@@ -14,12 +14,21 @@ SecureAgent provides a secure, isolated environment for executing code from LLM 
 - Manages sandbox lifecycle (create, connect, terminate)
 - Exposes REST API and WebSocket endpoints
 - Integrates with Kubernetes API for sandbox orchestration
+- Coordinates warm pool usage for faster sandbox creation
 
 #### `sandbox-controller`
 - Kubernetes operator that manages sandbox resources
 - Creates and manages pods for code execution
 - Implements security policies and resource limits
 - Handles template management and caching
+- Manages warm pools for improved startup performance
+
+#### `warm-pool-controller`
+- Maintains pools of pre-initialized sandbox environments
+- Ensures minimum number of warm pods are always available
+- Handles recycling of used pods when appropriate
+- Implements auto-scaling based on usage patterns
+- Coordinates with Sandbox Controller for pod assignment
 
 #### `execution-runtime`
 - Container image for code execution environments
@@ -85,7 +94,8 @@ from llmsafespace import Sandbox
 sandbox = Sandbox(
     runtime="python:3.10",
     api_key="your_api_key",
-    timeout=300  # seconds
+    timeout=300,  # seconds
+    use_warm_pool=True  # Use pre-initialized environments for faster startup
 )
 
 # Execute code
@@ -117,9 +127,10 @@ sandbox.terminate()
 
 ## Kubernetes Integration
 
-SecureAgent uses custom resources to manage sandboxes:
+SecureAgent uses custom resources to manage sandboxes and warm pools:
 
 ```yaml
+# Sandbox resource
 apiVersion: agent.example.com/v1
 kind: Sandbox
 metadata:
@@ -136,10 +147,40 @@ spec:
     runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault
+  useWarmPool: true
 status:
   phase: Running
   startTime: "2023-07-01T10:00:00Z"
   endpoint: "sandbox-12345.agent-sandboxes.svc.cluster.local"
+  warmPodRef:
+    name: "python-pool-abc123"
+    namespace: "warm-pools"
+```
+
+```yaml
+# WarmPool resource
+apiVersion: agent.example.com/v1
+kind: WarmPool
+metadata:
+  name: python-pool
+  namespace: warm-pools
+spec:
+  runtime: python:3.10
+  minSize: 5
+  maxSize: 20
+  securityLevel: standard
+  preloadPackages:
+    - numpy
+    - pandas
+  autoScaling:
+    enabled: true
+    targetUtilization: 80
+    scaleDownDelay: 300
+status:
+  availablePods: 3
+  assignedPods: 2
+  pendingPods: 0
+  lastScaleTime: "2023-07-01T10:00:00Z"
 ```
 
 ## Security Features
@@ -270,7 +311,18 @@ Current sandboxes are ephemeral by default, which is appropriate for most LLM ag
 - Shared volumes between related sandboxes
 - Integration with object storage for larger datasets
 
-### 2. Inter-Sandbox Communication
+### 2. Warm Pool Optimizations
+
+While the current warm pool implementation significantly improves startup times, there are several optimizations planned:
+
+**Planned Enhancements:**
+- Predictive scaling based on usage patterns
+- More sophisticated pod recycling strategies
+- Custom image preloading for specific use cases
+- Warm pool metrics and analytics dashboard
+- Multi-region warm pool distribution
+
+### 3. Inter-Sandbox Communication
 
 For complex multi-agent systems, enabling secure communication between sandboxes would allow for collaborative problem-solving.
 

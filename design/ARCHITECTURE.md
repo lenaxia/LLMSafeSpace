@@ -197,6 +197,7 @@ SecureAgent implements a defense-in-depth security approach with multiple layers
   - CPU and memory limits enforced at container level
   - Optional CPU pinning for sensitive workloads
   - Storage quotas to prevent disk space abuse
+  - Warm pool resource management for efficient utilization
 
 - **Network Isolation**:
   - Default-deny network policies

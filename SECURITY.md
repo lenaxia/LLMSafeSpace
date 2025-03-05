@@ -250,9 +250,31 @@ Enterprise edition includes additional security features:
 - Custom security policies
 - Compliance reporting
 - Enhanced isolation options
+- Dedicated warm pools with custom security profiles
+
+## Warm Pool Security Considerations
+
+The warm pool functionality introduces specific security considerations:
+
+### Pod Recycling Security
+
+- **Isolation Verification**: Before recycling pods, the system verifies that no sensitive data remains
+- **Filesystem Reset**: All writable directories are cleaned between uses
+- **Package Verification**: Installed packages are verified against an allowlist before recycling
+- **Time-Based Expiry**: Pods older than a configurable threshold are terminated rather than recycled
+- **Security Event Monitoring**: Pods that trigger security events are never recycled
+
+### Preloaded Package Security
+
+- **Package Scanning**: All preloaded packages are scanned for vulnerabilities
+- **Version Pinning**: Package versions are pinned to prevent supply chain attacks
+- **Integrity Verification**: Package integrity is verified during pod initialization
+- **Allowlist Enforcement**: Only approved packages can be preloaded
 
 ## Conclusion
 
 SecureAgent's security model provides robust protection for code execution environments while maintaining the simplicity and efficiency of a container-based architecture. By leveraging Kubernetes security features and adding specialized isolation mechanisms, SecureAgent delivers a secure platform suitable for most LLM agent execution scenarios.
+
+The warm pool functionality significantly improves startup performance without compromising security, thanks to careful pod lifecycle management and security verification during recycling.
 
 For use cases requiring the absolute highest level of isolation, consider deploying SecureAgent with a VM-based runtime or exploring our enterprise offerings with enhanced security features.
