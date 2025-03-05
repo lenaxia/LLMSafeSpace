@@ -1,10 +1,10 @@
-# Sandbox Controller Design for SecureAgent
+# Combined Controller Design for SecureAgent
 
 ## Overview
 
-The Sandbox Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of sandbox environments. This document provides a detailed design for the controller, including Custom Resource Definitions (CRDs), reconciliation loops, and resource lifecycle management.
+The Combined Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of both sandbox environments and warm pools. This document provides a detailed design for the controller, including Custom Resource Definitions (CRDs), reconciliation loops, and resource lifecycle management.
 
-The controller system also includes the Warm Pool Controller, which manages pools of pre-initialized sandbox environments for faster startup times.
+The controller manages both sandbox environments and pools of pre-initialized sandbox environments (warm pools) for faster startup times, providing a unified approach to resource management.
 
 ## Custom Resource Definitions (CRDs)
 
@@ -775,13 +775,96 @@ func main() {
 }
 ```
 
+## Controller Architecture
+
+### Component Structure
+
+The Combined Controller is structured as follows:
+
+1. **Main Controller Process**
+   - Initializes Kubernetes client and informers
+   - Sets up reconciliation loops for all resource types
+   - Manages leader election for HA deployments
+   - Handles graceful shutdown
+
+2. **Reconcilers**
+   - SandboxReconciler
+   - WarmPoolReconciler
+   - WarmPodReconciler
+   - SandboxProfileReconciler
+   - RuntimeEnvironmentReconciler
+
+3. **Resource Managers**
+   - PodManager
+   - NetworkPolicyManager
+   - ServiceManager
+   - VolumeManager
+   - SecurityContextManager
+   - WarmPodAllocator
+
+4. **Utilities**
+   - EventRecorder
+   - MetricsCollector
+   - TemplateRenderer
+   - ValidationHelper
+
+### Controller Initialization Flow
+
+```go
+func main() {
+    // Parse command-line flags
+    flag.Parse()
+    
+    // Set up logging
+    setupLogging()
+    
+    // Create Kubernetes client
+    config, err := rest.InClusterConfig()
+    if err != nil {
+        klog.Fatalf("Error getting Kubernetes config: %v", err)
+    }
+    
+    kubeClient, err := kubernetes.NewForConfig(config)
+    if err != nil {
+        klog.Fatalf("Error creating Kubernetes client: %v", err)
+    }
+    
+    llmsafespaceClient, err := clientset.NewForConfig(config)
+    if err != nil {
+        klog.Fatalf("Error creating LLMSafeSpace client: %v", err)
+    }
+    
+    // Set up informer factories
+    kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
+    llmsafespaceInformerFactory := informers.NewSharedInformerFactory(llmsafespaceClient, time.Second*30)
+    
+    // Create controller
+    controller := NewController(
+        kubeClient,
+        llmsafespaceClient,
+        kubeInformerFactory,
+        llmsafespaceInformerFactory,
+    )
+    
+    // Set up leader election if enabled
+    if *enableLeaderElection {
+        setupLeaderElection(kubeClient, controller)
+    } else {
+        // Start controller directly
+        controller.Run(*workers, stopCh)
+    }
+}
+```
+
 ## Reconciliation Loops
+
+The controller implements multiple reconciliation loops, one for each resource type, but shares common utilities and clients across all loops.
 
 ### 1. Sandbox Reconciliation Loop
 
-The Sandbox reconciliation loop is the core of the controller, responsible for ensuring that the actual state of sandbox resources matches the desired state defined in the Sandbox CR.
+The Sandbox reconciliation loop is responsible for ensuring that the actual state of sandbox resources matches the desired state defined in the Sandbox CR.
 
-The Sandbox reconciliation loop has been enhanced to support warm pods:
+The Sandbox reconciliation loop integrates directly with warm pod management:
 
 ```go
 func (c *Controller) reconcileSandbox(key string) error {
@@ -948,51 +1031,13 @@ The Sandbox resource follows a state machine pattern with the following phases:
 └─────────┘     └─────────┘     └─────────┘     └─────────┘
 ```
 
-### 2. SandboxProfile Reconciliation Loop
-
-The SandboxProfile reconciliation loop ensures that profile resources are properly validated and available for use by Sandboxes.
-
-```go
-func (c *Controller) reconcileSandboxProfile(key string) error {
-    namespace, name, err := cache.SplitMetaNamespaceKey(key)
-    if err != nil {
-        return err
-    }
-    
-    // Get SandboxProfile resource
-    profile, err := c.profileLister.SandboxProfiles(namespace).Get(name)
-    if errors.IsNotFound(err) {
-        // Profile was deleted, nothing to do
-        return nil
-    }
-    if err != nil {
-        return err
-    }
-    
-    // Deep copy to avoid modifying cache
-    profile = profile.DeepCopy()
-    
-    // Validate profile
-    if err := c.validateSandboxProfile(profile); err != nil {
-        c.recorder.Event(profile, corev1.EventTypeWarning, "ValidationFailed", 
-            fmt.Sprintf("Profile validation failed: %v", err))
-        return err
-    }
-    
-    // Update status if needed
-    // ...
-    
-    return nil
-}
-```
-
-### 3. WarmPool Reconciliation Loop
+### 2. WarmPool Reconciliation Loop
 
 The WarmPool reconciliation loop manages the lifecycle of warm pools, ensuring that the desired number of warm pods are available.
 
 ```go
 // reconcileWarmPool ensures the actual state of a warm pool matches the desired state
-func (c *WarmPoolController) reconcileWarmPool(key string) error {
+func (c *Controller) reconcileWarmPool(key string) error {
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
     if err != nil {
         return err
@@ -1068,7 +1113,7 @@ func (c *WarmPoolController) reconcileWarmPool(key string) error {
 }
 
 // createWarmPod creates a new warm pod for the given pool
-func (c *WarmPoolController) createWarmPod(pool *llmsafespacev1.WarmPool) error {
+func (c *Controller) createWarmPod(pool *llmsafespacev1.WarmPool) error {
     // Create WarmPod custom resource
     warmPod := &llmsafespacev1.WarmPod{
         ObjectMeta: metav1.ObjectMeta{
@@ -1119,13 +1164,13 @@ func (c *WarmPoolController) createWarmPod(pool *llmsafespacev1.WarmPool) error 
 }
 ```
 
-### 4. WarmPod Reconciliation Loop
+### 3. WarmPod Reconciliation Loop
 
 The WarmPod reconciliation loop manages the lifecycle of individual warm pods.
 
 ```go
 // reconcileWarmPod ensures the actual state of a warm pod matches the desired state
-func (c *WarmPodController) reconcileWarmPod(key string) error {
+func (c *Controller) reconcileWarmPod(key string) error {
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
     if err != nil {
         return err
@@ -1184,6 +1229,44 @@ func (c *WarmPodController) reconcileWarmPod(key string) error {
 }
 ```
 
+### 4. SandboxProfile Reconciliation Loop
+
+The SandboxProfile reconciliation loop ensures that profile resources are properly validated and available for use by Sandboxes.
+
+```go
+func (c *Controller) reconcileSandboxProfile(key string) error {
+    namespace, name, err := cache.SplitMetaNamespaceKey(key)
+    if err != nil {
+        return err
+    }
+    
+    // Get SandboxProfile resource
+    profile, err := c.profileLister.SandboxProfiles(namespace).Get(name)
+    if errors.IsNotFound(err) {
+        // Profile was deleted, nothing to do
+        return nil
+    }
+    if err != nil {
+        return err
+    }
+    
+    // Deep copy to avoid modifying cache
+    profile = profile.DeepCopy()
+    
+    // Validate profile
+    if err := c.validateSandboxProfile(profile); err != nil {
+        c.recorder.Event(profile, corev1.EventTypeWarning, "ValidationFailed", 
+            fmt.Sprintf("Profile validation failed: %v", err))
+        return err
+    }
+    
+    // Update status if needed
+    // ...
+    
+    return nil
+}
+```
+
 ### 5. RuntimeEnvironment Reconciliation Loop
 
 The RuntimeEnvironment reconciliation loop validates runtime environments and ensures they are available for use.
@@ -1233,18 +1316,89 @@ func (c *Controller) reconcileRuntimeEnvironment(key string) error {
 }
 ```
 
-## Resource Lifecycle Management
+## Shared Components and Utilities
 
-### 1. Sandbox Resource Creation
+The combined controller uses shared components and utilities across all reconciliation loops to avoid code duplication and ensure consistent behavior.
 
-The controller creates the following resources for each Sandbox:
+### 1. WarmPodAllocator
 
-1. **Namespace** (optional, for high isolation)
-2. **Pod** for the sandbox execution environment (or reuses a warm pod)
-3. **Service** for internal communication
-4. **NetworkPolicy** for network isolation
-5. **PersistentVolumeClaim** (if persistent storage is enabled)
-6. **ServiceAccount** with appropriate permissions
+The WarmPodAllocator is responsible for finding and allocating warm pods to sandboxes:
+
+```go
+// WarmPodAllocator handles allocation of warm pods to sandboxes
+type WarmPodAllocator struct {
+    llmsafespaceClient clientset.Interface
+    warmPoolLister     listers.WarmPoolLister
+    warmPodLister      listers.WarmPodLister
+    podLister          corelisters.PodLister
+    recorder           record.EventRecorder
+}
+
+// FindMatchingWarmPod finds a warm pod that matches the requirements
+func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.WarmPod, error) {
+    // Find warm pools that match the runtime
+    runtime := sandbox.Spec.Runtime
+    selector := labels.SelectorFromSet(labels.Set{
+        "runtime": strings.Replace(runtime, ":", "-", -1),
+    })
+    
+    pools, err := a.warmPoolLister.List(selector)
+    if err != nil {
+        return nil, err
+    }
+    
+    // No matching pools
+    if len(pools) == 0 {
+        return nil, nil
+    }
+    
+    // Find the best matching pool
+    var bestPool *llmsafespacev1.WarmPool
+    for i, pool := range pools {
+        if pool.Status.AvailablePods > 0 {
+            // Check if security level matches
+            if pool.Spec.SecurityLevel == sandbox.Spec.SecurityLevel {
+                bestPool = &pools[i]
+                break
+            }
+            
+            // If no exact match yet, use this as a fallback
+            if bestPool == nil {
+                bestPool = &pools[i]
+            }
+        }
+    }
+    
+    if bestPool == nil {
+        return nil, nil
+    }
+    
+    // Find an available warm pod from the pool
+    podSelector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": bestPool.Name,
+    })
+    
+    warmPods, err := a.warmPodLister.WarmPods(bestPool.Namespace).List(podSelector)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Find a ready pod
+    for _, pod := range warmPods {
+        if pod.Status.Phase == "Ready" {
+            return &pod, nil
+        }
+    }
+    
+    return nil, nil
+}
+```
+
+### 2. Resource Management
+
+The controller creates and manages resources for both sandboxes and warm pools:
 
 ```go
 func (c *Controller) createSandboxResources(sandbox *llmsafespacev1.Sandbox) error {
@@ -2062,9 +2216,143 @@ func (c *Controller) updateSandboxStatus(sandbox *llmsafespacev1.Sandbox, phase,
 }
 ```
 
+## Work Queue Processing
+
+The combined controller uses a single work queue for all resource types, with a mechanism to determine the resource type from the queue key:
+
+```go
+// Controller manages the lifecycle of sandboxes and warm pools
+type Controller struct {
+    kubeClient        kubernetes.Interface
+    llmsafespaceClient clientset.Interface
+    
+    // Informers and listers
+    sandboxInformer   informers.SandboxInformer
+    sandboxLister     listers.SandboxLister
+    sandboxSynced     cache.InformerSynced
+    
+    warmPoolInformer  informers.WarmPoolInformer
+    warmPoolLister    listers.WarmPoolLister
+    warmPoolSynced    cache.InformerSynced
+    
+    warmPodInformer   informers.WarmPodInformer
+    warmPodLister     listers.WarmPodLister
+    warmPodSynced     cache.InformerSynced
+    
+    profileInformer   informers.SandboxProfileInformer
+    profileLister     listers.SandboxProfileLister
+    profileSynced     cache.InformerSynced
+    
+    runtimeInformer   informers.RuntimeEnvironmentInformer
+    runtimeLister     listers.RuntimeEnvironmentLister
+    runtimeSynced     cache.InformerSynced
+    
+    podInformer       coreinformers.PodInformer
+    podLister         corelisters.PodLister
+    podSynced         cache.InformerSynced
+    
+    // Work queue
+    workqueue         workqueue.RateLimitingInterface
+    
+    // Resource managers
+    podManager        *PodManager
+    serviceManager    *ServiceManager
+    networkPolicyManager *NetworkPolicyManager
+    volumeManager     *VolumeManager
+    serviceAccountManager *ServiceAccountManager
+    securityContextManager *SecurityContextManager
+    warmPodAllocator  *WarmPodAllocator
+    
+    // Other utilities
+    recorder          record.EventRecorder
+    config            *config.Config
+}
+
+// processNextWorkItem processes the next item from the work queue
+func (c *Controller) processNextWorkItem() bool {
+    obj, shutdown := c.workqueue.Get()
+    if shutdown {
+        return false
+    }
+    
+    err := func(obj interface{}) error {
+        defer c.workqueue.Done(obj)
+        
+        var key string
+        var ok bool
+        if key, ok = obj.(string); !ok {
+            c.workqueue.Forget(obj)
+            return fmt.Errorf("expected string in workqueue but got %#v", obj)
+        }
+        
+        // Determine resource type from key format
+        // Format: <resource-type>/<namespace>/<name>
+        parts := strings.SplitN(key, "/", 3)
+        if len(parts) != 3 {
+            c.workqueue.Forget(obj)
+            return fmt.Errorf("invalid resource key: %s", key)
+        }
+        
+        resourceType := parts[0]
+        namespace := parts[1]
+        name := parts[2]
+        nsName := namespace + "/" + name
+        
+        // Call appropriate reconcile function based on resource type
+        var err error
+        switch resourceType {
+        case "sandbox":
+            err = c.reconcileSandbox(nsName)
+        case "warmpool":
+            err = c.reconcileWarmPool(nsName)
+        case "warmpod":
+            err = c.reconcileWarmPod(nsName)
+        case "profile":
+            err = c.reconcileSandboxProfile(nsName)
+        case "runtime":
+            err = c.reconcileRuntimeEnvironment(nsName)
+        default:
+            err = fmt.Errorf("unknown resource type: %s", resourceType)
+        }
+        
+        if err != nil {
+            // Check if we should requeue
+            if shouldRequeue(err) {
+                c.workqueue.AddRateLimited(key)
+                return fmt.Errorf("error reconciling %s '%s': %s, requeuing", resourceType, nsName, err.Error())
+            }
+            
+            // Don't requeue for permanent errors
+            c.workqueue.Forget(obj)
+            return fmt.Errorf("error reconciling %s '%s': %s, not requeuing", resourceType, nsName, err.Error())
+        }
+        
+        c.workqueue.Forget(obj)
+        return nil
+    }(obj)
+    
+    if err != nil {
+        klog.Errorf("Error processing item: %v", err)
+    }
+    
+    return true
+}
+
+// enqueueResource adds a resource to the work queue with appropriate type prefix
+func (c *Controller) enqueueResource(resourceType string, obj interface{}) {
+    var key string
+    var err error
+    if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
+        klog.Errorf("Error getting key for object: %v", err)
+        return
+    }
+    c.workqueue.Add(resourceType + "/" + key)
+}
+```
+
 ## Monitoring and Metrics
 
-The controller exposes Prometheus metrics for monitoring its operation and the state of managed resources.
+The combined controller exposes Prometheus metrics for monitoring its operation and the state of managed resources:
 
 ```go
 func setupMetrics() {
@@ -2206,6 +2494,85 @@ var (
 )
 ```
 
+## Error Handling and Recovery
+
+The combined controller implements comprehensive error handling and recovery mechanisms:
+
+```go
+// updateSandboxStatus updates the status of a sandbox with appropriate conditions
+func (c *Controller) updateSandboxStatus(sandbox *llmsafespacev1.Sandbox, phase, reason, message string) error {
+    // Deep copy to avoid modifying cache
+    sandbox = sandbox.DeepCopy()
+    
+    // Update status
+    sandbox.Status.Phase = phase
+    
+    // Add condition
+    now := metav1.Now()
+    condition := llmsafespacev1.SandboxCondition{
+        Type: reason,
+        Status: "True",
+        Reason: reason,
+        Message: message,
+        LastTransitionTime: now,
+    }
+    
+    // Check if condition already exists
+    for i, cond := range sandbox.Status.Conditions {
+        if cond.Type == reason {
+            if cond.Status == "True" && cond.Message == message {
+                // Condition already exists with same status and message
+                return nil
+            }
+            // Update existing condition
+            sandbox.Status.Conditions[i] = condition
+            _, err := c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+                context.TODO(), sandbox, metav1.UpdateOptions{})
+            
+            // Record event
+            c.recorder.Event(sandbox, corev1.EventTypeWarning, reason, message)
+            
+            return err
+        }
+    }
+    
+    // Add new condition
+    sandbox.Status.Conditions = append(sandbox.Status.Conditions, condition)
+    
+    _, err := c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+        context.TODO(), sandbox, metav1.UpdateOptions{})
+    
+    // Record event
+    if phase == "Failed" {
+        c.recorder.Event(sandbox, corev1.EventTypeWarning, reason, message)
+    } else {
+        c.recorder.Event(sandbox, corev1.EventTypeNormal, reason, message)
+    }
+    
+    return err
+}
+
+// shouldRequeue determines if an error should cause requeuing
+func shouldRequeue(err error) bool {
+    // Check for specific error types that should be requeued
+    if errors.IsServerTimeout(err) || errors.IsTimeout(err) || errors.IsTooManyRequests(err) {
+        return true
+    }
+    
+    // Check for network errors
+    if isNetworkError(err) {
+        return true
+    }
+    
+    // Check for resource conflict errors
+    if errors.IsConflict(err) {
+        return true
+    }
+    
+    return false
+}
+```
+
 ## High Availability and Scaling
 
 ### 1. Leader Election
@@ -2290,16 +2657,16 @@ spec:
 
 ## Conclusion
 
-The Sandbox Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of sandbox environments. It leverages Kubernetes custom resources and controllers to provide a secure, isolated environment for executing code.
+The Combined Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of both sandbox environments and warm pools. By integrating these closely related functions into a single controller, we achieve better coordination, simplified architecture, and more efficient resource usage.
 
 The controller's design follows Kubernetes best practices, including:
 
-1. **Declarative API**: Using CRDs to define the desired state of sandboxes
+1. **Declarative API**: Using CRDs to define the desired state of resources
 2. **Reconciliation Loop**: Continuously working to ensure the actual state matches the desired state
 3. **Eventual Consistency**: Handling transient errors with retries and backoff
 4. **Operator Pattern**: Encapsulating operational knowledge in the controller
 5. **Defense in Depth**: Implementing multiple layers of security
 
-The addition of warm pool functionality significantly improves the user experience by reducing sandbox startup times. By maintaining pools of pre-initialized pods, the system can respond to sandbox creation requests much more quickly, which is particularly valuable for interactive use cases where users expect immediate feedback.
+The warm pool functionality significantly improves the user experience by reducing sandbox startup times. By maintaining pools of pre-initialized pods, the system can respond to sandbox creation requests much more quickly, which is particularly valuable for interactive use cases where users expect immediate feedback.
 
-This design provides a robust foundation for the SecureAgent platform, enabling secure code execution for LLM agents while maintaining flexibility and ease of use.
+The combined controller approach provides a robust foundation for the SecureAgent platform, enabling secure code execution for LLM agents while maintaining flexibility and ease of use.
