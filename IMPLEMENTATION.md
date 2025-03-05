@@ -130,15 +130,16 @@ Implement the Kubernetes operator that manages warm pool lifecycle, including cr
 Implement the API service that provides the interface for SDK clients to interact with SecureAgent.
 
 **Requirements:**
-- Implement REST API endpoints for sandbox management
+- Implement REST API endpoints for sandbox and warm pool management
 - Implement WebSocket support for real-time communication
 - Implement authentication and authorization
 - Integrate with Kubernetes API for resource management
-- Implement warm pool management endpoints
+- Implement efficient warm pod allocation for sandbox requests
 
 **Acceptance Criteria:**
 - API service can be deployed to Kubernetes
 - API endpoints correctly handle sandbox creation, connection, and termination
+- API endpoints correctly manage warm pool creation, scaling, and deletion
 - Authentication and authorization correctly restrict access
 - API service properly communicates with the Kubernetes API
 - API service efficiently allocates warm pods to sandbox requests
@@ -354,7 +355,7 @@ Create example applications demonstrating SecureAgent usage.
   - Dependencies: Step 1.1, Step 1.2
 
 - **Phase 3** (Weeks 5-10): Security Hardening
-  - Dependencies: Step 1.2, Step 1.3
+  - Dependencies: Step 1.2
 
 - **Phase 4** (Weeks 7-12): Monitoring and Logging
   - Dependencies: Step 1.2, Step 2.1
@@ -387,6 +388,10 @@ Create example applications demonstrating SecureAgent usage.
 6. **Warm Pool Resource Efficiency**
    - Risk: Inefficient warm pool management could lead to resource waste
    - Mitigation: Implement intelligent scaling algorithms and monitor utilization metrics
+
+7. **Controller Complexity**
+   - Risk: Unified controller may become complex and harder to maintain
+   - Mitigation: Implement modular design with clear separation of concerns, comprehensive testing
 
 ## Success Metrics
 
