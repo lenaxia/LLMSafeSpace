@@ -52,11 +52,13 @@ This document outlines the implementation plan for SecureAgent, a Kubernetes-nat
 #### Step 1.1: Kubernetes CRD Design and Implementation
 
 **Description:**
-Define and implement the core Custom Resource Definitions (CRDs) for SecureAgent, including Sandbox, SandboxProfile, and RuntimeEnvironment resources.
+Define and implement the core Custom Resource Definitions (CRDs) for SecureAgent, including Sandbox, SandboxProfile, WarmPool, WarmPod, and RuntimeEnvironment resources.
 
 **Requirements:**
 - Define schema for Sandbox CRD with support for runtime selection, resource limits, and security settings
 - Define schema for SandboxProfile CRD to manage security profiles
+- Define schema for WarmPool CRD to manage pools of pre-initialized environments
+- Define schema for WarmPod CRD to track individual warm pods
 - Define schema for RuntimeEnvironment CRD to manage available execution environments
 - Implement validation webhooks for all CRDs
 
@@ -75,12 +77,14 @@ Implement the Kubernetes operator that manages sandbox lifecycle, including crea
 - Support reconciliation of Sandbox resources
 - Handle pod creation with appropriate security contexts
 - Implement status updates for Sandbox resources
+- Support integration with warm pools for faster sandbox creation
 
 **Acceptance Criteria:**
 - Controller successfully creates pods when Sandbox resources are created
 - Controller properly configures security contexts based on SandboxProfile
 - Controller updates Sandbox status with current state information
 - Controller cleans up resources when Sandbox is deleted
+- Controller can adopt warm pods from warm pools when available
 
 #### Step 1.3: Base Runtime Environment Images
 
@@ -99,6 +103,25 @@ Create base container images for different language runtimes with security harde
 - Images run with minimal privileges
 - Images pass security scanning with no critical vulnerabilities
 
+#### Step 1.3: Warm Pool Controller Implementation
+
+**Description:**
+Implement the Kubernetes operator that manages warm pool lifecycle, including creation, scaling, and pod recycling.
+
+**Requirements:**
+- Implement controller using the Operator SDK
+- Support reconciliation of WarmPool resources
+- Handle warm pod creation and management
+- Implement auto-scaling based on usage patterns
+- Support pod recycling for efficient resource usage
+
+**Acceptance Criteria:**
+- Controller successfully maintains pools of warm pods
+- Controller scales pools according to configuration
+- Controller properly recycles pods when appropriate
+- Controller integrates with Sandbox Controller for pod assignment
+- Warm pods are properly initialized with preloaded packages
+
 ### Phase 2: API and SDK Development
 
 #### Step 2.1: API Service Implementation
@@ -111,12 +134,14 @@ Implement the API service that provides the interface for SDK clients to interac
 - Implement WebSocket support for real-time communication
 - Implement authentication and authorization
 - Integrate with Kubernetes API for resource management
+- Implement warm pool management endpoints
 
 **Acceptance Criteria:**
 - API service can be deployed to Kubernetes
 - API endpoints correctly handle sandbox creation, connection, and termination
 - Authentication and authorization correctly restrict access
 - API service properly communicates with the Kubernetes API
+- API service efficiently allocates warm pods to sandbox requests
 
 #### Step 2.2: Python SDK Implementation
 
@@ -128,12 +153,14 @@ Implement the Python SDK for SecureAgent.
 - Support sandbox creation and management
 - Support code execution and file operations
 - Implement WebSocket client for real-time output
+- Support warm pool configuration and management
 
 **Acceptance Criteria:**
 - SDK can be installed via pip
 - SDK can create and manage sandboxes
 - SDK can execute code and commands
 - SDK can upload and download files
+- SDK can create and manage warm pools
 - SDK handles errors gracefully
 
 #### Step 2.3: JavaScript/TypeScript SDK Implementation
@@ -146,12 +173,14 @@ Implement the JavaScript/TypeScript SDK for SecureAgent.
 - Support sandbox creation and management
 - Support code execution and file operations
 - Implement WebSocket client for real-time output
+- Support warm pool configuration and management
 
 **Acceptance Criteria:**
 - SDK can be installed via npm
 - SDK can create and manage sandboxes
 - SDK can execute code and commands
 - SDK can upload and download files
+- SDK can create and manage warm pools
 - SDK handles errors gracefully
 
 ### Phase 3: Security Hardening
@@ -218,6 +247,7 @@ Implement comprehensive audit logging for security events.
 - Log sandbox lifecycle events
 - Log code execution and command execution
 - Log file operations
+- Log warm pool operations and pod assignments
 - Implement structured logging format
 
 **Acceptance Criteria:**
@@ -229,18 +259,20 @@ Implement comprehensive audit logging for security events.
 #### Step 4.2: Resource Monitoring Implementation
 
 **Description:**
-Implement resource usage monitoring for sandboxes.
+Implement resource usage monitoring for sandboxes and warm pools.
 
 **Requirements:**
 - Monitor CPU, memory, and storage usage
 - Implement resource usage limits enforcement
 - Provide resource usage metrics via API
 - Configure alerts for resource abuse
+- Track warm pool utilization and efficiency metrics
 
 **Acceptance Criteria:**
 - Resource usage is accurately tracked
 - Resource limits are enforced
 - Metrics are available via API
+- Warm pool efficiency metrics are collected
 - Alerts trigger when thresholds are exceeded
 
 #### Step 4.3: Security Monitoring Implementation
@@ -348,10 +380,20 @@ Create example applications demonstrating SecureAgent usage.
    - Risk: Some features may be cloud provider specific
    - Mitigation: Test on multiple cloud providers and document any provider-specific requirements
 
+5. **Warm Pool Recycling Security**
+   - Risk: Pod recycling could leave sensitive data or introduce security vulnerabilities
+   - Mitigation: Implement thorough cleanup procedures and verification before recycling pods
+
+6. **Warm Pool Resource Efficiency**
+   - Risk: Inefficient warm pool management could lead to resource waste
+   - Mitigation: Implement intelligent scaling algorithms and monitor utilization metrics
+
 ## Success Metrics
 
 1. **Security**: Zero critical vulnerabilities in security audit
-2. **Performance**: Sandbox startup time under 1 second
+2. **Performance**: Sandbox startup time under 1 second with warm pools, under 3 seconds without
 3. **Usability**: SDK ease-of-use rating from developer feedback
 4. **Reliability**: 99.9% uptime for API service
 5. **Adoption**: Number of active users and sandboxes created
+6. **Efficiency**: Warm pool hit ratio above 80% for common runtimes
+7. **Resource Utilization**: Reduced overall resource usage compared to on-demand sandbox creation
