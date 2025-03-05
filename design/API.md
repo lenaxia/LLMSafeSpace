@@ -55,6 +55,17 @@ All API requests require authentication using one of:
 | `/profiles` | GET | List available security profiles |
 | `/profiles/{id}` | GET | Get profile details |
 
+#### Warm Pools
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/warmpools` | GET | List all warm pools |
+| `/warmpools` | POST | Create a new warm pool |
+| `/warmpools/{id}` | GET | Get warm pool details |
+| `/warmpools/{id}` | PATCH | Update a warm pool |
+| `/warmpools/{id}` | DELETE | Delete a warm pool |
+| `/warmpools/{id}/status` | GET | Get warm pool status |
+
 #### User Management
 
 | Endpoint | Method | Description |
@@ -84,7 +95,8 @@ POST /api/v1/sandboxes
       {"domain": "pypi.org"},
       {"domain": "files.pythonhosted.org"}
     ]
-  }
+  },
+  "useWarmPool": true
 }
 ```
 
@@ -205,6 +217,77 @@ POST /api/v1/sandboxes/sb-a1b2c3d4/packages
   "exitCode": 0,
   "stdout": "Successfully installed pandas-2.0.1 matplotlib-3.7.1",
   "stderr": ""
+}
+```
+
+#### Create Warm Pool
+
+**Request:**
+```json
+POST /api/v1/warmpools
+{
+  "name": "python-pool",
+  "runtime": "python:3.10",
+  "minSize": 5,
+  "maxSize": 20,
+  "securityLevel": "standard",
+  "preloadPackages": ["numpy", "pandas"],
+  "autoScaling": {
+    "enabled": true,
+    "targetUtilization": 80,
+    "scaleDownDelay": 300
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "id": "wp-a1b2c3d4",
+  "name": "python-pool",
+  "runtime": "python:3.10",
+  "minSize": 5,
+  "maxSize": 20,
+  "securityLevel": "standard",
+  "preloadPackages": ["numpy", "pandas"],
+  "autoScaling": {
+    "enabled": true,
+    "targetUtilization": 80,
+    "scaleDownDelay": 300
+  },
+  "status": {
+    "availablePods": 0,
+    "assignedPods": 0,
+    "pendingPods": 5,
+    "lastScaleTime": "2023-07-01T10:00:00Z"
+  },
+  "createdAt": "2023-07-01T10:00:00Z"
+}
+```
+
+#### Get Warm Pool Status
+
+**Request:**
+```
+GET /api/v1/warmpools/wp-a1b2c3d4/status
+```
+
+**Response:**
+```json
+{
+  "availablePods": 5,
+  "assignedPods": 2,
+  "pendingPods": 0,
+  "lastScaleTime": "2023-07-01T10:05:00Z",
+  "conditions": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PoolReady",
+      "message": "Warm pool is ready",
+      "lastTransitionTime": "2023-07-01T10:05:00Z"
+    }
+  ]
 }
 ```
 
@@ -348,7 +431,8 @@ class Sandbox:
         timeout: int = 300,
         resources: dict = None,
         network_access: dict = None,
-        api_url: str = None
+        api_url: str = None,
+        use_warm_pool: bool = True
     ):
         """Initialize a new sandbox or connect to an existing one."""
         pass
@@ -484,6 +568,76 @@ class SandboxStatus:
     def uptime(self) -> float:
         """Uptime of the sandbox in seconds."""
         pass
+
+
+class WarmPool:
+    """Represents a warm pool of sandbox environments."""
+    
+    def __init__(
+        self, 
+        name: str,
+        runtime: str,
+        min_size: int = 1,
+        max_size: int = 10,
+        security_level: str = "standard",
+        preload_packages: List[str] = None,
+        auto_scaling: bool = False,
+        api_key: str = None,
+        api_url: str = None
+    ):
+        """Initialize a new warm pool."""
+        pass
+    
+    @property
+    def name(self) -> str:
+        """Get the warm pool name."""
+        pass
+    
+    @property
+    def runtime(self) -> str:
+        """Get the runtime environment."""
+        pass
+    
+    @property
+    def min_size(self) -> int:
+        """Get the minimum pool size."""
+        pass
+    
+    @property
+    def max_size(self) -> int:
+        """Get the maximum pool size."""
+        pass
+    
+    @property
+    def available_pods(self) -> int:
+        """Get the number of available pods."""
+        pass
+    
+    @property
+    def assigned_pods(self) -> int:
+        """Get the number of assigned pods."""
+        pass
+    
+    def scale(self, min_size: int = None, max_size: int = None) -> 'WarmPool':
+        """Scale the warm pool."""
+        pass
+    
+    def delete(self) -> bool:
+        """Delete the warm pool."""
+        pass
+    
+    def status(self) -> dict:
+        """Get the current status of the warm pool."""
+        pass
+
+
+def list_warm_pools(api_key: str = None, api_url: str = None) -> List[WarmPool]:
+    """List all warm pools."""
+    pass
+
+def get_warm_pool(name: str, api_key: str = None, api_url: str = None) -> WarmPool:
+    """Get a warm pool by name."""
+    pass
 ```
 
 ### Python SDK Implementation
@@ -994,6 +1148,7 @@ interface SandboxOptions {
     ingress?: boolean;
   };
   apiUrl?: string;
+  useWarmPool?: boolean;
 }
 
 interface ExecutionResult {
@@ -1044,6 +1199,57 @@ class Sandbox {
   async terminate(): Promise<boolean>;
   async status(): Promise<SandboxStatus>;
 }
+
+interface WarmPoolOptions {
+  name: string;
+  runtime: string;
+  minSize?: number;
+  maxSize?: number;
+  securityLevel?: 'standard' | 'high' | 'custom';
+  preloadPackages?: string[];
+  autoScaling?: {
+    enabled: boolean;
+    targetUtilization?: number;
+    scaleDownDelay?: number;
+  };
+  apiKey?: string;
+  apiUrl?: string;
+}
+
+interface WarmPoolStatus {
+  availablePods: number;
+  assignedPods: number;
+  pendingPods: number;
+  lastScaleTime: Date;
+  conditions: Array<{
+    type: string;
+    status: 'True' | 'False' | 'Unknown';
+    reason: string;
+    message: string;
+    lastTransitionTime: Date;
+  }>;
+}
+
+class WarmPool {
+  constructor(options: WarmPoolOptions);
+  
+  // Properties
+  readonly name: string;
+  readonly runtime: string;
+  readonly minSize: number;
+  readonly maxSize: number;
+  readonly availablePods: number;
+  readonly assignedPods: number;
+  
+  // Methods
+  async scale(options: { minSize?: number, maxSize?: number }): Promise<WarmPool>;
+  async delete(): Promise<boolean>;
+  async status(): Promise<WarmPoolStatus>;
+}
+
+// Helper functions
+async function listWarmPools(options?: { apiKey?: string, apiUrl?: string }): Promise<WarmPool[]>;
+async function getWarmPool(name: string, options?: { apiKey?: string, apiUrl?: string }): Promise<WarmPool>;
 ```
 
 ### Go SDK
@@ -1066,6 +1272,7 @@ type SandboxOptions struct {
 	Resources     *ResourceOptions
 	NetworkAccess *NetworkOptions
 	APIURL        string
+	UseWarmPool   bool
 }
 
 // ResourceOptions defines resource limits for a sandbox
@@ -1149,6 +1356,75 @@ func New(opts SandboxOptions) (Sandbox, error) {
 
 // Connect connects to an existing sandbox by ID
 func Connect(id string, apiKey string) (Sandbox, error) {
+	// Implementation
+}
+
+// WarmPoolOptions defines options for creating a new warm pool
+type WarmPoolOptions struct {
+	Name           string
+	Runtime        string
+	MinSize        int
+	MaxSize        int
+	SecurityLevel  string
+	PreloadPackages []string
+	AutoScaling    *AutoScalingOptions
+	APIKey         string
+	APIURL         string
+}
+
+// AutoScalingOptions defines auto-scaling configuration for a warm pool
+type AutoScalingOptions struct {
+	Enabled          bool
+	TargetUtilization int
+	ScaleDownDelay   int
+}
+
+// WarmPoolStatus contains the current status of a warm pool
+type WarmPoolStatus struct {
+	AvailablePods  int
+	AssignedPods   int
+	PendingPods    int
+	LastScaleTime  time.Time
+	Conditions     []WarmPoolCondition
+}
+
+// WarmPoolCondition represents a condition of a warm pool
+type WarmPoolCondition struct {
+	Type               string
+	Status             string
+	Reason             string
+	Message            string
+	LastTransitionTime time.Time
+}
+
+// WarmPool represents a pool of pre-initialized sandbox environments
+type WarmPool interface {
+	// Properties
+	Name() string
+	Runtime() string
+	MinSize() int
+	MaxSize() int
+	AvailablePods() int
+	AssignedPods() int
+	
+	// Methods
+	Scale(ctx context.Context, minSize, maxSize int) error
+	Delete(ctx context.Context) error
+	Status(ctx context.Context) (*WarmPoolStatus, error)
+}
+
+// NewWarmPool creates a new warm pool with the given options
+func NewWarmPool(opts WarmPoolOptions) (WarmPool, error) {
+	// Implementation
+}
+
+// GetWarmPool gets an existing warm pool by name
+func GetWarmPool(name string, apiKey string) (WarmPool, error) {
+	// Implementation
+}
+
+// ListWarmPools lists all warm pools
+func ListWarmPools(apiKey string) ([]WarmPool, error) {
 	// Implementation
 }
 ```
