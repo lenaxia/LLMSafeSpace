@@ -13,6 +13,7 @@ SecureAgent consists of three primary components that work together to provide s
    - Manages sandbox lifecycle (creation, connection, termination)
    - Integrates with Kubernetes API to orchestrate sandbox resources
    - Maintains session state and user context
+   - Coordinates warm pool usage for faster sandbox creation
 
 2. **Sandbox Controller (`sandbox-controller`)**
    - Kubernetes operator that implements the control loop for custom resources
@@ -21,8 +22,17 @@ SecureAgent consists of three primary components that work together to provide s
    - Handles template management and runtime environment selection
    - Updates status information for sandbox resources
    - Implements reconciliation logic for desired vs. actual state
+   - Manages warm pools and warm pods for improved startup performance
 
-3. **Execution Runtime (`execution-runtime`)**
+3. **Warm Pool Controller**
+   - Maintains pools of pre-initialized sandbox environments
+   - Ensures minimum number of warm pods are always available
+   - Handles recycling of used pods when appropriate
+   - Manages pod lifecycle (creation, assignment, recycling, termination)
+   - Implements auto-scaling based on usage patterns
+   - Coordinates with Sandbox Controller for pod assignment
+
+4. **Execution Runtime (`execution-runtime`)**
    - Container images for various language environments (Python, Node.js, etc.)
    - Provides pre-installed tools and libraries commonly used by LLM agents
    - Implements security hardening measures (read-only filesystem, non-root user)
@@ -36,12 +46,14 @@ SecureAgent consists of three primary components that work together to provide s
   - Sandbox metadata and configuration
   - Usage statistics and billing information
   - Audit logs for compliance
+  - Warm pool configuration and status
 
 - **Redis**: In-memory data store for:
   - Session management
   - Caching frequently accessed data
   - Real-time metrics and status information
   - Temporary storage for streaming outputs
+  - Warm pod allocation tracking
 
 ### Component Interactions
 
@@ -55,14 +67,26 @@ SecureAgent consists of three primary components that work together to provide s
    - API service creates/updates Kubernetes custom resources (CRs)
    - Controller watches for changes to these resources
    - Status updates flow back from controller to API service
+   - API service requests warm pods when available
 
-3. **Sandbox Controller to Runtime**:
+3. **API Service to Warm Pool Controller**:
+   - API service queries for available warm pods
+   - Warm pool controller assigns pods to sandboxes
+   - Status updates flow back from warm pool controller to API service
+
+4. **Warm Pool Controller to Sandbox Controller**:
+   - Warm pool controller manages warm pod lifecycle
+   - Sandbox controller adopts warm pods for sandbox use
+   - Coordination for pod recycling and cleanup
+
+5. **Sandbox Controller to Runtime**:
    - Controller creates pods with appropriate runtime images
    - Security contexts and resource limits are applied
    - Network policies and service accounts are configured
    - Volume mounts are set up for code and data
+   - Reuses warm pods when available
 
-4. **Runtime to API Service**:
+6. **Runtime to API Service**:
    - Execution results are sent back to the API service
    - Logs and metrics are collected for monitoring
    - File operations are proxied through the API service
@@ -108,13 +132,31 @@ SecureAgent is designed as a Kubernetes-native application with the following de
 │  │                 │      │                 │    │              │   │
 │  │   Agent API     │◄────►│    Sandbox      │◄──►│  PostgreSQL  │   │
 │  │   Service       │      │   Controller    │    │              │   │
-│  │                 │      │                 │    └──────────────┘   │
+│  │                 │◄────►│                 │    └──────────────┘   │
 │  └────────┬────────┘      └────────┬────────┘                      │
 │           │                        │           ┌──────────────┐    │
 │           │                        │           │              │    │
 │           │                        └──────────►│    Redis     │    │
-│           │                                    │              │    │
-│           │                                    └──────────────┘    │
+│           │                        │           │              │    │
+│           │                        │           └──────────────┘    │
+│           │                        │                               │
+│           │                        ▼                               │
+│           │            ┌─────────────────────┐                     │
+│           │            │                     │                     │
+│           │            │    Warm Pool        │                     │
+│           │            │    Controller       │                     │
+│           │            │                     │                     │
+│           │            └─────────┬───────────┘                     │
+│           │                      │                                 │
+│           │                      ▼                                 │
+│           │            ┌─────────────────────┐                     │
+│           │            │   Warm Pod Pools    │                     │
+│           │            │                     │                     │
+│           │            │  ┌───┐ ┌───┐ ┌───┐  │                     │
+│           │            │  │Pod│ │Pod│ │Pod│  │                     │
+│           │            │  └───┘ └───┘ └───┘  │                     │
+│           │            │                     │                     │
+│           │            └─────────────────────┘                     │
 │           │                                                        │
 │           ▼                                                        │
 │  ┌──────────────────────────────────────────────────────────────┐  │
@@ -221,6 +263,13 @@ SecureAgent provides predefined security configurations:
    - Network policies allow access to package repositories
    - Installation results are returned to SDK
 
+4. **Warm Pool Flow**:
+   - Warm pool controller maintains pools of pre-initialized pods
+   - When SDK requests a sandbox, API service checks for matching warm pods
+   - If available, warm pod is assigned to the sandbox
+   - Sandbox controller adopts the warm pod and configures it for the specific sandbox
+   - When sandbox is terminated, pod may be recycled back to warm pool if appropriate
+
 ## Conclusion
 
-SecureAgent's architecture provides a robust, scalable, and secure platform for LLM agent code execution. By leveraging Kubernetes native concepts and implementing multiple layers of security, it achieves strong isolation while maintaining flexibility and ease of use. The modular design allows for future enhancements in areas like persistent storage, inter-sandbox communication, and specialized ML runtimes.
+SecureAgent's architecture provides a robust, scalable, and secure platform for LLM agent code execution. By leveraging Kubernetes native concepts and implementing multiple layers of security, it achieves strong isolation while maintaining flexibility and ease of use. The warm pool functionality significantly improves startup performance for common runtime environments, making the platform more responsive for interactive use cases. The modular design allows for future enhancements in areas like persistent storage, inter-sandbox communication, and specialized ML runtimes.
