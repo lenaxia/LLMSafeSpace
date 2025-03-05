@@ -67,24 +67,29 @@ Define and implement the core Custom Resource Definitions (CRDs) for SecureAgent
 - Validation webhooks correctly enforce schema constraints
 - Custom resources can be created, updated, and deleted via kubectl
 
-#### Step 1.2: Sandbox Controller Implementation
+#### Step 1.2: Combined Sandbox and Warm Pool Controller Implementation
 
 **Description:**
-Implement the Kubernetes operator that manages sandbox lifecycle, including creation, monitoring, and termination.
+Implement a unified Kubernetes operator that manages both sandbox and warm pool lifecycles, including creation, monitoring, termination, scaling, and pod recycling.
 
 **Requirements:**
 - Implement controller using the Operator SDK
-- Support reconciliation of Sandbox resources
-- Handle pod creation with appropriate security contexts
-- Implement status updates for Sandbox resources
-- Support integration with warm pools for faster sandbox creation
+- Support reconciliation of Sandbox, WarmPool, and WarmPod resources
+- Handle pod creation with appropriate security contexts for both sandboxes and warm pods
+- Implement status updates for all managed resources
+- Support integration of warm pools for faster sandbox creation
+- Implement auto-scaling for warm pools based on usage patterns
+- Support pod recycling for efficient resource usage
 
 **Acceptance Criteria:**
-- Controller successfully creates pods when Sandbox resources are created
+- Controller successfully creates and manages pods for both sandboxes and warm pools
 - Controller properly configures security contexts based on SandboxProfile
-- Controller updates Sandbox status with current state information
-- Controller cleans up resources when Sandbox is deleted
-- Controller can adopt warm pods from warm pools when available
+- Controller updates status of Sandbox, WarmPool, and WarmPod resources with current state information
+- Controller cleans up resources when Sandbox or WarmPool resources are deleted
+- Controller efficiently allocates warm pods to sandboxes when available
+- Controller scales warm pools according to configuration
+- Controller properly recycles pods when appropriate
+- Warm pods are properly initialized with preloaded packages
 
 #### Step 1.3: Base Runtime Environment Images
 
@@ -102,25 +107,6 @@ Create base container images for different language runtimes with security harde
 - Images include necessary language runtimes and tools
 - Images run with minimal privileges
 - Images pass security scanning with no critical vulnerabilities
-
-#### Step 1.3: Warm Pool Controller Implementation
-
-**Description:**
-Implement the Kubernetes operator that manages warm pool lifecycle, including creation, scaling, and pod recycling.
-
-**Requirements:**
-- Implement controller using the Operator SDK
-- Support reconciliation of WarmPool resources
-- Handle warm pod creation and management
-- Implement auto-scaling based on usage patterns
-- Support pod recycling for efficient resource usage
-
-**Acceptance Criteria:**
-- Controller successfully maintains pools of warm pods
-- Controller scales pools according to configuration
-- Controller properly recycles pods when appropriate
-- Controller integrates with Sandbox Controller for pod assignment
-- Warm pods are properly initialized with preloaded packages
 
 ### Phase 2: API and SDK Development
 
