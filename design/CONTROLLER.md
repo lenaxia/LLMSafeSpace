@@ -1038,8 +1038,14 @@ The WarmPool reconciliation loop manages the lifecycle of warm pools, ensuring t
 ```go
 // reconcileWarmPool ensures the actual state of a warm pool matches the desired state
 func (c *Controller) reconcileWarmPool(key string) error {
+    startTime := time.Now()
+    defer func() {
+        reconciliationDurationSeconds.WithLabelValues("warmpool", "success").Observe(time.Since(startTime).Seconds())
+    }()
+    
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
     if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "key_split").Inc()
         return err
     }
     
@@ -1047,14 +1053,38 @@ func (c *Controller) reconcileWarmPool(key string) error {
     warmPool, err := c.warmPoolLister.WarmPools(namespace).Get(name)
     if errors.IsNotFound(err) {
         // WarmPool was deleted, nothing to do
+        klog.V(4).Infof("WarmPool %s/%s not found, likely deleted", namespace, name)
         return nil
     }
     if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "get").Inc()
         return err
     }
     
     // Deep copy to avoid modifying cache
     warmPool = warmPool.DeepCopy()
+    
+    // Add finalizer if not present
+    if !containsString(warmPool.Finalizers, warmPoolFinalizer) {
+        warmPool.Finalizers = append(warmPool.Finalizers, warmPoolFinalizer)
+        warmPool, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPools(namespace).Update(context.TODO(), warmPool, metav1.UpdateOptions{})
+        if err != nil {
+            reconciliationErrorsTotal.WithLabelValues("warmpool", "update_finalizer").Inc()
+            return err
+        }
+    }
+    
+    // Check if warm pool is being deleted
+    if !warmPool.DeletionTimestamp.IsZero() {
+        return c.handleWarmPoolDeletion(warmPool)
+    }
+    
+    // Validate the warm pool configuration
+    if err := c.validateWarmPool(warmPool); err != nil {
+        c.updateWarmPoolStatus(warmPool, "ValidationFailed", fmt.Sprintf("Warm pool validation failed: %v", err))
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "validation").Inc()
+        return err
+    }
     
     // List all warm pods for this pool
     selector := labels.SelectorFromSet(labels.Set{
@@ -1064,6 +1094,7 @@ func (c *Controller) reconcileWarmPool(key string) error {
     })
     warmPods, err := c.warmPodLister.WarmPods(namespace).List(selector)
     if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "list_pods").Inc()
         return err
     }
     
@@ -1085,31 +1116,444 @@ func (c *Controller) reconcileWarmPool(key string) error {
     warmPool.Status.AssignedPods = assignedPods
     warmPool.Status.PendingPods = pendingPods
     
+    // Calculate utilization for metrics
+    totalPods := availablePods + assignedPods + pendingPods
+    if totalPods > 0 {
+        utilization := float64(assignedPods) / float64(totalPods)
+        warmPoolUtilizationGauge.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime).Set(utilization)
+    }
+    
+    // Update warm pool metrics
+    warmPoolSizeGauge.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "available").Set(float64(availablePods))
+    warmPoolSizeGauge.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "assigned").Set(float64(assignedPods))
+    warmPoolSizeGauge.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "pending").Set(float64(pendingPods))
+    
     // Scale up if needed
     if availablePods < warmPool.Spec.MinSize {
         neededPods := warmPool.Spec.MinSize - availablePods
+        klog.V(2).Infof("Scaling up warm pool %s/%s: creating %d pods", namespace, name, neededPods)
+        
         for i := 0; i < neededPods; i++ {
             if err := c.createWarmPod(warmPool); err != nil {
+                reconciliationErrorsTotal.WithLabelValues("warmpool", "create_pod").Inc()
                 return err
             }
         }
         warmPool.Status.LastScaleTime = metav1.Now()
+        warmPoolScalingOperationsTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "up").Inc()
     }
     
     // Scale down if needed and autoscaling is enabled
     if warmPool.Spec.AutoScaling != nil && warmPool.Spec.AutoScaling.Enabled {
         maxSize := warmPool.Spec.MaxSize
         if maxSize > 0 && availablePods > maxSize {
+            // Calculate how many pods to remove
+            excessPods := availablePods - maxSize
+            klog.V(2).Infof("Scaling down warm pool %s/%s: removing %d pods", namespace, name, excessPods)
+            
             // Find oldest pods to remove
-            // ...
+            if err := c.scaleDownWarmPool(warmPool, excessPods); err != nil {
+                reconciliationErrorsTotal.WithLabelValues("warmpool", "scale_down").Inc()
+                return err
+            }
+            
+            warmPool.Status.LastScaleTime = metav1.Now()
+            warmPoolScalingOperationsTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "down").Inc()
+        }
+        
+        // Check if we should scale based on utilization
+        if warmPool.Spec.AutoScaling.TargetUtilization > 0 && totalPods > 0 {
+            utilization := float64(assignedPods) / float64(totalPods) * 100
+            targetUtilization := float64(warmPool.Spec.AutoScaling.TargetUtilization)
+            
+            // If utilization is too high, scale up (if not at max size)
+            if utilization > targetUtilization && (maxSize == 0 || totalPods < maxSize) {
+                // Calculate how many pods to add based on utilization
+                desiredTotal := int(math.Ceil(float64(assignedPods) / (targetUtilization / 100)))
+                podsToAdd := desiredTotal - totalPods
+                
+                // Limit to max size if specified
+                if maxSize > 0 && totalPods+podsToAdd > maxSize {
+                    podsToAdd = maxSize - totalPods
+                }
+                
+                if podsToAdd > 0 {
+                    klog.V(2).Infof("Auto-scaling up warm pool %s/%s: adding %d pods due to high utilization (%.2f%%)", 
+                        namespace, name, podsToAdd, utilization)
+                    
+                    for i := 0; i < podsToAdd; i++ {
+                        if err := c.createWarmPod(warmPool); err != nil {
+                            reconciliationErrorsTotal.WithLabelValues("warmpool", "autoscale_up").Inc()
+                            return err
+                        }
+                    }
+                    
+                    warmPool.Status.LastScaleTime = metav1.Now()
+                    warmPoolScalingOperationsTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "autoscale_up").Inc()
+                }
+            }
+            
+            // If utilization is too low, scale down (if above min size and after scale down delay)
+            scaleDownDelay := 300 // Default 5 minutes
+            if warmPool.Spec.AutoScaling.ScaleDownDelay > 0 {
+                scaleDownDelay = warmPool.Spec.AutoScaling.ScaleDownDelay
+            }
+            
+            lastScaleTime := warmPool.Status.LastScaleTime.Time
+            if utilization < targetUtilization && availablePods > warmPool.Spec.MinSize && 
+               time.Since(lastScaleTime) > time.Duration(scaleDownDelay)*time.Second {
+                
+                // Calculate how many pods to remove based on utilization
+                desiredAvailable := int(math.Ceil(float64(assignedPods) / (targetUtilization / 100))) - assignedPods
+                podsToRemove := availablePods - desiredAvailable
+                
+                // Ensure we don't go below min size
+                if availablePods-podsToRemove < warmPool.Spec.MinSize {
+                    podsToRemove = availablePods - warmPool.Spec.MinSize
+                }
+                
+                if podsToRemove > 0 {
+                    klog.V(2).Infof("Auto-scaling down warm pool %s/%s: removing %d pods due to low utilization (%.2f%%)", 
+                        namespace, name, podsToRemove, utilization)
+                    
+                    if err := c.scaleDownWarmPool(warmPool, podsToRemove); err != nil {
+                        reconciliationErrorsTotal.WithLabelValues("warmpool", "autoscale_down").Inc()
+                        return err
+                    }
+                    
+                    warmPool.Status.LastScaleTime = metav1.Now()
+                    warmPoolScalingOperationsTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "autoscale_down").Inc()
+                }
+            }
+        }
+    }
+    
+    // Check for expired pods
+    if warmPool.Spec.TTL > 0 {
+        if err := c.cleanupExpiredWarmPods(warmPool); err != nil {
+            reconciliationErrorsTotal.WithLabelValues("warmpool", "cleanup_expired").Inc()
+            return err
         }
     }
     
     // Update status
     _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPools(namespace).UpdateStatus(
         context.TODO(), warmPool, metav1.UpdateOptions{})
+    if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "update_status").Inc()
+        return err
+    }
     
-    return err
+    return nil
+}
+
+// validateWarmPool validates the warm pool configuration
+func (c *Controller) validateWarmPool(warmPool *llmsafespacev1.WarmPool) error {
+    // Check if the runtime exists
+    runtimeExists := false
+    runtimes, err := c.runtimeLister.List(labels.Everything())
+    if err != nil {
+        return fmt.Errorf("failed to list runtimes: %v", err)
+    }
+    
+    for _, runtime := range runtimes {
+        if runtime.Spec.Image == warmPool.Spec.Runtime {
+            runtimeExists = true
+            break
+        }
+    }
+    
+    if !runtimeExists {
+        return fmt.Errorf("runtime %s does not exist", warmPool.Spec.Runtime)
+    }
+    
+    // Validate min and max size
+    if warmPool.Spec.MinSize < 0 {
+        return fmt.Errorf("minSize must be non-negative")
+    }
+    
+    if warmPool.Spec.MaxSize < 0 {
+        return fmt.Errorf("maxSize must be non-negative")
+    }
+    
+    if warmPool.Spec.MaxSize > 0 && warmPool.Spec.MinSize > warmPool.Spec.MaxSize {
+        return fmt.Errorf("minSize (%d) cannot be greater than maxSize (%d)", 
+            warmPool.Spec.MinSize, warmPool.Spec.MaxSize)
+    }
+    
+    // Validate security level
+    if warmPool.Spec.SecurityLevel != "standard" && 
+       warmPool.Spec.SecurityLevel != "high" && 
+       warmPool.Spec.SecurityLevel != "custom" {
+        return fmt.Errorf("invalid security level: %s", warmPool.Spec.SecurityLevel)
+    }
+    
+    // Validate profile reference if specified
+    if warmPool.Spec.ProfileRef != nil {
+        profileNamespace := warmPool.Namespace
+        if warmPool.Spec.ProfileRef.Namespace != "" {
+            profileNamespace = warmPool.Spec.ProfileRef.Namespace
+        }
+        
+        _, err := c.profileLister.SandboxProfiles(profileNamespace).Get(warmPool.Spec.ProfileRef.Name)
+        if err != nil {
+            if errors.IsNotFound(err) {
+                return fmt.Errorf("profile %s/%s not found", profileNamespace, warmPool.Spec.ProfileRef.Name)
+            }
+            return fmt.Errorf("failed to get profile: %v", err)
+        }
+    }
+    
+    // Validate auto-scaling configuration if enabled
+    if warmPool.Spec.AutoScaling != nil && warmPool.Spec.AutoScaling.Enabled {
+        if warmPool.Spec.AutoScaling.TargetUtilization < 1 || warmPool.Spec.AutoScaling.TargetUtilization > 100 {
+            return fmt.Errorf("targetUtilization must be between 1 and 100, got %d", 
+                warmPool.Spec.AutoScaling.TargetUtilization)
+        }
+        
+        if warmPool.Spec.AutoScaling.ScaleDownDelay < 0 {
+            return fmt.Errorf("scaleDownDelay must be non-negative, got %d", 
+                warmPool.Spec.AutoScaling.ScaleDownDelay)
+        }
+    }
+    
+    // Validate preload packages if specified
+    if warmPool.Spec.PreloadPackages != nil && len(warmPool.Spec.PreloadPackages) > 0 {
+        runtimeLang := strings.Split(warmPool.Spec.Runtime, ":")[0]
+        
+        for _, pkg := range warmPool.Spec.PreloadPackages {
+            if !c.isPackageAllowed(pkg, warmPool.Spec.Runtime) {
+                return fmt.Errorf("package %s is not allowed for runtime %s", pkg, runtimeLang)
+            }
+        }
+    }
+    
+    return nil
+}
+
+// scaleDownWarmPool scales down a warm pool by removing the specified number of pods
+func (c *Controller) scaleDownWarmPool(warmPool *llmsafespacev1.WarmPool, count int) error {
+    if count <= 0 {
+        return nil
+    }
+    
+    // List all warm pods for this pool
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": warmPool.Name,
+    })
+    warmPods, err := c.warmPodLister.WarmPods(warmPool.Namespace).List(selector)
+    if err != nil {
+        return fmt.Errorf("failed to list warm pods: %v", err)
+    }
+    
+    // Filter for available pods only
+    var availablePods []*llmsafespacev1.WarmPod
+    for _, pod := range warmPods {
+        if pod.Status.Phase == "Ready" {
+            availablePods = append(availablePods, pod)
+        }
+    }
+    
+    // Sort by creation time (oldest first)
+    sort.Slice(availablePods, func(i, j int) bool {
+        return availablePods[i].CreationTimestamp.Before(&availablePods[j].CreationTimestamp)
+    })
+    
+    // Remove the oldest pods up to the count
+    podsToRemove := availablePods
+    if len(podsToRemove) > count {
+        podsToRemove = podsToRemove[:count]
+    }
+    
+    for _, pod := range podsToRemove {
+        klog.V(3).Infof("Deleting warm pod %s/%s as part of scale down", pod.Namespace, pod.Name)
+        err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(pod.Namespace).Delete(
+            context.TODO(), pod.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            return fmt.Errorf("failed to delete warm pod %s: %v", pod.Name, err)
+        }
+        warmPoolPodsDeletedTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "scale_down").Inc()
+    }
+    
+    return nil
+}
+
+// cleanupExpiredWarmPods removes warm pods that have exceeded their TTL
+func (c *Controller) cleanupExpiredWarmPods(warmPool *llmsafespacev1.WarmPool) error {
+    if warmPool.Spec.TTL <= 0 {
+        return nil
+    }
+    
+    // List all warm pods for this pool
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": warmPool.Name,
+    })
+    warmPods, err := c.warmPodLister.WarmPods(warmPool.Namespace).List(selector)
+    if err != nil {
+        return fmt.Errorf("failed to list warm pods: %v", err)
+    }
+    
+    // Find expired pods (only consider Ready pods, not Assigned or Pending)
+    var expiredPods []*llmsafespacev1.WarmPod
+    ttlDuration := time.Duration(warmPool.Spec.TTL) * time.Second
+    
+    for _, pod := range warmPods {
+        if pod.Status.Phase == "Ready" {
+            // Use last heartbeat time to determine expiry
+            lastHeartbeat := pod.Spec.LastHeartbeat.Time
+            if time.Since(lastHeartbeat) > ttlDuration {
+                expiredPods = append(expiredPods, pod)
+            }
+        }
+    }
+    
+    // Delete expired pods
+    for _, pod := range expiredPods {
+        klog.V(3).Infof("Deleting expired warm pod %s/%s (TTL: %ds, age: %v)", 
+            pod.Namespace, pod.Name, warmPool.Spec.TTL, time.Since(pod.Spec.LastHeartbeat.Time))
+        
+        err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(pod.Namespace).Delete(
+            context.TODO(), pod.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            return fmt.Errorf("failed to delete expired warm pod %s: %v", pod.Name, err)
+        }
+        warmPoolPodsDeletedTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "expired").Inc()
+    }
+    
+    return nil
+}
+
+// updateWarmPoolStatus updates the status of a warm pool with appropriate conditions
+func (c *Controller) updateWarmPoolStatus(warmPool *llmsafespacev1.WarmPool, reason, message string) error {
+    // Add or update condition
+    now := metav1.Now()
+    condition := llmsafespacev1.WarmPoolCondition{
+        Type:               reason,
+        Status:             "True",
+        Reason:             reason,
+        Message:            message,
+        LastTransitionTime: now,
+    }
+    
+    // Update or append the condition
+    found := false
+    for i, cond := range warmPool.Status.Conditions {
+        if cond.Type == reason {
+            warmPool.Status.Conditions[i] = condition
+            found = true
+            break
+        }
+    }
+    
+    if !found {
+        warmPool.Status.Conditions = append(warmPool.Status.Conditions, condition)
+    }
+    
+    // Update the status
+    _, err := c.llmsafespaceClient.LlmsafespaceV1().WarmPools(warmPool.Namespace).UpdateStatus(
+        context.TODO(), warmPool, metav1.UpdateOptions{})
+    
+    if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "update_status").Inc()
+        return err
+    }
+    
+    // Record event
+    eventType := corev1.EventTypeNormal
+    if strings.Contains(reason, "Failed") {
+        eventType = corev1.EventTypeWarning
+    }
+    
+    c.recorder.Event(warmPool, eventType, reason, message)
+    
+    return nil
+}
+
+// handleWarmPoolDeletion handles the deletion of a WarmPool
+func (c *Controller) handleWarmPoolDeletion(warmPool *llmsafespacev1.WarmPool) error {
+    startTime := time.Now()
+    klog.V(2).Infof("Handling deletion of warm pool %s/%s", warmPool.Namespace, warmPool.Name)
+    
+    // List all warm pods for this pool
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": warmPool.Name,
+    })
+    warmPods, err := c.warmPodLister.WarmPods(warmPool.Namespace).List(selector)
+    if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "list_pods_deletion").Inc()
+        return fmt.Errorf("failed to list warm pods: %v", err)
+    }
+    
+    // Check if there are still assigned pods
+    hasAssignedPods := false
+    for _, pod := range warmPods {
+        if pod.Status.Phase == "Assigned" {
+            hasAssignedPods = true
+            break
+        }
+    }
+    
+    if hasAssignedPods && !c.config.ForceDeleteWarmPoolWithAssignedPods {
+        return fmt.Errorf("warm pool has assigned pods, cannot delete until they are released")
+    }
+    
+    // Delete all warm pods
+    for _, pod := range warmPods {
+        klog.V(3).Infof("Deleting warm pod %s/%s as part of warm pool deletion", 
+            pod.Namespace, pod.Name)
+        
+        err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(pod.Namespace).Delete(
+            context.TODO(), pod.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            reconciliationErrorsTotal.WithLabelValues("warmpool", "delete_pod").Inc()
+            return fmt.Errorf("failed to delete warm pod %s: %v", pod.Name, err)
+        }
+        warmPoolPodsDeletedTotal.WithLabelValues(warmPool.Name, warmPool.Spec.Runtime, "pool_deletion").Inc()
+    }
+    
+    // Check if all pods are gone
+    if len(warmPods) > 0 {
+        // Recheck to see if pods are actually gone
+        remainingPods, err := c.warmPodLister.WarmPods(warmPool.Namespace).List(selector)
+        if err != nil {
+            reconciliationErrorsTotal.WithLabelValues("warmpool", "recheck_pods").Inc()
+            return fmt.Errorf("failed to recheck warm pods: %v", err)
+        }
+        
+        if len(remainingPods) > 0 {
+            // Some pods still exist, wait for them to be deleted
+            return fmt.Errorf("waiting for %d warm pods to be deleted", len(remainingPods))
+        }
+    }
+    
+    // Remove finalizer
+    warmPool.Finalizers = removeString(warmPool.Finalizers, warmPoolFinalizer)
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPools(warmPool.Namespace).Update(
+        context.TODO(), warmPool, metav1.UpdateOptions{})
+    if err != nil {
+        reconciliationErrorsTotal.WithLabelValues("warmpool", "remove_finalizer").Inc()
+        return fmt.Errorf("failed to remove finalizer: %v", err)
+    }
+    
+    klog.V(2).Infof("Successfully deleted warm pool %s/%s in %v", 
+        warmPool.Namespace, warmPool.Name, time.Since(startTime))
+    
+    // Record deletion metric
+    warmPoolsDeletedTotal.Inc()
+    
+    // Remove metrics for this warm pool
+    warmPoolSizeGauge.DeleteLabelValues(warmPool.Name, warmPool.Spec.Runtime, "available")
+    warmPoolSizeGauge.DeleteLabelValues(warmPool.Name, warmPool.Spec.Runtime, "assigned")
+    warmPoolSizeGauge.DeleteLabelValues(warmPool.Name, warmPool.Spec.Runtime, "pending")
+    warmPoolUtilizationGauge.DeleteLabelValues(warmPool.Name, warmPool.Spec.Runtime)
+    
+    return nil
 }
 
 // createWarmPod creates a new warm pod for the given pool
@@ -1250,6 +1694,7 @@ func (c *Controller) reconcileSandboxProfile(key string) error {
     profile, err := c.profileLister.SandboxProfiles(namespace).Get(name)
     if errors.IsNotFound(err) {
         // Profile was deleted, nothing to do
+        klog.V(4).Infof("SandboxProfile %s/%s not found, likely deleted", namespace, name)
         return nil
     }
     if err != nil {
@@ -1259,6 +1704,21 @@ func (c *Controller) reconcileSandboxProfile(key string) error {
     
     // Deep copy to avoid modifying cache
     profile = profile.DeepCopy()
+    
+    // Add finalizer if not present
+    if !containsString(profile.Finalizers, sandboxProfileFinalizer) {
+        profile.Finalizers = append(profile.Finalizers, sandboxProfileFinalizer)
+        profile, err = c.llmsafespaceClient.LlmsafespaceV1().SandboxProfiles(namespace).Update(context.TODO(), profile, metav1.UpdateOptions{})
+        if err != nil {
+            reconciliationErrorsTotal.WithLabelValues("sandboxprofile", "update_finalizer").Inc()
+            return err
+        }
+    }
+    
+    // Check if profile is being deleted
+    if !profile.DeletionTimestamp.IsZero() {
+        return c.handleSandboxProfileDeletion(profile)
+    }
     
     // Basic validation
     if err := c.validateSandboxProfile(profile); err != nil {
@@ -1288,9 +1748,229 @@ func (c *Controller) reconcileSandboxProfile(key string) error {
         return err
     }
     
+    // Validate resource defaults
+    if err := c.validateProfileResourceDefaults(profile); err != nil {
+        c.updateProfileStatus(profile, "ResourceValidationFailed", fmt.Sprintf("Profile resource defaults validation failed: %v", err), false)
+        reconciliationErrorsTotal.WithLabelValues("sandboxprofile", "resource_validation").Inc()
+        return err
+    }
+    
+    // Validate pre-installed packages
+    if err := c.validateProfilePackages(profile); err != nil {
+        c.updateProfileStatus(profile, "PackageValidationFailed", fmt.Sprintf("Profile package validation failed: %v", err), false)
+        reconciliationErrorsTotal.WithLabelValues("sandboxprofile", "package_validation").Inc()
+        return err
+    }
+    
     // Update status to valid
     c.updateProfileStatus(profile, "ValidationSucceeded", "Profile is valid and ready to use", true)
     
+    // Record metric for successful validation
+    sandboxProfileValidationsTotal.WithLabelValues(profile.Spec.Language, profile.Spec.SecurityLevel).Inc()
+    
+    return nil
+}
+
+// validateSandboxProfile performs basic validation of a SandboxProfile
+func (c *Controller) validateSandboxProfile(profile *llmsafespacev1.SandboxProfile) error {
+    // Check if language is supported
+    supportedLanguages := []string{"python", "nodejs", "go", "ruby", "java"}
+    languageSupported := false
+    for _, lang := range supportedLanguages {
+        if profile.Spec.Language == lang {
+            languageSupported = true
+            break
+        }
+    }
+    
+    if !languageSupported {
+        return fmt.Errorf("unsupported language: %s", profile.Spec.Language)
+    }
+    
+    // Check security level
+    if profile.Spec.SecurityLevel != "standard" && 
+       profile.Spec.SecurityLevel != "high" && 
+       profile.Spec.SecurityLevel != "custom" {
+        return fmt.Errorf("invalid security level: %s", profile.Spec.SecurityLevel)
+    }
+    
+    // Validate seccomp profile if specified
+    if profile.Spec.SeccompProfile != "" {
+        if !c.seccompProfileExists(profile.Spec.SeccompProfile) {
+            return fmt.Errorf("seccomp profile not found: %s", profile.Spec.SeccompProfile)
+        }
+    }
+    
+    return nil
+}
+
+// validateProfileResourceDefaults validates the resource defaults in the profile
+func (c *Controller) validateProfileResourceDefaults(profile *llmsafespacev1.SandboxProfile) error {
+    if profile.Spec.ResourceDefaults == nil {
+        return nil
+    }
+    
+    // Validate CPU resource
+    if profile.Spec.ResourceDefaults.CPU != "" {
+        _, err := resource.ParseQuantity(profile.Spec.ResourceDefaults.CPU)
+        if err != nil {
+            return fmt.Errorf("invalid CPU resource: %v", err)
+        }
+    }
+    
+    // Validate memory resource
+    if profile.Spec.ResourceDefaults.Memory != "" {
+        _, err := resource.ParseQuantity(profile.Spec.ResourceDefaults.Memory)
+        if err != nil {
+            return fmt.Errorf("invalid memory resource: %v", err)
+        }
+    }
+    
+    // Validate ephemeral storage
+    if profile.Spec.ResourceDefaults.EphemeralStorage != "" {
+        _, err := resource.ParseQuantity(profile.Spec.ResourceDefaults.EphemeralStorage)
+        if err != nil {
+            return fmt.Errorf("invalid ephemeral storage resource: %v", err)
+        }
+    }
+    
+    // Check if resource defaults are within cluster limits
+    if c.config.EnforceResourceLimits {
+        if profile.Spec.ResourceDefaults.CPU != "" {
+            cpu, _ := resource.ParseQuantity(profile.Spec.ResourceDefaults.CPU)
+            maxCPU, _ := resource.ParseQuantity(c.config.MaxCPU)
+            if cpu.Cmp(maxCPU) > 0 {
+                return fmt.Errorf("CPU resource exceeds maximum allowed: %s > %s", 
+                    profile.Spec.ResourceDefaults.CPU, c.config.MaxCPU)
+            }
+        }
+        
+        if profile.Spec.ResourceDefaults.Memory != "" {
+            memory, _ := resource.ParseQuantity(profile.Spec.ResourceDefaults.Memory)
+            maxMemory, _ := resource.ParseQuantity(c.config.MaxMemory)
+            if memory.Cmp(maxMemory) > 0 {
+                return fmt.Errorf("memory resource exceeds maximum allowed: %s > %s", 
+                    profile.Spec.ResourceDefaults.Memory, c.config.MaxMemory)
+            }
+        }
+    }
+    
+    return nil
+}
+
+// validateProfilePackages validates the pre-installed packages in the profile
+func (c *Controller) validateProfilePackages(profile *llmsafespacev1.SandboxProfile) error {
+    if profile.Spec.PreInstalledPackages == nil || len(profile.Spec.PreInstalledPackages) == 0 {
+        return nil
+    }
+    
+    // Check if packages are in the allowlist
+    if c.config.EnforcePackageAllowlist {
+        language := profile.Spec.Language
+        allowlist, ok := c.config.PackageAllowlists[language]
+        if !ok {
+            return fmt.Errorf("no package allowlist defined for language: %s", language)
+        }
+        
+        for _, pkg := range profile.Spec.PreInstalledPackages {
+            if !isPackageInAllowlist(pkg, allowlist) {
+                return fmt.Errorf("package %s is not in the allowlist for %s", pkg, language)
+            }
+        }
+    }
+    
+    // Check for package compatibility issues
+    if err := c.checkPackageCompatibility(profile.Spec.Language, profile.Spec.PreInstalledPackages); err != nil {
+        return fmt.Errorf("package compatibility issue: %v", err)
+    }
+    
+    return nil
+}
+
+// isPackageInAllowlist checks if a package is in the allowlist
+func isPackageInAllowlist(pkg string, allowlist []string) bool {
+    // Extract base package name (without version)
+    basePkg := pkg
+    if idx := strings.Index(pkg, "=="); idx > 0 {
+        basePkg = pkg[:idx]
+    } else if idx := strings.Index(pkg, "@"); idx > 0 {
+        basePkg = pkg[:idx]
+    }
+    
+    for _, allowed := range allowlist {
+        if basePkg == allowed {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// checkPackageCompatibility checks for known compatibility issues between packages
+func (c *Controller) checkPackageCompatibility(language string, packages []string) error {
+    // This would check for known compatibility issues between packages
+    // For example, conflicting versions or packages that don't work together
+    
+    // For Python, check for tensorflow and pytorch in the same environment
+    if language == "python" {
+        hasTensorflow := false
+        hasPytorch := false
+        
+        for _, pkg := range packages {
+            if strings.HasPrefix(pkg, "tensorflow") {
+                hasTensorflow = true
+            }
+            if strings.HasPrefix(pkg, "torch") {
+                hasPytorch = true
+            }
+        }
+        
+        if hasTensorflow && hasPytorch && c.config.WarnOnTfPytorchConflict {
+            klog.Warningf("Profile includes both TensorFlow and PyTorch, which may cause memory issues")
+        }
+    }
+    
+    return nil
+}
+
+// handleSandboxProfileDeletion handles the deletion of a SandboxProfile
+func (c *Controller) handleSandboxProfileDeletion(profile *llmsafespacev1.SandboxProfile) error {
+    // Check if this profile is being used by any sandboxes
+    sandboxes, err := c.sandboxLister.List(labels.Everything())
+    if err != nil {
+        return fmt.Errorf("failed to list sandboxes: %v", err)
+    }
+    
+    for _, sandbox := range sandboxes {
+        if sandbox.Spec.ProfileRef != nil && 
+           sandbox.Spec.ProfileRef.Name == profile.Name &&
+           (sandbox.Spec.ProfileRef.Namespace == profile.Namespace || sandbox.Spec.ProfileRef.Namespace == "") {
+            return fmt.Errorf("profile is still in use by sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+        }
+    }
+    
+    // Check if this profile is being used by any warm pools
+    warmPools, err := c.warmPoolLister.List(labels.Everything())
+    if err != nil {
+        return fmt.Errorf("failed to list warm pools: %v", err)
+    }
+    
+    for _, pool := range warmPools {
+        if pool.Spec.ProfileRef != nil && 
+           pool.Spec.ProfileRef.Name == profile.Name &&
+           (pool.Spec.ProfileRef.Namespace == profile.Namespace || pool.Spec.ProfileRef.Namespace == "") {
+            return fmt.Errorf("profile is still in use by warm pool %s/%s", pool.Namespace, pool.Name)
+        }
+    }
+    
+    // Remove finalizer
+    profile.Finalizers = removeString(profile.Finalizers, sandboxProfileFinalizer)
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().SandboxProfiles(profile.Namespace).Update(context.TODO(), profile, metav1.UpdateOptions{})
+    if err != nil {
+        return fmt.Errorf("failed to remove finalizer: %v", err)
+    }
+    
+    klog.V(2).Infof("Successfully deleted SandboxProfile %s/%s", profile.Namespace, profile.Name)
     return nil
 }
 
@@ -1490,6 +2170,7 @@ func (c *Controller) reconcileRuntimeEnvironment(key string) error {
     runtime, err := c.runtimeLister.Get(name)
     if errors.IsNotFound(err) {
         // Runtime was deleted, nothing to do
+        klog.V(4).Infof("RuntimeEnvironment %s not found, likely deleted", name)
         return nil
     }
     if err != nil {
@@ -1499,6 +2180,21 @@ func (c *Controller) reconcileRuntimeEnvironment(key string) error {
     
     // Deep copy to avoid modifying cache
     runtime = runtime.DeepCopy()
+    
+    // Add finalizer if not present
+    if !containsString(runtime.Finalizers, runtimeEnvironmentFinalizer) {
+        runtime.Finalizers = append(runtime.Finalizers, runtimeEnvironmentFinalizer)
+        runtime, err = c.llmsafespaceClient.LlmsafespaceV1().RuntimeEnvironments().Update(context.TODO(), runtime, metav1.UpdateOptions{})
+        if err != nil {
+            reconciliationErrorsTotal.WithLabelValues("runtimeenvironment", "update_finalizer").Inc()
+            return err
+        }
+    }
+    
+    // Check if runtime is being deleted
+    if !runtime.DeletionTimestamp.IsZero() {
+        return c.handleRuntimeEnvironmentDeletion(runtime)
+    }
     
     // Perform comprehensive validation
     if err := c.validateRuntimeImage(runtime); err != nil {
@@ -1524,6 +2220,58 @@ func (c *Controller) reconcileRuntimeEnvironment(key string) error {
     // Update status to available
     c.updateRuntimeStatus(runtime, true, "ValidationSucceeded", "Runtime environment is valid and available")
     
+    // Record metric for successful validation
+    runtimeEnvironmentValidationsTotal.WithLabelValues(runtime.Spec.Language, runtime.Spec.Version, "success").Inc()
+    
+    return nil
+}
+
+// validateRuntimeImage validates the runtime image
+func (c *Controller) validateRuntimeImage(runtime *llmsafespacev1.RuntimeEnvironment) error {
+    // Check if the image exists in the registry
+    imageExists, err := c.imageRegistry.ImageExists(runtime.Spec.Image)
+    if err != nil {
+        return fmt.Errorf("failed to check if image exists: %v", err)
+    }
+    
+    if !imageExists {
+        return fmt.Errorf("image %s does not exist in registry", runtime.Spec.Image)
+    }
+    
+    // Check image digest to ensure it matches expected value if specified
+    if runtime.Spec.ImageDigest != "" {
+        digest, err := c.imageRegistry.GetImageDigest(runtime.Spec.Image)
+        if err != nil {
+            return fmt.Errorf("failed to get image digest: %v", err)
+        }
+        
+        if digest != runtime.Spec.ImageDigest {
+            return fmt.Errorf("image digest mismatch: expected %s, got %s", runtime.Spec.ImageDigest, digest)
+        }
+    }
+    
+    // Check for image vulnerabilities if scanner is configured
+    if c.config.EnableVulnerabilityScanning {
+        vulnerabilities, err := c.imageScanner.ScanImage(runtime.Spec.Image)
+        if err != nil {
+            return fmt.Errorf("failed to scan image for vulnerabilities: %v", err)
+        }
+        
+        // Check if there are critical vulnerabilities
+        if vulnerabilities.HasCritical() {
+            return fmt.Errorf("image has critical vulnerabilities: %v", vulnerabilities.CriticalCount)
+        }
+        
+        // Update runtime with vulnerability information
+        runtime.Status.VulnerabilityStatus = &llmsafespacev1.VulnerabilityStatus{
+            LastScanTime: metav1.Now(),
+            CriticalCount: vulnerabilities.CriticalCount,
+            HighCount: vulnerabilities.HighCount,
+            MediumCount: vulnerabilities.MediumCount,
+            LowCount: vulnerabilities.LowCount,
+        }
+    }
+    
     return nil
 }
 
@@ -1534,12 +2282,77 @@ func (c *Controller) validateRuntimeCompatibility(runtime *llmsafespacev1.Runtim
         if feature == "gvisor" && !c.isGvisorAvailable() {
             return fmt.Errorf("gvisor runtime is required but not available in the cluster")
         }
+        
+        if feature == "seccomp" && !c.isSeccompAvailable() {
+            return fmt.Errorf("seccomp is required but not available in the cluster")
+        }
+        
+        if feature == "apparmor" && !c.isApparmorAvailable() {
+            return fmt.Errorf("apparmor is required but not available in the cluster")
+        }
     }
     
     // Check resource requirements against cluster capacity
     if runtime.Spec.ResourceRequirements != nil {
-        // Validate that the minimum resource requirements can be met
-        // This could involve checking node capacities or resource quotas
+        // Get cluster capacity
+        nodes, err := c.kubeClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to list nodes: %v", err)
+        }
+        
+        // Check if there's at least one node that can accommodate the minimum resource requirements
+        minCpuReq, err := resource.ParseQuantity(runtime.Spec.ResourceRequirements.MinCpu)
+        if err != nil {
+            return fmt.Errorf("invalid CPU requirement: %v", err)
+        }
+        
+        minMemReq, err := resource.ParseQuantity(runtime.Spec.ResourceRequirements.MinMemory)
+        if err != nil {
+            return fmt.Errorf("invalid memory requirement: %v", err)
+        }
+        
+        canSchedule := false
+        for _, node := range nodes.Items {
+            allocatableCpu := node.Status.Allocatable.Cpu()
+            allocatableMem := node.Status.Allocatable.Memory()
+            
+            if allocatableCpu.Cmp(minCpuReq) >= 0 && allocatableMem.Cmp(minMemReq) >= 0 {
+                canSchedule = true
+                break
+            }
+        }
+        
+        if !canSchedule {
+            return fmt.Errorf("no nodes available that meet minimum resource requirements: CPU %s, Memory %s", 
+                runtime.Spec.ResourceRequirements.MinCpu, runtime.Spec.ResourceRequirements.MinMemory)
+        }
+    }
+    
+    // Check for specific node features if required
+    if runtime.Spec.RequiredNodeFeatures != nil && len(runtime.Spec.RequiredNodeFeatures) > 0 {
+        nodes, err := c.kubeClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to list nodes: %v", err)
+        }
+        
+        featureAvailable := make(map[string]bool)
+        for _, feature := range runtime.Spec.RequiredNodeFeatures {
+            featureAvailable[feature] = false
+        }
+        
+        for _, node := range nodes.Items {
+            for feature := range featureAvailable {
+                if _, ok := node.Labels[feature]; ok {
+                    featureAvailable[feature] = true
+                }
+            }
+        }
+        
+        for feature, available := range featureAvailable {
+            if !available {
+                return fmt.Errorf("required node feature %s is not available in the cluster", feature)
+            }
+        }
     }
     
     return nil
@@ -1548,12 +2361,136 @@ func (c *Controller) validateRuntimeCompatibility(runtime *llmsafespacev1.Runtim
 // validateRuntimeSecurity validates the security aspects of the runtime
 func (c *Controller) validateRuntimeSecurity(runtime *llmsafespacev1.RuntimeEnvironment) error {
     // Check if the runtime image has known vulnerabilities
-    // This could integrate with container scanning tools
+    if c.config.EnableVulnerabilityScanning {
+        vulnerabilities, err := c.imageScanner.ScanImage(runtime.Spec.Image)
+        if err != nil {
+            return fmt.Errorf("failed to scan image for vulnerabilities: %v", err)
+        }
+        
+        if c.config.BlockCriticalVulnerabilities && vulnerabilities.HasCritical() {
+            return fmt.Errorf("image has %d critical vulnerabilities", vulnerabilities.CriticalCount)
+        }
+    }
     
     // Verify that the runtime supports required security features
-    // like seccomp, AppArmor, or SELinux profiles
+    if runtime.Spec.SecurityLevel == "high" {
+        // For high security, verify specific security features
+        requiredFeatures := []string{"seccomp", "apparmor", "no-new-privs"}
+        for _, feature := range requiredFeatures {
+            found := false
+            for _, supportedFeature := range runtime.Spec.SecurityFeatures {
+                if supportedFeature == feature {
+                    found = true
+                    break
+                }
+            }
+            
+            if !found {
+                return fmt.Errorf("high security level requires %s feature, but it's not supported by this runtime", feature)
+            }
+        }
+    }
+    
+    // Verify seccomp profile if specified
+    if runtime.Spec.SeccompProfile != "" {
+        if !c.seccompProfileExists(runtime.Spec.SeccompProfile) {
+            return fmt.Errorf("specified seccomp profile %s does not exist", runtime.Spec.SeccompProfile)
+        }
+    }
+    
+    // Verify AppArmor profile if specified
+    if runtime.Spec.AppArmorProfile != "" {
+        if !c.apparmorProfileExists(runtime.Spec.AppArmorProfile) {
+            return fmt.Errorf("specified AppArmor profile %s does not exist", runtime.Spec.AppArmorProfile)
+        }
+    }
+    
+    // Check if runtime runs as non-root by default
+    if !runtime.Spec.RunAsNonRoot {
+        klog.Warningf("Runtime %s does not run as non-root by default, this is a security risk", runtime.Name)
+        if c.config.RequireNonRootRuntimes {
+            return fmt.Errorf("runtime must run as non-root")
+        }
+    }
     
     return nil
+}
+
+// handleRuntimeEnvironmentDeletion handles the deletion of a RuntimeEnvironment
+func (c *Controller) handleRuntimeEnvironmentDeletion(runtime *llmsafespacev1.RuntimeEnvironment) error {
+    // Check if this runtime is being used by any sandboxes
+    sandboxes, err := c.sandboxLister.List(labels.Everything())
+    if err != nil {
+        return fmt.Errorf("failed to list sandboxes: %v", err)
+    }
+    
+    for _, sandbox := range sandboxes {
+        if sandbox.Spec.Runtime == runtime.Spec.Image {
+            return fmt.Errorf("runtime is still in use by sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+        }
+    }
+    
+    // Check if this runtime is being used by any warm pools
+    warmPools, err := c.warmPoolLister.List(labels.Everything())
+    if err != nil {
+        return fmt.Errorf("failed to list warm pools: %v", err)
+    }
+    
+    for _, pool := range warmPools {
+        if pool.Spec.Runtime == runtime.Spec.Image {
+            return fmt.Errorf("runtime is still in use by warm pool %s/%s", pool.Namespace, pool.Name)
+        }
+    }
+    
+    // Remove finalizer
+    runtime.Finalizers = removeString(runtime.Finalizers, runtimeEnvironmentFinalizer)
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().RuntimeEnvironments().Update(context.TODO(), runtime, metav1.UpdateOptions{})
+    if err != nil {
+        return fmt.Errorf("failed to remove finalizer: %v", err)
+    }
+    
+    klog.V(2).Infof("Successfully deleted RuntimeEnvironment %s", runtime.Name)
+    return nil
+}
+
+// isGvisorAvailable checks if gVisor is available in the cluster
+func (c *Controller) isGvisorAvailable() bool {
+    runtimeClass, err := c.kubeClient.NodeV1().RuntimeClasses().Get(context.TODO(), "gvisor", metav1.GetOptions{})
+    return err == nil && runtimeClass != nil
+}
+
+// isSeccompAvailable checks if seccomp is available in the cluster
+func (c *Controller) isSeccompAvailable() bool {
+    // Check if seccomp is enabled in the kubelet configuration
+    // This is a simplified check - in a real implementation, this would involve
+    // checking kubelet configuration or node properties
+    return c.config.SeccompEnabled
+}
+
+// isApparmorAvailable checks if AppArmor is available in the cluster
+func (c *Controller) isApparmorAvailable() bool {
+    // Check if AppArmor is enabled in the kubelet configuration
+    // This is a simplified check - in a real implementation, this would involve
+    // checking kubelet configuration or node properties
+    return c.config.AppArmorEnabled
+}
+
+// seccompProfileExists checks if a seccomp profile exists
+func (c *Controller) seccompProfileExists(profilePath string) bool {
+    // This would check if the seccomp profile exists in the system
+    // For now, we'll just return true for common profiles
+    return strings.HasPrefix(profilePath, "profiles/") || 
+           profilePath == "runtime/default" || 
+           profilePath == "localhost/default"
+}
+
+// apparmorProfileExists checks if an AppArmor profile exists
+func (c *Controller) apparmorProfileExists(profileName string) bool {
+    // This would check if the AppArmor profile exists in the system
+    // For now, we'll just return true for common profiles
+    return strings.HasPrefix(profileName, "runtime/") || 
+           profileName == "runtime/default" || 
+           profileName == "localhost/default"
 }
 
 // updateRuntimeStatus updates the status of a RuntimeEnvironment with appropriate conditions
@@ -1749,12 +2686,386 @@ func (c *Controller) createSandboxResources(sandbox *llmsafespacev1.Sandbox) err
         return err
     }
     
-    // Create persistent volume claim if needed
-    if sandbox.Spec.Storage != nil && sandbox.Spec.Storage.Persistent {
-        if err := c.volumeManager.EnsurePersistentVolumeClaim(sandbox); err != nil {
-            return err
+    // VolumeManager handles the creation, update, and deletion of volumes for sandboxes
+    type VolumeManager struct {
+        kubeClient kubernetes.Interface
+        config     *config.Config
+        recorder   record.EventRecorder
+    }
+
+    // NewVolumeManager creates a new VolumeManager
+    func NewVolumeManager(kubeClient kubernetes.Interface, config *config.Config, recorder record.EventRecorder) *VolumeManager {
+        return &VolumeManager{
+            kubeClient: kubeClient,
+            config:     config,
+            recorder:   recorder,
         }
     }
+
+    // EnsurePersistentVolumeClaim ensures that a PVC exists for a sandbox
+    func (v *VolumeManager) EnsurePersistentVolumeClaim(sandbox *llmsafespacev1.Sandbox) error {
+        startTime := time.Now()
+        defer func() {
+            volumeOperationDurationSeconds.WithLabelValues("ensure_pvc").Observe(time.Since(startTime).Seconds())
+        }()
+    
+        if sandbox.Spec.Storage == nil || !sandbox.Spec.Storage.Persistent {
+            return nil
+        }
+    
+        // Determine namespace
+        namespace := sandbox.Namespace
+        if v.config.NamespaceIsolation {
+            namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+        }
+    
+        // Determine volume size
+        volumeSize := "5Gi" // Default size
+        if sandbox.Spec.Storage.VolumeSize != "" {
+            volumeSize = sandbox.Spec.Storage.VolumeSize
+        }
+    
+        // Determine storage class
+        storageClass := v.config.DefaultStorageClass
+        if sandbox.Spec.Storage.StorageClass != "" {
+            storageClass = sandbox.Spec.Storage.StorageClass
+        }
+    
+        // Create PVC
+        pvc := &corev1.PersistentVolumeClaim{
+            ObjectMeta: metav1.ObjectMeta{
+                Name: fmt.Sprintf("sandbox-%s-data", sandbox.Name),
+                Namespace: namespace,
+                Labels: map[string]string{
+                    "app": "llmsafespace",
+                    "component": "sandbox-storage",
+                    "sandbox-id": sandbox.Name,
+                    "sandbox-uid": string(sandbox.UID),
+                },
+                Annotations: map[string]string{
+                    "llmsafespace.dev/sandbox-id": sandbox.Name,
+                    "llmsafespace.dev/sandbox-uid": string(sandbox.UID),
+                },
+                OwnerReferences: []metav1.OwnerReference{
+                    *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
+                },
+            },
+            Spec: corev1.PersistentVolumeClaimSpec{
+                AccessModes: []corev1.PersistentVolumeAccessMode{
+                    corev1.ReadWriteOnce,
+                },
+                Resources: corev1.ResourceRequirements{
+                    Requests: corev1.ResourceList{
+                        corev1.ResourceStorage: resource.MustParse(volumeSize),
+                    },
+                },
+            },
+        }
+    
+        // Set storage class if specified
+        if storageClass != "" {
+            pvc.Spec.StorageClassName = &storageClass
+        }
+    
+        // Try to get existing PVC
+        existing, err := v.kubeClient.CoreV1().PersistentVolumeClaims(namespace).Get(
+            context.TODO(), pvc.Name, metav1.GetOptions{})
+    
+        if err != nil {
+            if errors.IsNotFound(err) {
+                // Create new PVC
+                _, err = v.kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(
+                    context.TODO(), pvc, metav1.CreateOptions{})
+                if err != nil {
+                    volumeOperationsTotal.WithLabelValues("create", "failed").Inc()
+                    return fmt.Errorf("failed to create PVC: %v", err)
+                }
+                volumeOperationsTotal.WithLabelValues("create", "success").Inc()
+            
+                // Record event
+                v.recorder.Event(sandbox, corev1.EventTypeNormal, "PVCCreated", 
+                    fmt.Sprintf("Created persistent volume claim %s", pvc.Name))
+            
+                return nil
+            }
+            return fmt.Errorf("failed to get PVC: %v", err)
+        }
+    
+        // PVC already exists, check if it needs to be updated
+        needsUpdate := false
+    
+        // Check if storage size needs to be updated
+        requestedSize := resource.MustParse(volumeSize)
+        currentSize := existing.Spec.Resources.Requests[corev1.ResourceStorage]
+        if requestedSize.Cmp(currentSize) > 0 {
+            // Requested size is larger than current size
+            existing.Spec.Resources.Requests[corev1.ResourceStorage] = requestedSize
+            needsUpdate = true
+        }
+    
+        // Check if storage class needs to be updated
+        if storageClass != "" && (existing.Spec.StorageClassName == nil || *existing.Spec.StorageClassName != storageClass) {
+            // Cannot update storage class of an existing PVC
+            v.recorder.Event(sandbox, corev1.EventTypeWarning, "PVCStorageClassMismatch", 
+                fmt.Sprintf("Cannot update storage class of existing PVC %s", pvc.Name))
+        }
+    
+        // Update PVC if needed
+        if needsUpdate {
+            _, err = v.kubeClient.CoreV1().PersistentVolumeClaims(namespace).Update(
+                context.TODO(), existing, metav1.UpdateOptions{})
+            if err != nil {
+                volumeOperationsTotal.WithLabelValues("update", "failed").Inc()
+                return fmt.Errorf("failed to update PVC: %v", err)
+            }
+            volumeOperationsTotal.WithLabelValues("update", "success").Inc()
+        
+            // Record event
+            v.recorder.Event(sandbox, corev1.EventTypeNormal, "PVCUpdated", 
+                fmt.Sprintf("Updated persistent volume claim %s", pvc.Name))
+        }
+    
+        return nil
+    }
+
+    // GetVolumeMounts returns the volume mounts for a sandbox
+    func (v *VolumeManager) GetVolumeMounts(sandbox *llmsafespacev1.Sandbox) ([]corev1.Volume, []corev1.VolumeMount) {
+        volumes := []corev1.Volume{
+            {
+                Name: "workspace",
+                VolumeSource: corev1.VolumeSource{
+                    EmptyDir: &corev1.EmptyDirVolumeSource{},
+                },
+            },
+            {
+                Name: "tmp",
+                VolumeSource: corev1.VolumeSource{
+                    EmptyDir: &corev1.EmptyDirVolumeSource{},
+                },
+            },
+        }
+    
+        volumeMounts := []corev1.VolumeMount{
+            {
+                Name:      "workspace",
+                MountPath: "/workspace",
+            },
+            {
+                Name:      "tmp",
+                MountPath: "/tmp",
+            },
+        }
+    
+        // Add persistent storage if enabled
+        if sandbox.Spec.Storage != nil && sandbox.Spec.Storage.Persistent {
+            volumes = append(volumes, corev1.Volume{
+                Name: "persistent-data",
+                VolumeSource: corev1.VolumeSource{
+                    PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+                        ClaimName: fmt.Sprintf("sandbox-%s-data", sandbox.Name),
+                    },
+                },
+            })
+        
+            volumeMounts = append(volumeMounts, corev1.VolumeMount{
+                Name:      "persistent-data",
+                MountPath: "/data",
+            })
+        }
+    
+        // Add additional writable paths if specified
+        if sandbox.Spec.Filesystem != nil && len(sandbox.Spec.Filesystem.WritablePaths) > 0 {
+            for i, path := range sandbox.Spec.Filesystem.WritablePaths {
+                // Skip default writable paths
+                if path == "/tmp" || path == "/workspace" || path == "/data" {
+                    continue
+                }
+            
+                // Create a volume for this path
+                volumeName := fmt.Sprintf("writable-%d", i)
+                volumes = append(volumes, corev1.Volume{
+                    Name: volumeName,
+                    VolumeSource: corev1.VolumeSource{
+                        EmptyDir: &corev1.EmptyDirVolumeSource{},
+                    },
+                })
+            
+                volumeMounts = append(volumeMounts, corev1.VolumeMount{
+                    Name:      volumeName,
+                    MountPath: path,
+                })
+            }
+        }
+    
+        // Add shared volumes if specified
+        if sandbox.Spec.Storage != nil && len(sandbox.Spec.Storage.SharedVolumes) > 0 {
+            for i, sharedVolume := range sandbox.Spec.Storage.SharedVolumes {
+                volumeName := fmt.Sprintf("shared-%d", i)
+                volumes = append(volumes, corev1.Volume{
+                    Name: volumeName,
+                    VolumeSource: corev1.VolumeSource{
+                        PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+                            ClaimName: sharedVolume.ClaimName,
+                            ReadOnly:  sharedVolume.ReadOnly,
+                        },
+                    },
+                })
+            
+                volumeMounts = append(volumeMounts, corev1.VolumeMount{
+                    Name:      volumeName,
+                    MountPath: sharedVolume.MountPath,
+                    ReadOnly:  sharedVolume.ReadOnly,
+                })
+            }
+        }
+    
+        return volumes, volumeMounts
+    }
+
+    // DeletePersistentVolumeClaim deletes the PVC for a sandbox
+    func (v *VolumeManager) DeletePersistentVolumeClaim(sandbox *llmsafespacev1.Sandbox) error {
+        startTime := time.Now()
+        defer func() {
+            volumeOperationDurationSeconds.WithLabelValues("delete_pvc").Observe(time.Since(startTime).Seconds())
+        }()
+    
+        if sandbox.Spec.Storage == nil || !sandbox.Spec.Storage.Persistent {
+            return nil
+        }
+    
+        // Determine namespace
+        namespace := sandbox.Namespace
+        if v.config.NamespaceIsolation {
+            namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+        }
+    
+        // If pod namespace is specified in status, use that
+        if sandbox.Status.PodNamespace != "" {
+            namespace = sandbox.Status.PodNamespace
+        }
+    
+        // Delete PVC
+        pvcName := fmt.Sprintf("sandbox-%s-data", sandbox.Name)
+        err := v.kubeClient.CoreV1().PersistentVolumeClaims(namespace).Delete(
+            context.TODO(), pvcName, metav1.DeleteOptions{})
+    
+        if err != nil {
+            if errors.IsNotFound(err) {
+                return nil
+            }
+            volumeOperationsTotal.WithLabelValues("delete", "failed").Inc()
+            return fmt.Errorf("failed to delete PVC: %v", err)
+        }
+    
+        volumeOperationsTotal.WithLabelValues("delete", "success").Inc()
+    
+        // Record event
+        v.recorder.Event(sandbox, corev1.EventTypeNormal, "PVCDeleted", 
+            fmt.Sprintf("Deleted persistent volume claim %s", pvcName))
+    
+        return nil
+    }
+
+    // MonitorVolumeUsage monitors the usage of persistent volumes
+    func (v *VolumeManager) MonitorVolumeUsage(sandbox *llmsafespacev1.Sandbox) {
+        if sandbox.Spec.Storage == nil || !sandbox.Spec.Storage.Persistent {
+            return
+        }
+    
+        // Determine namespace
+        namespace := sandbox.Namespace
+        if v.config.NamespaceIsolation {
+            namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+        }
+    
+        // If pod namespace is specified in status, use that
+        if sandbox.Status.PodNamespace != "" {
+            namespace = sandbox.Status.PodNamespace
+        }
+    
+        // Start a goroutine to monitor volume usage
+        go func() {
+            ticker := time.NewTicker(1 * time.Minute)
+            defer ticker.Stop()
+        
+            for {
+                select {
+                case <-ticker.C:
+                    // Check if sandbox still exists
+                    _, err := v.kubeClient.CoreV1().Pods(namespace).Get(
+                        context.TODO(), sandbox.Status.PodName, metav1.GetOptions{})
+                    if err != nil {
+                        if errors.IsNotFound(err) {
+                            // Pod no longer exists, stop monitoring
+                            return
+                        }
+                        klog.Warningf("Failed to get pod for volume usage monitoring: %v", err)
+                        continue
+                    }
+                
+                    // Get volume usage
+                    usage, err := v.getVolumeUsage(sandbox)
+                    if err != nil {
+                        klog.Warningf("Failed to get volume usage: %v", err)
+                        continue
+                    }
+                
+                    // Update metrics
+                    persistentVolumeUsageGauge.WithLabelValues(sandbox.Name, namespace).Set(float64(usage))
+                
+                    // Check if usage is approaching limit
+                    volumeSize := "5Gi" // Default size
+                    if sandbox.Spec.Storage.VolumeSize != "" {
+                        volumeSize = sandbox.Spec.Storage.VolumeSize
+                    }
+                
+                    sizeQuantity, err := resource.ParseQuantity(volumeSize)
+                    if err != nil {
+                        klog.Warningf("Failed to parse volume size: %v", err)
+                        continue
+                    }
+                
+                    sizeBytes := sizeQuantity.Value()
+                    usagePercent := float64(usage) / float64(sizeBytes) * 100
+                
+                    // Update resource utilization metric
+                    resourceLimitUtilizationGauge.WithLabelValues("storage", sandbox.Name, namespace).Set(usagePercent)
+                
+                    // Warn if usage is above threshold
+                    if usagePercent > 80 {
+                        v.recorder.Event(sandbox, corev1.EventTypeWarning, "HighVolumeUsage", 
+                            fmt.Sprintf("Persistent volume usage is high: %.1f%%", usagePercent))
+                    }
+                }
+            }
+        }()
+    }
+
+    // getVolumeUsage gets the usage of a persistent volume in bytes
+    func (v *VolumeManager) getVolumeUsage(sandbox *llmsafespacev1.Sandbox) (int64, error) {
+        // In a real implementation, this would execute a command in the pod to get disk usage
+        // For now, we'll return a simulated value
+    
+        // This is a placeholder implementation
+        // In a real system, you would exec into the pod and run a command like:
+        // du -sb /data | cut -f1
+    
+        // Simulate increasing usage over time
+        elapsedSeconds := time.Since(sandbox.Status.StartTime.Time).Seconds()
+        usageBytes := int64(1024*1024*10 + int(elapsedSeconds*1000)) // Start with 10MB and grow 1KB per second
+    
+        return usageBytes, nil
+    }
+
+    // volumeOperationDurationSeconds tracks the duration of volume operations
+    var volumeOperationDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_volume_operation_duration_seconds",
+            Help: "Duration of volume operations in seconds",
+            Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+        },
+        []string{"operation"},
+    )
     
     // Create pod
     pod, err := c.podManager.EnsurePod(sandbox, runtimeEnv, profile)
@@ -1954,18 +3265,107 @@ func (p *PodManager) createPod(sandbox *llmsafespacev1.Sandbox, runtime *llmsafe
 Network policies are created to enforce network isolation between sandboxes and control egress traffic.
 
 ```go
-func (n *NetworkPolicyManager) createNetworkPolicies(sandbox *llmsafespacev1.Sandbox) error {
+// NetworkPolicyManager handles the creation, update, and deletion of network policies
+type NetworkPolicyManager struct {
+    kubeClient kubernetes.Interface
+    config     *config.Config
+    recorder   record.EventRecorder
+}
+
+// NewNetworkPolicyManager creates a new NetworkPolicyManager
+func NewNetworkPolicyManager(kubeClient kubernetes.Interface, config *config.Config, recorder record.EventRecorder) *NetworkPolicyManager {
+    return &NetworkPolicyManager{
+        kubeClient: kubeClient,
+        config:     config,
+        recorder:   recorder,
+    }
+}
+
+// EnsureNetworkPolicies ensures that all required network policies exist for a sandbox
+func (n *NetworkPolicyManager) EnsureNetworkPolicies(sandbox *llmsafespacev1.Sandbox, podNamespace string) error {
+    startTime := time.Now()
+    defer func() {
+        networkPolicyOperationDurationSeconds.WithLabelValues("ensure").Observe(time.Since(startTime).Seconds())
+    }()
+    
     // Determine namespace
-    namespace := sandbox.Namespace
-    if n.config.NamespaceIsolation {
-        namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+    namespace := podNamespace
+    if namespace == "" {
+        namespace = sandbox.Namespace
+        if n.config.NamespaceIsolation {
+            namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+        }
     }
     
     // Create default deny policy
+    if err := n.ensureDefaultDenyPolicy(sandbox, namespace); err != nil {
+        networkPolicyOperationsTotal.WithLabelValues("create_default_deny", "failed").Inc()
+        return fmt.Errorf("failed to ensure default deny policy: %v", err)
+    }
+    networkPolicyOperationsTotal.WithLabelValues("create_default_deny", "success").Inc()
+    
+    // Create API service access policy
+    if err := n.ensureAPIServicePolicy(sandbox, namespace); err != nil {
+        networkPolicyOperationsTotal.WithLabelValues("create_api_access", "failed").Inc()
+        return fmt.Errorf("failed to ensure API service access policy: %v", err)
+    }
+    networkPolicyOperationsTotal.WithLabelValues("create_api_access", "success").Inc()
+    
+    // Create DNS access policy
+    if err := n.ensureDNSAccessPolicy(sandbox, namespace); err != nil {
+        networkPolicyOperationsTotal.WithLabelValues("create_dns_access", "failed").Inc()
+        return fmt.Errorf("failed to ensure DNS access policy: %v", err)
+    }
+    networkPolicyOperationsTotal.WithLabelValues("create_dns_access", "success").Inc()
+    
+    // Create egress policies if specified
+    if sandbox.Spec.NetworkAccess != nil && len(sandbox.Spec.NetworkAccess.Egress) > 0 {
+        if err := n.ensureEgressPolicies(sandbox, namespace); err != nil {
+            networkPolicyOperationsTotal.WithLabelValues("create_egress", "failed").Inc()
+            return fmt.Errorf("failed to ensure egress policies: %v", err)
+        }
+        networkPolicyOperationsTotal.WithLabelValues("create_egress", "success").Inc()
+    } else {
+        // Delete any existing egress policies if no egress is specified
+        if err := n.deleteEgressPolicies(sandbox, namespace); err != nil {
+            networkPolicyOperationsTotal.WithLabelValues("delete_egress", "failed").Inc()
+            return fmt.Errorf("failed to delete egress policies: %v", err)
+        }
+        networkPolicyOperationsTotal.WithLabelValues("delete_egress", "success").Inc()
+    }
+    
+    // Create ingress policies if specified
+    if sandbox.Spec.NetworkAccess != nil && sandbox.Spec.NetworkAccess.Ingress {
+        if err := n.ensureIngressPolicies(sandbox, namespace); err != nil {
+            networkPolicyOperationsTotal.WithLabelValues("create_ingress", "failed").Inc()
+            return fmt.Errorf("failed to ensure ingress policies: %v", err)
+        }
+        networkPolicyOperationsTotal.WithLabelValues("create_ingress", "success").Inc()
+    } else {
+        // Delete any existing ingress policies if ingress is not enabled
+        if err := n.deleteIngressPolicies(sandbox, namespace); err != nil {
+            networkPolicyOperationsTotal.WithLabelValues("delete_ingress", "failed").Inc()
+            return fmt.Errorf("failed to delete ingress policies: %v", err)
+        }
+        networkPolicyOperationsTotal.WithLabelValues("delete_ingress", "success").Inc()
+    }
+    
+    return nil
+}
+
+// ensureDefaultDenyPolicy ensures that the default deny policy exists
+func (n *NetworkPolicyManager) ensureDefaultDenyPolicy(sandbox *llmsafespacev1.Sandbox, namespace string) error {
     defaultDenyPolicy := &networkingv1.NetworkPolicy{
         ObjectMeta: metav1.ObjectMeta{
             Name: fmt.Sprintf("sandbox-%s-default-deny", sandbox.Name),
             Namespace: namespace,
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "component": "network-policy",
+                "sandbox-id": sandbox.Name,
+                "sandbox-uid": string(sandbox.UID),
+                "policy-type": "default-deny",
+            },
             OwnerReferences: []metav1.OwnerReference{
                 *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
             },
@@ -1983,17 +3383,53 @@ func (n *NetworkPolicyManager) createNetworkPolicies(sandbox *llmsafespacev1.San
         },
     }
     
-    _, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
-        context.TODO(), defaultDenyPolicy, metav1.CreateOptions{})
-    if err != nil && !errors.IsAlreadyExists(err) {
-        return err
+    // Try to get existing policy
+    existing, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Get(
+        context.TODO(), defaultDenyPolicy.Name, metav1.GetOptions{})
+    
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Create new policy
+            _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
+                context.TODO(), defaultDenyPolicy, metav1.CreateOptions{})
+            if err != nil {
+                return fmt.Errorf("failed to create default deny policy: %v", err)
+            }
+            return nil
+        }
+        return fmt.Errorf("failed to get default deny policy: %v", err)
     }
     
-    // Create API service access policy
+    // Update existing policy if needed
+    if !reflect.DeepEqual(existing.Spec, defaultDenyPolicy.Spec) || 
+       !reflect.DeepEqual(existing.Labels, defaultDenyPolicy.Labels) {
+        
+        existing.Spec = defaultDenyPolicy.Spec
+        existing.Labels = defaultDenyPolicy.Labels
+        
+        _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Update(
+            context.TODO(), existing, metav1.UpdateOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to update default deny policy: %v", err)
+        }
+    }
+    
+    return nil
+}
+
+// ensureAPIServicePolicy ensures that the API service access policy exists
+func (n *NetworkPolicyManager) ensureAPIServicePolicy(sandbox *llmsafespacev1.Sandbox, namespace string) error {
     apiServicePolicy := &networkingv1.NetworkPolicy{
         ObjectMeta: metav1.ObjectMeta{
             Name: fmt.Sprintf("sandbox-%s-api-access", sandbox.Name),
             Namespace: namespace,
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "component": "network-policy",
+                "sandbox-id": sandbox.Name,
+                "sandbox-uid": string(sandbox.UID),
+                "policy-type": "api-access",
+            },
             OwnerReferences: []metav1.OwnerReference{
                 *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
             },
@@ -2058,18 +3494,177 @@ func (n *NetworkPolicyManager) createNetworkPolicies(sandbox *llmsafespacev1.San
         },
     }
     
-    _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
-        context.TODO(), apiServicePolicy, metav1.CreateOptions{})
-    if err != nil && !errors.IsAlreadyExists(err) {
-        return err
+    // Try to get existing policy
+    existing, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Get(
+        context.TODO(), apiServicePolicy.Name, metav1.GetOptions{})
+    
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Create new policy
+            _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
+                context.TODO(), apiServicePolicy, metav1.CreateOptions{})
+            if err != nil {
+                return fmt.Errorf("failed to create API service policy: %v", err)
+            }
+            return nil
+        }
+        return fmt.Errorf("failed to get API service policy: %v", err)
     }
     
-    // Create egress policies if specified
-    if sandbox.Spec.NetworkAccess != nil && len(sandbox.Spec.NetworkAccess.Egress) > 0 {
+    // Update existing policy if needed
+    if !reflect.DeepEqual(existing.Spec, apiServicePolicy.Spec) || 
+       !reflect.DeepEqual(existing.Labels, apiServicePolicy.Labels) {
+        
+        existing.Spec = apiServicePolicy.Spec
+        existing.Labels = apiServicePolicy.Labels
+        
+        _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Update(
+            context.TODO(), existing, metav1.UpdateOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to update API service policy: %v", err)
+        }
+    }
+    
+    return nil
+}
+
+// ensureDNSAccessPolicy ensures that the DNS access policy exists
+func (n *NetworkPolicyManager) ensureDNSAccessPolicy(sandbox *llmsafespacev1.Sandbox, namespace string) error {
+    dnsPolicy := &networkingv1.NetworkPolicy{
+        ObjectMeta: metav1.ObjectMeta{
+            Name: fmt.Sprintf("sandbox-%s-dns-access", sandbox.Name),
+            Namespace: namespace,
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "component": "network-policy",
+                "sandbox-id": sandbox.Name,
+                "sandbox-uid": string(sandbox.UID),
+                "policy-type": "dns-access",
+            },
+            OwnerReferences: []metav1.OwnerReference{
+                *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
+            },
+        },
+        Spec: networkingv1.NetworkPolicySpec{
+            PodSelector: metav1.LabelSelector{
+                MatchLabels: map[string]string{
+                    "sandbox-id": sandbox.Name,
+                },
+            },
+            Egress: []networkingv1.NetworkPolicyEgressRule{
+                {
+                    To: []networkingv1.NetworkPolicyPeer{
+                        {
+                            NamespaceSelector: &metav1.LabelSelector{
+                                MatchLabels: map[string]string{
+                                    "kubernetes.io/metadata.name": "kube-system",
+                                },
+                            },
+                            PodSelector: &metav1.LabelSelector{
+                                MatchLabels: map[string]string{
+                                    "k8s-app": "kube-dns",
+                                },
+                            },
+                        },
+                    },
+                    Ports: []networkingv1.NetworkPolicyPort{
+                        {
+                            Port: &intstr.IntOrString{
+                                Type: intstr.Int,
+                                IntVal: 53,
+                            },
+                            Protocol: &[]corev1.Protocol{corev1.ProtocolUDP}[0],
+                        },
+                        {
+                            Port: &intstr.IntOrString{
+                                Type: intstr.Int,
+                                IntVal: 53,
+                            },
+                            Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+                        },
+                    },
+                },
+            },
+            PolicyTypes: []networkingv1.PolicyType{
+                networkingv1.PolicyTypeEgress,
+            },
+        },
+    }
+    
+    // Try to get existing policy
+    existing, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Get(
+        context.TODO(), dnsPolicy.Name, metav1.GetOptions{})
+    
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Create new policy
+            _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
+                context.TODO(), dnsPolicy, metav1.CreateOptions{})
+            if err != nil {
+                return fmt.Errorf("failed to create DNS access policy: %v", err)
+            }
+            return nil
+        }
+        return fmt.Errorf("failed to get DNS access policy: %v", err)
+    }
+    
+    // Update existing policy if needed
+    if !reflect.DeepEqual(existing.Spec, dnsPolicy.Spec) || 
+       !reflect.DeepEqual(existing.Labels, dnsPolicy.Labels) {
+        
+        existing.Spec = dnsPolicy.Spec
+        existing.Labels = dnsPolicy.Labels
+        
+        _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Update(
+            context.TODO(), existing, metav1.UpdateOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to update DNS access policy: %v", err)
+        }
+    }
+    
+    return nil
+}
+
+// ensureEgressPolicies ensures that egress policies exist for the specified domains
+func (n *NetworkPolicyManager) ensureEgressPolicies(sandbox *llmsafespacev1.Sandbox, namespace string) error {
+    if sandbox.Spec.NetworkAccess == nil || len(sandbox.Spec.NetworkAccess.Egress) == 0 {
+        return nil
+    }
+    
+    // Create a policy for each domain group (up to 10 domains per policy to avoid too large policies)
+    domainGroups := make([][]llmsafespacev1.DomainRule, 0)
+    currentGroup := make([]llmsafespacev1.DomainRule, 0)
+    
+    for _, rule := range sandbox.Spec.NetworkAccess.Egress {
+        currentGroup = append(currentGroup, rule)
+        
+        if len(currentGroup) >= 10 {
+            domainGroups = append(domainGroups, currentGroup)
+            currentGroup = make([]llmsafespacev1.DomainRule, 0)
+        }
+    }
+    
+    if len(currentGroup) > 0 {
+        domainGroups = append(domainGroups, currentGroup)
+    }
+    
+    // Create or update policies for each domain group
+    for i, group := range domainGroups {
+        policyName := fmt.Sprintf("sandbox-%s-egress-%d", sandbox.Name, i)
+        
+        // Create egress policy for this group
         egressPolicy := &networkingv1.NetworkPolicy{
             ObjectMeta: metav1.ObjectMeta{
-                Name: fmt.Sprintf("sandbox-%s-egress", sandbox.Name),
+                Name: policyName,
                 Namespace: namespace,
+                Labels: map[string]string{
+                    "app": "llmsafespace",
+                    "component": "network-policy",
+                    "sandbox-id": sandbox.Name,
+                    "sandbox-uid": string(sandbox.UID),
+                    "policy-type": "egress",
+                    "policy-group": fmt.Sprintf("%d", i),
+                },
                 OwnerReferences: []metav1.OwnerReference{
                     *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
                 },
@@ -2094,22 +3689,7 @@ func (n *NetworkPolicyManager) createNetworkPolicies(sandbox *llmsafespacev1.San
                                 },
                             },
                         },
-                        Ports: []networkingv1.NetworkPolicyPort{
-                            {
-                                Port: &intstr.IntOrString{
-                                    Type: intstr.Int,
-                                    IntVal: 443,
-                                },
-                                Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
-                            },
-                            {
-                                Port: &intstr.IntOrString{
-                                    Type: intstr.Int,
-                                    IntVal: 80,
-                                },
-                                Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
-                            },
-                        },
+                        Ports: n.getEgressPorts(group),
                     },
                 },
                 PolicyTypes: []networkingv1.PolicyType{
@@ -2118,15 +3698,353 @@ func (n *NetworkPolicyManager) createNetworkPolicies(sandbox *llmsafespacev1.San
             },
         }
         
-        _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
-            context.TODO(), egressPolicy, metav1.CreateOptions{})
-        if err != nil && !errors.IsAlreadyExists(err) {
-            return err
+        // Try to get existing policy
+        existing, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Get(
+            context.TODO(), policyName, metav1.GetOptions{})
+        
+        if err != nil {
+            if errors.IsNotFound(err) {
+                // Create new policy
+                _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
+                    context.TODO(), egressPolicy, metav1.CreateOptions{})
+                if err != nil {
+                    return fmt.Errorf("failed to create egress policy %s: %v", policyName, err)
+                }
+            } else {
+                return fmt.Errorf("failed to get egress policy %s: %v", policyName, err)
+            }
+        } else {
+            // Update existing policy if needed
+            if !reflect.DeepEqual(existing.Spec, egressPolicy.Spec) || 
+               !reflect.DeepEqual(existing.Labels, egressPolicy.Labels) {
+                
+                existing.Spec = egressPolicy.Spec
+                existing.Labels = egressPolicy.Labels
+                
+                _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Update(
+                    context.TODO(), existing, metav1.UpdateOptions{})
+                if err != nil {
+                    return fmt.Errorf("failed to update egress policy %s: %v", policyName, err)
+                }
+            }
+        }
+        
+        // Add annotations with domain information for auditing
+        domains := make([]string, 0)
+        for _, rule := range group {
+            domains = append(domains, rule.Domain)
+        }
+        
+        // Update annotations with domain information
+        if existing != nil {
+            patchData := map[string]interface{}{
+                "metadata": map[string]interface{}{
+                    "annotations": map[string]string{
+                        "llmsafespace.dev/allowed-domains": strings.Join(domains, ","),
+                    },
+                },
+            }
+            
+            patchBytes, err := json.Marshal(patchData)
+            if err != nil {
+                return fmt.Errorf("failed to marshal patch data: %v", err)
+            }
+            
+            _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Patch(
+                context.TODO(), policyName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+            if err != nil {
+                return fmt.Errorf("failed to patch egress policy %s: %v", policyName, err)
+            }
+        }
+    }
+    
+    // Clean up any old policies that are no longer needed
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "network-policy",
+        "sandbox-id": sandbox.Name,
+        "policy-type": "egress",
+    })
+    
+    policies, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).List(
+        context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
+    if err != nil {
+        return fmt.Errorf("failed to list egress policies: %v", err)
+    }
+    
+    for _, policy := range policies.Items {
+        groupStr, ok := policy.Labels["policy-group"]
+        if !ok {
+            continue
+        }
+        
+        group, err := strconv.Atoi(groupStr)
+        if err != nil {
+            continue
+        }
+        
+        if group >= len(domainGroups) {
+            // This policy is no longer needed
+            err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Delete(
+                context.TODO(), policy.Name, metav1.DeleteOptions{})
+            if err != nil && !errors.IsNotFound(err) {
+                return fmt.Errorf("failed to delete old egress policy %s: %v", policy.Name, err)
+            }
         }
     }
     
     return nil
 }
+
+// getEgressPorts returns the list of ports for the egress policy
+func (n *NetworkPolicyManager) getEgressPorts(rules []llmsafespacev1.DomainRule) []networkingv1.NetworkPolicyPort {
+    // Check if any rules have specific ports
+    hasSpecificPorts := false
+    for _, rule := range rules {
+        if len(rule.Ports) > 0 {
+            hasSpecificPorts = true
+            break
+        }
+    }
+    
+    // If no specific ports, use default HTTP/HTTPS ports
+    if !hasSpecificPorts {
+        return []networkingv1.NetworkPolicyPort{
+            {
+                Port: &intstr.IntOrString{
+                    Type: intstr.Int,
+                    IntVal: 443,
+                },
+                Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+            },
+            {
+                Port: &intstr.IntOrString{
+                    Type: intstr.Int,
+                    IntVal: 80,
+                },
+                Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+            },
+        }
+    }
+    
+    // Collect all unique ports from all rules
+    portMap := make(map[string]networkingv1.NetworkPolicyPort)
+    for _, rule := range rules {
+        for _, port := range rule.Ports {
+            protocol := corev1.ProtocolTCP
+            if port.Protocol == "UDP" {
+                protocol = corev1.ProtocolUDP
+            }
+            
+            key := fmt.Sprintf("%d-%s", port.Port, protocol)
+            portMap[key] = networkingv1.NetworkPolicyPort{
+                Port: &intstr.IntOrString{
+                    Type: intstr.Int,
+                    IntVal: int32(port.Port),
+                },
+                Protocol: &protocol,
+            }
+        }
+    }
+    
+    // Convert map to slice
+    ports := make([]networkingv1.NetworkPolicyPort, 0, len(portMap))
+    for _, port := range portMap {
+        ports = append(ports, port)
+    }
+    
+    return ports
+}
+
+// deleteEgressPolicies deletes all egress policies for a sandbox
+func (n *NetworkPolicyManager) deleteEgressPolicies(sandbox *llmsafespacev1.Sandbox, namespace string) error {
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "network-policy",
+        "sandbox-id": sandbox.Name,
+        "policy-type": "egress",
+    })
+    
+    policies, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).List(
+        context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
+    if err != nil {
+        return fmt.Errorf("failed to list egress policies: %v", err)
+    }
+    
+    for _, policy := range policies.Items {
+        err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Delete(
+            context.TODO(), policy.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            return fmt.Errorf("failed to delete egress policy %s: %v", policy.Name, err)
+        }
+    }
+    
+    return nil
+}
+
+// ensureIngressPolicies ensures that ingress policies exist if ingress is enabled
+func (n *NetworkPolicyManager) ensureIngressPolicies(sandbox *llmsafespacev1.Sandbox, namespace string) error {
+    if sandbox.Spec.NetworkAccess == nil || !sandbox.Spec.NetworkAccess.Ingress {
+        return nil
+    }
+    
+    ingressPolicy := &networkingv1.NetworkPolicy{
+        ObjectMeta: metav1.ObjectMeta{
+            Name: fmt.Sprintf("sandbox-%s-ingress", sandbox.Name),
+            Namespace: namespace,
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "component": "network-policy",
+                "sandbox-id": sandbox.Name,
+                "sandbox-uid": string(sandbox.UID),
+                "policy-type": "ingress",
+            },
+            OwnerReferences: []metav1.OwnerReference{
+                *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
+            },
+        },
+        Spec: networkingv1.NetworkPolicySpec{
+            PodSelector: metav1.LabelSelector{
+                MatchLabels: map[string]string{
+                    "sandbox-id": sandbox.Name,
+                },
+            },
+            Ingress: []networkingv1.NetworkPolicyIngressRule{
+                {
+                    Ports: []networkingv1.NetworkPolicyPort{
+                        {
+                            Port: &intstr.IntOrString{
+                                Type: intstr.Int,
+                                IntVal: 8080,
+                            },
+                            Protocol: &[]corev1.Protocol{corev1.ProtocolTCP}[0],
+                        },
+                    },
+                },
+            },
+            PolicyTypes: []networkingv1.PolicyType{
+                networkingv1.PolicyTypeIngress,
+            },
+        },
+    }
+    
+    // Try to get existing policy
+    existing, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Get(
+        context.TODO(), ingressPolicy.Name, metav1.GetOptions{})
+    
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Create new policy
+            _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Create(
+                context.TODO(), ingressPolicy, metav1.CreateOptions{})
+            if err != nil {
+                return fmt.Errorf("failed to create ingress policy: %v", err)
+            }
+            return nil
+        }
+        return fmt.Errorf("failed to get ingress policy: %v", err)
+    }
+    
+    // Update existing policy if needed
+    if !reflect.DeepEqual(existing.Spec, ingressPolicy.Spec) || 
+       !reflect.DeepEqual(existing.Labels, ingressPolicy.Labels) {
+        
+        existing.Spec = ingressPolicy.Spec
+        existing.Labels = ingressPolicy.Labels
+        
+        _, err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Update(
+            context.TODO(), existing, metav1.UpdateOptions{})
+        if err != nil {
+            return fmt.Errorf("failed to update ingress policy: %v", err)
+        }
+    }
+    
+    return nil
+}
+
+// deleteIngressPolicies deletes all ingress policies for a sandbox
+func (n *NetworkPolicyManager) deleteIngressPolicies(sandbox *llmsafespacev1.Sandbox, namespace string) error {
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "network-policy",
+        "sandbox-id": sandbox.Name,
+        "policy-type": "ingress",
+    })
+    
+    policies, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).List(
+        context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
+    if err != nil {
+        return fmt.Errorf("failed to list ingress policies: %v", err)
+    }
+    
+    for _, policy := range policies.Items {
+        err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Delete(
+            context.TODO(), policy.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            return fmt.Errorf("failed to delete ingress policy %s: %v", policy.Name, err)
+        }
+    }
+    
+    return nil
+}
+
+// DeleteNetworkPolicies deletes all network policies for a sandbox
+func (n *NetworkPolicyManager) DeleteNetworkPolicies(sandbox *llmsafespacev1.Sandbox) error {
+    startTime := time.Now()
+    defer func() {
+        networkPolicyOperationDurationSeconds.WithLabelValues("delete").Observe(time.Since(startTime).Seconds())
+    }()
+    
+    // Determine namespace
+    namespace := sandbox.Namespace
+    if n.config.NamespaceIsolation {
+        namespace = fmt.Sprintf("sandbox-%s", sandbox.UID)
+    }
+    
+    // If pod namespace is specified in status, use that
+    if sandbox.Status.PodNamespace != "" {
+        namespace = sandbox.Status.PodNamespace
+    }
+    
+    // Delete all network policies for this sandbox
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "network-policy",
+        "sandbox-id": sandbox.Name,
+    })
+    
+    policies, err := n.kubeClient.NetworkingV1().NetworkPolicies(namespace).List(
+        context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
+    if err != nil {
+        if errors.IsNotFound(err) {
+            return nil
+        }
+        networkPolicyOperationsTotal.WithLabelValues("delete", "failed").Inc()
+        return fmt.Errorf("failed to list network policies: %v", err)
+    }
+    
+    for _, policy := range policies.Items {
+        err = n.kubeClient.NetworkingV1().NetworkPolicies(namespace).Delete(
+            context.TODO(), policy.Name, metav1.DeleteOptions{})
+        if err != nil && !errors.IsNotFound(err) {
+            networkPolicyOperationsTotal.WithLabelValues("delete", "failed").Inc()
+            return fmt.Errorf("failed to delete network policy %s: %v", policy.Name, err)
+        }
+    }
+    
+    networkPolicyOperationsTotal.WithLabelValues("delete", "success").Inc()
+    return nil
+}
+
+// networkPolicyOperationDurationSeconds tracks the duration of network policy operations
+var networkPolicyOperationDurationSeconds = prometheus.NewHistogramVec(
+    prometheus.HistogramOpts{
+        Name: "llmsafespace_network_policy_operation_duration_seconds",
+        Help: "Duration of network policy operations in seconds",
+        Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+    },
+    []string{"operation"},
+)
 ```
 
 ### 4. Sandbox Cleanup
@@ -2316,19 +4234,40 @@ func (c *Controller) handleSandboxDeletion(sandbox *llmsafespacev1.Sandbox) erro
 
 // shouldRecyclePod determines if a warm pod should be recycled
 func (c *Controller) shouldRecyclePod(warmPod *llmsafespacev1.WarmPod, sandbox *llmsafespacev1.Sandbox) bool {
+    startTime := time.Now()
+    defer func() {
+        warmPodRecycleDecisionDurationSeconds.Observe(time.Since(startTime).Seconds())
+    }()
+    
     // Get the pool
     pool, err := c.warmPoolLister.WarmPools(warmPod.Spec.PoolRef.Namespace).Get(warmPod.Spec.PoolRef.Name)
     if err != nil {
         klog.Warningf("Failed to get warm pool %s/%s: %v", 
             warmPod.Spec.PoolRef.Namespace, warmPod.Spec.PoolRef.Name, err)
+        warmPodRecycleDecisionsTotal.WithLabelValues("pool_not_found", "false").Inc()
+        return false
+    }
+    
+    // Check if recycling is disabled for this pool
+    if pool.Spec.DisablePodRecycling {
+        klog.V(4).Infof("Pod recycling is disabled for pool %s, not recycling pod %s", 
+            pool.Name, warmPod.Status.PodName)
+        warmPodRecycleDecisionsTotal.WithLabelValues("recycling_disabled", "false").Inc()
         return false
     }
     
     // Check if the pool still exists and needs more pods
     if pool.Status.AvailablePods < pool.Spec.MinSize {
         // Check if the pod has been running for too long
-        if warmPod.Spec.CreationTimestamp.Add(24 * time.Hour).Before(time.Now()) {
-            klog.V(4).Infof("Pod %s is too old (>24h), not recycling", warmPod.Status.PodName)
+        maxPodAge := 24 * time.Hour
+        if pool.Spec.MaxPodAge > 0 {
+            maxPodAge = time.Duration(pool.Spec.MaxPodAge) * time.Second
+        }
+        
+        if warmPod.Spec.CreationTimestamp.Add(maxPodAge).Before(time.Now()) {
+            klog.V(4).Infof("Pod %s is too old (>%v), not recycling", 
+                warmPod.Status.PodName, maxPodAge)
+            warmPodRecycleDecisionsTotal.WithLabelValues("pod_too_old", "false").Inc()
             return false
         }
         
@@ -2336,44 +4275,122 @@ func (c *Controller) shouldRecyclePod(warmPod *llmsafespacev1.WarmPod, sandbox *
         if c.hasSandboxSecurityEvents(sandbox) {
             klog.V(2).Infof("Sandbox %s has security events, not recycling pod %s", 
                 sandbox.Name, warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("security_events", "false").Inc()
+            
+            // Record security event metric
+            securityEventsTotal.WithLabelValues("sandbox", "recycle_blocked").Inc()
+            
+            // Add annotation to track security event
+            if sandbox.Annotations == nil {
+                sandbox.Annotations = make(map[string]string)
+            }
+            sandbox.Annotations["llmsafespace.dev/security-event-timestamp"] = time.Now().Format(time.RFC3339)
+            sandbox.Annotations["llmsafespace.dev/security-event-type"] = "recycle_blocked"
+            
+            // Update the sandbox with the new annotations
+            _, err := c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+                context.TODO(), sandbox, metav1.UpdateOptions{})
+            if err != nil {
+                klog.Warningf("Failed to update sandbox %s with security event annotation: %v", 
+                    sandbox.Name, err)
+            }
+            
             return false
         }
         
         // Check if the sandbox installed packages
-        if c.hasInstalledUntrustedPackages(sandbox) {
-            klog.V(2).Infof("Sandbox %s installed untrusted packages, not recycling pod %s", 
-                sandbox.Name, warmPod.Status.PodName)
+        untrustedPackages, hasUntrusted := c.hasInstalledUntrustedPackages(sandbox)
+        if hasUntrusted {
+            klog.V(2).Infof("Sandbox %s installed untrusted packages (%s), not recycling pod %s", 
+                sandbox.Name, strings.Join(untrustedPackages, ", "), warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("untrusted_packages", "false").Inc()
             return false
         }
         
         // Check if the sandbox modified system files
-        if c.hasModifiedSystemFiles(sandbox) {
-            klog.V(2).Infof("Sandbox %s modified system files, not recycling pod %s", 
-                sandbox.Name, warmPod.Status.PodName)
+        modifiedFiles, hasModified := c.hasModifiedSystemFiles(sandbox)
+        if hasModified {
+            klog.V(2).Infof("Sandbox %s modified system files (%s), not recycling pod %s", 
+                sandbox.Name, strings.Join(modifiedFiles, ", "), warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("modified_system_files", "false").Inc()
             return false
         }
         
         // Check resource usage history
-        if c.hadExcessiveResourceUsage(sandbox) {
-            klog.V(2).Infof("Sandbox %s had excessive resource usage, not recycling pod %s", 
-                sandbox.Name, warmPod.Status.PodName)
+        if excessive, reason := c.hadExcessiveResourceUsage(sandbox); excessive {
+            klog.V(2).Infof("Sandbox %s had excessive resource usage (%s), not recycling pod %s", 
+                sandbox.Name, reason, warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("excessive_resource_usage", "false").Inc()
             return false
         }
         
         // Check if the pod has been recycled too many times
         recycleCount := c.getPodRecycleCount(warmPod)
-        if recycleCount >= c.config.MaxPodRecycleCount {
+        maxRecycleCount := c.config.MaxPodRecycleCount
+        if pool.Spec.MaxPodRecycleCount > 0 {
+            maxRecycleCount = pool.Spec.MaxPodRecycleCount
+        }
+        
+        if recycleCount >= maxRecycleCount {
             klog.V(2).Infof("Pod %s has been recycled %d times (max: %d), not recycling", 
-                warmPod.Status.PodName, recycleCount, c.config.MaxPodRecycleCount)
+                warmPod.Status.PodName, recycleCount, maxRecycleCount)
+            warmPodRecycleDecisionsTotal.WithLabelValues("max_recycle_count_reached", "false").Inc()
             return false
         }
         
+        // Check if the pod has been running for the minimum time before recycling
+        minRuntime := c.config.MinPodRuntimeBeforeRecycle
+        if pool.Spec.MinPodRuntimeBeforeRecycle > 0 {
+            minRuntime = pool.Spec.MinPodRuntimeBeforeRecycle
+        }
+        
+        if minRuntime > 0 {
+            podRuntime := time.Since(warmPod.Spec.CreationTimestamp.Time)
+            if podRuntime < time.Duration(minRuntime)*time.Second {
+                klog.V(4).Infof("Pod %s has only been running for %v (min: %v), not recycling", 
+                    warmPod.Status.PodName, podRuntime, time.Duration(minRuntime)*time.Second)
+                warmPodRecycleDecisionsTotal.WithLabelValues("min_runtime_not_reached", "false").Inc()
+                return false
+            }
+        }
+        
+        // Check if the pod has any active processes that would make recycling unsafe
+        if c.hasActiveProcesses(warmPod) {
+            klog.V(2).Infof("Pod %s has active processes, not recycling", warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("active_processes", "false").Inc()
+            return false
+        }
+        
+        // Check if the pod has network connections that would make recycling unsafe
+        if c.hasActiveNetworkConnections(warmPod) {
+            klog.V(2).Infof("Pod %s has active network connections, not recycling", warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("active_network_connections", "false").Inc()
+            return false
+        }
+        
+        // Check if the pod has any file locks that would make recycling unsafe
+        if c.hasFileLocks(warmPod) {
+            klog.V(2).Infof("Pod %s has file locks, not recycling", warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("file_locks", "false").Inc()
+            return false
+        }
+        
+        // Check if the pod has any memory leaks that would make recycling unsafe
+        if c.hasMemoryLeaks(warmPod) {
+            klog.V(2).Infof("Pod %s has potential memory leaks, not recycling", warmPod.Status.PodName)
+            warmPodRecycleDecisionsTotal.WithLabelValues("memory_leaks", "false").Inc()
+            return false
+        }
+        
+        // All checks passed, pod is eligible for recycling
         klog.V(4).Infof("Pod %s is eligible for recycling", warmPod.Status.PodName)
+        warmPodRecycleDecisionsTotal.WithLabelValues("eligible", "true").Inc()
         return true
     }
     
     klog.V(4).Infof("Pool %s has sufficient pods, not recycling pod %s", 
         pool.Name, warmPod.Status.PodName)
+    warmPodRecycleDecisionsTotal.WithLabelValues("sufficient_pods", "false").Inc()
     return false
 }
 
@@ -2386,14 +4403,42 @@ func (c *Controller) hasSandboxSecurityEvents(sandbox *llmsafespacev1.Sandbox) b
         }
     }
     
-    // Could also check external security monitoring systems
+    // Check for security events in annotations
+    if sandbox.Annotations != nil {
+        securityEvents := []string{
+            "llmsafespace.dev/security-event",
+            "llmsafespace.dev/seccomp-violation",
+            "llmsafespace.dev/apparmor-violation",
+            "llmsafespace.dev/capability-violation",
+            "llmsafespace.dev/syscall-violation",
+            "llmsafespace.dev/network-violation",
+        }
+        
+        for _, eventKey := range securityEvents {
+            if _, ok := sandbox.Annotations[eventKey]; ok {
+                return true
+            }
+        }
+    }
+    
+    // Check audit logs for security events if audit logging is enabled
+    if c.config.EnableAuditLogging {
+        events, err := c.auditLogger.GetSecurityEvents(sandbox.UID, time.Hour)
+        if err != nil {
+            klog.Warningf("Failed to get security events for sandbox %s: %v", sandbox.Name, err)
+            return false
+        }
+        
+        return len(events) > 0
+    }
+    
     return false
 }
 
 // hasInstalledUntrustedPackages checks if a sandbox installed packages not in the allowlist
-func (c *Controller) hasInstalledUntrustedPackages(sandbox *llmsafespacev1.Sandbox) bool {
-    // This would check if the sandbox installed any packages not in the allowlist
-    // For now, we'll check if the sandbox has a package installation record
+// Returns a list of untrusted packages and a boolean indicating if any were found
+func (c *Controller) hasInstalledUntrustedPackages(sandbox *llmsafespacev1.Sandbox) ([]string, bool) {
+    untrustedPackages := []string{}
     
     // Check if we have package installation tracking in annotations
     if sandbox.Annotations != nil {
@@ -2403,32 +4448,81 @@ func (c *Controller) hasInstalledUntrustedPackages(sandbox *llmsafespacev1.Sandb
             // Check each package against the allowlist
             for _, pkg := range packages {
                 if !c.isPackageAllowed(pkg, sandbox.Spec.Runtime) {
-                    return true
+                    untrustedPackages = append(untrustedPackages, pkg)
                 }
             }
         }
     }
     
-    return false
+    // If package tracking is enabled, check the package manager logs
+    if c.config.EnablePackageTracking {
+        installedPackages, err := c.packageTracker.GetInstalledPackages(sandbox)
+        if err != nil {
+            klog.Warningf("Failed to get installed packages for sandbox %s: %v", sandbox.Name, err)
+        } else {
+            for _, pkg := range installedPackages {
+                if !c.isPackageAllowed(pkg, sandbox.Spec.Runtime) && !containsString(untrustedPackages, pkg) {
+                    untrustedPackages = append(untrustedPackages, pkg)
+                }
+            }
+        }
+    }
+    
+    return untrustedPackages, len(untrustedPackages) > 0
 }
 
 // isPackageAllowed checks if a package is in the allowlist for a runtime
 func (c *Controller) isPackageAllowed(pkg, runtime string) bool {
-    // This would check against a configured allowlist
-    // For now, we'll assume common packages are allowed
-    allowedPackages := map[string][]string{
-        "python": {"numpy", "pandas", "matplotlib", "scikit-learn", "tensorflow", "torch", "requests"},
-        "nodejs": {"axios", "express", "lodash", "moment", "react", "vue"},
-    }
-    
+    // Extract runtime language from the runtime string
     runtimeLang := strings.Split(runtime, ":")[0]
-    allowed, ok := allowedPackages[runtimeLang]
-    if !ok {
-        return false
+    
+    // Extract base package name (without version)
+    basePkg := pkg
+    if idx := strings.Index(pkg, "=="); idx > 0 {
+        basePkg = pkg[:idx]
+    } else if idx := strings.Index(pkg, "@"); idx > 0 {
+        basePkg = pkg[:idx]
     }
     
-    for _, allowedPkg := range allowed {
-        if pkg == allowedPkg || strings.HasPrefix(pkg, allowedPkg+"==") {
+    // Check against configured allowlist
+    allowlist, ok := c.config.PackageAllowlists[runtimeLang]
+    if !ok {
+        // Fall back to default allowlists if no specific one is configured
+        defaultAllowlists := map[string][]string{
+            "python": {"numpy", "pandas", "matplotlib", "scikit-learn", "tensorflow", "torch", "requests"},
+            "nodejs": {"axios", "express", "lodash", "moment", "react", "vue"},
+            "go": {"github.com/gorilla/mux", "github.com/gin-gonic/gin", "github.com/spf13/cobra"},
+            "ruby": {"rails", "sinatra", "rspec", "puma"},
+            "java": {"org.springframework", "com.google.guava", "org.apache.commons"},
+        }
+        
+        allowlist, ok = defaultAllowlists[runtimeLang]
+        if !ok {
+            // If no default allowlist exists for this runtime, deny all packages
+            return false
+        }
+    }
+    
+    // Check if the package is in the allowlist
+    for _, allowed := range allowlist {
+        if basePkg == allowed || strings.HasPrefix(basePkg, allowed+".") {
+            return true
+        }
+    }
+    
+    // Check if the package is in the global allowlist
+    for _, allowed := range c.config.GlobalPackageAllowlist {
+        if basePkg == allowed || strings.HasPrefix(basePkg, allowed+".") {
+            return true
+        }
+    }
+    
+    // If package verification is enabled, check package signature
+    if c.config.EnablePackageVerification {
+        verified, err := c.packageVerifier.VerifyPackage(pkg, runtimeLang)
+        if err != nil {
+            klog.Warningf("Failed to verify package %s: %v", pkg, err)
+        } else if verified {
             return true
         }
     }
@@ -2437,41 +4531,127 @@ func (c *Controller) isPackageAllowed(pkg, runtime string) bool {
 }
 
 // hasModifiedSystemFiles checks if a sandbox modified any system files
-func (c *Controller) hasModifiedSystemFiles(sandbox *llmsafespacev1.Sandbox) bool {
-    // This would check if the sandbox modified any system files
-    // In a real implementation, this could use file integrity monitoring
+// Returns a list of modified files and a boolean indicating if any were found
+func (c *Controller) hasModifiedSystemFiles(sandbox *llmsafespacev1.Sandbox) ([]string, bool) {
+    modifiedFiles := []string{}
     
-    // For now, we'll check if there's a record of file modifications in annotations
+    // Check if there's a record of file modifications in annotations
     if sandbox.Annotations != nil {
-        if _, ok := sandbox.Annotations["llmsafespace.dev/modified-system-files"]; ok {
-            return true
+        if filesStr, ok := sandbox.Annotations["llmsafespace.dev/modified-system-files"]; ok {
+            modifiedFiles = strings.Split(filesStr, ",")
+            return modifiedFiles, len(modifiedFiles) > 0
         }
     }
     
-    return false
+    // If file integrity monitoring is enabled, check for modified files
+    if c.config.EnableFileIntegrityMonitoring {
+        pod, err := c.podLister.Pods(sandbox.Status.PodNamespace).Get(sandbox.Status.PodName)
+        if err != nil {
+            klog.Warningf("Failed to get pod for sandbox %s: %v", sandbox.Name, err)
+            return modifiedFiles, false
+        }
+        
+        // Get list of modified files from the file integrity monitor
+        files, err := c.fileIntegrityMonitor.GetModifiedFiles(pod)
+        if err != nil {
+            klog.Warningf("Failed to get modified files for pod %s: %v", pod.Name, err)
+            return modifiedFiles, false
+        }
+        
+        // Check each file against the list of protected system paths
+        for _, file := range files {
+            for _, protectedPath := range c.config.ProtectedSystemPaths {
+                if strings.HasPrefix(file, protectedPath) {
+                    modifiedFiles = append(modifiedFiles, file)
+                    break
+                }
+            }
+        }
+    }
+    
+    return modifiedFiles, len(modifiedFiles) > 0
 }
 
 // hadExcessiveResourceUsage checks if a sandbox had excessive resource usage
-func (c *Controller) hadExcessiveResourceUsage(sandbox *llmsafespacev1.Sandbox) bool {
-    // This would check if the sandbox had excessive resource usage
-    // For now, we'll check if there's a record of resource usage in annotations
+// Returns a boolean indicating if usage was excessive and a reason string
+func (c *Controller) hadExcessiveResourceUsage(sandbox *llmsafespacev1.Sandbox) (bool, string) {
+    // Define thresholds
+    cpuThreshold := 0.9  // 90% CPU usage
+    memThreshold := 0.9  // 90% memory usage
+    diskThreshold := 0.9 // 90% disk usage
+    
+    // Override with config values if set
+    if c.config.ResourceThresholds.CPU > 0 {
+        cpuThreshold = c.config.ResourceThresholds.CPU
+    }
+    if c.config.ResourceThresholds.Memory > 0 {
+        memThreshold = c.config.ResourceThresholds.Memory
+    }
+    if c.config.ResourceThresholds.Disk > 0 {
+        diskThreshold = c.config.ResourceThresholds.Disk
+    }
+    
+    // Check annotations for resource usage records
     if sandbox.Annotations != nil {
+        // Check CPU usage
         if cpuUsageStr, ok := sandbox.Annotations["llmsafespace.dev/max-cpu-usage"]; ok {
             cpuUsage, err := strconv.ParseFloat(cpuUsageStr, 64)
-            if err == nil && cpuUsage > 0.9 { // 90% CPU usage threshold
-                return true
+            if err == nil && cpuUsage > cpuThreshold {
+                return true, fmt.Sprintf("CPU usage %.2f exceeds threshold %.2f", cpuUsage, cpuThreshold)
             }
         }
         
+        // Check memory usage
         if memUsageStr, ok := sandbox.Annotations["llmsafespace.dev/max-memory-usage"]; ok {
             memUsage, err := strconv.ParseFloat(memUsageStr, 64)
-            if err == nil && memUsage > 0.9 { // 90% memory usage threshold
-                return true
+            if err == nil && memUsage > memThreshold {
+                return true, fmt.Sprintf("Memory usage %.2f exceeds threshold %.2f", memUsage, memThreshold)
+            }
+        }
+        
+        // Check disk usage
+        if diskUsageStr, ok := sandbox.Annotations["llmsafespace.dev/max-disk-usage"]; ok {
+            diskUsage, err := strconv.ParseFloat(diskUsageStr, 64)
+            if err == nil && diskUsage > diskThreshold {
+                return true, fmt.Sprintf("Disk usage %.2f exceeds threshold %.2f", diskUsage, diskThreshold)
             }
         }
     }
     
-    return false
+    // If metrics collection is enabled, check historical metrics
+    if c.config.EnableMetricsCollection {
+        // Get pod metrics
+        pod, err := c.podLister.Pods(sandbox.Status.PodNamespace).Get(sandbox.Status.PodName)
+        if err != nil {
+            klog.Warningf("Failed to get pod for sandbox %s: %v", sandbox.Name, err)
+            return false, ""
+        }
+        
+        // Get resource usage metrics
+        metrics, err := c.metricsClient.GetPodMetrics(pod.Namespace, pod.Name)
+        if err != nil {
+            klog.Warningf("Failed to get metrics for pod %s: %v", pod.Name, err)
+            return false, ""
+        }
+        
+        // Check if any metric exceeds thresholds
+        if metrics.MaxCPUUsage > cpuThreshold {
+            return true, fmt.Sprintf("Historical CPU usage %.2f exceeds threshold %.2f", 
+                metrics.MaxCPUUsage, cpuThreshold)
+        }
+        
+        if metrics.MaxMemoryUsage > memThreshold {
+            return true, fmt.Sprintf("Historical memory usage %.2f exceeds threshold %.2f", 
+                metrics.MaxMemoryUsage, memThreshold)
+        }
+        
+        if metrics.MaxDiskUsage > diskThreshold {
+            return true, fmt.Sprintf("Historical disk usage %.2f exceeds threshold %.2f", 
+                metrics.MaxDiskUsage, diskThreshold)
+        }
+    }
+    
+    return false, ""
 }
 
 // getPodRecycleCount gets the number of times a pod has been recycled
@@ -2491,6 +4671,207 @@ func (c *Controller) getPodRecycleCount(warmPod *llmsafespacev1.WarmPod) int {
     }
     
     return count
+}
+
+// hasActiveProcesses checks if a warm pod has active processes that would make recycling unsafe
+func (c *Controller) hasActiveProcesses(warmPod *llmsafespacev1.WarmPod) bool {
+    // Skip this check if process checking is disabled
+    if !c.config.CheckActiveProcessesBeforeRecycling {
+        return false
+    }
+    
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        klog.Warningf("Failed to get pod for warm pod %s: %v", warmPod.Name, err)
+        return false
+    }
+    
+    // Execute ps command in the pod to check for active processes
+    execReq := c.kubeClient.CoreV1().RESTClient().Post().
+        Resource("pods").
+        Name(pod.Name).
+        Namespace(pod.Namespace).
+        SubResource("exec").
+        VersionedParams(&corev1.PodExecOptions{
+            Command: []string{"/bin/sh", "-c", "ps aux | grep -v 'ps aux\\|grep\\|sleep\\|sh -c\\|sandbox-init' | wc -l"},
+            Stdin:   false,
+            Stdout:  true,
+            Stderr:  true,
+            TTY:     false,
+            Container: "sandbox",
+        }, scheme.ParameterCodec)
+    
+    // Execute the command
+    exec, err := remotecommand.NewSPDYExecutor(c.restConfig, "POST", execReq.URL())
+    if err != nil {
+        klog.Warningf("Failed to create executor for process check: %v", err)
+        return false
+    }
+    
+    var stdout, stderr bytes.Buffer
+    err = exec.Stream(remotecommand.StreamOptions{
+        Stdout: &stdout,
+        Stderr: &stderr,
+    })
+    
+    if err != nil {
+        klog.Warningf("Failed to execute process check: %v", err)
+        return false
+    }
+    
+    // Parse the output to get the number of active processes
+    processCount, err := strconv.Atoi(strings.TrimSpace(stdout.String()))
+    if err != nil {
+        klog.Warningf("Failed to parse process count: %v", err)
+        return false
+    }
+    
+    // If there are more than the expected baseline processes, consider it active
+    return processCount > c.config.BaselineProcessCount
+}
+
+// hasActiveNetworkConnections checks if a warm pod has active network connections
+func (c *Controller) hasActiveNetworkConnections(warmPod *llmsafespacev1.WarmPod) bool {
+    // Skip this check if network connection checking is disabled
+    if !c.config.CheckNetworkConnectionsBeforeRecycling {
+        return false
+    }
+    
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        klog.Warningf("Failed to get pod for warm pod %s: %v", warmPod.Name, err)
+        return false
+    }
+    
+    // Execute netstat command in the pod to check for active connections
+    execReq := c.kubeClient.CoreV1().RESTClient().Post().
+        Resource("pods").
+        Name(pod.Name).
+        Namespace(pod.Namespace).
+        SubResource("exec").
+        VersionedParams(&corev1.PodExecOptions{
+            Command: []string{"/bin/sh", "-c", "netstat -tuln | grep -v '127.0.0.1\\|::1' | grep ESTABLISHED | wc -l"},
+            Stdin:   false,
+            Stdout:  true,
+            Stderr:  true,
+            TTY:     false,
+            Container: "sandbox",
+        }, scheme.ParameterCodec)
+    
+    // Execute the command
+    exec, err := remotecommand.NewSPDYExecutor(c.restConfig, "POST", execReq.URL())
+    if err != nil {
+        klog.Warningf("Failed to create executor for network check: %v", err)
+        return false
+    }
+    
+    var stdout, stderr bytes.Buffer
+    err = exec.Stream(remotecommand.StreamOptions{
+        Stdout: &stdout,
+        Stderr: &stderr,
+    })
+    
+    if err != nil {
+        klog.Warningf("Failed to execute network check: %v", err)
+        return false
+    }
+    
+    // Parse the output to get the number of active connections
+    connectionCount, err := strconv.Atoi(strings.TrimSpace(stdout.String()))
+    if err != nil {
+        klog.Warningf("Failed to parse connection count: %v", err)
+        return false
+    }
+    
+    // If there are any active connections, consider it active
+    return connectionCount > 0
+}
+
+// hasFileLocks checks if a warm pod has any file locks that would make recycling unsafe
+func (c *Controller) hasFileLocks(warmPod *llmsafespacev1.WarmPod) bool {
+    // Skip this check if file lock checking is disabled
+    if !c.config.CheckFileLocksBeforeRecycling {
+        return false
+    }
+    
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        klog.Warningf("Failed to get pod for warm pod %s: %v", warmPod.Name, err)
+        return false
+    }
+    
+    // Execute lsof command in the pod to check for file locks
+    execReq := c.kubeClient.CoreV1().RESTClient().Post().
+        Resource("pods").
+        Name(pod.Name).
+        Namespace(pod.Namespace).
+        SubResource("exec").
+        VersionedParams(&corev1.PodExecOptions{
+            Command: []string{"/bin/sh", "-c", "lsof -F | grep -v '/dev\\|/proc\\|/sys\\|/tmp' | wc -l"},
+            Stdin:   false,
+            Stdout:  true,
+            Stderr:  true,
+            TTY:     false,
+            Container: "sandbox",
+        }, scheme.ParameterCodec)
+    
+    // Execute the command
+    exec, err := remotecommand.NewSPDYExecutor(c.restConfig, "POST", execReq.URL())
+    if err != nil {
+        klog.Warningf("Failed to create executor for file lock check: %v", err)
+        return false
+    }
+    
+    var stdout, stderr bytes.Buffer
+    err = exec.Stream(remotecommand.StreamOptions{
+        Stdout: &stdout,
+        Stderr: &stderr,
+    })
+    
+    if err != nil {
+        klog.Warningf("Failed to execute file lock check: %v", err)
+        return false
+    }
+    
+    // Parse the output to get the number of file locks
+    lockCount, err := strconv.Atoi(strings.TrimSpace(stdout.String()))
+    if err != nil {
+        klog.Warningf("Failed to parse lock count: %v", err)
+        return false
+    }
+    
+    // If there are more than the expected baseline file locks, consider it unsafe
+    return lockCount > c.config.BaselineFileLockCount
+}
+
+// hasMemoryLeaks checks if a warm pod has any memory leaks that would make recycling unsafe
+func (c *Controller) hasMemoryLeaks(warmPod *llmsafespacev1.WarmPod) bool {
+    // Skip this check if memory leak checking is disabled
+    if !c.config.CheckMemoryLeaksBeforeRecycling {
+        return false
+    }
+    
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        klog.Warningf("Failed to get pod for warm pod %s: %v", warmPod.Name, err)
+        return false
+    }
+    
+    // Get memory usage metrics
+    metrics, err := c.metricsClient.GetPodMetrics(pod.Namespace, pod.Name)
+    if err != nil {
+        klog.Warningf("Failed to get metrics for pod %s: %v", pod.Name, err)
+        return false
+    }
+    
+    // Check if memory usage is increasing over time (potential leak)
+    if metrics.MemoryGrowthRate > c.config.MemoryLeakThreshold {
+        klog.V(2).Infof("Pod %s shows signs of memory leak: growth rate %.2f exceeds threshold %.2f", 
+            pod.Name, metrics.MemoryGrowthRate, c.config.MemoryLeakThreshold)
+        return true
+    }
+    
+    return false
 }
 
 // recyclePod recycles a warm pod for reuse
@@ -3101,16 +5482,44 @@ type APIServiceClient struct {
     baseURL     string
     httpClient  *http.Client
     authToken   string
+    retryConfig RetryConfig
+    metrics     *APIServiceMetrics
+}
+
+// RetryConfig defines the retry behavior for API service requests
+type RetryConfig struct {
+    MaxRetries  int
+    InitialWait time.Duration
+    MaxWait     time.Duration
+}
+
+// APIServiceMetrics collects metrics for API service interactions
+type APIServiceMetrics struct {
+    requestsTotal      *prometheus.CounterVec
+    latencySeconds     *prometheus.HistogramVec
+    retryAttemptsTotal *prometheus.CounterVec
 }
 
 // NewAPIServiceClient creates a new API service client
-func NewAPIServiceClient(baseURL, authToken string) *APIServiceClient {
+func NewAPIServiceClient(baseURL, authToken string, metrics *APIServiceMetrics) *APIServiceClient {
     return &APIServiceClient{
         baseURL:    baseURL,
         authToken:  authToken,
         httpClient: &http.Client{
             Timeout: 10 * time.Second,
+            Transport: &http.Transport{
+                MaxIdleConns:        100,
+                MaxIdleConnsPerHost: 20,
+                IdleConnTimeout:     90 * time.Second,
+                TLSHandshakeTimeout: 10 * time.Second,
+            },
         },
+        retryConfig: RetryConfig{
+            MaxRetries:  3,
+            InitialWait: 100 * time.Millisecond,
+            MaxWait:     2 * time.Second,
+        },
+        metrics: metrics,
     }
 }
 
@@ -3118,95 +5527,188 @@ func NewAPIServiceClient(baseURL, authToken string) *APIServiceClient {
 func (c *APIServiceClient) NotifySandboxStatus(sandbox *llmsafespacev1.Sandbox) error {
     startTime := time.Now()
     defer func() {
-        apiServiceLatencySeconds.WithLabelValues("notify_status").Observe(time.Since(startTime).Seconds())
+        c.metrics.latencySeconds.WithLabelValues("notify_status").Observe(time.Since(startTime).Seconds())
     }()
     
     url := fmt.Sprintf("%s/internal/sandboxes/%s/status", c.baseURL, sandbox.Name)
     
     payload := map[string]interface{}{
-        "status":      sandbox.Status.Phase,
-        "podName":     sandbox.Status.PodName,
+        "status":       sandbox.Status.Phase,
+        "podName":      sandbox.Status.PodName,
         "podNamespace": sandbox.Status.PodNamespace,
-        "endpoint":    sandbox.Status.Endpoint,
-        "startTime":   sandbox.Status.StartTime,
-        "conditions":  sandbox.Status.Conditions,
+        "endpoint":     sandbox.Status.Endpoint,
+        "startTime":    sandbox.Status.StartTime,
+        "conditions":   sandbox.Status.Conditions,
+        "resources":    sandbox.Status.Resources,
+        "warmPodRef":   sandbox.Status.WarmPodRef,
     }
     
     jsonPayload, err := json.Marshal(payload)
     if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("notify_status", "error").Inc()
+        c.metrics.requestsTotal.WithLabelValues("notify_status", "error").Inc()
         return fmt.Errorf("failed to marshal payload: %v", err)
     }
     
-    req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
-    if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("notify_status", "error").Inc()
-        return fmt.Errorf("failed to create request: %v", err)
+    var resp *http.Response
+    var retryCount int
+    
+    // Retry loop
+    for retryCount = 0; retryCount <= c.retryConfig.MaxRetries; retryCount++ {
+        if retryCount > 0 {
+            // Record retry attempt
+            c.metrics.retryAttemptsTotal.WithLabelValues("notify_status").Inc()
+            
+            // Wait before retrying with exponential backoff
+            waitTime := c.retryConfig.InitialWait * time.Duration(1<<uint(retryCount-1))
+            if waitTime > c.retryConfig.MaxWait {
+                waitTime = c.retryConfig.MaxWait
+            }
+            time.Sleep(waitTime)
+        }
+        
+        req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+        if err != nil {
+            continue // Retry on request creation error
+        }
+        
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        
+        // Add context with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        req = req.WithContext(ctx)
+        
+        resp, err = c.httpClient.Do(req)
+        cancel() // Cancel the context to release resources
+        
+        if err != nil {
+            klog.Warningf("API request failed (attempt %d/%d): %v", 
+                retryCount+1, c.retryConfig.MaxRetries+1, err)
+            continue // Retry on connection error
+        }
+        
+        // Break on success or non-retryable errors
+        if resp.StatusCode < 500 {
+            break
+        }
+        
+        // Close response body before retrying
+        resp.Body.Close()
     }
     
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-    
-    resp, err := c.httpClient.Do(req)
-    if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("notify_status", "error").Inc()
-        return fmt.Errorf("failed to send request: %v", err)
+    // Check if all retries were exhausted
+    if retryCount > c.retryConfig.MaxRetries {
+        c.metrics.requestsTotal.WithLabelValues("notify_status", "error").Inc()
+        return fmt.Errorf("failed to send request after %d retries", c.retryConfig.MaxRetries)
     }
+    
     defer resp.Body.Close()
     
     if resp.StatusCode != http.StatusOK {
-        apiServiceRequestsTotal.WithLabelValues("notify_status", "error").Inc()
-        return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+        c.metrics.requestsTotal.WithLabelValues("notify_status", "error").Inc()
+        
+        // Try to read error response
+        body, _ := io.ReadAll(resp.Body)
+        return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
     }
     
-    apiServiceRequestsTotal.WithLabelValues("notify_status", "success").Inc()
+    c.metrics.requestsTotal.WithLabelValues("notify_status", "success").Inc()
     return nil
 }
 
 // RequestWarmPod requests a warm pod from the API service
-func (c *APIServiceClient) RequestWarmPod(runtime, securityLevel string) (*llmsafespacev1.WarmPod, error) {
+func (c *APIServiceClient) RequestWarmPod(runtime, securityLevel string, resourceRequirements *llmsafespacev1.ResourceRequirements) (*llmsafespacev1.WarmPod, error) {
     startTime := time.Now()
     defer func() {
-        apiServiceLatencySeconds.WithLabelValues("request_warmpod").Observe(time.Since(startTime).Seconds())
+        c.metrics.latencySeconds.WithLabelValues("request_warmpod").Observe(time.Since(startTime).Seconds())
     }()
     
     url := fmt.Sprintf("%s/internal/warmpods/allocate", c.baseURL)
     
-    payload := map[string]string{
+    payload := map[string]interface{}{
         "runtime":       runtime,
         "securityLevel": securityLevel,
     }
     
+    // Add resource requirements if specified
+    if resourceRequirements != nil {
+        payload["resources"] = resourceRequirements
+    }
+    
     jsonPayload, err := json.Marshal(payload)
     if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "error").Inc()
+        c.metrics.requestsTotal.WithLabelValues("request_warmpod", "error").Inc()
         return nil, fmt.Errorf("failed to marshal payload: %v", err)
     }
     
-    req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
-    if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "error").Inc()
-        return nil, fmt.Errorf("failed to create request: %v", err)
+    var resp *http.Response
+    var retryCount int
+    
+    // Retry loop
+    for retryCount = 0; retryCount <= c.retryConfig.MaxRetries; retryCount++ {
+        if retryCount > 0 {
+            // Record retry attempt
+            c.metrics.retryAttemptsTotal.WithLabelValues("request_warmpod").Inc()
+            
+            // Wait before retrying with exponential backoff
+            waitTime := c.retryConfig.InitialWait * time.Duration(1<<uint(retryCount-1))
+            if waitTime > c.retryConfig.MaxWait {
+                waitTime = c.retryConfig.MaxWait
+            }
+            time.Sleep(waitTime)
+        }
+        
+        req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+        if err != nil {
+            continue // Retry on request creation error
+        }
+        
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        
+        // Add context with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        req = req.WithContext(ctx)
+        
+        resp, err = c.httpClient.Do(req)
+        cancel() // Cancel the context to release resources
+        
+        if err != nil {
+            klog.Warningf("API request failed (attempt %d/%d): %v", 
+                retryCount+1, c.retryConfig.MaxRetries+1, err)
+            continue // Retry on connection error
+        }
+        
+        // Break on success, not found, or non-retryable errors
+        if resp.StatusCode == http.StatusNotFound || resp.StatusCode < 500 {
+            break
+        }
+        
+        // Close response body before retrying
+        resp.Body.Close()
     }
     
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-    
-    resp, err := c.httpClient.Do(req)
-    if err != nil {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "error").Inc()
-        return nil, fmt.Errorf("failed to send request: %v", err)
+    // Check if all retries were exhausted
+    if retryCount > c.retryConfig.MaxRetries {
+        c.metrics.requestsTotal.WithLabelValues("request_warmpod", "error").Inc()
+        return nil, fmt.Errorf("failed to send request after %d retries", c.retryConfig.MaxRetries)
     }
+    
     defer resp.Body.Close()
     
     if resp.StatusCode == http.StatusNotFound {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "not_found").Inc()
+        c.metrics.requestsTotal.WithLabelValues("request_warmpod", "not_found").Inc()
         return nil, nil // No warm pod available
     }
     
     if resp.StatusCode != http.StatusOK {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "error").Inc()
-        return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+        c.metrics.requestsTotal.WithLabelValues("request_warmpod", "error").Inc()
+        
+        // Try to read error response
+        body, _ := io.ReadAll(resp.Body)
+        return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
     }
     
     var result struct {
@@ -3214,12 +5716,309 @@ func (c *APIServiceClient) RequestWarmPod(runtime, securityLevel string) (*llmsa
     }
     
     if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-        apiServiceRequestsTotal.WithLabelValues("request_warmpod", "error").Inc()
+        c.metrics.requestsTotal.WithLabelValues("request_warmpod", "error").Inc()
         return nil, fmt.Errorf("failed to decode response: %v", err)
     }
     
-    apiServiceRequestsTotal.WithLabelValues("request_warmpod", "success").Inc()
+    c.metrics.requestsTotal.WithLabelValues("request_warmpod", "success").Inc()
     return result.WarmPod, nil
+}
+
+// ReleaseWarmPod notifies the API service that a warm pod has been released
+func (c *APIServiceClient) ReleaseWarmPod(warmPodName, warmPodNamespace string, recycled bool) error {
+    startTime := time.Now()
+    defer func() {
+        c.metrics.latencySeconds.WithLabelValues("release_warmpod").Observe(time.Since(startTime).Seconds())
+    }()
+    
+    url := fmt.Sprintf("%s/internal/warmpods/release", c.baseURL)
+    
+    payload := map[string]interface{}{
+        "name":      warmPodName,
+        "namespace": warmPodNamespace,
+        "recycled":  recycled,
+    }
+    
+    jsonPayload, err := json.Marshal(payload)
+    if err != nil {
+        c.metrics.requestsTotal.WithLabelValues("release_warmpod", "error").Inc()
+        return fmt.Errorf("failed to marshal payload: %v", err)
+    }
+    
+    var resp *http.Response
+    var retryCount int
+    
+    // Retry loop
+    for retryCount = 0; retryCount <= c.retryConfig.MaxRetries; retryCount++ {
+        if retryCount > 0 {
+            // Record retry attempt
+            c.metrics.retryAttemptsTotal.WithLabelValues("release_warmpod").Inc()
+            
+            // Wait before retrying with exponential backoff
+            waitTime := c.retryConfig.InitialWait * time.Duration(1<<uint(retryCount-1))
+            if waitTime > c.retryConfig.MaxWait {
+                waitTime = c.retryConfig.MaxWait
+            }
+            time.Sleep(waitTime)
+        }
+        
+        req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+        if err != nil {
+            continue // Retry on request creation error
+        }
+        
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        
+        // Add context with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        req = req.WithContext(ctx)
+        
+        resp, err = c.httpClient.Do(req)
+        cancel() // Cancel the context to release resources
+        
+        if err != nil {
+            klog.Warningf("API request failed (attempt %d/%d): %v", 
+                retryCount+1, c.retryConfig.MaxRetries+1, err)
+            continue // Retry on connection error
+        }
+        
+        // Break on success or non-retryable errors
+        if resp.StatusCode < 500 {
+            break
+        }
+        
+        // Close response body before retrying
+        resp.Body.Close()
+    }
+    
+    // Check if all retries were exhausted
+    if retryCount > c.retryConfig.MaxRetries {
+        c.metrics.requestsTotal.WithLabelValues("release_warmpod", "error").Inc()
+        return fmt.Errorf("failed to send request after %d retries", c.retryConfig.MaxRetries)
+    }
+    
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK {
+        c.metrics.requestsTotal.WithLabelValues("release_warmpod", "error").Inc()
+        
+        // Try to read error response
+        body, _ := io.ReadAll(resp.Body)
+        return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+    }
+    
+    c.metrics.requestsTotal.WithLabelValues("release_warmpod", "success").Inc()
+    return nil
+}
+
+// GetWarmPoolStats gets statistics about warm pools from the API service
+func (c *APIServiceClient) GetWarmPoolStats() (map[string]interface{}, error) {
+    startTime := time.Now()
+    defer func() {
+        c.metrics.latencySeconds.WithLabelValues("get_warmpool_stats").Observe(time.Since(startTime).Seconds())
+    }()
+    
+    url := fmt.Sprintf("%s/internal/warmpools/stats", c.baseURL)
+    
+    var resp *http.Response
+    var retryCount int
+    
+    // Retry loop
+    for retryCount = 0; retryCount <= c.retryConfig.MaxRetries; retryCount++ {
+        if retryCount > 0 {
+            // Record retry attempt
+            c.metrics.retryAttemptsTotal.WithLabelValues("get_warmpool_stats").Inc()
+            
+            // Wait before retrying with exponential backoff
+            waitTime := c.retryConfig.InitialWait * time.Duration(1<<uint(retryCount-1))
+            if waitTime > c.retryConfig.MaxWait {
+                waitTime = c.retryConfig.MaxWait
+            }
+            time.Sleep(waitTime)
+        }
+        
+        req, err := http.NewRequest("GET", url, nil)
+        if err != nil {
+            continue // Retry on request creation error
+        }
+        
+        req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        
+        // Add context with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        req = req.WithContext(ctx)
+        
+        resp, err = c.httpClient.Do(req)
+        cancel() // Cancel the context to release resources
+        
+        if err != nil {
+            klog.Warningf("API request failed (attempt %d/%d): %v", 
+                retryCount+1, c.retryConfig.MaxRetries+1, err)
+            continue // Retry on connection error
+        }
+        
+        // Break on success or non-retryable errors
+        if resp.StatusCode < 500 {
+            break
+        }
+        
+        // Close response body before retrying
+        resp.Body.Close()
+    }
+    
+    // Check if all retries were exhausted
+    if retryCount > c.retryConfig.MaxRetries {
+        c.metrics.requestsTotal.WithLabelValues("get_warmpool_stats", "error").Inc()
+        return nil, fmt.Errorf("failed to send request after %d retries", c.retryConfig.MaxRetries)
+    }
+    
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK {
+        c.metrics.requestsTotal.WithLabelValues("get_warmpool_stats", "error").Inc()
+        
+        // Try to read error response
+        body, _ := io.ReadAll(resp.Body)
+        return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+    }
+    
+    var result map[string]interface{}
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        c.metrics.requestsTotal.WithLabelValues("get_warmpool_stats", "error").Inc()
+        return nil, fmt.Errorf("failed to decode response: %v", err)
+    }
+    
+    c.metrics.requestsTotal.WithLabelValues("get_warmpool_stats", "success").Inc()
+    return result, nil
+}
+
+// ReportSecurityEvent reports a security event to the API service
+func (c *APIServiceClient) ReportSecurityEvent(sandboxID string, eventType string, severity string, details map[string]interface{}) error {
+    startTime := time.Now()
+    defer func() {
+        c.metrics.latencySeconds.WithLabelValues("report_security_event").Observe(time.Since(startTime).Seconds())
+    }()
+    
+    url := fmt.Sprintf("%s/internal/security/events", c.baseURL)
+    
+    payload := map[string]interface{}{
+        "sandboxID": sandboxID,
+        "eventType": eventType,
+        "severity":  severity,
+        "details":   details,
+        "timestamp": time.Now().Format(time.RFC3339),
+    }
+    
+    jsonPayload, err := json.Marshal(payload)
+    if err != nil {
+        c.metrics.requestsTotal.WithLabelValues("report_security_event", "error").Inc()
+        return fmt.Errorf("failed to marshal payload: %v", err)
+    }
+    
+    var resp *http.Response
+    var retryCount int
+    
+    // Retry loop
+    for retryCount = 0; retryCount <= c.retryConfig.MaxRetries; retryCount++ {
+        if retryCount > 0 {
+            // Record retry attempt
+            c.metrics.retryAttemptsTotal.WithLabelValues("report_security_event").Inc()
+            
+            // Wait before retrying with exponential backoff
+            waitTime := c.retryConfig.InitialWait * time.Duration(1<<uint(retryCount-1))
+            if waitTime > c.retryConfig.MaxWait {
+                waitTime = c.retryConfig.MaxWait
+            }
+            time.Sleep(waitTime)
+        }
+        
+        req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+        if err != nil {
+            continue // Retry on request creation error
+        }
+        
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        
+        // Add context with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        req = req.WithContext(ctx)
+        
+        resp, err = c.httpClient.Do(req)
+        cancel() // Cancel the context to release resources
+        
+        if err != nil {
+            klog.Warningf("API request failed (attempt %d/%d): %v", 
+                retryCount+1, c.retryConfig.MaxRetries+1, err)
+            continue // Retry on connection error
+        }
+        
+        // Break on success or non-retryable errors
+        if resp.StatusCode < 500 {
+            break
+        }
+        
+        // Close response body before retrying
+        resp.Body.Close()
+    }
+    
+    // Check if all retries were exhausted
+    if retryCount > c.retryConfig.MaxRetries {
+        c.metrics.requestsTotal.WithLabelValues("report_security_event", "error").Inc()
+        return fmt.Errorf("failed to send request after %d retries", c.retryConfig.MaxRetries)
+    }
+    
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+        c.metrics.requestsTotal.WithLabelValues("report_security_event", "error").Inc()
+        
+        // Try to read error response
+        body, _ := io.ReadAll(resp.Body)
+        return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+    }
+    
+    c.metrics.requestsTotal.WithLabelValues("report_security_event", "success").Inc()
+    return nil
+}
+
+// NewAPIServiceMetrics creates a new APIServiceMetrics instance
+func NewAPIServiceMetrics() *APIServiceMetrics {
+    return &APIServiceMetrics{
+        requestsTotal: prometheus.NewCounterVec(
+            prometheus.CounterOpts{
+                Name: "llmsafespace_api_service_requests_total",
+                Help: "Total number of requests to the API service",
+            },
+            []string{"request_type", "status"},
+        ),
+        latencySeconds: prometheus.NewHistogramVec(
+            prometheus.HistogramOpts{
+                Name: "llmsafespace_api_service_latency_seconds",
+                Help: "Latency of API service requests",
+                Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+            },
+            []string{"request_type"},
+        ),
+        retryAttemptsTotal: prometheus.NewCounterVec(
+            prometheus.CounterOpts{
+                Name: "llmsafespace_api_service_retry_attempts_total",
+                Help: "Total number of retry attempts for API service requests",
+            },
+            []string{"request_type"},
+        ),
+    }
+}
+
+// RegisterMetrics registers the API service metrics with Prometheus
+func (m *APIServiceMetrics) RegisterMetrics() {
+    prometheus.MustRegister(m.requestsTotal)
+    prometheus.MustRegister(m.latencySeconds)
+    prometheus.MustRegister(m.retryAttemptsTotal)
 }
 
 // processNextWorkItem processes the next item from the work queue
@@ -3339,6 +6138,7 @@ func setupMetrics() {
 
 // Metric definitions
 var (
+    // Sandbox metrics
     sandboxesCreatedTotal = prometheus.NewCounter(
         prometheus.CounterOpts{
             Name: "llmsafespace_sandboxes_created_total",
@@ -3353,13 +6153,267 @@ var (
         },
     )
     
-    sandboxesFailedTotal = prometheus.NewCounter(
+    sandboxesFailedTotal = prometheus.NewCounterVec(
         prometheus.CounterOpts{
             Name: "llmsafespace_sandboxes_failed_total",
             Help: "Total number of sandboxes that failed to create",
         },
+        []string{"reason"},
     )
     
+    sandboxStartupDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_sandbox_startup_duration_seconds",
+            Help: "Time taken for a sandbox to start up",
+            Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60},
+        },
+        []string{"runtime", "warm_pod_used"},
+    )
+    
+    sandboxExecutionsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_sandbox_executions_total",
+            Help: "Total number of code/command executions in sandboxes",
+        },
+        []string{"runtime", "execution_type", "status"},
+    )
+    
+    sandboxExecutionDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_sandbox_execution_duration_seconds",
+            Help: "Duration of code/command executions in sandboxes",
+            Buckets: prometheus.ExponentialBuckets(0.01, 2, 15),
+        },
+        []string{"runtime", "execution_type"},
+    )
+    
+    // Warm pool metrics
+    warmPoolsCreatedTotal = prometheus.NewCounter(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpools_created_total",
+            Help: "Total number of warm pools created",
+        },
+    )
+    
+    warmPoolsDeletedTotal = prometheus.NewCounter(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpools_deleted_total",
+            Help: "Total number of warm pools deleted",
+        },
+    )
+    
+    warmPoolSizeGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_warmpool_size",
+            Help: "Current size of warm pools",
+        },
+        []string{"pool", "runtime", "status"},
+    )
+    
+    warmPoolUtilizationGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_warmpool_utilization",
+            Help: "Utilization ratio of warm pools (assigned pods / total pods)",
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolAssignmentDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpool_assignment_duration_seconds",
+            Help: "Time taken to assign a warm pod to a sandbox",
+            Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolCreationDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpool_creation_duration_seconds",
+            Help: "Time taken to create a warm pod",
+            Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30},
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolRecycleTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpool_recycle_total",
+            Help: "Total number of warm pods recycled",
+        },
+        []string{"pool", "runtime", "success"},
+    )
+    
+    warmPoolRecycleDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpool_recycle_duration_seconds",
+            Help: "Time taken to recycle a warm pod",
+            Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30},
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolHitRatio = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_warmpool_hit_ratio",
+            Help: "Ratio of sandbox creations that used a warm pod",
+        },
+        []string{"runtime"},
+    )
+    
+    warmPoolPodsDeletedTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpool_pods_deleted_total",
+            Help: "Total number of warm pods deleted",
+        },
+        []string{"pool", "runtime", "reason"},
+    )
+    
+    warmPoolScalingOperationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpool_scaling_operations_total",
+            Help: "Total number of warm pool scaling operations",
+        },
+        []string{"pool", "runtime", "operation"},
+    )
+    
+    warmPodRecycleDecisionDurationSeconds = prometheus.NewHistogram(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpod_recycle_decision_duration_seconds",
+            Help: "Time taken to decide whether to recycle a warm pod",
+            Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5},
+        },
+    )
+    
+    warmPodRecycleDecisionsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpod_recycle_decisions_total",
+            Help: "Total number of warm pod recycle decisions",
+        },
+        []string{"reason", "decision"},
+    )
+    
+    // Runtime environment metrics
+    runtimeEnvironmentValidationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_runtime_environment_validations_total",
+            Help: "Total number of runtime environment validations",
+        },
+        []string{"language", "version", "result"},
+    )
+    
+    runtimeEnvironmentUsageTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_runtime_environment_usage_total",
+            Help: "Total number of times each runtime environment is used",
+        },
+        []string{"language", "version"},
+    )
+    
+    // Sandbox profile metrics
+    sandboxProfileValidationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_sandbox_profile_validations_total",
+            Help: "Total number of sandbox profile validations",
+        },
+        []string{"language", "security_level"},
+    )
+    
+    sandboxProfileUsageTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_sandbox_profile_usage_total",
+            Help: "Total number of times each sandbox profile is used",
+        },
+        []string{"profile", "namespace"},
+    )
+    
+    // Security metrics
+    securityEventsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_security_events_total",
+            Help: "Total number of security events detected",
+        },
+        []string{"event_type", "severity", "runtime"},
+    )
+    
+    seccompViolationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_seccomp_violations_total",
+            Help: "Total number of seccomp violations",
+        },
+        []string{"syscall", "runtime", "action"},
+    )
+    
+    networkViolationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_network_violations_total",
+            Help: "Total number of network policy violations",
+        },
+        []string{"direction", "destination", "runtime"},
+    )
+    
+    // Resource usage metrics
+    resourceUsageGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_resource_usage",
+            Help: "Resource usage by sandboxes and warm pools",
+        },
+        []string{"resource_type", "component", "namespace"},
+    )
+    
+    resourceLimitUtilizationGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_resource_limit_utilization",
+            Help: "Resource utilization as a percentage of limit",
+        },
+        []string{"resource_type", "sandbox_id", "namespace"},
+    )
+    
+    // API service integration metrics
+    apiServiceRequestsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_api_service_requests_total",
+            Help: "Total number of requests from the API service",
+        },
+        []string{"request_type", "status"},
+    )
+    
+    apiServiceLatencySeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_api_service_latency_seconds",
+            Help: "Latency of API service requests",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"request_type"},
+    )
+    
+    // Volume metrics
+    volumeOperationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_volume_operations_total",
+            Help: "Total number of volume operations",
+        },
+        []string{"operation", "status"},
+    )
+    
+    persistentVolumeUsageGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_persistent_volume_usage_bytes",
+            Help: "Usage of persistent volumes in bytes",
+        },
+        []string{"sandbox_id", "namespace"},
+    )
+    
+    // Network policy metrics
+    networkPolicyOperationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_network_policy_operations_total",
+            Help: "Total number of network policy operations",
+        },
+        []string{"operation", "status"},
+    )
+    
+    // Controller metrics
     reconciliationDurationSeconds = prometheus.NewHistogramVec(
         prometheus.HistogramOpts{
             Name: "llmsafespace_reconciliation_duration_seconds",
@@ -3403,110 +6457,20 @@ var (
         []string{"queue"},
     )
     
-    // Warm pool metrics
-    warmPoolSizeGauge = prometheus.NewGaugeVec(
+    controllerSyncCountTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_controller_sync_count_total",
+            Help: "Total number of sync operations performed by the controller",
+        },
+        []string{"resource"},
+    )
+    
+    controllerResourceCountGauge = prometheus.NewGaugeVec(
         prometheus.GaugeOpts{
-            Name: "llmsafespace_warmpool_size",
-            Help: "Current size of warm pools",
+            Name: "llmsafespace_controller_resource_count",
+            Help: "Current count of resources managed by the controller",
         },
-        []string{"pool", "runtime", "status"},
-    )
-    
-    warmPoolAssignmentDurationSeconds = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name: "llmsafespace_warmpool_assignment_duration_seconds",
-            Help: "Time taken to assign a warm pod to a sandbox",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"pool", "runtime"},
-    )
-    
-    warmPoolCreationDurationSeconds = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name: "llmsafespace_warmpool_creation_duration_seconds",
-            Help: "Time taken to create a warm pod",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"pool", "runtime"},
-    )
-    
-    warmPoolRecycleTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "llmsafespace_warmpool_recycle_total",
-            Help: "Total number of warm pods recycled",
-        },
-        []string{"pool", "runtime", "success"},
-    )
-    
-    warmPoolRecycleDurationSeconds = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name: "llmsafespace_warmpool_recycle_duration_seconds",
-            Help: "Time taken to recycle a warm pod",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"pool", "runtime"},
-    )
-    
-    warmPoolHitRatio = prometheus.NewGaugeVec(
-        prometheus.GaugeOpts{
-            Name: "llmsafespace_warmpool_hit_ratio",
-            Help: "Ratio of sandbox creations that used a warm pod",
-        },
-        []string{"runtime"},
-    )
-    
-    // Security metrics
-    securityEventsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "llmsafespace_security_events_total",
-            Help: "Total number of security events detected",
-        },
-        []string{"event_type", "severity", "runtime"},
-    )
-    
-    // Resource usage metrics
-    resourceUsageGauge = prometheus.NewGaugeVec(
-        prometheus.GaugeOpts{
-            Name: "llmsafespace_resource_usage",
-            Help: "Resource usage by sandboxes and warm pools",
-        },
-        []string{"resource_type", "component", "namespace"},
-    )
-    
-    // API service integration metrics
-    apiServiceRequestsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "llmsafespace_api_service_requests_total",
-            Help: "Total number of requests from the API service",
-        },
-        []string{"request_type", "status"},
-    )
-    
-    apiServiceLatencySeconds = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name: "llmsafespace_api_service_latency_seconds",
-            Help: "Latency of API service requests",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"request_type"},
-    )
-    
-    // Volume metrics
-    volumeOperationsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "llmsafespace_volume_operations_total",
-            Help: "Total number of volume operations",
-        },
-        []string{"operation", "status"},
-    )
-    
-    // Network policy metrics
-    networkPolicyOperationsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "llmsafespace_network_policy_operations_total",
-            Help: "Total number of network policy operations",
-        },
-        []string{"operation", "status"},
+        []string{"resource"},
     )
 )
 ```
@@ -3649,37 +6613,174 @@ func setupLeaderElection(kubeClient kubernetes.Interface, controller *Controller
 // Shutdown performs a graceful shutdown of the controller
 func (c *Controller) Shutdown() error {
     klog.Info("Shutting down controller")
+    shutdownStartTime := time.Now()
+    
+    // Signal active reconciliations to stop
+    close(c.stopCh)
+    
+    // Set shutdown flag to prevent new reconciliations
+    atomic.StoreInt32(&c.isShuttingDown, 1)
+    
+    // Wait for active reconciliations to complete with timeout
+    shutdownTimeout := c.config.ShutdownTimeoutSeconds
+    if shutdownTimeout <= 0 {
+        shutdownTimeout = 30 // Default 30 seconds
+    }
+    
+    // Create a context with timeout for shutdown operations
+    ctx, cancel := context.WithTimeout(context.Background(), time.Duration(shutdownTimeout)*time.Second)
+    defer cancel()
+    
+    // Wait for active reconciliations to complete
+    klog.Infof("Waiting for %d active reconciliations to complete", c.activeReconciliations.Load())
+    
+    // Create a ticker to log progress
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+    
+    // Wait for active reconciliations to complete or timeout
+    for c.activeReconciliations.Load() > 0 {
+        select {
+        case <-ctx.Done():
+            klog.Warningf("Shutdown timeout reached with %d active reconciliations still running", 
+                c.activeReconciliations.Load())
+            goto shutdownContinue
+        case <-ticker.C:
+            klog.Infof("Still waiting for %d active reconciliations to complete", 
+                c.activeReconciliations.Load())
+        case <-time.After(100 * time.Millisecond):
+            // Check frequently but don't spam logs
+        }
+    }
+    
+shutdownContinue:
+    // Wait for work queue to drain with timeout
+    klog.Info("Shutting down work queue")
+    c.workqueue.ShutDown()
+    
+    // Wait for queue to drain with timeout
+    queueDrainCtx, queueDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer queueDrainCancel()
+    
+    ticker = time.NewTicker(1 * time.Second)
+    defer ticker.Stop()
+    
+    for c.workqueue.Len() > 0 {
+        select {
+        case <-queueDrainCtx.Done():
+            klog.Warningf("Queue drain timeout reached with %d items still in queue", 
+                c.workqueue.Len())
+            break
+        case <-ticker.C:
+            klog.Infof("Still waiting for work queue to drain, %d items remaining", 
+                c.workqueue.Len())
+        }
+    }
+    
+    klog.Info("Work queue shut down")
     
     // Execute all registered shutdown handlers
     var shutdownErrors []error
     for _, handler := range c.shutdownHandlers {
-        if err := handler(); err != nil {
-            shutdownErrors = append(shutdownErrors, err)
-            klog.Errorf("Error during shutdown: %v", err)
+        handlerName := runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()
+        klog.Infof("Executing shutdown handler: %s", handlerName)
+        
+        handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer handlerCancel()
+        
+        // Create a channel to receive the handler result
+        resultCh := make(chan error, 1)
+        
+        // Execute the handler in a goroutine
+        go func() {
+            resultCh <- handler()
+        }()
+        
+        // Wait for the handler to complete or timeout
+        select {
+        case err := <-resultCh:
+            if err != nil {
+                shutdownErrors = append(shutdownErrors, fmt.Errorf("%s: %v", handlerName, err))
+                klog.Errorf("Error in shutdown handler %s: %v", handlerName, err)
+            }
+        case <-handlerCtx.Done():
+            shutdownErrors = append(shutdownErrors, fmt.Errorf("%s: timed out", handlerName))
+            klog.Errorf("Shutdown handler %s timed out", handlerName)
         }
     }
     
-    // Wait for work queue to drain
-    c.workqueue.ShutDown()
-    klog.Info("Work queue shut down")
+    // Close connections to the Kubernetes API server
+    klog.Info("Closing Kubernetes API connections")
+    if c.kubeClient != nil {
+        if restClient, ok := c.kubeClient.(*rest.RESTClient); ok {
+            restClient.Close()
+        }
+    }
     
-    // Wait for in-progress reconciliations to complete
-    // This could be implemented with a wait group that tracks active reconciliations
+    // Close metrics server if running
+    if c.metricsServer != nil {
+        klog.Info("Stopping metrics server")
+        if err := c.metricsServer.Close(); err != nil {
+            shutdownErrors = append(shutdownErrors, fmt.Errorf("metrics server: %v", err))
+            klog.Errorf("Error stopping metrics server: %v", err)
+        }
+    }
     
     // Log final metrics before shutdown
     workqueueDepthGauge.WithLabelValues("controller").Set(0)
+    
+    // Record shutdown duration
+    shutdownDuration := time.Since(shutdownStartTime)
+    klog.Infof("Controller shutdown completed in %v", shutdownDuration)
     
     if len(shutdownErrors) > 0 {
         return fmt.Errorf("errors during shutdown: %v", shutdownErrors)
     }
     
-    klog.Info("Controller shutdown completed successfully")
     return nil
 }
 
 // RegisterShutdownHandler registers a function to be called during shutdown
 func (c *Controller) RegisterShutdownHandler(handler func() error) {
     c.shutdownHandlers = append(c.shutdownHandlers, handler)
+}
+
+// SetupSignalHandler sets up signal handling for graceful shutdown
+func (c *Controller) SetupSignalHandler() {
+    // Set up signal handling
+    signalCh := make(chan os.Signal, 2)
+    signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        sig := <-signalCh
+        klog.Infof("Received signal: %v", sig)
+        klog.Info("Initiating graceful shutdown")
+        
+        // Start shutdown process
+        if err := c.Shutdown(); err != nil {
+            klog.Errorf("Error during shutdown: %v", err)
+            os.Exit(1)
+        }
+        
+        klog.Info("Graceful shutdown completed successfully")
+        os.Exit(0)
+    }()
+}
+
+// beginReconciliation marks the start of a reconciliation and increments the active count
+func (c *Controller) beginReconciliation(resource string) {
+    c.activeReconciliations.Add(1)
+    controllerSyncCountTotal.WithLabelValues(resource).Inc()
+}
+
+// endReconciliation marks the end of a reconciliation and decrements the active count
+func (c *Controller) endReconciliation() {
+    c.activeReconciliations.Add(-1)
+}
+
+// isShuttingDown returns true if the controller is in the process of shutting down
+func (c *Controller) isShuttingDown() bool {
+    return atomic.LoadInt32(&c.isShuttingDown) == 1
 }
 ```
 
