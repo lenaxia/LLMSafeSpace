@@ -16,15 +16,16 @@ SecureAgent provides a secure, isolated environment for executing code from LLM 
 - Integrates with Kubernetes API for sandbox orchestration
 - Coordinates warm pool usage for faster sandbox creation
 
-#### `controller`
+#### `sandbox-controller`
 - Unified Kubernetes operator that manages all custom resources
-- Creates and manages sandbox pods and warm pools
+- Creates and manages sandbox pods with integrated warm pool support
 - Implements security policies and resource limits
 - Handles template management and caching
 - Maintains pools of pre-initialized sandbox environments
 - Ensures minimum number of warm pods are always available
 - Handles recycling of used pods when appropriate
 - Implements auto-scaling based on usage patterns
+- Provides seamless coordination between sandbox creation and warm pod allocation
 
 #### `execution-runtime`
 - Container image for code execution environments
@@ -48,7 +49,7 @@ src/
 │       ├── auth/             # Authentication and authorization
 │       ├── handlers/         # API endpoint handlers
 │       └── k8s/              # Kubernetes integration
-├── controller/               # Unified Kubernetes operator
+├── sandbox-controller/       # Unified Kubernetes operator
 │   ├── Dockerfile
 │   ├── main.go
 │   └── internal/
@@ -56,6 +57,7 @@ src/
 │       ├── resources/        # CRD definitions
 │       ├── sandbox/          # Sandbox reconciliation logic
 │       ├── warmpool/         # Warm pool reconciliation logic
+│       ├── warmpod/          # Warm pod reconciliation logic
 │       └── common/           # Shared utilities and components
 ├── runtimes/                 # Execution environment images
 │   ├── base/                 # Base image with common tools
@@ -130,7 +132,7 @@ SecureAgent uses custom resources to manage sandboxes and warm pools:
 
 ```yaml
 # Sandbox resource
-apiVersion: agent.example.com/v1
+apiVersion: llmsafespace.dev/v1
 kind: Sandbox
 metadata:
   name: sandbox-12345
@@ -142,6 +144,7 @@ spec:
     memory: "1Gi"
   timeout: 300
   user: "user-123"
+  securityLevel: "standard"
   securityContext:
     runAsNonRoot: true
     seccompProfile:
@@ -158,7 +161,7 @@ status:
 
 ```yaml
 # WarmPool resource
-apiVersion: agent.example.com/v1
+apiVersion: llmsafespace.dev/v1
 kind: WarmPool
 metadata:
   name: python-pool
@@ -171,6 +174,12 @@ spec:
   preloadPackages:
     - numpy
     - pandas
+  preloadScripts:
+    - name: init-data
+      content: |
+        import numpy as np
+        np.random.seed(42)
+        print("Preloaded numpy with fixed seed")
   autoScaling:
     enabled: true
     targetUtilization: 80
@@ -180,6 +189,35 @@ status:
   assignedPods: 2
   pendingPods: 0
   lastScaleTime: "2023-07-01T10:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: PoolReady
+      message: "Warm pool is ready"
+      lastTransitionTime: "2023-07-01T10:05:00Z"
+```
+
+```yaml
+# WarmPod resource
+apiVersion: llmsafespace.dev/v1
+kind: WarmPod
+metadata:
+  name: python-pool-abc123
+  namespace: warm-pools
+  labels:
+    app: llmsafespace
+    component: warmpod
+    pool: python-pool
+spec:
+  poolRef:
+    name: python-pool
+    namespace: warm-pools
+  creationTimestamp: "2023-07-01T09:55:00Z"
+  lastHeartbeat: "2023-07-01T10:00:00Z"
+status:
+  phase: Ready
+  podName: python-pool-pod-abc123
+  podNamespace: warm-pools
 ```
 
 ## Security Features
@@ -312,14 +350,15 @@ Current sandboxes are ephemeral by default, which is appropriate for most LLM ag
 
 ### 2. Warm Pool Optimizations
 
-While the current warm pool implementation significantly improves startup times, there are several optimizations planned:
+The unified sandbox-controller significantly improves warm pool management, but there are several additional optimizations planned:
 
 **Planned Enhancements:**
-- Predictive scaling based on usage patterns
-- More sophisticated pod recycling strategies
-- Custom image preloading for specific use cases
-- Warm pool metrics and analytics dashboard
-- Multi-region warm pool distribution
+- Predictive scaling based on usage patterns and time-of-day trends
+- More sophisticated pod recycling strategies with security verification
+- Custom image preloading for specific use cases with dependency analysis
+- Warm pool metrics and analytics dashboard with efficiency reporting
+- Multi-region warm pool distribution with locality awareness
+- Intelligent pod allocation based on workload characteristics
 
 ### 3. Inter-Sandbox Communication
 
