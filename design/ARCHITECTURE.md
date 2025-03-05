@@ -15,22 +15,18 @@ SecureAgent consists of three primary components that work together to provide s
    - Maintains session state and user context
    - Coordinates warm pool usage for faster sandbox creation
 
-2. **Sandbox Controller (`sandbox-controller`)**
-   - Kubernetes operator that implements the control loop for custom resources
-   - Manages the lifecycle of sandbox pods and related resources
+2. **Combined Controller (`controller`)**
+   - Unified Kubernetes operator that implements control loops for all custom resources
+   - Manages the lifecycle of sandboxes, warm pools, and warm pods
    - Enforces security policies, resource limits, and isolation boundaries
    - Handles template management and runtime environment selection
-   - Updates status information for sandbox resources
+   - Updates status information for all managed resources
    - Implements reconciliation logic for desired vs. actual state
-   - Manages warm pools and warm pods for improved startup performance
-
-3. **Warm Pool Controller**
    - Maintains pools of pre-initialized sandbox environments
    - Ensures minimum number of warm pods are always available
    - Handles recycling of used pods when appropriate
-   - Manages pod lifecycle (creation, assignment, recycling, termination)
    - Implements auto-scaling based on usage patterns
-   - Coordinates with Sandbox Controller for pod assignment
+   - Coordinates warm pod allocation to sandboxes
 
 4. **Execution Runtime (`execution-runtime`)**
    - Container images for various language environments (Python, Node.js, etc.)
@@ -63,30 +59,27 @@ SecureAgent consists of three primary components that work together to provide s
    - Requests are validated and authorized before processing
    - Real-time output is streamed via WebSockets
 
-2. **API Service to Sandbox Controller**:
+2. **API Service to Combined Controller**:
    - API service creates/updates Kubernetes custom resources (CRs)
    - Controller watches for changes to these resources
    - Status updates flow back from controller to API service
    - API service requests warm pods when available
 
-3. **API Service to Warm Pool Controller**:
-   - API service queries for available warm pods
-   - Warm pool controller assigns pods to sandboxes
-   - Status updates flow back from warm pool controller to API service
+3. **Combined Controller Internal Coordination**:
+   - Unified controller manages all resource types with shared utilities
+   - Warm pod allocation is handled internally without cross-controller communication
+   - Single work queue processes all resource types with appropriate handlers
+   - Shared components handle common tasks like pod creation and security configuration
+   - Integrated metrics collection for all resource types
 
-4. **Warm Pool Controller to Sandbox Controller**:
-   - Warm pool controller manages warm pod lifecycle
-   - Sandbox controller adopts warm pods for sandbox use
-   - Coordination for pod recycling and cleanup
-
-5. **Sandbox Controller to Runtime**:
+4. **Combined Controller to Runtime**:
    - Controller creates pods with appropriate runtime images
    - Security contexts and resource limits are applied
    - Network policies and service accounts are configured
    - Volume mounts are set up for code and data
    - Reuses warm pods when available
 
-6. **Runtime to API Service**:
+5. **Runtime to API Service**:
    - Execution results are sent back to the API service
    - Logs and metrics are collected for monitoring
    - File operations are proxied through the API service
@@ -130,7 +123,7 @@ SecureAgent is designed as a Kubernetes-native application with the following de
 │                                                                     │
 │  ┌─────────────────┐      ┌─────────────────┐    ┌──────────────┐   │
 │  │                 │      │                 │    │              │   │
-│  │   Agent API     │◄────►│    Sandbox      │◄──►│  PostgreSQL  │   │
+│  │   Agent API     │◄────►│    Combined     │◄──►│  PostgreSQL  │   │
 │  │   Service       │      │   Controller    │    │              │   │
 │  │                 │◄────►│                 │    └──────────────┘   │
 │  └────────┬────────┘      └────────┬────────┘                      │
@@ -141,14 +134,6 @@ SecureAgent is designed as a Kubernetes-native application with the following de
 │           │                        │           └──────────────┘    │
 │           │                        │                               │
 │           │                        ▼                               │
-│           │            ┌─────────────────────┐                     │
-│           │            │                     │                     │
-│           │            │    Warm Pool        │                     │
-│           │            │    Controller       │                     │
-│           │            │                     │                     │
-│           │            └─────────┬───────────┘                     │
-│           │                      │                                 │
-│           │                      ▼                                 │
 │           │            ┌─────────────────────┐                     │
 │           │            │   Warm Pod Pools    │                     │
 │           │            │                     │                     │
@@ -265,10 +250,10 @@ SecureAgent provides predefined security configurations:
    - Installation results are returned to SDK
 
 4. **Warm Pool Flow**:
-   - Warm pool controller maintains pools of pre-initialized pods
+   - Combined controller maintains pools of pre-initialized pods
    - When SDK requests a sandbox, API service checks for matching warm pods
    - If available, warm pod is assigned to the sandbox
-   - Sandbox controller adopts the warm pod and configures it for the specific sandbox
+   - Combined controller adopts the warm pod and configures it for the specific sandbox
    - When sandbox is terminated, pod may be recycled back to warm pool if appropriate
 
 ## Conclusion

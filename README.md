@@ -16,19 +16,15 @@ SecureAgent provides a secure, isolated environment for executing code from LLM 
 - Integrates with Kubernetes API for sandbox orchestration
 - Coordinates warm pool usage for faster sandbox creation
 
-#### `sandbox-controller`
-- Kubernetes operator that manages sandbox resources
-- Creates and manages pods for code execution
+#### `controller`
+- Unified Kubernetes operator that manages all custom resources
+- Creates and manages sandbox pods and warm pools
 - Implements security policies and resource limits
 - Handles template management and caching
-- Manages warm pools for improved startup performance
-
-#### `warm-pool-controller`
 - Maintains pools of pre-initialized sandbox environments
 - Ensures minimum number of warm pods are always available
 - Handles recycling of used pods when appropriate
 - Implements auto-scaling based on usage patterns
-- Coordinates with Sandbox Controller for pod assignment
 
 #### `execution-runtime`
 - Container image for code execution environments
@@ -52,12 +48,15 @@ src/
 │       ├── auth/             # Authentication and authorization
 │       ├── handlers/         # API endpoint handlers
 │       └── k8s/              # Kubernetes integration
-├── controller/               # Kubernetes operator for sandbox management
+├── controller/               # Unified Kubernetes operator
 │   ├── Dockerfile
 │   ├── main.go
 │   └── internal/
-│       ├── controller/       # Custom resource controller
-│       └── resources/        # CRD definitions
+│       ├── controller/       # Combined resource controller
+│       ├── resources/        # CRD definitions
+│       ├── sandbox/          # Sandbox reconciliation logic
+│       ├── warmpool/         # Warm pool reconciliation logic
+│       └── common/           # Shared utilities and components
 ├── runtimes/                 # Execution environment images
 │   ├── base/                 # Base image with common tools
 │   ├── python/               # Python runtime
