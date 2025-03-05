@@ -230,27 +230,46 @@ spec:
 
 ## 2. Controller Changes
 
-### WarmPool Controller
+### Sandbox Controller with Warm Pool Support
 
-The WarmPool controller manages the lifecycle of warm pools:
+The Sandbox Controller will be enhanced to manage both sandboxes and warm pools in a unified way:
 
 ```go
-// WarmPoolController manages the lifecycle of warm pools
-type WarmPoolController struct {
+// Controller manages the lifecycle of sandboxes and warm pools
+type Controller struct {
     kubeClient        kubernetes.Interface
     llmsafespaceClient clientset.Interface
+    
+    // Informers and listers for all resource types
+    sandboxInformer   informers.SandboxInformer
+    sandboxLister     listers.SandboxLister
+    sandboxSynced     cache.InformerSynced
+    
+    warmPoolInformer  informers.WarmPoolInformer
     warmPoolLister    listers.WarmPoolLister
     warmPoolSynced    cache.InformerSynced
+    
+    warmPodInformer   informers.WarmPodInformer
     warmPodLister     listers.WarmPodLister
     warmPodSynced     cache.InformerSynced
+    
+    podInformer       coreinformers.PodInformer
     podLister         corelisters.PodLister
     podSynced         cache.InformerSynced
+    
+    // Single work queue for all resource types
     workqueue         workqueue.RateLimitingInterface
+    
+    // Resource managers and utilities
+    podManager        *PodManager
+    serviceManager    *ServiceManager
+    networkPolicyManager *NetworkPolicyManager
+    warmPodAllocator  *WarmPodAllocator
     recorder          record.EventRecorder
 }
 
 // reconcileWarmPool ensures the actual state of a warm pool matches the desired state
-func (c *WarmPoolController) reconcileWarmPool(key string) error {
+func (c *Controller) reconcileWarmPool(key string) error {
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
     if err != nil {
         return err
@@ -325,65 +344,8 @@ func (c *WarmPoolController) reconcileWarmPool(key string) error {
     return err
 }
 
-// createWarmPod creates a new warm pod for the given pool
-func (c *WarmPoolController) createWarmPod(pool *llmsafespacev1.WarmPool) error {
-    // Create WarmPod custom resource
-    warmPod := &llmsafespacev1.WarmPod{
-        ObjectMeta: metav1.ObjectMeta{
-            GenerateName: fmt.Sprintf("%s-", pool.Name),
-            Namespace: pool.Namespace,
-            Labels: map[string]string{
-                "app": "llmsafespace",
-                "component": "warmpod",
-                "pool": pool.Name,
-            },
-            OwnerReferences: []metav1.OwnerReference{
-                *metav1.NewControllerRef(pool, llmsafespacev1.SchemeGroupVersion.WithKind("WarmPool")),
-            },
-        },
-        Spec: llmsafespacev1.WarmPodSpec{
-            PoolRef: llmsafespacev1.PoolReference{
-                Name: pool.Name,
-                Namespace: pool.Namespace,
-            },
-            CreationTimestamp: metav1.Now(),
-        },
-        Status: llmsafespacev1.WarmPodStatus{
-            Phase: "Pending",
-        },
-    }
-    
-    // Create the WarmPod resource
-    warmPod, err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(pool.Namespace).Create(
-        context.TODO(), warmPod, metav1.CreateOptions{})
-    if err != nil {
-        return err
-    }
-    
-    // Create the actual pod
-    pod, err := c.createPodForWarmPod(warmPod, pool)
-    if err != nil {
-        return err
-    }
-    
-    // Update WarmPod status with pod info
-    warmPod.Status.PodName = pod.Name
-    warmPod.Status.PodNamespace = pod.Namespace
-    
-    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
-        context.TODO(), warmPod, metav1.UpdateOptions{})
-    
-    return err
-}
-```
-
-### WarmPod Controller
-
-The WarmPod controller manages the lifecycle of individual warm pods:
-
-```go
 // reconcileWarmPod ensures the actual state of a warm pod matches the desired state
-func (c *WarmPodController) reconcileWarmPod(key string) error {
+func (c *Controller) reconcileWarmPod(key string) error {
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
     if err != nil {
         return err
@@ -439,6 +401,65 @@ func (c *WarmPodController) reconcileWarmPod(key string) error {
         context.TODO(), warmPod, metav1.UpdateOptions{})
     
     return err
+}
+
+// processNextWorkItem processes the next item from the work queue
+func (c *Controller) processNextWorkItem() bool {
+    obj, shutdown := c.workqueue.Get()
+    if shutdown {
+        return false
+    }
+    
+    err := func(obj interface{}) error {
+        defer c.workqueue.Done(obj)
+        
+        var key string
+        var ok bool
+        if key, ok = obj.(string); !ok {
+            c.workqueue.Forget(obj)
+            return fmt.Errorf("expected string in workqueue but got %#v", obj)
+        }
+        
+        // Determine resource type from key format
+        // Format: <resource-type>/<namespace>/<name>
+        parts := strings.SplitN(key, "/", 3)
+        if len(parts) != 3 {
+            c.workqueue.Forget(obj)
+            return fmt.Errorf("invalid resource key: %s", key)
+        }
+        
+        resourceType := parts[0]
+        namespace := parts[1]
+        name := parts[2]
+        nsName := namespace + "/" + name
+        
+        // Call appropriate reconcile function based on resource type
+        var err error
+        switch resourceType {
+        case "sandbox":
+            err = c.reconcileSandbox(nsName)
+        case "warmpool":
+            err = c.reconcileWarmPool(nsName)
+        case "warmpod":
+            err = c.reconcileWarmPod(nsName)
+        default:
+            err = fmt.Errorf("unknown resource type: %s", resourceType)
+        }
+        
+        if err != nil {
+            // Handle error and requeue if needed
+            return err
+        }
+        
+        c.workqueue.Forget(obj)
+        return nil
+    }(obj)
+    
+    if err != nil {
+        klog.Errorf("Error processing item: %v", err)
+    }
+    
+    return true
 }
 ```
 
