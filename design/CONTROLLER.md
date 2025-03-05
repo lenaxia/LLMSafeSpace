@@ -4,6 +4,8 @@
 
 The Sandbox Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of sandbox environments. This document provides a detailed design for the controller, including Custom Resource Definitions (CRDs), reconciliation loops, and resource lifecycle management.
 
+The controller system also includes the Warm Pool Controller, which manages pools of pre-initialized sandbox environments for faster startup times.
+
 ## Custom Resource Definitions (CRDs)
 
 ### 1. Sandbox CRD
@@ -335,7 +337,264 @@ spec:
           jsonPath: .metadata.creationTimestamp
 ```
 
-### 3. RuntimeEnvironment CRD
+### 3. WarmPool CRD
+
+The WarmPool CRD defines a pool of pre-initialized sandbox environments.
+
+```yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: warmpools.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: WarmPool
+    plural: warmpools
+    singular: warmpool
+    shortNames:
+      - wp
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - runtime
+                - minSize
+              properties:
+                runtime:
+                  type: string
+                  description: "Runtime environment (e.g., python:3.10)"
+                minSize:
+                  type: integer
+                  minimum: 0
+                  description: "Minimum number of warm pods to maintain"
+                maxSize:
+                  type: integer
+                  minimum: 0
+                  description: "Maximum number of warm pods to maintain (0 for unlimited)"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high", "custom"]
+                  default: "standard"
+                  description: "Security level for warm pods"
+                ttl:
+                  type: integer
+                  minimum: 0
+                  default: 3600
+                  description: "Time-to-live for unused warm pods in seconds (0 for no expiry)"
+                resources:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                      pattern: "^([0-9]+m|[0-9]+\\.[0-9]+)$"
+                      default: "500m"
+                      description: "CPU resource limit"
+                    memory:
+                      type: string
+                      pattern: "^[0-9]+(Ki|Mi|Gi)$"
+                      default: "512Mi"
+                      description: "Memory resource limit"
+                profileRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of SandboxProfile to use"
+                    namespace:
+                      type: string
+                      description: "Namespace of SandboxProfile"
+                preloadPackages:
+                  type: array
+                  items:
+                    type: string
+                  description: "Packages to preinstall in warm pods"
+                preloadScripts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      content:
+                        type: string
+                  description: "Scripts to run during pod initialization"
+                autoScaling:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    targetUtilization:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+                      default: 80
+                    scaleDownDelay:
+                      type: integer
+                      minimum: 0
+                      default: 300
+                      description: "Seconds to wait before scaling down"
+            status:
+              type: object
+              properties:
+                availablePods:
+                  type: integer
+                  description: "Number of warm pods available for immediate use"
+                assignedPods:
+                  type: integer
+                  description: "Number of warm pods currently assigned to sandboxes"
+                pendingPods:
+                  type: integer
+                  description: "Number of warm pods being created"
+                lastScaleTime:
+                  type: string
+                  format: date-time
+                  description: "Last time the pool was scaled"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: "Type of condition"
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                        description: "Reason for the condition"
+                      message:
+                        type: string
+                        description: "Message explaining the condition"
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: "Last time the condition transitioned"
+      additionalPrinterColumns:
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
+        - name: Available
+          type: integer
+          jsonPath: .status.availablePods
+        - name: Assigned
+          type: integer
+          jsonPath: .status.assignedPods
+        - name: Pending
+          type: integer
+          jsonPath: .status.pendingPods
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+```
+
+### 4. WarmPod CRD
+
+The WarmPod CRD represents an individual pre-initialized pod in a warm pool.
+
+```yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: warmpods.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: WarmPod
+    plural: warmpods
+    singular: warmpod
+    shortNames:
+      - wpod
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - poolRef
+              properties:
+                poolRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of the WarmPool this pod belongs to"
+                    namespace:
+                      type: string
+                      description: "Namespace of the WarmPool"
+                creationTimestamp:
+                  type: string
+                  format: date-time
+                  description: "Time when this warm pod was created"
+                lastHeartbeat:
+                  type: string
+                  format: date-time
+                  description: "Last time the pod reported it was healthy"
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: ["Pending", "Ready", "Assigned", "Terminating"]
+                  description: "Current phase of the warm pod"
+                podName:
+                  type: string
+                  description: "Name of the underlying pod"
+                podNamespace:
+                  type: string
+                  description: "Namespace of the underlying pod"
+                assignedTo:
+                  type: string
+                  description: "ID of the sandbox this pod is assigned to (if any)"
+                assignedAt:
+                  type: string
+                  format: date-time
+                  description: "Time when this pod was assigned to a sandbox"
+      additionalPrinterColumns:
+        - name: Pool
+          type: string
+          jsonPath: .spec.poolRef.name
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Pod
+          type: string
+          jsonPath: .status.podName
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+```
+
+### 5. RuntimeEnvironment CRD
 
 The RuntimeEnvironment CRD defines available runtime environments for sandboxes.
 
@@ -450,6 +709,8 @@ The Sandbox Controller is structured as follows:
    - SandboxReconciler
    - SandboxProfileReconciler
    - RuntimeEnvironmentReconciler
+   - WarmPoolReconciler
+   - WarmPodReconciler
 
 3. **Resource Managers**
    - PodManager
@@ -457,12 +718,14 @@ The Sandbox Controller is structured as follows:
    - ServiceManager
    - VolumeManager
    - SecurityContextManager
+   - WarmPoolManager
 
 4. **Utilities**
    - EventRecorder
    - MetricsCollector
    - TemplateRenderer
    - ValidationHelper
+   - WarmPodAllocator
 
 ### Controller Initialization Flow
 
@@ -518,6 +781,8 @@ func main() {
 
 The Sandbox reconciliation loop is the core of the controller, responsible for ensuring that the actual state of sandbox resources matches the desired state defined in the Sandbox CR.
 
+The Sandbox reconciliation loop has been enhanced to support warm pods:
+
 ```go
 func (c *Controller) reconcileSandbox(key string) error {
     namespace, name, err := cache.SplitMetaNamespaceKey(key)
@@ -552,6 +817,11 @@ func (c *Controller) reconcileSandbox(key string) error {
         }
     }
     
+    // Check if sandbox is using a warm pod
+    if sandbox.Status.WarmPodRef != nil {
+        return c.handleSandboxWithWarmPod(sandbox)
+    }
+    
     // Process based on current phase
     switch sandbox.Status.Phase {
     case "":
@@ -574,6 +844,80 @@ func (c *Controller) reconcileSandbox(key string) error {
             fmt.Sprintf("Sandbox has unknown phase: %s", sandbox.Status.Phase))
         return fmt.Errorf("unknown sandbox phase: %s", sandbox.Status.Phase)
     }
+}
+
+// handleSandboxWithWarmPod handles a sandbox that's using a warm pod
+func (c *Controller) handleSandboxWithWarmPod(sandbox *llmsafespacev1.Sandbox) error {
+    // Get the warm pod
+    warmPod, err := c.warmPodLister.WarmPods(sandbox.Status.WarmPodRef.Namespace).Get(sandbox.Status.WarmPodRef.Name)
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Warm pod was deleted, fall back to regular creation
+            sandbox.Status.WarmPodRef = nil
+            sandbox.Status.Phase = "Pending"
+            _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+                context.TODO(), sandbox, metav1.UpdateOptions{})
+            return err
+        }
+        return err
+    }
+    
+    // Get the underlying pod
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        if errors.IsNotFound(err) {
+            // Pod was deleted, fall back to regular creation
+            sandbox.Status.WarmPodRef = nil
+            sandbox.Status.Phase = "Pending"
+            _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+                context.TODO(), sandbox, metav1.UpdateOptions{})
+            return err
+        }
+        return err
+    }
+    
+    // Update the pod labels and annotations to match the sandbox
+    podCopy := pod.DeepCopy()
+    if podCopy.Labels == nil {
+        podCopy.Labels = make(map[string]string)
+    }
+    podCopy.Labels["sandbox-id"] = sandbox.Name
+    podCopy.Labels["sandbox-uid"] = string(sandbox.UID)
+    
+    // Add owner reference to the pod
+    podCopy.OwnerReferences = []metav1.OwnerReference{
+        *metav1.NewControllerRef(sandbox, llmsafespacev1.SchemeGroupVersion.WithKind("Sandbox")),
+    }
+    
+    // Update the pod
+    _, err = c.kubeClient.CoreV1().Pods(pod.Namespace).Update(
+        context.TODO(), podCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    // Create service for the pod
+    service, err := c.serviceManager.EnsureService(sandbox, pod.Namespace, pod.Name)
+    if err != nil {
+        return err
+    }
+    
+    // Update network policies if needed
+    if err := c.networkPolicyManager.EnsureNetworkPolicies(sandbox, pod.Namespace); err != nil {
+        return err
+    }
+    
+    // Update sandbox status
+    sandbox.Status.Phase = "Running"
+    sandbox.Status.PodName = pod.Name
+    sandbox.Status.PodNamespace = pod.Namespace
+    sandbox.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", service.Name, service.Namespace)
+    sandbox.Status.StartTime = metav1.Now()
+    
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+        context.TODO(), sandbox, metav1.UpdateOptions{})
+    
+    return err
 }
 ```
 
@@ -642,7 +986,205 @@ func (c *Controller) reconcileSandboxProfile(key string) error {
 }
 ```
 
-### 3. RuntimeEnvironment Reconciliation Loop
+### 3. WarmPool Reconciliation Loop
+
+The WarmPool reconciliation loop manages the lifecycle of warm pools, ensuring that the desired number of warm pods are available.
+
+```go
+// reconcileWarmPool ensures the actual state of a warm pool matches the desired state
+func (c *WarmPoolController) reconcileWarmPool(key string) error {
+    namespace, name, err := cache.SplitMetaNamespaceKey(key)
+    if err != nil {
+        return err
+    }
+    
+    // Get WarmPool resource
+    warmPool, err := c.warmPoolLister.WarmPools(namespace).Get(name)
+    if errors.IsNotFound(err) {
+        // WarmPool was deleted, nothing to do
+        return nil
+    }
+    if err != nil {
+        return err
+    }
+    
+    // Deep copy to avoid modifying cache
+    warmPool = warmPool.DeepCopy()
+    
+    // List all warm pods for this pool
+    selector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": warmPool.Name,
+    })
+    warmPods, err := c.warmPodLister.WarmPods(namespace).List(selector)
+    if err != nil {
+        return err
+    }
+    
+    // Count pods by status
+    var availablePods, assignedPods, pendingPods int
+    for _, pod := range warmPods {
+        switch pod.Status.Phase {
+        case "Ready":
+            availablePods++
+        case "Assigned":
+            assignedPods++
+        case "Pending":
+            pendingPods++
+        }
+    }
+    
+    // Update status
+    warmPool.Status.AvailablePods = availablePods
+    warmPool.Status.AssignedPods = assignedPods
+    warmPool.Status.PendingPods = pendingPods
+    
+    // Scale up if needed
+    if availablePods < warmPool.Spec.MinSize {
+        neededPods := warmPool.Spec.MinSize - availablePods
+        for i := 0; i < neededPods; i++ {
+            if err := c.createWarmPod(warmPool); err != nil {
+                return err
+            }
+        }
+        warmPool.Status.LastScaleTime = metav1.Now()
+    }
+    
+    // Scale down if needed and autoscaling is enabled
+    if warmPool.Spec.AutoScaling != nil && warmPool.Spec.AutoScaling.Enabled {
+        maxSize := warmPool.Spec.MaxSize
+        if maxSize > 0 && availablePods > maxSize {
+            // Find oldest pods to remove
+            // ...
+        }
+    }
+    
+    // Update status
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPools(namespace).UpdateStatus(
+        context.TODO(), warmPool, metav1.UpdateOptions{})
+    
+    return err
+}
+
+// createWarmPod creates a new warm pod for the given pool
+func (c *WarmPoolController) createWarmPod(pool *llmsafespacev1.WarmPool) error {
+    // Create WarmPod custom resource
+    warmPod := &llmsafespacev1.WarmPod{
+        ObjectMeta: metav1.ObjectMeta{
+            GenerateName: fmt.Sprintf("%s-", pool.Name),
+            Namespace: pool.Namespace,
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "component": "warmpod",
+                "pool": pool.Name,
+            },
+            OwnerReferences: []metav1.OwnerReference{
+                *metav1.NewControllerRef(pool, llmsafespacev1.SchemeGroupVersion.WithKind("WarmPool")),
+            },
+        },
+        Spec: llmsafespacev1.WarmPodSpec{
+            PoolRef: llmsafespacev1.PoolReference{
+                Name: pool.Name,
+                Namespace: pool.Namespace,
+            },
+            CreationTimestamp: metav1.Now(),
+        },
+        Status: llmsafespacev1.WarmPodStatus{
+            Phase: "Pending",
+        },
+    }
+    
+    // Create the WarmPod resource
+    warmPod, err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(pool.Namespace).Create(
+        context.TODO(), warmPod, metav1.CreateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    // Create the actual pod
+    pod, err := c.createPodForWarmPod(warmPod, pool)
+    if err != nil {
+        return err
+    }
+    
+    // Update WarmPod status with pod info
+    warmPod.Status.PodName = pod.Name
+    warmPod.Status.PodNamespace = pod.Namespace
+    
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
+        context.TODO(), warmPod, metav1.UpdateOptions{})
+    
+    return err
+}
+```
+
+### 4. WarmPod Reconciliation Loop
+
+The WarmPod reconciliation loop manages the lifecycle of individual warm pods.
+
+```go
+// reconcileWarmPod ensures the actual state of a warm pod matches the desired state
+func (c *WarmPodController) reconcileWarmPod(key string) error {
+    namespace, name, err := cache.SplitMetaNamespaceKey(key)
+    if err != nil {
+        return err
+    }
+    
+    // Get WarmPod resource
+    warmPod, err := c.warmPodLister.WarmPods(namespace).Get(name)
+    if errors.IsNotFound(err) {
+        // WarmPod was deleted, nothing to do
+        return nil
+    }
+    if err != nil {
+        return err
+    }
+    
+    // Deep copy to avoid modifying cache
+    warmPod = warmPod.DeepCopy()
+    
+    // Check if pod exists
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if errors.IsNotFound(err) {
+        // Pod was deleted, update status
+        warmPod.Status.Phase = "Terminating"
+        _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(namespace).UpdateStatus(
+            context.TODO(), warmPod, metav1.UpdateOptions{})
+        return err
+    }
+    if err != nil {
+        return err
+    }
+    
+    // Update status based on pod status
+    if pod.Status.Phase == corev1.PodRunning {
+        // Check readiness
+        isReady := isPodReady(pod)
+        
+        if isReady && warmPod.Status.Phase == "Pending" {
+            warmPod.Status.Phase = "Ready"
+            warmPod.Spec.LastHeartbeat = metav1.Now()
+            
+            // Run any preload scripts if this is the first time the pod is ready
+            if err := c.runPreloadScripts(warmPod, pod); err != nil {
+                return err
+            }
+        }
+    } else if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+        // Pod is no longer usable
+        warmPod.Status.Phase = "Terminating"
+    }
+    
+    // Update status
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(namespace).UpdateStatus(
+        context.TODO(), warmPod, metav1.UpdateOptions{})
+    
+    return err
+}
+```
+
+### 5. RuntimeEnvironment Reconciliation Loop
 
 The RuntimeEnvironment reconciliation loop validates runtime environments and ensures they are available for use.
 
@@ -698,7 +1240,7 @@ func (c *Controller) reconcileRuntimeEnvironment(key string) error {
 The controller creates the following resources for each Sandbox:
 
 1. **Namespace** (optional, for high isolation)
-2. **Pod** for the sandbox execution environment
+2. **Pod** for the sandbox execution environment (or reuses a warm pod)
 3. **Service** for internal communication
 4. **NetworkPolicy** for network isolation
 5. **PersistentVolumeClaim** (if persistent storage is enabled)
@@ -715,6 +1257,18 @@ func (c *Controller) createSandboxResources(sandbox *llmsafespacev1.Sandbox) err
             return err
         }
     }
+    
+    // Check if there's a matching warm pod available
+    warmPod, err := c.warmPodAllocator.FindMatchingWarmPod(sandbox)
+    if err != nil {
+        klog.Warningf("Error finding matching warm pod: %v", err)
+        // Continue with normal creation
+    } else if warmPod != nil {
+        // Use the warm pod for this sandbox
+        return c.assignWarmPodToSandbox(sandbox, warmPod)
+    }
+    
+    // No matching warm pod, create a new sandbox from scratch
     
     // Get runtime environment
     runtimeEnv, err := c.getRuntimeEnvironment(sandbox.Spec.Runtime)
@@ -783,6 +1337,39 @@ func (c *Controller) createSandboxResources(sandbox *llmsafespacev1.Sandbox) err
     
     _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
         context.TODO(), sandbox, metav1.UpdateOptions{})
+    
+    return err
+}
+
+// assignWarmPodToSandbox assigns a warm pod to a sandbox
+func (c *Controller) assignWarmPodToSandbox(sandbox *llmsafespacev1.Sandbox, warmPod *llmsafespacev1.WarmPod) error {
+    // Update warm pod status to Assigned
+    warmPodCopy := warmPod.DeepCopy()
+    warmPodCopy.Status.Phase = "Assigned"
+    warmPodCopy.Status.AssignedTo = string(sandbox.UID)
+    warmPodCopy.Status.AssignedAt = metav1.Now()
+    
+    _, err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
+        context.TODO(), warmPodCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    // Update sandbox to reference the warm pod
+    sandboxCopy := sandbox.DeepCopy()
+    sandboxCopy.Status.WarmPodRef = &llmsafespacev1.WarmPodReference{
+        Name: warmPod.Name,
+        Namespace: warmPod.Namespace,
+    }
+    
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+        context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+    
+    // Record metrics for warm pod assignment
+    warmPoolAssignmentDurationSeconds.WithLabelValues(
+        warmPod.Spec.PoolRef.Name,
+        strings.Split(sandbox.Spec.Runtime, ":")[0],
+    ).Observe(time.Since(warmPod.CreationTimestamp.Time).Seconds())
     
     return err
 }
@@ -1115,6 +1702,29 @@ func (c *Controller) handleSandboxDeletion(sandbox *llmsafespacev1.Sandbox) erro
         }
     }
     
+    // Check if this sandbox was using a warm pod
+    if sandbox.Status.WarmPodRef != nil {
+        // Get the warm pod
+        warmPod, err := c.warmPodLister.WarmPods(sandbox.Status.WarmPodRef.Namespace).Get(sandbox.Status.WarmPodRef.Name)
+        if err != nil && !errors.IsNotFound(err) {
+            return err
+        }
+        
+        if warmPod != nil {
+            // Check if we should recycle this pod
+            if c.shouldRecyclePod(warmPod, sandbox) {
+                return c.recyclePod(warmPod, sandbox)
+            } else {
+                // Delete the warm pod
+                err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).Delete(
+                    context.TODO(), warmPod.Name, metav1.DeleteOptions{})
+                if err != nil && !errors.IsNotFound(err) {
+                    return err
+                }
+            }
+        }
+    }
+    
     // Delete pod
     if sandbox.Status.PodName != "" {
         podNamespace := sandbox.Status.PodNamespace
@@ -1169,6 +1779,161 @@ func (c *Controller) handleSandboxDeletion(sandbox *llmsafespacev1.Sandbox) erro
         context.TODO(), sandbox, metav1.UpdateOptions{})
     
     return err
+}
+
+// shouldRecyclePod determines if a warm pod should be recycled
+func (c *Controller) shouldRecyclePod(warmPod *llmsafespacev1.WarmPod, sandbox *llmsafespacev1.Sandbox) bool {
+    // Get the pool
+    pool, err := c.warmPoolLister.WarmPools(warmPod.Spec.PoolRef.Namespace).Get(warmPod.Spec.PoolRef.Name)
+    if err != nil {
+        return false
+    }
+    
+    // Check if the pool still exists and needs more pods
+    if pool.Status.AvailablePods < pool.Spec.MinSize {
+        // Check if the pod has been running for too long
+        if warmPod.Spec.CreationTimestamp.Add(24 * time.Hour).Before(time.Now()) {
+            // Pod is too old, don't recycle
+            return false
+        }
+        
+        // Check if the sandbox did anything that would make recycling unsafe
+        // (e.g., installed untrusted packages, modified system files)
+        // This would require additional tracking in the sandbox status
+        
+        return true
+    }
+    
+    return false
+}
+
+// recyclePod recycles a warm pod for reuse
+func (c *Controller) recyclePod(warmPod *llmsafespacev1.WarmPod, sandbox *llmsafespacev1.Sandbox) error {
+    // Get the pod
+    pod, err := c.podLister.Pods(warmPod.Status.PodNamespace).Get(warmPod.Status.PodName)
+    if err != nil {
+        return err
+    }
+    
+    // Update the pod labels to remove sandbox association
+    podCopy := pod.DeepCopy()
+    delete(podCopy.Labels, "sandbox-id")
+    delete(podCopy.Labels, "sandbox-uid")
+    
+    // Remove owner reference to the sandbox
+    var newOwnerRefs []metav1.OwnerReference
+    for _, ref := range podCopy.OwnerReferences {
+        if ref.UID != sandbox.UID {
+            newOwnerRefs = append(newOwnerRefs, ref)
+        }
+    }
+    podCopy.OwnerReferences = newOwnerRefs
+    
+    // Update the pod
+    _, err = c.kubeClient.CoreV1().Pods(pod.Namespace).Update(
+        context.TODO(), podCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    // Clean up the pod environment
+    if err := c.cleanupPodEnvironment(pod); err != nil {
+        return err
+    }
+    
+    // Update warm pod status
+    warmPod.Status.Phase = "Ready"
+    warmPod.Status.AssignedTo = ""
+    warmPod.Status.AssignedAt = metav1.Time{}
+    warmPod.Spec.LastHeartbeat = metav1.Now()
+    
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
+        context.TODO(), warmPod, metav1.UpdateOptions{})
+    
+    // Record metrics for pod recycling
+    warmPoolRecycleTotal.WithLabelValues(
+        warmPod.Spec.PoolRef.Name,
+        strings.Split(sandbox.Spec.Runtime, ":")[0],
+        "true",
+    ).Inc()
+    
+    return err
+}
+```
+
+### 5. Warm Pod Management
+
+The controller includes functionality for managing warm pods, including creation, assignment, and recycling.
+
+```go
+// WarmPodAllocator handles allocation of warm pods to sandboxes
+type WarmPodAllocator struct {
+    llmsafespaceClient clientset.Interface
+    warmPoolLister     listers.WarmPoolLister
+    warmPodLister      listers.WarmPodLister
+    podLister          corelisters.PodLister
+    recorder           record.EventRecorder
+}
+
+// FindMatchingWarmPod finds a warm pod that matches the requirements
+func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.WarmPod, error) {
+    // Find warm pools that match the runtime
+    runtime := sandbox.Spec.Runtime
+    selector := labels.SelectorFromSet(labels.Set{
+        "runtime": strings.Replace(runtime, ":", "-", -1),
+    })
+    
+    pools, err := a.warmPoolLister.List(selector)
+    if err != nil {
+        return nil, err
+    }
+    
+    // No matching pools
+    if len(pools) == 0 {
+        return nil, nil
+    }
+    
+    // Find the best matching pool
+    var bestPool *llmsafespacev1.WarmPool
+    for i, pool := range pools {
+        if pool.Status.AvailablePods > 0 {
+            // Check if security level matches
+            if pool.Spec.SecurityLevel == sandbox.Spec.SecurityLevel {
+                bestPool = &pools[i]
+                break
+            }
+            
+            // If no exact match yet, use this as a fallback
+            if bestPool == nil {
+                bestPool = &pools[i]
+            }
+        }
+    }
+    
+    if bestPool == nil {
+        return nil, nil
+    }
+    
+    // Find an available warm pod from the pool
+    podSelector := labels.SelectorFromSet(labels.Set{
+        "app": "llmsafespace",
+        "component": "warmpod",
+        "pool": bestPool.Name,
+    })
+    
+    warmPods, err := a.warmPodLister.WarmPods(bestPool.Namespace).List(podSelector)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Find a ready pod
+    for _, pod := range warmPods {
+        if pod.Status.Phase == "Ready" {
+            return &pod, nil
+        }
+    }
+    
+    return nil, nil
 }
 ```
 
@@ -1313,6 +2078,13 @@ func setupMetrics() {
     prometheus.MustRegister(workqueueLatencySeconds)
     prometheus.MustRegister(workqueueWorkDurationSeconds)
     
+    // Register warm pool metrics
+    prometheus.MustRegister(warmPoolSizeGauge)
+    prometheus.MustRegister(warmPoolAssignmentDurationSeconds)
+    prometheus.MustRegister(warmPoolCreationDurationSeconds)
+    prometheus.MustRegister(warmPoolRecycleTotal)
+    prometheus.MustRegister(warmPoolHitRatio)
+    
     // Start metrics server
     http.Handle("/metrics", promhttp.Handler())
     go func() {
@@ -1387,6 +2159,49 @@ var (
             Buckets: prometheus.DefBuckets,
         },
         []string{"queue"},
+    )
+    
+    // Warm pool metrics
+    warmPoolSizeGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_warmpool_size",
+            Help: "Current size of warm pools",
+        },
+        []string{"pool", "runtime", "status"},
+    )
+    
+    warmPoolAssignmentDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpool_assignment_duration_seconds",
+            Help: "Time taken to assign a warm pod to a sandbox",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolCreationDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "llmsafespace_warmpool_creation_duration_seconds",
+            Help: "Time taken to create a warm pod",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"pool", "runtime"},
+    )
+    
+    warmPoolRecycleTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "llmsafespace_warmpool_recycle_total",
+            Help: "Total number of warm pods recycled",
+        },
+        []string{"pool", "runtime", "success"},
+    )
+    
+    warmPoolHitRatio = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "llmsafespace_warmpool_hit_ratio",
+            Help: "Ratio of sandbox creations that used a warm pod",
+        },
+        []string{"runtime"},
     )
 )
 ```
@@ -1484,5 +2299,7 @@ The controller's design follows Kubernetes best practices, including:
 3. **Eventual Consistency**: Handling transient errors with retries and backoff
 4. **Operator Pattern**: Encapsulating operational knowledge in the controller
 5. **Defense in Depth**: Implementing multiple layers of security
+
+The addition of warm pool functionality significantly improves the user experience by reducing sandbox startup times. By maintaining pools of pre-initialized pods, the system can respond to sandbox creation requests much more quickly, which is particularly valuable for interactive use cases where users expect immediate feedback.
 
 This design provides a robust foundation for the SecureAgent platform, enabling secure code execution for LLM agents while maintaining flexibility and ease of use.
