@@ -75,7 +75,7 @@ func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox
 	}
 	
 	// Create a network policy for each egress rule
-	for i, egressRule := range sandbox.Spec.NetworkAccess.Egress {
+	for i := range sandbox.Spec.NetworkAccess.Egress {
 		// Define the network policy
 		policy := &networkingv1.NetworkPolicy{
 			ObjectMeta: metav1.ObjectMeta{
