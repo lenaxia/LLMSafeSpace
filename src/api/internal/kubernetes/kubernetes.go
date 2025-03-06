@@ -7,6 +7,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -24,6 +25,7 @@ type Client struct {
 	informerFactory   *InformerFactory
 	logger            *logger.Logger
 	config            *config.Config
+	dbService         *database.Service
 	stopCh            chan struct{}
 }
 
@@ -67,7 +69,7 @@ type FileListResult struct {
 }
 
 // New creates a new Kubernetes client
-func New(cfg *config.Config, log *logger.Logger) (*Client, error) {
+func New(cfg *config.Config, log *logger.Logger, dbService *database.Service) (*Client, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -114,6 +116,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Client, error) {
 		informerFactory:   informerFactory,
 		logger:            log,
 		config:            cfg,
+		dbService:         dbService,
 		stopCh:            make(chan struct{}),
 	}, nil
 }

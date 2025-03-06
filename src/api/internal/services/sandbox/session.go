@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 )
 
 // Message represents a WebSocket message
@@ -79,14 +80,16 @@ type Session struct {
 
 // SessionManager manages WebSocket sessions
 type SessionManager struct {
-	sessions map[string]*Session
-	mu       sync.RWMutex
+	sessions     map[string]*Session
+	cacheService *cache.Service
+	mu           sync.RWMutex
 }
 
 // NewSessionManager creates a new session manager
-func NewSessionManager() *SessionManager {
+func NewSessionManager(cacheService *cache.Service) *SessionManager {
 	return &SessionManager{
-		sessions: make(map[string]*Session),
+		sessions:     make(map[string]*Session),
+		cacheService: cacheService,
 	}
 }
 
@@ -104,14 +107,46 @@ func (m *SessionManager) CreateSession(userID, sandboxID string, conn *websocket
 	m.sessions[session.ID] = session
 	m.mu.Unlock()
 
+	// Store session metadata in cache
+	ctx := context.Background()
+	sessionData := map[string]interface{}{
+		"user_id":    userID,
+		"sandbox_id": sandboxID,
+		"created_at": time.Now().Unix(),
+	}
+	
+	err := m.cacheService.SetSession(ctx, session.ID, sessionData, 24*time.Hour)
+	if err != nil {
+		// Log error but continue
+		// We still have the session in memory
+	}
+
 	return session
 }
 
 // GetSession gets a session by ID
 func (m *SessionManager) GetSession(sessionID string) *Session {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.sessions[sessionID]
+	session := m.sessions[sessionID]
+	m.mu.RUnlock()
+	
+	if session != nil {
+		return session
+	}
+	
+	// If not found in memory, check the cache
+	// This is useful for distributed deployments where the session
+	// might be managed by another instance
+	ctx := context.Background()
+	sessionData, err := m.cacheService.GetSession(ctx, sessionID)
+	if err != nil || sessionData == nil {
+		return nil
+	}
+	
+	// We found session metadata but don't have the actual connection
+	// Return nil as we can't use this session directly
+	// This information could be used for analytics or debugging
+	return nil
 }
 
 // CloseSession closes a session
@@ -132,6 +167,14 @@ func (m *SessionManager) CloseSession(sessionID string) {
 
 		// Remove from sessions map
 		delete(m.sessions, sessionID)
+		
+		// Remove from cache
+		ctx := context.Background()
+		err := m.cacheService.DeleteSession(ctx, sessionID)
+		if err != nil {
+			// Log error but continue
+			// The session will eventually expire from the cache
+		}
 	}
 }
 
