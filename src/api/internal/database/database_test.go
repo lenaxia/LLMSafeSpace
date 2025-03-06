@@ -9,9 +9,10 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 )
 
-func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
+func setupMockDB(t *testing.T) (*database.Service, sqlmock.Sqlmock, func()) {
 	// Create a mock database connection
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -31,10 +32,10 @@ func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
 	mockConfig.Database.ConnMaxLifetime = 5 * time.Minute
 
 	// Create the database service with the mock DB
-	service := &Service{
-		logger: mockLogger,
-		config: mockConfig,
-		db:     db,
+	service := &database.Service{
+		Logger: mockLogger,
+		Config: mockConfig,
+		DB:     db,
 	}
 
 	// Return the service, mock, and a cleanup function

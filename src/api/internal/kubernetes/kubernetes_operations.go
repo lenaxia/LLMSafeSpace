@@ -1,17 +1,10 @@
-// Package kubernetes provides Kubernetes client functionality
 package kubernetes
 
-// Client manages Kubernetes API interactions
-type Client struct {
-	clientset         kubernetes.Interface
-	llmsafespaceClient *LLMSafespaceV1Client
-	restConfig        *rest.Config
-	informerFactory   *InformerFactory
-	logger            *logger.Logger
-	config            *config.Config
-	dbService         *database.Service
-	stopCh            chan struct{}
-}
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 // ExecutionRequest defines a request to execute code or a command
 type ExecutionRequest struct {
@@ -50,129 +43,6 @@ type FileResult struct {
 // FileListResult defines the result of listing files
 type FileListResult struct {
 	Files []FileResult `json:"files"`
-}
-
-// New creates a new Kubernetes client
-func New(cfg *config.Config, log *logger.Logger, dbService *database.Service) (*Client, error) {
-	var restConfig *rest.Config
-	var err error
-
-	if cfg.Kubernetes.InCluster {
-		// Use in-cluster config
-		restConfig, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create in-cluster config: %w", err)
-		}
-		log.Info("Using in-cluster Kubernetes configuration")
-	} else {
-		// Use kubeconfig file
-		restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubernetes.ConfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
-		}
-		log.Info("Using external Kubernetes configuration", "path", cfg.Kubernetes.ConfigPath)
-	}
-
-	// Configure connection pooling
-	restConfig.QPS = 100
-	restConfig.Burst = 200
-	restConfig.Timeout = time.Second * 30
-
-	// Create clientset
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
-	}
-
-	// Create LLMSafespace client
-	llmsafespaceClient, err := newLLMSafespaceV1Client(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create LLMSafespace client: %w", err)
-	}
-
-	// Create informer factory
-	informerFactory := NewInformerFactory(llmsafespaceClient, time.Minute*30, cfg.Kubernetes.Namespace)
-
-	return &Client{
-		clientset:         clientset,
-		llmsafespaceClient: llmsafespaceClient,
-		restConfig:        restConfig,
-		informerFactory:   informerFactory,
-		logger:            log,
-		config:            cfg,
-		dbService:         dbService,
-		stopCh:            make(chan struct{}),
-	}, nil
-}
-
-// Start starts the Kubernetes client
-func (c *Client) Start() error {
-	// Start informer factory
-	c.informerFactory.StartInformers(c.stopCh)
-	c.logger.Info("Started informer factory")
-
-	// Configure leader election if enabled
-	if c.config.Kubernetes.LeaderElection.Enabled {
-		go c.runLeaderElection()
-	}
-
-	return nil
-}
-
-// Stop stops the Kubernetes client
-func (c *Client) Stop() {
-	close(c.stopCh)
-	c.logger.Info("Stopped Kubernetes client")
-}
-
-// runLeaderElection starts the leader election process
-func (c *Client) runLeaderElection() {
-	// Create leader election config
-	lock := &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name:      "llmsafespace-api-leader",
-			Namespace: c.config.Kubernetes.Namespace,
-		},
-		Client: c.clientset.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: c.config.Kubernetes.PodName,
-		},
-	}
-
-	// Configure leader election
-	leaderelection.RunOrDie(context.Background(), leaderelection.LeaderElectionConfig{
-		Lock:            lock,
-		ReleaseOnCancel: true,
-		LeaseDuration:   c.config.Kubernetes.LeaderElection.LeaseDuration,
-		RenewDeadline:   c.config.Kubernetes.LeaderElection.RenewDeadline,
-		RetryPeriod:     c.config.Kubernetes.LeaderElection.RetryPeriod,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				c.logger.Info("Started leading")
-			},
-			OnStoppedLeading: func() {
-				c.logger.Info("Stopped leading")
-			},
-			OnNewLeader: func(identity string) {
-				c.logger.Info("New leader elected", "leader", identity)
-			},
-		},
-	})
-}
-
-// Clientset returns the Kubernetes clientset
-func (c *Client) Clientset() kubernetes.Interface {
-	return c.clientset
-}
-
-// LlmsafespaceV1 returns the LLMSafespace v1 client
-func (c *Client) LlmsafespaceV1() *LLMSafespaceV1Client {
-	return c.llmsafespaceClient
-}
-
-// RESTConfig returns the REST config
-func (c *Client) RESTConfig() *rest.Config {
-	return c.restConfig
 }
 
 // ExecuteInSandbox executes code or a command in a sandbox

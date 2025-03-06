@@ -1,9 +1,6 @@
 package logger
 
 import (
-	"bytes"
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"go.uber.org/zap"

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -96,7 +97,7 @@ func (s *Service) GetObject(ctx context.Context, key string, value interface{}) 
 		return fmt.Errorf("failed to get object from cache: %w", err)
 	}
 
-	err = redis.UnmarshalBinary(data, value)
+	err = json.Unmarshal(data, value)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal object from cache: %w", err)
 	}
@@ -106,7 +107,7 @@ func (s *Service) GetObject(ctx context.Context, key string, value interface{}) 
 
 // SetObject sets an object in the cache
 func (s *Service) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
-	data, err := redis.MarshalBinary(value)
+	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal object for cache: %w", err)
 	}
