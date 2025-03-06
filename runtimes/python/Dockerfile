@@ -29,7 +29,8 @@ COPY --chown=root:root security/python/sitecustomize.py /opt/venv/lib/python3.9/
 
 # Copy Python security wrapper
 COPY --chown=root:root tools/python-security-wrapper.py /opt/llmsafespace/bin/python-security-wrapper.py
-RUN chmod +x /opt/llmsafespace/bin/python-security-wrapper.py
+RUN chmod 755 /opt/llmsafespace/bin/python-security-wrapper.py && \
+    python3.9 -m py_compile /opt/llmsafespace/bin/python-security-wrapper.py
 
 USER sandbox
 CMD ["python-security-wrapper.py"]
