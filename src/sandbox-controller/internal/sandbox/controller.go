@@ -135,9 +135,9 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 		sandbox.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", pod.Name, pod.Namespace)
 		
 		// Update conditions
-		conditions := []metav1.Condition{}
-		common.SetCondition(&conditions, common.ConditionPodRunning, metav1.ConditionTrue, common.ReasonPodRunning, "Pod is running")
-		common.SetCondition(&conditions, common.ConditionReady, metav1.ConditionTrue, common.ReasonPodRunning, "Sandbox is ready")
+		conditions := []resources.SandboxCondition{}
+		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "True", common.ReasonPodRunning, "Pod is running")
+		common.SetSandboxCondition(&conditions, common.ConditionReady, "True", common.ReasonPodRunning, "Sandbox is ready")
 		sandbox.Status.Conditions = conditions
 		
 		if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -170,8 +170,8 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 			
 			// Update conditions
 			conditions := sandbox.Status.Conditions
-			common.SetCondition(&conditions, common.ConditionPodRunning, metav1.ConditionFalse, common.ReasonPodNotRunning, "Pod not found")
-			common.SetCondition(&conditions, common.ConditionReady, metav1.ConditionFalse, common.ReasonPodNotRunning, "Sandbox failed")
+			common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, "Pod not found")
+			common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
 			sandbox.Status.Conditions = conditions
 			
 			if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -193,8 +193,8 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 		
 		// Update conditions
 		conditions := sandbox.Status.Conditions
-		common.SetCondition(&conditions, common.ConditionPodRunning, metav1.ConditionFalse, common.ReasonPodNotRunning, fmt.Sprintf("Pod is %s", pod.Status.Phase))
-		common.SetCondition(&conditions, common.ConditionReady, metav1.ConditionFalse, common.ReasonPodNotRunning, "Sandbox failed")
+		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, fmt.Sprintf("Pod is %s", pod.Status.Phase))
+		common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
 		sandbox.Status.Conditions = conditions
 		
 		if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -445,8 +445,8 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 	sandbox.Status.PodNamespace = pod.Namespace
 	
 	// Update conditions
-	conditions := []metav1.Condition{}
-	common.SetCondition(&conditions, common.ConditionPodCreated, metav1.ConditionTrue, common.ReasonPodCreated, "Pod created successfully")
+	conditions := []resources.SandboxCondition{}
+	common.SetSandboxCondition(&conditions, common.ConditionPodCreated, "True", common.ReasonPodCreated, "Pod created successfully")
 	sandbox.Status.Conditions = conditions
 	
 	if err := r.Status().Update(ctx, sandbox); err != nil {

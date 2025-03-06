@@ -93,7 +93,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		
 		// Update conditions
 		conditions := warmPool.Status.Conditions
-		common.SetCondition(&conditions, common.ConditionScalingUp, metav1.ConditionTrue, common.ReasonScalingUp, fmt.Sprintf("Scaling up to meet minimum size of %d", warmPool.Spec.MinSize))
+		common.SetWarmPoolCondition(&conditions, common.ConditionScalingUp, "True", common.ReasonScalingUp, fmt.Sprintf("Scaling up to meet minimum size of %d", warmPool.Spec.MinSize))
 		warmPool.Status.Conditions = conditions
 		
 		// Create new warm pods
@@ -116,7 +116,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		
 		// Update conditions
 		conditions := warmPool.Status.Conditions
-		common.SetCondition(&conditions, common.ConditionScalingDown, metav1.ConditionTrue, common.ReasonScalingDown, fmt.Sprintf("Scaling down to meet maximum size of %d", warmPool.Spec.MaxSize))
+		common.SetWarmPoolCondition(&conditions, common.ConditionScalingDown, "True", common.ReasonScalingDown, fmt.Sprintf("Scaling down to meet maximum size of %d", warmPool.Spec.MaxSize))
 		warmPool.Status.Conditions = conditions
 		
 		// Delete excess warm pods
@@ -154,9 +154,9 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	isReady := availablePods >= warmPool.Spec.MinSize
 	conditions := warmPool.Status.Conditions
 	if isReady {
-		common.SetCondition(&conditions, common.ConditionPoolReady, metav1.ConditionTrue, common.ReasonPoolReady, "Warm pool has enough available pods")
+		common.SetWarmPoolCondition(&conditions, common.ConditionPoolReady, "True", common.ReasonPoolReady, "Warm pool has enough available pods")
 	} else {
-		common.SetCondition(&conditions, common.ConditionPoolReady, metav1.ConditionFalse, common.ReasonPoolNotReady, "Warm pool does not have enough available pods")
+		common.SetWarmPoolCondition(&conditions, common.ConditionPoolReady, "False", common.ReasonPoolNotReady, "Warm pool does not have enough available pods")
 	}
 	warmPool.Status.Conditions = conditions
 	
