@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# Configuration
+WORKSPACE_DIR="/workspace"
+TEMP_DIRS=("/tmp" "/var/tmp")
+LOG_FILE="/var/log/llmsafespace/cleanup.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# Clean workspace directory
+cleanup_workspace() {
+    log "Cleaning workspace directory"
+    find "$WORKSPACE_DIR" -mindepth 1 -delete
+    mkdir -p "$WORKSPACE_DIR"
+    chmod 755 "$WORKSPACE_DIR"
+}
+
+# Clean temporary directories
+cleanup_temp() {
+    log "Cleaning temporary directories"
+    for dir in "${TEMP_DIRS[@]}"; do
+        find "$dir" -mindepth 1 -delete
+        mkdir -p "$dir"
+        chmod 1777 "$dir"
+    done
+}
+
+# Reset system state
+reset_state() {
+    log "Resetting system state"
+    
+    # Kill any user processes
+    pkill -u sandbox
+    
+    # Clear package caches based on runtime
+    if command -v pip &> /dev/null; then
+        pip cache purge
+    fi
+    if command -v npm &> /dev/null; then
+        npm cache clean --force
+    fi
+    
+    # Reset environment variables
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+# Verify cleanup
+verify_cleanup() {
+    log "Verifying cleanup"
+    
+    # Check workspace is empty
+    if [ "$(find "$WORKSPACE_DIR" -mindepth 1 | wc -l)" -ne 0 ]; then
+        log "ERROR: Workspace not empty"
+        return 1
+    fi
+    
+    # Check no unauthorized processes
+    if [ "$(pgrep -u sandbox | wc -l)" -ne 0 ]; then
+        log "ERROR: User processes still running"
+        return 1
+    }
+    
+    return 0
+}
+
+# Main cleanup process
+main() {
+    log "Starting cleanup process"
+    
+    cleanup_workspace
+    cleanup_temp
+    reset_state
+    
+    if verify_cleanup; then
+        log "Cleanup completed successfully"
+        exit 0
+    else
+        log "Cleanup failed verification"
+        exit 1
+    fi
+}
+
+main
