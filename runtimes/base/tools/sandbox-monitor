@@ -111,7 +111,7 @@ monitor_security_events() {
     local unauthorized=$(ss -Htnp | grep -vE ":(80|443|8080)" || true)
     if [ ! -z "$unauthorized" ]; then
         log "WARNING" "Unauthorized network connection: $unauthorized"
-    }
+    fi
 }
 
 # Main monitoring loop
