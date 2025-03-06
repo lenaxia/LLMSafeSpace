@@ -5,9 +5,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/llmsafespace/sandbox-controller/internal/sandbox"
-	"github.com/llmsafespace/sandbox-controller/internal/warmpool"
-	"github.com/llmsafespace/sandbox-controller/internal/warmpod"
+	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/sandbox"
+	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/warmpool"
+	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/warmpod"
 )
 
 // SetupControllers sets up all controllers with the Manager

@@ -1,4 +1,4 @@
-module github.com/llmsafespace/sandbox-controller
+module github.com/lenaxia/llmsafespace/src/sandbox-controller
 
 go 1.19
 
