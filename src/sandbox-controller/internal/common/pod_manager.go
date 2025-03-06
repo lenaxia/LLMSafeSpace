@@ -242,7 +242,7 @@ func (p *PodManager) RecyclePod(ctx context.Context, pod *corev1.Pod) error {
 	if podCopy.Annotations == nil {
 		podCopy.Annotations = make(map[string]string)
 	}
-	podCopy.Annotations[AnnotationRecycled] = "true"
+	podCopy.Annotations[AnnotationRecyclable] = "true"
 	
 	// Update the pod
 	if err := p.Client.Update(ctx, podCopy); err != nil {
