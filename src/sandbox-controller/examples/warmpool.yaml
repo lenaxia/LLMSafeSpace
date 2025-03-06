@@ -1,0 +1,11 @@
+apiVersion: llmsafespace.dev/v1
+kind: WarmPool
+metadata:
+  name: python-pool
+spec:
+  runtime: python:3.10
+  minSize: 3
+  maxSize: 10
+  preloadPackages:
+    - numpy
+    - pandas

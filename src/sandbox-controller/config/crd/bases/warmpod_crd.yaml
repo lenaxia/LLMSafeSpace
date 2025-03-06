@@ -1,0 +1,82 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: warmpods.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: WarmPod
+    plural: warmpods
+    singular: warmpod
+    shortNames:
+      - wpod
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - poolRef
+              properties:
+                poolRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of the WarmPool this pod belongs to"
+                    namespace:
+                      type: string
+                      description: "Namespace of the WarmPool"
+                creationTimestamp:
+                  type: string
+                  format: date-time
+                  description: "Time when this warm pod was created"
+                lastHeartbeat:
+                  type: string
+                  format: date-time
+                  description: "Last time the pod reported it was healthy"
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: ["Pending", "Ready", "Assigned", "Terminating"]
+                  description: "Current phase of the warm pod"
+                podName:
+                  type: string
+                  description: "Name of the underlying pod"
+                podNamespace:
+                  type: string
+                  description: "Namespace of the underlying pod"
+                assignedTo:
+                  type: string
+                  description: "ID of the sandbox this pod is assigned to (if any)"
+                assignedAt:
+                  type: string
+                  format: date-time
+                  description: "Time when this pod was assigned to a sandbox"
+      additionalPrinterColumns:
+        - name: Pool
+          type: string
+          jsonPath: .spec.poolRef.name
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Pod
+          type: string
+          jsonPath: .status.podName
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}

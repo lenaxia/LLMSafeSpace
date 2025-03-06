@@ -1,0 +1,23 @@
+apiVersion: llmsafespace.dev/v1
+kind: RuntimeEnvironment
+metadata:
+  name: python-3.10
+spec:
+  image: llmsafespace/runtime-python:3.10
+  language: python
+  version: "3.10"
+  tags:
+    - ml
+    - data-science
+  preInstalledPackages:
+    - numpy
+    - pandas
+  packageManager: pip
+  securityFeatures:
+    - seccomp
+    - apparmor
+  resourceRequirements:
+    minCpu: "500m"
+    minMemory: "512Mi"
+    recommendedCpu: "1"
+    recommendedMemory: "1Gi"
