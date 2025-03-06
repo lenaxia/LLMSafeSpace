@@ -1,0 +1,14 @@
+apiVersion: llmsafespace.dev/v1
+kind: Sandbox
+metadata:
+  name: example-sandbox
+spec:
+  runtime: python:3.10
+  securityLevel: standard
+  resources:
+    cpu: "1"
+    memory: "1Gi"
+  networkAccess:
+    egress:
+      - domain: pypi.org
+      - domain: files.pythonhosted.org

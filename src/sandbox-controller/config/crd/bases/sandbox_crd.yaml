@@ -1,0 +1,214 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sandboxes.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: Sandbox
+    plural: sandboxes
+    singular: sandbox
+    shortNames:
+      - sb
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - runtime
+              properties:
+                runtime:
+                  type: string
+                  description: "Runtime environment (e.g., python:3.10)"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high", "custom"]
+                  default: "standard"
+                  description: "Security level for the sandbox"
+                timeout:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 300
+                  description: "Timeout in seconds for sandbox operations"
+                resources:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                      pattern: "^([0-9]+m|[0-9]+\\.[0-9]+)$"
+                      default: "500m"
+                      description: "CPU resource limit"
+                    memory:
+                      type: string
+                      pattern: "^[0-9]+(Ki|Mi|Gi)$"
+                      default: "512Mi"
+                      description: "Memory resource limit"
+                    ephemeralStorage:
+                      type: string
+                      pattern: "^[0-9]+(Ki|Mi|Gi)$"
+                      default: "1Gi"
+                      description: "Ephemeral storage limit"
+                    cpuPinning:
+                      type: boolean
+                      default: false
+                      description: "Enable CPU pinning for sensitive workloads"
+                networkAccess:
+                  type: object
+                  properties:
+                    egress:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - domain
+                        properties:
+                          domain:
+                            type: string
+                            description: "Domain name for egress filtering"
+                          ports:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                port:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 65535
+                                protocol:
+                                  type: string
+                                  enum: ["TCP", "UDP"]
+                                  default: "TCP"
+                    ingress:
+                      type: boolean
+                      default: false
+                      description: "Allow ingress traffic to sandbox"
+                filesystem:
+                  type: object
+                  properties:
+                    readOnlyRoot:
+                      type: boolean
+                      default: true
+                      description: "Mount root filesystem as read-only"
+                    writablePaths:
+                      type: array
+                      items:
+                        type: string
+                      default: ["/tmp", "/workspace"]
+                      description: "Paths that should be writable"
+                storage:
+                  type: object
+                  properties:
+                    persistent:
+                      type: boolean
+                      default: false
+                      description: "Enable persistent storage"
+                    volumeSize:
+                      type: string
+                      pattern: "^[0-9]+(Ki|Mi|Gi)$"
+                      default: "5Gi"
+                      description: "Size of persistent volume"
+                securityContext:
+                  type: object
+                  properties:
+                    runAsUser:
+                      type: integer
+                      default: 1000
+                      description: "User ID to run container processes"
+                    runAsGroup:
+                      type: integer
+                      default: 1000
+                      description: "Group ID to run container processes"
+                    seccompProfile:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: ["RuntimeDefault", "Localhost"]
+                          default: "RuntimeDefault"
+                        localhostProfile:
+                          type: string
+                          description: "Path to seccomp profile on node"
+                profileRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of SandboxProfile to use"
+                    namespace:
+                      type: string
+                      description: "Namespace of SandboxProfile"
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: ["Pending", "Creating", "Running", "Terminating", "Terminated", "Failed"]
+                  description: "Current phase of the sandbox"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: "Type of condition"
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                        description: "Reason for the condition"
+                      message:
+                        type: string
+                        description: "Message explaining the condition"
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: "Last time the condition transitioned"
+                podName:
+                  type: string
+                  description: "Name of the pod running the sandbox"
+                podNamespace:
+                  type: string
+                  description: "Namespace of the pod running the sandbox"
+                startTime:
+                  type: string
+                  format: date-time
+                  description: "Time when the sandbox was started"
+                endpoint:
+                  type: string
+                  description: "Internal endpoint for the sandbox"
+                resources:
+                  type: object
+                  properties:
+                    cpuUsage:
+                      type: string
+                      description: "Current CPU usage"
+                    memoryUsage:
+                      type: string
+                      description: "Current memory usage"
+      additionalPrinterColumns:
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
+        - name: Status
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}

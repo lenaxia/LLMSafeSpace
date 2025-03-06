@@ -1,0 +1,161 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: warmpools.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: WarmPool
+    plural: warmpools
+    singular: warmpool
+    shortNames:
+      - wp
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - runtime
+                - minSize
+              properties:
+                runtime:
+                  type: string
+                  description: "Runtime environment (e.g., python:3.10)"
+                minSize:
+                  type: integer
+                  minimum: 0
+                  description: "Minimum number of warm pods to maintain"
+                maxSize:
+                  type: integer
+                  minimum: 0
+                  description: "Maximum number of warm pods to maintain (0 for unlimited)"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high", "custom"]
+                  default: "standard"
+                  description: "Security level for warm pods"
+                ttl:
+                  type: integer
+                  minimum: 0
+                  default: 3600
+                  description: "Time-to-live for unused warm pods in seconds (0 for no expiry)"
+                resources:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                      pattern: "^([0-9]+m|[0-9]+\\.[0-9]+)$"
+                      default: "500m"
+                      description: "CPU resource limit"
+                    memory:
+                      type: string
+                      pattern: "^[0-9]+(Ki|Mi|Gi)$"
+                      default: "512Mi"
+                      description: "Memory resource limit"
+                profileRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of SandboxProfile to use"
+                    namespace:
+                      type: string
+                      description: "Namespace of SandboxProfile"
+                preloadPackages:
+                  type: array
+                  items:
+                    type: string
+                  description: "Packages to preinstall in warm pods"
+                preloadScripts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      content:
+                        type: string
+                  description: "Scripts to run during pod initialization"
+                autoScaling:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    targetUtilization:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+                      default: 80
+                    scaleDownDelay:
+                      type: integer
+                      minimum: 0
+                      default: 300
+                      description: "Seconds to wait before scaling down"
+            status:
+              type: object
+              properties:
+                availablePods:
+                  type: integer
+                  description: "Number of warm pods available for immediate use"
+                assignedPods:
+                  type: integer
+                  description: "Number of warm pods currently assigned to sandboxes"
+                pendingPods:
+                  type: integer
+                  description: "Number of warm pods being created"
+                lastScaleTime:
+                  type: string
+                  format: date-time
+                  description: "Last time the pool was scaled"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: "Type of condition"
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                        description: "Reason for the condition"
+                      message:
+                        type: string
+                        description: "Message explaining the condition"
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: "Last time the condition transitioned"
+      additionalPrinterColumns:
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
+        - name: Available
+          type: integer
+          jsonPath: .status.availablePods
+        - name: Assigned
+          type: integer
+          jsonPath: .status.assignedPods
+        - name: Pending
+          type: integer
+          jsonPath: .status.pendingPods
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}

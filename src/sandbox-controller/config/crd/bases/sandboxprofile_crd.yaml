@@ -1,0 +1,101 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sandboxprofiles.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: SandboxProfile
+    plural: sandboxprofiles
+    singular: sandboxprofile
+    shortNames:
+      - sbp
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - language
+              properties:
+                language:
+                  type: string
+                  description: "Target language for this profile"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high", "custom"]
+                  default: "standard"
+                  description: "Base security level for this profile"
+                seccompProfile:
+                  type: string
+                  description: "Path to seccomp profile for this language"
+                networkPolicies:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: ["egress", "ingress"]
+                      rules:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            domain:
+                              type: string
+                            cidr:
+                              type: string
+                            ports:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  port:
+                                    type: integer
+                                  protocol:
+                                    type: string
+                                    enum: ["TCP", "UDP"]
+                preInstalledPackages:
+                  type: array
+                  items:
+                    type: string
+                  description: "Packages pre-installed in this profile"
+                resourceDefaults:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                    memory:
+                      type: string
+                    ephemeralStorage:
+                      type: string
+                filesystemConfig:
+                  type: object
+                  properties:
+                    readOnlyPaths:
+                      type: array
+                      items:
+                        type: string
+                    writablePaths:
+                      type: array
+                      items:
+                        type: string
+      additionalPrinterColumns:
+        - name: Language
+          type: string
+          jsonPath: .spec.language
+        - name: SecurityLevel
+          type: string
+          jsonPath: .spec.securityLevel
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

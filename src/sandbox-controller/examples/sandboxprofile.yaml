@@ -1,0 +1,14 @@
+apiVersion: llmsafespace.dev/v1
+kind: SandboxProfile
+metadata:
+  name: python-data-science
+spec:
+  language: python
+  securityLevel: standard
+  preInstalledPackages:
+    - numpy
+    - pandas
+    - matplotlib
+  resourceDefaults:
+    cpu: "1"
+    memory: "2Gi"
