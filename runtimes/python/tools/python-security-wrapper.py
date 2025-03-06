@@ -9,6 +9,15 @@ import importlib.util
 with open('/etc/llmsafespace/python/restricted_modules.json', 'r') as f:
     RESTRICTED_MODULES = json.load(f)
 
+# Disable dangerous os functions
+def disable_dangerous_functions():
+    if 'os' in sys.modules:
+        os_module = sys.modules['os']
+        dangerous_functions = ['system', 'popen', 'spawn', 'execl', 'execle', 'execlp', 'execv', 'execve', 'execvp']
+        for func in dangerous_functions:
+            if hasattr(os_module, func):
+                setattr(os_module, func, None)
+
 # Set resource limits
 def set_resource_limits():
     try:
@@ -40,6 +49,9 @@ sys.meta_path.insert(0, RestrictedImportFinder(RESTRICTED_MODULES))
 
 # Set resource limits
 set_resource_limits()
+
+# Disable dangerous functions
+disable_dangerous_functions()
 
 # Execute the Python interpreter with the provided script
 if __name__ == "__main__":
