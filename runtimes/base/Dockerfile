@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     iputils-ping \
     stress \
+    lsof \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

@@ -60,7 +60,7 @@ verify_cleanup() {
     if [ "$(pgrep -u sandbox | wc -l)" -ne 0 ]; then
         log "ERROR: User processes still running"
         return 1
-    }
+    fi
     
     return 0
 }

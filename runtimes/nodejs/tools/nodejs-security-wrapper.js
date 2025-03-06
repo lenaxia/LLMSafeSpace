@@ -29,27 +29,40 @@ Module.prototype.require = function(moduleName) {
 // Set up secure execution context
 const setupSecureContext = () => {
   // Disable process.exit
-  process.exit = () => {
+  process.exit = (code) => {
     console.error('process.exit() is disabled for security reasons');
-  };
-  
-  // Restrict child_process
-  delete require.cache[require.resolve('child_process')];
-  require.cache[require.resolve('child_process')] = {
-    exports: {
-      exec: () => { throw new Error('child_process.exec is disabled'); },
-      spawn: () => { throw new Error('child_process.spawn is disabled'); },
-      execSync: () => { throw new Error('child_process.execSync is disabled'); },
-      spawnSync: () => { throw new Error('child_process.spawnSync is disabled'); }
+    if (code !== 0) {
+      throw new Error(`Attempted to exit with code ${code}`);
     }
   };
   
+  // Restrict child_process
+  try {
+    delete require.cache[require.resolve('child_process')];
+    require.cache[require.resolve('child_process')] = {
+      exports: {
+        exec: () => { throw new Error('child_process.exec is disabled'); },
+        spawn: () => { throw new Error('child_process.spawn is disabled'); },
+        execSync: () => { throw new Error('child_process.execSync is disabled'); },
+        spawnSync: () => { throw new Error('child_process.spawnSync is disabled'); }
+      }
+    };
+  } catch (err) {
+    console.warn('Warning: Could not restrict child_process module');
+  }
+  
   // Set resource limits
-  process.setResourceLimits({
-    maxOldGenerationSizeMb: 512,
-    maxYoungGenerationSizeMb: 128,
-    codeRangeSizeMb: 64
-  });
+  try {
+    if (typeof process.setResourceLimits === 'function') {
+      process.setResourceLimits({
+        maxOldGenerationSizeMb: 512,
+        maxYoungGenerationSizeMb: 128,
+        codeRangeSizeMb: 64
+      });
+    }
+  } catch (err) {
+    console.warn('Warning: Could not set resource limits');
+  }
 };
 
 // Set up secure context
@@ -57,20 +70,33 @@ setupSecureContext();
 
 // Execute the provided script
 if (process.argv.length > 2) {
-  const scriptPath = process.argv[2];
-  process.argv = process.argv.slice(1); // Adjust argv to match normal node behavior
+  const arg = process.argv[2];
   
-  try {
-    // Check if TypeScript file
-    if (scriptPath.endsWith('.ts')) {
-      require('ts-node').register({
-        project: process.env.TS_NODE_PROJECT
-      });
+  if (arg === '-e' && process.argv.length > 3) {
+    // Execute code directly
+    try {
+      eval(process.argv[3]);
+    } catch (error) {
+      console.error(`Error executing code: ${error.message}`);
+      process.exit(1);
     }
-    require(path.resolve(scriptPath));
-  } catch (error) {
-    console.error(`Error executing script: ${error.message}`);
-    process.exit(1);
+  } else {
+    // Execute script file
+    const scriptPath = arg;
+    process.argv = process.argv.slice(1); // Adjust argv to match normal node behavior
+    
+    try {
+      // Check if TypeScript file
+      if (scriptPath.endsWith('.ts')) {
+        require('ts-node').register({
+          project: process.env.TS_NODE_PROJECT
+        });
+      }
+      require(path.resolve(scriptPath));
+    } catch (error) {
+      console.error(`Error executing script: ${error.message}`);
+      process.exit(1);
+    }
   }
 } else {
   // Interactive mode (REPL)

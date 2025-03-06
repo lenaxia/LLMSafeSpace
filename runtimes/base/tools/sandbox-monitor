@@ -22,6 +22,9 @@ mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$METRICS_FILE")"
 touch "$LOG_FILE" "$METRICS_FILE"
 chmod 644 "$LOG_FILE" "$METRICS_FILE"
 
+# Ensure the script is executable
+chmod +x "$0"
+
 log() {
     local level="$1"
     local message="$2"
