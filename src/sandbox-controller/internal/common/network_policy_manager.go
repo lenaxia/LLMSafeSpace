@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -74,7 +75,7 @@ func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox
 	}
 	
 	// Create a network policy for each egress rule
-	for i, rule := range sandbox.Spec.NetworkAccess.Egress {
+	for i, egressRule := range sandbox.Spec.NetworkAccess.Egress {
 		// Define the network policy
 		policy := &networkingv1.NetworkPolicy{
 			ObjectMeta: metav1.ObjectMeta{
