@@ -905,6 +905,13 @@ func (c *Controller) reconcileSandbox(key string) error {
         return c.handleSandboxWithWarmPod(sandbox)
     }
     
+    // Check if sandbox has requested a warm pod but hasn't been assigned one yet
+    if sandbox.Annotations != nil && sandbox.Annotations["llmsafespace.dev/use-warm-pod"] == "true" && 
+       sandbox.Status.WarmPodRef == nil && sandbox.Status.Phase == "" {
+        // Try to find and assign a warm pod
+        return c.handleWarmPodRequest(sandbox)
+    }
+    
     // Process based on current phase
     switch sandbox.Status.Phase {
     case "":
@@ -927,6 +934,127 @@ func (c *Controller) reconcileSandbox(key string) error {
             fmt.Sprintf("Sandbox has unknown phase: %s", sandbox.Status.Phase))
         return fmt.Errorf("unknown sandbox phase: %s", sandbox.Status.Phase)
     }
+}
+
+// handleWarmPodRequest attempts to find and assign a warm pod to a sandbox
+func (c *Controller) handleWarmPodRequest(sandbox *llmsafespacev1.Sandbox) error {
+    // Mark that we're processing the warm pod request
+    sandboxCopy := sandbox.DeepCopy()
+    if sandboxCopy.Annotations == nil {
+        sandboxCopy.Annotations = make(map[string]string)
+    }
+    sandboxCopy.Annotations["llmsafespace.dev/warm-pod-pending"] = "true"
+    
+    sandbox, err := c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+        context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    // Try to find a matching warm pod
+    warmPod, err := c.warmPodAllocator.FindMatchingWarmPod(sandbox)
+    if err != nil {
+        c.recorder.Event(sandbox, corev1.EventTypeWarning, "WarmPodAllocationFailed", 
+            fmt.Sprintf("Failed to find matching warm pod: %v", err))
+        
+        // Update annotation to indicate warm pod was not used
+        sandboxCopy = sandbox.DeepCopy()
+        sandboxCopy.Annotations["llmsafespace.dev/warm-pod-used"] = "false"
+        delete(sandboxCopy.Annotations, "llmsafespace.dev/warm-pod-pending")
+        
+        _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+            context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+        if err != nil {
+            return err
+        }
+        
+        // Continue with normal sandbox creation
+        return c.initializeSandbox(sandbox)
+    }
+    
+    if warmPod == nil {
+        c.recorder.Event(sandbox, corev1.EventTypeNormal, "NoWarmPodAvailable", 
+            "No matching warm pod available, creating sandbox from scratch")
+        
+        // Update annotation to indicate warm pod was not used
+        sandboxCopy = sandbox.DeepCopy()
+        sandboxCopy.Annotations["llmsafespace.dev/warm-pod-used"] = "false"
+        delete(sandboxCopy.Annotations, "llmsafespace.dev/warm-pod-pending")
+        
+        _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+            context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+        if err != nil {
+            return err
+        }
+        
+        // Continue with normal sandbox creation
+        return c.initializeSandbox(sandbox)
+    }
+    
+    // Try to claim the warm pod
+    claimed, err := c.warmPodAllocator.ClaimWarmPod(sandbox, warmPod)
+    if err != nil {
+        c.recorder.Event(sandbox, corev1.EventTypeWarning, "WarmPodClaimFailed", 
+            fmt.Sprintf("Failed to claim warm pod: %v", err))
+        
+        // Update annotation to indicate warm pod was not used
+        sandboxCopy = sandbox.DeepCopy()
+        sandboxCopy.Annotations["llmsafespace.dev/warm-pod-used"] = "false"
+        delete(sandboxCopy.Annotations, "llmsafespace.dev/warm-pod-pending")
+        
+        _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+            context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+        if err != nil {
+            return err
+        }
+        
+        // Continue with normal sandbox creation
+        return c.initializeSandbox(sandbox)
+    }
+    
+    if !claimed {
+        c.recorder.Event(sandbox, corev1.EventTypeNormal, "WarmPodNotClaimed", 
+            "Warm pod was no longer available, creating sandbox from scratch")
+        
+        // Update annotation to indicate warm pod was not used
+        sandboxCopy = sandbox.DeepCopy()
+        sandboxCopy.Annotations["llmsafespace.dev/warm-pod-used"] = "false"
+        delete(sandboxCopy.Annotations, "llmsafespace.dev/warm-pod-pending")
+        
+        _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+            context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+        if err != nil {
+            return err
+        }
+        
+        // Continue with normal sandbox creation
+        return c.initializeSandbox(sandbox)
+    }
+    
+    // Warm pod was successfully claimed, update sandbox with reference
+    sandboxCopy = sandbox.DeepCopy()
+    sandboxCopy.Status.WarmPodRef = &llmsafespacev1.WarmPodReference{
+        Name: warmPod.Name,
+        Namespace: warmPod.Namespace,
+    }
+    sandboxCopy.Annotations["llmsafespace.dev/warm-pod-used"] = "true"
+    delete(sandboxCopy.Annotations, "llmsafespace.dev/warm-pod-pending")
+    
+    // Update status with warm pod reference
+    _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
+        context.TODO(), sandboxCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return err
+    }
+    
+    c.recorder.Event(sandbox, corev1.EventTypeNormal, "WarmPodAssigned", 
+        fmt.Sprintf("Assigned warm pod %s/%s to sandbox", warmPod.Namespace, warmPod.Name))
+    
+    // Record warm pod usage metric
+    warmPoolHitRatio.WithLabelValues(sandbox.Spec.Runtime).Set(1.0)
+    
+    // Requeue to handle the sandbox with warm pod
+    return c.handleSandboxWithWarmPod(sandboxCopy)
 }
 
 // handleSandboxWithWarmPod handles a sandbox that's using a warm pod
@@ -2558,23 +2686,94 @@ type WarmPodAllocator struct {
     warmPodLister      listers.WarmPodLister
     podLister          corelisters.PodLister
     recorder           record.EventRecorder
+    metrics            *WarmPodMetrics
+}
+
+// WarmPodMetrics collects metrics for warm pod operations
+type WarmPodMetrics struct {
+    allocationAttemptsTotal    *prometheus.CounterVec
+    allocationDurationSeconds  *prometheus.HistogramVec
+    allocationResultTotal      *prometheus.CounterVec
 }
 
 // FindMatchingWarmPod finds a warm pod that matches the requirements
 func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.WarmPod, error) {
+    startTime := time.Now()
+    defer func() {
+        if a.metrics != nil {
+            a.metrics.allocationDurationSeconds.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+            ).Observe(time.Since(startTime).Seconds())
+        }
+    }()
+    
+    // Check if sandbox requests a warm pod
+    useWarmPod := false
+    if sandbox.Annotations != nil {
+        if value, ok := sandbox.Annotations["llmsafespace.dev/use-warm-pod"]; ok && value == "true" {
+            useWarmPod = true
+        }
+    }
+    
+    if !useWarmPod {
+        if a.metrics != nil {
+            a.metrics.allocationAttemptsTotal.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+                "not_requested",
+            ).Inc()
+        }
+        return nil, nil
+    }
+    
+    if a.metrics != nil {
+        a.metrics.allocationAttemptsTotal.WithLabelValues(
+            sandbox.Spec.Runtime,
+            sandbox.Spec.SecurityLevel,
+            "requested",
+        ).Inc()
+    }
+    
     // Find warm pools that match the runtime
     runtime := sandbox.Spec.Runtime
+    securityLevel := sandbox.Spec.SecurityLevel
+    
+    // Use annotations if available for more precise matching
+    if sandbox.Annotations != nil {
+        if rt, ok := sandbox.Annotations["llmsafespace.dev/warm-pod-runtime"]; ok && rt != "" {
+            runtime = rt
+        }
+        if sl, ok := sandbox.Annotations["llmsafespace.dev/warm-pod-security-level"]; ok && sl != "" {
+            securityLevel = sl
+        }
+    }
+    
     selector := labels.SelectorFromSet(labels.Set{
         "runtime": strings.Replace(runtime, ":", "-", -1),
     })
     
     pools, err := a.warmPoolLister.List(selector)
     if err != nil {
+        if a.metrics != nil {
+            a.metrics.allocationResultTotal.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+                "error",
+            ).Inc()
+        }
         return nil, err
     }
     
     // No matching pools
     if len(pools) == 0 {
+        if a.metrics != nil {
+            a.metrics.allocationResultTotal.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+                "no_matching_pools",
+            ).Inc()
+        }
         return nil, nil
     }
     
@@ -2583,7 +2782,7 @@ func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) 
     for i, pool := range pools {
         if pool.Status.AvailablePods > 0 {
             // Check if security level matches
-            if pool.Spec.SecurityLevel == sandbox.Spec.SecurityLevel {
+            if pool.Spec.SecurityLevel == securityLevel {
                 bestPool = &pools[i]
                 break
             }
@@ -2596,6 +2795,13 @@ func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) 
     }
     
     if bestPool == nil {
+        if a.metrics != nil {
+            a.metrics.allocationResultTotal.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+                "no_available_pods",
+            ).Inc()
+        }
         return nil, nil
     }
     
@@ -2604,21 +2810,86 @@ func (a *WarmPodAllocator) FindMatchingWarmPod(sandbox *llmsafespacev1.Sandbox) 
         "app": "llmsafespace",
         "component": "warmpod",
         "pool": bestPool.Name,
+        "status": "ready",
     })
     
     warmPods, err := a.warmPodLister.WarmPods(bestPool.Namespace).List(podSelector)
     if err != nil {
+        if a.metrics != nil {
+            a.metrics.allocationResultTotal.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+                "error",
+            ).Inc()
+        }
         return nil, err
     }
     
     // Find a ready pod
     for _, pod := range warmPods {
         if pod.Status.Phase == "Ready" {
+            if a.metrics != nil {
+                a.metrics.allocationResultTotal.WithLabelValues(
+                    sandbox.Spec.Runtime,
+                    sandbox.Spec.SecurityLevel,
+                    "success",
+                ).Inc()
+            }
             return &pod, nil
         }
     }
     
+    if a.metrics != nil {
+        a.metrics.allocationResultTotal.WithLabelValues(
+            sandbox.Spec.Runtime,
+            sandbox.Spec.SecurityLevel,
+            "no_ready_pods",
+        ).Inc()
+    }
     return nil, nil
+}
+
+// ClaimWarmPod attempts to claim a warm pod for use with a sandbox
+func (a *WarmPodAllocator) ClaimWarmPod(sandbox *llmsafespacev1.Sandbox, warmPod *llmsafespacev1.WarmPod) (bool, error) {
+    startTime := time.Now()
+    defer func() {
+        if a.metrics != nil {
+            a.metrics.allocationDurationSeconds.WithLabelValues(
+                sandbox.Spec.Runtime,
+                sandbox.Spec.SecurityLevel,
+            ).Observe(time.Since(startTime).Seconds())
+        }
+    }()
+    
+    // Get the warm pod (fresh copy to avoid conflicts)
+    freshWarmPod, err := a.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).Get(
+        context.TODO(), warmPod.Name, metav1.GetOptions{})
+    if err != nil {
+        return false, err
+    }
+    
+    // Check if pod is still available
+    if freshWarmPod.Status.Phase != "Ready" {
+        return false, nil
+    }
+    
+    // Try to update status to Assigned using optimistic concurrency
+    warmPodCopy := freshWarmPod.DeepCopy()
+    warmPodCopy.Status.Phase = "Assigned"
+    warmPodCopy.Status.AssignedTo = string(sandbox.UID)
+    warmPodCopy.Status.AssignedAt = metav1.Now()
+    
+    _, err = a.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
+        context.TODO(), warmPodCopy, metav1.UpdateOptions{})
+    if err != nil {
+        return false, err
+    }
+    
+    // Record event
+    a.recorder.Event(warmPod, corev1.EventTypeNormal, "PodAssigned", 
+        fmt.Sprintf("Warm pod assigned to sandbox %s", sandbox.Name))
+    
+    return true, nil
 }
 ```
 
@@ -3095,38 +3366,8 @@ func (c *Controller) createSandboxResources(sandbox *llmsafespacev1.Sandbox) err
     return err
 }
 
-// assignWarmPodToSandbox assigns a warm pod to a sandbox
-func (c *Controller) assignWarmPodToSandbox(sandbox *llmsafespacev1.Sandbox, warmPod *llmsafespacev1.WarmPod) error {
-    // Update warm pod status to Assigned
-    warmPodCopy := warmPod.DeepCopy()
-    warmPodCopy.Status.Phase = "Assigned"
-    warmPodCopy.Status.AssignedTo = string(sandbox.UID)
-    warmPodCopy.Status.AssignedAt = metav1.Now()
-    
-    _, err := c.llmsafespaceClient.LlmsafespaceV1().WarmPods(warmPod.Namespace).UpdateStatus(
-        context.TODO(), warmPodCopy, metav1.UpdateOptions{})
-    if err != nil {
-        return err
-    }
-    
-    // Update sandbox to reference the warm pod
-    sandboxCopy := sandbox.DeepCopy()
-    sandboxCopy.Status.WarmPodRef = &llmsafespacev1.WarmPodReference{
-        Name: warmPod.Name,
-        Namespace: warmPod.Namespace,
-    }
-    
-    _, err = c.llmsafespaceClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(
-        context.TODO(), sandboxCopy, metav1.UpdateOptions{})
-    
-    // Record metrics for warm pod assignment
-    warmPoolAssignmentDurationSeconds.WithLabelValues(
-        warmPod.Spec.PoolRef.Name,
-        strings.Split(sandbox.Spec.Runtime, ":")[0],
-    ).Observe(time.Since(warmPod.CreationTimestamp.Time).Seconds())
-    
-    return err
-}
+// This function is now replaced by the ClaimWarmPod method in WarmPodAllocator
+// and the handleWarmPodRequest method in the Controller
 ```
 
 ### 2. Pod Creation and Configuration

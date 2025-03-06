@@ -213,19 +213,6 @@ type SandboxService struct {
 
 // CreateSandbox creates a new sandbox
 func (s *SandboxService) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*Sandbox, error) {
-    // Check if warm pool should be used
-    var warmPodRef *WarmPodReference
-    if req.UseWarmPool {
-        // Try to get a warm pod
-        warmPod, err := s.warmPoolService.AllocateWarmPod(ctx, req.Runtime, req.SecurityLevel)
-        if err == nil && warmPod != nil {
-            warmPodRef = &WarmPodReference{
-                Name:      warmPod.Name,
-                Namespace: warmPod.Namespace,
-            }
-        }
-    }
-    
     // Create Sandbox custom resource
     sandbox := &v1.Sandbox{
         ObjectMeta: metav1.ObjectMeta{
@@ -234,6 +221,7 @@ func (s *SandboxService) CreateSandbox(ctx context.Context, req CreateSandboxReq
                 "app": "llmsafespace",
                 "user-id": req.UserID,
             },
+            Annotations: map[string]string{},
         },
         Spec: v1.SandboxSpec{
             Runtime:       req.Runtime,
@@ -244,9 +232,21 @@ func (s *SandboxService) CreateSandbox(ctx context.Context, req CreateSandboxReq
         },
     }
     
-    // Set warm pod reference if available
-    if warmPodRef != nil {
-        sandbox.Spec.WarmPodRef = warmPodRef
+    // Check if warm pool should be used
+    if req.UseWarmPool {
+        // Check if warm pods are available
+        available, err := s.warmPoolService.CheckWarmPoolAvailability(ctx, req.Runtime, req.SecurityLevel)
+        if err != nil {
+            // Log the error but continue without warm pod
+            s.logger.Error("Failed to check warm pool availability", err, 
+                zap.String("runtime", req.Runtime),
+                zap.String("securityLevel", req.SecurityLevel))
+        } else if available {
+            // Add annotation to request warm pod
+            sandbox.Annotations["llmsafespace.dev/use-warm-pod"] = "true"
+            sandbox.Annotations["llmsafespace.dev/warm-pod-runtime"] = req.Runtime
+            sandbox.Annotations["llmsafespace.dev/warm-pod-security-level"] = req.SecurityLevel
+        }
     }
     
     // Create the sandbox in Kubernetes
@@ -282,93 +282,101 @@ func (s *SandboxService) CreateSandbox(ctx context.Context, req CreateSandboxReq
 
 #### 2.2 Warm Pool Service
 
-The Warm Pool Service manages warm pool allocation and coordination:
+The Warm Pool Service coordinates with the Sandbox Controller for warm pool usage:
 
 ```go
-// WarmPoolService handles warm pool operations
+// WarmPoolService handles warm pool coordination
 type WarmPoolService struct {
     k8sClient      kubernetes.Interface
     databaseClient DatabaseClient
     cacheClient    CacheClient
 }
 
-// AllocateWarmPod finds and allocates a warm pod for a sandbox
-func (s *WarmPoolService) AllocateWarmPod(ctx context.Context, runtime, securityLevel string) (*WarmPod, error) {
-    // Check cache first for faster allocation
-    cacheKey := fmt.Sprintf("warmpod:%s:%s", runtime, securityLevel)
-    if podJSON, err := s.cacheClient.Get(ctx, cacheKey); err == nil {
-        var pod WarmPod
-        if err := json.Unmarshal([]byte(podJSON), &pod); err == nil {
-            // Attempt to claim this pod
-            claimed, err := s.claimWarmPod(ctx, &pod)
-            if err == nil && claimed {
-                return &pod, nil
-            }
-            // If claiming failed, remove from cache
-            s.cacheClient.Delete(ctx, cacheKey)
+// CheckWarmPoolAvailability checks if warm pods are available for a given runtime and security level
+func (s *WarmPoolService) CheckWarmPoolAvailability(ctx context.Context, runtime, securityLevel string) (bool, error) {
+    // Check cache first for faster response
+    cacheKey := fmt.Sprintf("warmpool:availability:%s:%s", runtime, securityLevel)
+    if availableStr, err := s.cacheClient.Get(ctx, cacheKey); err == nil {
+        available, err := strconv.ParseBool(availableStr)
+        if err == nil {
+            return available, nil
         }
     }
     
-    // Find available warm pods from Kubernetes
+    // Find available warm pools from Kubernetes
     selector := labels.SelectorFromSet(labels.Set{
         "runtime": strings.Replace(runtime, ":", "-", -1),
         "security-level": securityLevel,
-        "status": "ready",
     })
     
-    warmPods, err := s.k8sClient.LlmsafespaceV1().WarmPods("").List(ctx, metav1.ListOptions{
+    warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{
         LabelSelector: selector.String(),
-        Limit:         10,
     })
     
-    if err != nil || len(warmPods.Items) == 0 {
-        return nil, errors.New("no warm pods available")
+    if err != nil {
+        return false, fmt.Errorf("failed to list warm pools: %v", err)
     }
     
-    // Try to claim each pod until successful
-    for _, pod := range warmPods.Items {
-        warmPod := &WarmPod{
-            Name:      pod.Name,
-            Namespace: pod.Namespace,
-            Runtime:   runtime,
-        }
-        
-        claimed, err := s.claimWarmPod(ctx, warmPod)
-        if err == nil && claimed {
-            // Cache this successful allocation for future reference
-            if podJSON, err := json.Marshal(warmPod); err == nil {
-                s.cacheClient.SetWithTTL(ctx, cacheKey, string(podJSON), 30*time.Second)
-            }
-            return warmPod, nil
+    // Check if any pool has available pods
+    available := false
+    for _, pool := range warmPools.Items {
+        if pool.Status.AvailablePods > 0 {
+            available = true
+            break
         }
     }
     
-    return nil, errors.New("failed to allocate warm pod")
+    // Cache the result for a short period
+    s.cacheClient.SetWithTTL(ctx, cacheKey, strconv.FormatBool(available), 10*time.Second)
+    
+    return available, nil
 }
 
-// claimWarmPod attempts to claim a warm pod for use
-func (s *WarmPoolService) claimWarmPod(ctx context.Context, pod *WarmPod) (bool, error) {
-    // Get the warm pod
-    warmPod, err := s.k8sClient.LlmsafespaceV1().WarmPods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+// RequestWarmPodForSandbox adds warm pod request annotation to a sandbox
+func (s *WarmPoolService) RequestWarmPodForSandbox(ctx context.Context, sandbox *v1.Sandbox) (*v1.Sandbox, error) {
+    // Check if sandbox already has warm pod annotation
+    if sandbox.Annotations == nil {
+        sandbox.Annotations = make(map[string]string)
+    }
+    
+    // Add annotation to request warm pod
+    sandbox.Annotations["llmsafespace.dev/use-warm-pod"] = "true"
+    
+    // Add runtime and security level for matching
+    sandbox.Annotations["llmsafespace.dev/warm-pod-runtime"] = sandbox.Spec.Runtime
+    sandbox.Annotations["llmsafespace.dev/warm-pod-security-level"] = sandbox.Spec.SecurityLevel
+    
+    // Update the sandbox resource
+    updatedSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Update(
+        ctx, sandbox, metav1.UpdateOptions{})
     if err != nil {
-        return false, err
+        return nil, fmt.Errorf("failed to update sandbox with warm pod request: %v", err)
     }
     
-    // Check if pod is still available
-    if warmPod.Status.Phase != "Ready" {
-        return false, nil
+    return updatedSandbox, nil
+}
+
+// GetWarmPodStatus checks if a sandbox was assigned a warm pod
+func (s *WarmPoolService) GetWarmPodStatus(ctx context.Context, sandbox *v1.Sandbox) (bool, string, error) {
+    // Check if sandbox has warm pod reference in status
+    if sandbox.Status.WarmPodRef != nil {
+        return true, fmt.Sprintf("Warm pod %s/%s assigned", 
+            sandbox.Status.WarmPodRef.Namespace, sandbox.Status.WarmPodRef.Name), nil
     }
     
-    // Try to update status to Assigned using optimistic concurrency
-    warmPod.Status.Phase = "Assigned"
-    warmPod.Status.AssignedAt = metav1.Now()
-    
-    _, err = s.k8sClient.LlmsafespaceV1().WarmPods(pod.Namespace).UpdateStatus(ctx, warmPod, metav1.UpdateOptions{})
-    if err != nil {
-        return false, err
+    // Check if sandbox has warm pod pending annotation
+    if sandbox.Annotations != nil && sandbox.Annotations["llmsafespace.dev/warm-pod-pending"] == "true" {
+        return false, "Warm pod allocation pending", nil
     }
     
-    return true, nil
+    // Check if warm pod was requested but not used
+    if sandbox.Annotations != nil && sandbox.Annotations["llmsafespace.dev/use-warm-pod"] == "true" {
+        if sandbox.Annotations["llmsafespace.dev/warm-pod-used"] == "false" {
+            return false, "No suitable warm pod available", nil
+        }
+    }
+    
+    return false, "No warm pod requested", nil
 }
 ```
 
