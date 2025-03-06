@@ -16,6 +16,7 @@ env:
   REGISTRY: ghcr.io
   BASE_IMAGE: lenaxia/llmsafespace/base
   PYTHON_IMAGE: lenaxia/llmsafespace/python
+  PYTHON_ML_IMAGE: lenaxia/llmsafespace/python-ml
   NODEJS_IMAGE: lenaxia/llmsafespace/nodejs
   GO_IMAGE: lenaxia/llmsafespace/go
 
@@ -70,6 +71,16 @@ jobs:
           context: ./runtimes/python
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.REGISTRY }}/${{ env.PYTHON_IMAGE }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Python ML image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./runtimes/python
+          file: ./runtimes/python/Dockerfile.ml
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.REGISTRY }}/${{ env.PYTHON_ML_IMAGE }}:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
