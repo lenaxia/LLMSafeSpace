@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     procps \
     tini \
-    seccomp-tools \
-    apparmor-utils \
+    libseccomp2 \
+    libseccomp-dev \
+    apparmor \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
