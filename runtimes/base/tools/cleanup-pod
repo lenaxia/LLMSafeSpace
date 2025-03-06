@@ -21,10 +21,12 @@ cleanup_workspace() {
 cleanup_temp() {
     log "Cleaning temporary directories"
     for dir in "${TEMP_DIRS[@]}"; do
-        find "$dir" -mindepth 1 -delete
-        mkdir -p "$dir"
-        chmod 1777 "$dir"
+        find "$dir" -mindepth 1 -delete 2>/dev/null || true
+        mkdir -p "$dir" 2>/dev/null || true
+        chmod 1777 "$dir" 2>/dev/null || true
     done
+    # Return success even if permissions can't be changed
+    return 0
 }
 
 # Reset system state

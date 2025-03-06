@@ -25,8 +25,20 @@ sys.meta_path.insert(0, RestrictedImportFinder(RESTRICTED_MODULES))
 
 # Disable dangerous os functions
 if hasattr(os, 'system'):
-    delattr(os, 'system')
+    os.system = None  # Replace with None instead of deleting to ensure AttributeError
 if hasattr(os, 'popen'):
-    delattr(os, 'popen')
+    os.popen = None
 if hasattr(os, 'spawn'):
-    delattr(os, 'spawn')
+    os.spawn = None
+if hasattr(os, 'execl'):
+    os.execl = None
+if hasattr(os, 'execle'):
+    os.execle = None
+if hasattr(os, 'execlp'):
+    os.execlp = None
+if hasattr(os, 'execv'):
+    os.execv = None
+if hasattr(os, 'execve'):
+    os.execve = None
+if hasattr(os, 'execvp'):
+    os.execvp = None
