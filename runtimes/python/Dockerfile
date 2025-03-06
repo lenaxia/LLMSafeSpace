@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3.9 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install base packages
+# Install base packages with retry logic and increased timeout
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
+    pip install --no-cache-dir --timeout 120 --retries 5 \
     requests==2.31.0 \
     ipython==8.14.0 \
     pytest==7.3.1 \
