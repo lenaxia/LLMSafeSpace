@@ -1,8 +1,8 @@
-# Combined Controller Design for SecureAgent
+# Sandbox Controller Design for LLMSafeSpace
 
 ## Overview
 
-The Combined Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of both sandbox environments and warm pools. This document provides a detailed design for the controller, including Custom Resource Definitions (CRDs), reconciliation loops, and resource lifecycle management.
+The Sandbox Controller is a critical component of the LLMSafeSpace platform, responsible for managing the lifecycle of both sandbox environments and warm pools. This document provides a detailed design for the controller, including Custom Resource Definitions (CRDs), reconciliation loops, and resource lifecycle management.
 
 The controller manages both sandbox environments and pools of pre-initialized sandbox environments (warm pools) for faster startup times, providing a unified approach to resource management.
 
@@ -779,7 +779,7 @@ func main() {
 
 ### Component Structure
 
-The Combined Controller is structured as follows:
+The Sandbox Controller is structured as follows:
 
 1. **Main Controller Process**
    - Initializes Kubernetes client and informers
@@ -2544,7 +2544,7 @@ func (c *Controller) updateRuntimeStatus(runtime *llmsafespacev1.RuntimeEnvironm
 
 ## Shared Components and Utilities
 
-The combined controller uses shared components and utilities across all reconciliation loops to avoid code duplication and ensure consistent behavior.
+The Sandbox Controller uses shared components and utilities across all reconciliation loops to avoid code duplication and ensure consistent behavior.
 
 ### 1. WarmPodAllocator
 
@@ -5418,7 +5418,7 @@ func (c *Controller) updateSandboxStatus(sandbox *llmsafespacev1.Sandbox, phase,
 
 ## Work Queue Processing
 
-The combined controller uses a single work queue for all resource types, with a mechanism to determine the resource type from the queue key:
+The Sandbox Controller uses a single work queue for all resource types, with a mechanism to determine the resource type from the queue key:
 
 ```go
 // Controller manages the lifecycle of sandboxes and warm pools
@@ -5573,7 +5573,7 @@ func (c *APIServiceClient) NotifySandboxStatus(sandbox *llmsafespacev1.Sandbox) 
         
         req.Header.Set("Content-Type", "application/json")
         req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        req.Header.Set("User-Agent", "LLMSafeSpace-Controller/1.0")
         
         // Add context with timeout
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -5666,7 +5666,7 @@ func (c *APIServiceClient) RequestWarmPod(runtime, securityLevel string, resourc
         
         req.Header.Set("Content-Type", "application/json")
         req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        req.Header.Set("User-Agent", "LLMSafeSpace-Controller/1.0")
         
         // Add context with timeout
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -5769,7 +5769,7 @@ func (c *APIServiceClient) ReleaseWarmPod(warmPodName, warmPodNamespace string, 
         
         req.Header.Set("Content-Type", "application/json")
         req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        req.Header.Set("User-Agent", "LLMSafeSpace-Controller/1.0")
         
         // Add context with timeout
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -5845,7 +5845,7 @@ func (c *APIServiceClient) GetWarmPoolStats() (map[string]interface{}, error) {
         }
         
         req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        req.Header.Set("User-Agent", "LLMSafeSpace-Controller/1.0")
         
         // Add context with timeout
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -5942,7 +5942,7 @@ func (c *APIServiceClient) ReportSecurityEvent(sandboxID string, eventType strin
         
         req.Header.Set("Content-Type", "application/json")
         req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
-        req.Header.Set("User-Agent", "SecureAgent-Controller/1.0")
+        req.Header.Set("User-Agent", "LLMSafeSpace-Controller/1.0")
         
         // Add context with timeout
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -6105,7 +6105,7 @@ func (c *Controller) enqueueResource(resourceType string, obj interface{}) {
 
 ## Monitoring and Metrics
 
-The combined controller exposes Prometheus metrics for monitoring its operation and the state of managed resources:
+The Sandbox Controller exposes Prometheus metrics for monitoring its operation and the state of managed resources:
 
 ```go
 func setupMetrics() {
@@ -6477,7 +6477,7 @@ var (
 
 ## Error Handling and Recovery
 
-The combined controller implements comprehensive error handling and recovery mechanisms:
+The Sandbox Controller implements comprehensive error handling and recovery mechanisms:
 
 ```go
 // updateSandboxStatus updates the status of a sandbox with appropriate conditions
@@ -6823,7 +6823,7 @@ spec:
 
 ## Conclusion
 
-The Combined Controller is a critical component of the SecureAgent platform, responsible for managing the lifecycle of both sandbox environments and warm pools. By integrating these closely related functions into a single controller, we achieve better coordination, simplified architecture, and more efficient resource usage.
+The Sandbox Controller is a critical component of the LLMSafeSpace platform, responsible for managing the lifecycle of both sandbox environments and warm pools. By integrating these closely related functions into a single controller, we achieve better coordination, simplified architecture, and more efficient resource usage.
 
 The controller's design follows Kubernetes best practices, including:
 
@@ -6841,4 +6841,4 @@ The controller's integration with the API service provides a seamless experience
 
 The volume management and network policy components provide fine-grained control over data persistence and network access, allowing for flexible yet secure sandbox configurations. The graceful shutdown procedures ensure that resources are properly cleaned up when the controller is terminated.
 
-Overall, the combined controller approach provides a robust foundation for the SecureAgent platform, enabling secure code execution for LLM agents while maintaining flexibility, performance, and ease of use. The design addresses all key requirements for a production-grade system, including security, scalability, observability, and reliability.
+Overall, the Sandbox Controller approach provides a robust foundation for the LLMSafeSpace platform, enabling secure code execution for LLM agents while maintaining flexibility, performance, and ease of use. The design addresses all key requirements for a production-grade system, including security, scalability, observability, and reliability.
