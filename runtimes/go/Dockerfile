@@ -8,17 +8,24 @@ RUN curl -sSL https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C 
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
+ENV GOPROXY=direct
+ENV GOSUMDB=off
 
 # Create Go directories
 RUN mkdir -p ${GOPATH}/src ${GOPATH}/bin && \
     chmod -R 777 ${GOPATH}
 
-# Install common Go packages
-RUN go install github.com/gorilla/mux@v1.8.0 && \
-    go install github.com/gin-gonic/gin@v1.9.1 && \
-    go install github.com/spf13/cobra@v1.7.0 && \
-    go install github.com/stretchr/testify@v1.8.4 && \
-    go install gonum.org/v1/gonum@v0.13.0
+# Install common Go packages with retries and error handling
+RUN for i in {1..3}; do \
+        (go install github.com/gorilla/mux@v1.8.0 && \
+         go install github.com/gin-gonic/gin@v1.9.1 && \
+         go install github.com/spf13/cobra@v1.7.0 && \
+         go install github.com/stretchr/testify@v1.8.4 && \
+         go install gonum.org/v1/gonum@v0.13.0) && break || \
+        if [ $i -eq 3 ]; then exit 1; fi; \
+        echo "Retry $i: Waiting before retrying package installation..." && \
+        sleep 5; \
+    done
 
 # Copy Go-specific security configurations
 COPY --chown=root:root security/go/restricted_packages.json /etc/llmsafespace/go/
