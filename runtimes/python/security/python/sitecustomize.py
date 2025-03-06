@@ -23,22 +23,25 @@ class RestrictedImportFinder:
 # Register the import hook
 sys.meta_path.insert(0, RestrictedImportFinder(RESTRICTED_MODULES))
 
-# Disable dangerous os functions
+# Disable dangerous os functions by replacing them with functions that raise AttributeError
+def _raise_attribute_error(*args, **kwargs):
+    raise AttributeError("This function is disabled for security reasons")
+
 if hasattr(os, 'system'):
-    os.system = None  # Replace with None instead of deleting to ensure AttributeError
+    os.system = _raise_attribute_error
 if hasattr(os, 'popen'):
-    os.popen = None
+    os.popen = _raise_attribute_error
 if hasattr(os, 'spawn'):
-    os.spawn = None
+    os.spawn = _raise_attribute_error
 if hasattr(os, 'execl'):
-    os.execl = None
+    os.execl = _raise_attribute_error
 if hasattr(os, 'execle'):
-    os.execle = None
+    os.execle = _raise_attribute_error
 if hasattr(os, 'execlp'):
-    os.execlp = None
+    os.execlp = _raise_attribute_error
 if hasattr(os, 'execv'):
-    os.execv = None
+    os.execv = _raise_attribute_error
 if hasattr(os, 'execve'):
-    os.execve = None
+    os.execve = _raise_attribute_error
 if hasattr(os, 'execvp'):
-    os.execvp = None
+    os.execvp = _raise_attribute_error

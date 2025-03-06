@@ -14,9 +14,14 @@ def disable_dangerous_functions():
     if 'os' in sys.modules:
         os_module = sys.modules['os']
         dangerous_functions = ['system', 'popen', 'spawn', 'execl', 'execle', 'execlp', 'execv', 'execve', 'execvp']
+        
+        # Create a function that raises AttributeError
+        def _raise_attribute_error(*args, **kwargs):
+            raise AttributeError("This function is disabled for security reasons")
+        
         for func in dangerous_functions:
             if hasattr(os_module, func):
-                setattr(os_module, func, None)
+                setattr(os_module, func, _raise_attribute_error)
 
 # Set resource limits
 def set_resource_limits():
