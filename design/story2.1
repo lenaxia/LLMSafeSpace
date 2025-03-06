@@ -1,0 +1,1113 @@
+# Implementation Plan for API Service
+
+## Overview
+
+Based on the detailed design in `APISERVICE.md`, `README.md`, and `IMPLEMENTATION.md`, this plan outlines the implementation approach for the API Service component of LLMSafeSpace. The API Service serves as the entry point for all SDK interactions, handling authentication, sandbox lifecycle management, and coordination with the Sandbox Controller.
+
+## Implementation Phases
+
+### Phase 1: Project Setup and Core Infrastructure (Week 1)
+
+#### 1.1 Project Structure and Dependencies
+
+- Create the basic project structure following the layout in `README.md`
+- Set up Go modules and dependency management
+- Configure build system with Makefile targets
+- Implement configuration loading from files and environment variables
+- Set up logging infrastructure with structured logging
+
+```go
+// Example configuration structure
+type Config struct {
+    Server struct {
+        Host string `yaml:"host"`
+        Port int    `yaml:"port"`
+    } `yaml:"server"`
+    
+    Kubernetes struct {
+        ConfigPath string `yaml:"configPath"`
+        InCluster  bool   `yaml:"inCluster"`
+    } `yaml:"kubernetes"`
+    
+    // Other configuration sections as defined in APISERVICE.md
+}
+```
+
+#### 1.2 Kubernetes Client Integration
+
+- Implement Kubernetes client initialization
+- Set up informer factories for custom resources
+- Configure connection pooling and retry logic
+- Implement leader election for high availability
+
+```go
+// Example Kubernetes client initialization
+func NewK8sClient(kubeconfig string) (*K8sClient, error) {
+    // Load Kubernetes configuration
+    config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create clientset
+    clientset, err := kubernetes.NewForConfig(config)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create dynamic client
+    dynamicClient, err := dynamic.NewForConfig(config)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create informer factory
+    informerFactory := informers.NewSharedInformerFactory(clientset, 30*time.Second)
+    
+    return &K8sClient{
+        clientset:       clientset,
+        dynamicClient:   dynamicClient,
+        restConfig:      config,
+        informerFactory: informerFactory,
+    }, nil
+}
+```
+
+#### 1.3 Database and Cache Integration
+
+- Implement PostgreSQL client for persistent storage
+- Implement Redis client for caching and session management
+- Set up connection pooling and health checks
+- Create database schema and migration scripts
+
+### Phase 2: API Layer Implementation (Week 2)
+
+#### 2.1 REST API Framework Setup
+
+- Set up web framework (Gin or Echo as mentioned in APISERVICE.md)
+- Implement middleware for common functionality
+- Configure routing and handler registration
+- Set up error handling and response formatting
+
+```go
+// Example router setup
+func SetupRouter(config *Config, services *Services) *gin.Engine {
+    router := gin.New()
+    
+    // Add middleware
+    router.Use(gin.Recovery())
+    router.Use(services.Metrics.MetricsMiddleware())
+    router.Use(services.Auth.AuthMiddleware())
+    
+    if config.RateLimiting.Enabled {
+        router.Use(services.RateLimiter.RateLimitMiddleware())
+    }
+    
+    // API version group
+    v1 := router.Group("/api/v1")
+    
+    // Register routes
+    sandboxHandler := NewSandboxHandler(services.SandboxService, services.AuthService)
+    sandboxHandler.Routes(v1)
+    
+    warmPoolHandler := NewWarmPoolHandler(services.WarmPoolService, services.AuthService)
+    warmPoolHandler.Routes(v1)
+    
+    // Other route registrations...
+    
+    return router
+}
+```
+
+#### 2.2 Authentication and Authorization
+
+- Implement API key authentication
+- Implement JWT token generation and validation
+- Set up RBAC for resource access control
+- Create middleware for authentication checks
+
+```go
+// Example auth middleware
+func (s *AuthService) AuthMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // Extract token from Authorization header
+        token := extractToken(c)
+        
+        // Validate token
+        userID, err := s.tokenManager.ValidateToken(token)
+        if err != nil {
+            c.AbortWithStatusJSON(401, ErrorResponse{
+                Error: ErrorDetails{
+                    Code:    "unauthorized",
+                    Message: "Invalid or expired token",
+                },
+            })
+            return
+        }
+        
+        // Store user ID in context
+        c.Set("userID", userID)
+        c.Next()
+    }
+}
+```
+
+#### 2.3 Resource Endpoints
+
+- Implement sandbox management endpoints
+- Implement warm pool management endpoints
+- Implement runtime environment endpoints
+- Implement user management endpoints
+
+```go
+// Example sandbox routes registration
+func (h *SandboxHandler) Routes(router *gin.RouterGroup) {
+    sandboxGroup := router.Group("/sandboxes")
+    
+    sandboxGroup.GET("", h.ListSandboxes)
+    sandboxGroup.POST("", h.CreateSandbox)
+    sandboxGroup.GET("/:id", h.GetSandbox)
+    sandboxGroup.DELETE("/:id", h.TerminateSandbox)
+    sandboxGroup.GET("/:id/status", h.GetSandboxStatus)
+    sandboxGroup.POST("/:id/execute", h.ExecuteCode)
+    sandboxGroup.GET("/:id/files", h.ListFiles)
+    sandboxGroup.GET("/:id/files/*path", h.DownloadFile)
+    sandboxGroup.PUT("/:id/files/*path", h.UploadFile)
+    sandboxGroup.DELETE("/:id/files/*path", h.DeleteFile)
+    sandboxGroup.POST("/:id/packages", h.InstallPackages)
+}
+```
+
+### Phase 3: Service Layer Implementation (Week 3)
+
+#### 3.1 Sandbox Service
+
+- Implement sandbox creation logic with warm pool integration
+- Implement sandbox status monitoring
+- Implement sandbox termination
+- Integrate with warm pool allocation
+
+```go
+// Example sandbox creation method
+func (s *SandboxService) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*Sandbox, error) {
+    // Create Sandbox custom resource
+    sandbox := &v1.Sandbox{
+        ObjectMeta: metav1.ObjectMeta{
+            GenerateName: "sb-",
+            Labels: map[string]string{
+                "app": "llmsafespace",
+                "user-id": req.UserID,
+            },
+            Annotations: map[string]string{},
+        },
+        Spec: v1.SandboxSpec{
+            Runtime:       req.Runtime,
+            SecurityLevel: req.SecurityLevel,
+            Timeout:       req.Timeout,
+            Resources:     req.Resources,
+            NetworkAccess: req.NetworkAccess,
+        },
+    }
+    
+    // Check if warm pool should be used
+    if req.UseWarmPool {
+        // Check if warm pods are available
+        available, err := s.warmPoolService.CheckWarmPoolAvailability(ctx, req.Runtime, req.SecurityLevel)
+        if err != nil {
+            // Log the error but continue without warm pod
+            s.logger.Error("Failed to check warm pool availability", err, 
+                zap.String("runtime", req.Runtime),
+                zap.String("securityLevel", req.SecurityLevel))
+        } else if available {
+            // Add annotation to request warm pod
+            sandbox.Annotations["llmsafespace.dev/use-warm-pod"] = "true"
+            sandbox.Annotations["llmsafespace.dev/warm-pod-runtime"] = req.Runtime
+            sandbox.Annotations["llmsafespace.dev/warm-pod-security-level"] = req.SecurityLevel
+        }
+    }
+    
+    // Create the sandbox in Kubernetes
+    result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(ctx, sandbox, metav1.CreateOptions{})
+    if err != nil {
+        return nil, err
+    }
+    
+    // Store sandbox metadata in database
+    sandboxMeta := &SandboxMetadata{
+        ID:        result.Name,
+        UserID:    req.UserID,
+        CreatedAt: time.Now(),
+        Runtime:   req.Runtime,
+    }
+    err = s.databaseClient.CreateSandboxMetadata(ctx, sandboxMeta)
+    if err != nil {
+        // Attempt to clean up the Kubernetes resource
+        _ = s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(ctx, result.Name, metav1.DeleteOptions{})
+        return nil, err
+    }
+    
+    // Return sandbox details
+    return &Sandbox{
+        ID:        result.Name,
+        Status:    string(result.Status.Phase),
+        CreatedAt: result.CreationTimestamp.Time,
+        Runtime:   req.Runtime,
+        // ... other fields
+    }, nil
+}
+```
+
+#### 3.2 Warm Pool Service
+
+- Implement warm pool availability checking
+- Implement warm pod allocation
+- Implement warm pool status monitoring
+- Implement warm pool scaling
+
+```go
+// Example warm pool availability check
+func (s *WarmPoolService) CheckWarmPoolAvailability(ctx context.Context, runtime, securityLevel string) (bool, error) {
+    // Check cache first for faster response
+    cacheKey := fmt.Sprintf("warmpool:availability:%s:%s", runtime, securityLevel)
+    if availableStr, err := s.cacheClient.Get(ctx, cacheKey); err == nil {
+        available, err := strconv.ParseBool(availableStr)
+        if err == nil {
+            return available, nil
+        }
+    }
+    
+    // Find available warm pools from Kubernetes
+    selector := labels.SelectorFromSet(labels.Set{
+        "runtime": strings.Replace(runtime, ":", "-", -1),
+        "security-level": securityLevel,
+    })
+    
+    warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{
+        LabelSelector: selector.String(),
+    })
+    
+    if err != nil {
+        return false, fmt.Errorf("failed to list warm pools: %v", err)
+    }
+    
+    // Check if any pool has available pods
+    available := false
+    for _, pool := range warmPools.Items {
+        if pool.Status.AvailablePods > 0 {
+            available = true
+            break
+        }
+    }
+    
+    // Cache the result for a short period
+    s.cacheClient.SetWithTTL(ctx, cacheKey, strconv.FormatBool(available), 10*time.Second)
+    
+    return available, nil
+}
+```
+
+#### 3.3 Execution Service
+
+- Implement code execution
+- Implement command execution
+- Implement streaming execution
+- Implement execution cancellation
+
+```go
+// Example execution method
+func (s *ExecutionService) ExecuteCode(ctx context.Context, req ExecuteCodeRequest) (*ExecutionResult, error) {
+    // Get sandbox
+    sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Get(ctx, req.SandboxID, metav1.GetOptions{})
+    if err != nil {
+        return nil, err
+    }
+    
+    // Check if sandbox is running
+    if sandbox.Status.Phase != "Running" {
+        return nil, errors.New("sandbox is not running")
+    }
+    
+    // Create execution request
+    execReq := &v1.ExecutionRequest{
+        Type:    req.Type,
+        Content: req.Content,
+        Timeout: req.Timeout,
+    }
+    
+    // Execute code via Kubernetes API
+    execResult, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Execute(ctx, req.SandboxID, execReq)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Return execution result
+    return &ExecutionResult{
+        ExecutionID:  execResult.Name,
+        Status:       string(execResult.Status.Phase),
+        StartedAt:    execResult.Status.StartTime.Time,
+        CompletedAt:  execResult.Status.CompletionTime.Time,
+        ExitCode:     execResult.Status.ExitCode,
+        Stdout:       execResult.Status.Stdout,
+        Stderr:       execResult.Status.Stderr,
+    }, nil
+}
+```
+
+#### 3.4 File Service
+
+- Implement file upload
+- Implement file download
+- Implement file listing
+- Implement file deletion
+
+### Phase 4: WebSocket Implementation (Week 4)
+
+#### 4.1 WebSocket Server
+
+- Set up WebSocket server
+- Implement connection handling
+- Implement message parsing
+- Implement session management
+
+```go
+// Example WebSocket handler
+func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
+    // Upgrade HTTP connection to WebSocket
+    conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+    if err != nil {
+        return
+    }
+    defer conn.Close()
+    
+    // Authenticate connection
+    userID, err := h.authService.AuthenticateWebSocket(c)
+    if err != nil {
+        conn.WriteJSON(ErrorMessage{Type: "error", Code: "unauthorized"})
+        return
+    }
+    
+    // Create session
+    session := h.sessionManager.CreateSession(userID, conn)
+    defer h.sessionManager.CloseSession(session.ID)
+    
+    // Handle messages
+    for {
+        messageType, message, err := conn.ReadMessage()
+        if err != nil {
+            break
+        }
+        
+        // Process message
+        h.handleMessage(session, messageType, message)
+    }
+}
+```
+
+#### 4.2 Session Management
+
+- Implement session creation and tracking
+- Implement message routing
+- Implement execution cancellation
+- Implement heartbeat handling
+
+```go
+// Example session manager
+type SessionManager struct {
+    sessions map[string]*Session
+    mu       sync.RWMutex
+}
+
+// CreateSession creates a new session
+func (m *SessionManager) CreateSession(userID string, conn *websocket.Conn) *Session {
+    session := &Session{
+        ID:            uuid.New().String(),
+        UserID:        userID,
+        conn:          conn,
+        send:          make(chan WebSocketMessage, 256),
+        cancellations: make(map[string]context.CancelFunc),
+    }
+    
+    m.mu.Lock()
+    m.sessions[session.ID] = session
+    m.mu.Unlock()
+    
+    // Start goroutines for reading and writing
+    go session.writePump()
+    
+    return session
+}
+```
+
+#### 4.3 Streaming Execution
+
+- Implement streaming code execution
+- Implement streaming command execution
+- Implement output buffering
+- Implement execution cancellation
+
+```go
+// Example streaming execution
+func (s *ExecutionService) StreamExecution(session *Session, req StreamExecutionRequest) {
+    // Create execution context with cancellation
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+    
+    // Store cancellation function in session
+    session.SetCancellationFunc(req.ExecutionID, cancel)
+    
+    // Notify client that execution has started
+    session.Send(WebSocketMessage{
+        Type:        "execution_start",
+        ExecutionID: req.ExecutionID,
+        Timestamp:   time.Now().UnixMilli(),
+    })
+    
+    // Execute in goroutine
+    go func() {
+        // Create execution request
+        execReq := &v1.ExecutionRequest{
+            Type:    req.Mode,
+            Content: req.Content,
+            Timeout: req.Timeout,
+            Stream:  true,
+        }
+        
+        // Execute and stream
+        stream, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).ExecuteStream(
+            ctx, req.SandboxID, execReq)
+        if err != nil {
+            session.Send(WebSocketMessage{
+                Type:        "error",
+                Code:        "execution_failed",
+                Message:     err.Error(),
+                ExecutionID: req.ExecutionID,
+                Timestamp:   time.Now().UnixMilli(),
+            })
+            return
+        }
+        
+        // Process stream
+        for {
+            output, err := stream.Recv()
+            if err == io.EOF {
+                break
+            }
+            if err != nil {
+                session.Send(WebSocketMessage{
+                    Type:        "error",
+                    Code:        "stream_error",
+                    Message:     err.Error(),
+                    ExecutionID: req.ExecutionID,
+                    Timestamp:   time.Now().UnixMilli(),
+                })
+                return
+            }
+            
+            // Send output to client
+            session.Send(WebSocketMessage{
+                Type:        "output",
+                ExecutionID: req.ExecutionID,
+                Stream:      output.Stream,
+                Content:     output.Content,
+                Timestamp:   time.Now().UnixMilli(),
+            })
+        }
+        
+        // Notify client that execution has completed
+        session.Send(WebSocketMessage{
+            Type:        "execution_complete",
+            ExecutionID: req.ExecutionID,
+            ExitCode:    0, // Get actual exit code from final stream message
+            Timestamp:   time.Now().UnixMilli(),
+        })
+    }()
+}
+```
+
+### Phase 5: Observability and Error Handling (Week 5)
+
+#### 5.1 Metrics and Monitoring
+
+- Implement Prometheus metrics
+- Set up metrics collection for API endpoints
+- Set up metrics for warm pool usage
+- Implement health checks
+
+```go
+// Example metrics service
+func NewMetricsService() *MetricsService {
+    requestCounter := prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "api_requests_total",
+            Help: "Total number of API requests",
+        },
+        []string{"method", "endpoint", "status"},
+    )
+    
+    requestDuration := prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "api_request_duration_seconds",
+            Help:    "API request duration in seconds",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"method", "endpoint"},
+    )
+    
+    responseSize := prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "api_response_size_bytes",
+            Help:    "API response size in bytes",
+            Buckets: prometheus.ExponentialBuckets(100, 10, 8),
+        },
+        []string{"method", "endpoint"},
+    )
+    
+    activeConnections := prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "api_active_connections",
+            Help: "Number of active connections",
+        },
+        []string{"type"},
+    )
+    
+    warmPoolHitRatio := prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "warm_pool_hit_ratio",
+            Help: "Ratio of sandbox creations that used a warm pod",
+        },
+        []string{"runtime"},
+    )
+    
+    // Register metrics
+    prometheus.MustRegister(requestCounter)
+    prometheus.MustRegister(requestDuration)
+    prometheus.MustRegister(responseSize)
+    prometheus.MustRegister(activeConnections)
+    prometheus.MustRegister(warmPoolHitRatio)
+    
+    return &MetricsService{
+        requestCounter:   requestCounter,
+        requestDuration:  requestDuration,
+        responseSize:     responseSize,
+        activeConnections: activeConnections,
+        warmPoolHitRatio: warmPoolHitRatio,
+    }
+}
+```
+
+#### 5.2 Structured Logging
+
+- Implement structured logging
+- Set up log levels and formatting
+- Configure log output destinations
+- Implement request/response logging
+
+```go
+// Example logger
+func NewLogger(development bool) (*Logger, error) {
+    var logger *zap.Logger
+    var err error
+    
+    if development {
+        logger, err = zap.NewDevelopment()
+    } else {
+        config := zap.NewProductionConfig()
+        config.EncoderConfig.TimeKey = "timestamp"
+        config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+        logger, err = config.Build()
+    }
+    
+    if err != nil {
+        return nil, err
+    }
+    
+    return &Logger{logger: logger}, nil
+}
+```
+
+#### 5.3 Error Handling
+
+- Implement standardized error responses
+- Set up error categorization
+- Implement error logging
+- Configure error reporting
+
+```go
+// Example error handling
+func HandleError(c *gin.Context, err error) {
+    // Check for specific error types
+    switch e := err.(type) {
+    case *ValidationError:
+        c.JSON(400, NewErrorResponse("invalid_request", e.Message, e.Details))
+    case *AuthError:
+        c.JSON(401, NewErrorResponse("unauthorized", e.Message, nil))
+    case *ForbiddenError:
+        c.JSON(403, NewErrorResponse("forbidden", e.Message, nil))
+    case *NotFoundError:
+        c.JSON(404, NewErrorResponse("not_found", e.Message, nil))
+    case *ConflictError:
+        c.JSON(409, NewErrorResponse("conflict", e.Message, nil))
+    case *RateLimitError:
+        c.Header("X-RateLimit-Limit", strconv.Itoa(e.Limit))
+        c.Header("X-RateLimit-Remaining", "0")
+        c.Header("X-RateLimit-Reset", strconv.FormatInt(e.Reset, 10))
+        c.JSON(429, NewErrorResponse("rate_limited", e.Message, nil))
+    default:
+        // Log unexpected errors
+        log.Printf("Unexpected error: %v", err)
+        c.JSON(500, NewErrorResponse("internal_error", "An unexpected error occurred", nil))
+    }
+}
+```
+
+### Phase 6: Rate Limiting and Security (Week 6)
+
+#### 6.1 Rate Limiting
+
+- Implement rate limiting middleware
+- Configure rate limits for different endpoints
+- Set up rate limit headers
+- Implement rate limit storage in Redis
+
+```go
+// Example rate limiter middleware
+func (r *RateLimiter) RateLimitMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // Get API key from context
+        apiKey := c.GetString("apiKey")
+        if apiKey == "" {
+            c.Next()
+            return
+        }
+        
+        // Determine limit type based on endpoint
+        limitType := "default"
+        path := c.FullPath()
+        method := c.Request.Method
+        
+        if method == "POST" && strings.HasSuffix(path, "/sandboxes") {
+            limitType = "create_sandbox"
+        } else if method == "POST" && strings.Contains(path, "/execute") {
+            limitType = "execute_code"
+        }
+        
+        // Get limit for this type
+        limit, ok := r.limits[limitType]
+        if !ok {
+            limit = r.limits["default"]
+        }
+        
+        // Check rate limit
+        key := fmt.Sprintf("ratelimit:%s:%s", apiKey, limitType)
+        count, err := r.store.Incr(c, key).Result()
+        if err != nil {
+            // Log error but continue
+            c.Next()
+            return
+        }
+        
+        // Set expiry on first request
+        if count == 1 {
+            r.store.Expire(c, key, limit.Window)
+        }
+        
+        // Set rate limit headers
+        c.Header("X-RateLimit-Limit", strconv.Itoa(limit.Requests))
+        c.Header("X-RateLimit-Remaining", strconv.Itoa(limit.Requests-int(count)))
+        
+        // Get TTL for reset time
+        ttl, err := r.store.TTL(c, key).Result()
+        if err == nil {
+            resetTime := time.Now().Add(ttl).Unix()
+            c.Header("X-RateLimit-Reset", strconv.FormatInt(resetTime, 10))
+        }
+        
+        // Check if limit exceeded
+        if count > int64(limit.Requests) {
+            c.AbortWithStatusJSON(429, NewErrorResponse(
+                "rate_limited",
+                fmt.Sprintf("Rate limit exceeded. Try again in %v", ttl),
+                nil,
+            ))
+            return
+        }
+        
+        c.Next()
+    }
+}
+```
+
+#### 6.2 Input Validation
+
+- Implement request validation
+- Set up validation middleware
+- Configure validation rules
+- Implement validation error responses
+
+```go
+// Example validation
+func validateCreateSandboxRequest(req *CreateSandboxRequest) error {
+    if req.Runtime == "" {
+        return &ValidationError{
+            Message: "Runtime is required",
+            Details: map[string]interface{}{
+                "field": "runtime",
+            },
+        }
+    }
+    
+    if req.Timeout <= 0 {
+        return &ValidationError{
+            Message: "Timeout must be positive",
+            Details: map[string]interface{}{
+                "field": "timeout",
+                "value": req.Timeout,
+            },
+        }
+    }
+    
+    // More validation rules...
+    
+    return nil
+}
+```
+
+#### 6.3 Security Headers
+
+- Implement security headers middleware
+- Configure CORS settings
+- Set up content security policy
+- Implement XSS protection
+
+```go
+// Example security headers middleware
+func SecurityHeadersMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        c.Header("X-Content-Type-Options", "nosniff")
+        c.Header("X-Frame-Options", "DENY")
+        c.Header("X-XSS-Protection", "1; mode=block")
+        c.Header("Content-Security-Policy", "default-src 'self'")
+        c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+        c.Next()
+    }
+}
+```
+
+### Phase 7: Testing and Integration (Week 7)
+
+#### 7.1 Unit Testing
+
+- Write unit tests for all components
+- Set up test fixtures
+- Configure test coverage reporting
+- Implement mocks for external dependencies
+
+```go
+// Example test
+func TestSandboxService_CreateSandbox(t *testing.T) {
+    // Setup
+    ctrl := gomock.NewController(t)
+    defer ctrl.Finish()
+    
+    mockK8sClient := mocks.NewMockK8sClient(ctrl)
+    mockWarmPoolService := mocks.NewMockWarmPoolService(ctrl)
+    mockDatabaseClient := mocks.NewMockDatabaseClient(ctrl)
+    
+    service := &SandboxService{
+        k8sClient:       mockK8sClient,
+        warmPoolService:  mockWarmPoolService,
+        databaseClient:   mockDatabaseClient,
+    }
+    
+    // Expectations
+    mockWarmPoolService.EXPECT().
+        CheckWarmPoolAvailability(gomock.Any(), "python:3.10", "standard").
+        Return(true, nil)
+    
+    mockK8sClient.EXPECT().
+        LlmsafespaceV1().
+        Return(mockLlmsafespaceV1Client)
+    
+    mockLlmsafespaceV1Client.EXPECT().
+        Sandboxes(gomock.Any()).
+        Return(mockSandboxClient)
+    
+    mockSandboxClient.EXPECT().
+        Create(gomock.Any(), gomock.Any(), gomock.Any()).
+        Return(&v1.Sandbox{
+            ObjectMeta: metav1.ObjectMeta{
+                Name: "sb-12345",
+                CreationTimestamp: metav1.Now(),
+            },
+            Status: v1.SandboxStatus{
+                Phase: "Creating",
+            },
+        }, nil)
+    
+    mockDatabaseClient.EXPECT().
+        CreateSandboxMetadata(gomock.Any(), gomock.Any()).
+        Return(nil)
+    
+    // Test
+    req := CreateSandboxRequest{
+        Runtime: "python:3.10",
+        SecurityLevel: "standard",
+        Timeout: 300,
+        UseWarmPool: true,
+    }
+    
+    result, err := service.CreateSandbox(context.Background(), req)
+    
+    // Assertions
+    assert.NoError(t, err)
+    assert.NotNil(t, result)
+    assert.Equal(t, "sb-12345", result.ID)
+    assert.Equal(t, "Creating", result.Status)
+    assert.Equal(t, "python:3.10", result.Runtime)
+}
+```
+
+#### 7.2 Integration Testing
+
+- Set up integration test environment
+- Write integration tests for API endpoints
+- Test WebSocket functionality
+- Test database and cache integration
+
+```go
+// Example integration test
+func TestSandboxAPI_CreateSandbox(t *testing.T) {
+    // Setup test server
+    app := setupTestApp()
+    server := httptest.NewServer(app.router)
+    defer server.Close()
+    
+    // Create test client
+    client := &http.Client{}
+    
+    // Create request
+    reqBody := `{
+        "runtime": "python:3.10",
+        "securityLevel": "standard",
+        "timeout": 300,
+        "useWarmPool": true
+    }`
+    
+    req, err := http.NewRequest("POST", server.URL+"/api/v1/sandboxes", strings.NewReader(reqBody))
+    require.NoError(t, err)
+    
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", "Bearer test-api-key")
+    
+    // Send request
+    resp, err := client.Do(req)
+    require.NoError(t, err)
+    defer resp.Body.Close()
+    
+    // Check response
+    assert.Equal(t, http.StatusOK, resp.StatusCode)
+    
+    var result map[string]interface{}
+    err = json.NewDecoder(resp.Body).Decode(&result)
+    require.NoError(t, err)
+    
+    assert.NotEmpty(t, result["id"])
+    assert.Equal(t, "creating", result["status"])
+    assert.Equal(t, "python:3.10", result["runtime"])
+}
+```
+
+#### 7.3 End-to-End Testing
+
+- Set up end-to-end test environment
+- Write end-to-end tests for complete workflows
+- Test integration with Sandbox Controller
+- Test warm pool allocation
+
+### Phase 8: Documentation and Deployment (Week 8)
+
+#### 8.1 API Documentation
+
+- Generate API documentation
+- Create usage examples
+- Document error codes and responses
+- Create SDK integration guides
+
+#### 8.2 Deployment Configuration
+
+- Create Kubernetes deployment manifests
+- Configure resource requests and limits
+- Set up service and ingress resources
+- Configure horizontal pod autoscaling
+
+```yaml
+# Example deployment manifest
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api
+  namespace: llmsafespace
+  labels:
+    app: llmsafespace
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: llmsafespace
+      component: api
+  template:
+    metadata:
+      labels:
+        app: llmsafespace
+        component: api
+    spec:
+      serviceAccountName: agent-api
+      containers:
+      - name: api
+        image: llmsafespace/agent-api:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SERVER_PORT
+          value: "8080"
+        - name: KUBERNETES_IN_CLUSTER
+          value: "true"
+        - name: DATABASE_HOST
+          value: "postgres"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: DATABASE_NAME
+          value: "llmsafespace"
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: AUTH_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: jwt-secret
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: agent-api-config
+```
+
+#### 8.3 CI/CD Pipeline
+
+- Set up continuous integration
+- Configure automated testing
+- Set up continuous deployment
+- Configure release management
+
+## Timeline
+
+| Week | Phase | Tasks |
+|------|-------|-------|
+| 1 | Project Setup and Core Infrastructure | Project structure, Kubernetes client, Database and cache integration |
+| 2 | API Layer Implementation | REST API framework, Authentication, Resource endpoints |
+| 3 | Service Layer Implementation | Sandbox service, Warm pool service, Execution service, File service |
+| 4 | WebSocket Implementation | WebSocket server, Session management, Streaming execution |
+| 5 | Observability and Error Handling | Metrics and monitoring, Structured logging, Error handling |
+| 6 | Rate Limiting and Security | Rate limiting, Input validation, Security headers |
+| 7 | Testing and Integration | Unit testing, Integration testing, End-to-end testing |
+| 8 | Documentation and Deployment | API documentation, Deployment configuration, CI/CD pipeline |
+
+## Dependencies and Prerequisites
+
+1. **Kubernetes Cluster**
+   - Required for development and testing
+   - Minimum version: 1.20+
+   - Custom Resource Definitions (CRDs) must be installed
+
+2. **Database**
+   - PostgreSQL 14+
+   - Schema migrations must be applied
+
+3. **Cache**
+   - Redis 7+
+   - Configured for session storage and rate limiting
+
+4. **Sandbox Controller**
+   - Must be deployed and operational
+   - CRDs must be registered and validated
+
+5. **Development Tools**
+   - Go 1.19+
+   - Docker
+   - kubectl
+   - Helm (for deployment)
+
+## Risk Assessment and Mitigation
+
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|------------|------------|
+| Kubernetes API changes | High | Low | Use stable API versions, comprehensive testing |
+| Database performance bottlenecks | Medium | Medium | Connection pooling, query optimization, caching |
+| WebSocket scaling issues | High | Medium | Implement proper connection handling, load testing |
+| Rate limiting effectiveness | Medium | Low | Thorough testing, monitoring, adjustable limits |
+| Security vulnerabilities | High | Medium | Security reviews, dependency scanning, regular updates |
+| Integration issues with Sandbox Controller | High | Medium | Comprehensive integration testing, clear API contracts |
+
+## Success Criteria
+
+1. **Functionality**
+   - All API endpoints work as specified
+   - WebSocket streaming functions correctly
+   - Warm pool allocation is efficient
+   - Authentication and authorization work properly
+
+2. **Performance**
+   - API response time under 100ms for 95% of requests
+   - WebSocket connections handle at least 1000 concurrent users
+   - Rate limiting correctly prevents abuse
+
+3. **Reliability**
+   - 99.9% uptime
+   - Graceful handling of failures
+   - Proper error reporting
+
+4. **Security**
+   - All endpoints properly authenticated
+   - Input validation prevents injection attacks
+   - Rate limiting prevents abuse
+
+5. **Observability**
+   - Comprehensive metrics collection
+   - Structured logging for all operations
+   - Health checks for monitoring
