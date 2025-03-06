@@ -4,7 +4,6 @@ import sys
 import json
 import resource
 import importlib.util
-import subprocess
 
 # Load restricted modules configuration
 with open('/etc/llmsafespace/python/restricted_modules.json', 'r') as f:
@@ -12,12 +11,15 @@ with open('/etc/llmsafespace/python/restricted_modules.json', 'r') as f:
 
 # Set resource limits
 def set_resource_limits():
-    # CPU time limit (seconds)
-    resource.setrlimit(resource.RLIMIT_CPU, (300, 300))
-    # Virtual memory limit (bytes) - 1GB
-    resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024, 1024 * 1024 * 1024))
-    # File size limit (bytes) - 100MB
-    resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024, 100 * 1024 * 1024))
+    try:
+        # CPU time limit (seconds)
+        resource.setrlimit(resource.RLIMIT_CPU, (300, 300))
+        # Virtual memory limit (bytes) - 1GB
+        resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024, 1024 * 1024 * 1024))
+        # File size limit (bytes) - 100MB
+        resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024, 100 * 1024 * 1024))
+    except Exception as e:
+        print(f"Warning: Could not set resource limits: {e}", file=sys.stderr)
 
 # Custom import hook to restrict dangerous modules
 class RestrictedImportFinder:
@@ -42,12 +44,25 @@ set_resource_limits()
 # Execute the Python interpreter with the provided script
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        script_path = sys.argv[1]
-        sys.argv = sys.argv[1:]
-        
-        with open(script_path, 'rb') as f:
-            code = compile(f.read(), script_path, 'exec')
-            exec(code, {'__name__': '__main__'})
+        if sys.argv[1] == '-c':
+            # Execute code directly
+            if len(sys.argv) > 2:
+                exec(sys.argv[2])
+            else:
+                print("Error: No code provided with -c option", file=sys.stderr)
+                sys.exit(1)
+        else:
+            # Execute script file
+            script_path = sys.argv[1]
+            sys.argv = sys.argv[1:]
+            
+            try:
+                with open(script_path, 'rb') as f:
+                    code = compile(f.read(), script_path, 'exec')
+                    exec(code, {'__name__': '__main__'})
+            except FileNotFoundError:
+                print(f"Error: Script file '{script_path}' not found", file=sys.stderr)
+                sys.exit(1)
     else:
         # Interactive mode
         import code

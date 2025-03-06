@@ -49,7 +49,8 @@ func main() {
 	// Check for restricted packages
 	for _, pkg := range restricted.Blocked {
 		if strings.Contains(string(source), fmt.Sprintf("import \"%s\"", pkg)) ||
-			strings.Contains(string(source), fmt.Sprintf("import (\n\t\"%s\"", pkg)) {
+			strings.Contains(string(source), fmt.Sprintf("import (\n\t\"%s\"", pkg)) ||
+			strings.Contains(string(source), fmt.Sprintf("\"%s\"", pkg)) {
 			fmt.Fprintf(os.Stderr, "Error: Use of restricted package '%s' is not allowed\n", pkg)
 			os.Exit(1)
 		}
@@ -58,7 +59,8 @@ func main() {
 	// Check for warning packages
 	for _, pkg := range restricted.Warning {
 		if strings.Contains(string(source), fmt.Sprintf("import \"%s\"", pkg)) ||
-			strings.Contains(string(source), fmt.Sprintf("import (\n\t\"%s\"", pkg)) {
+			strings.Contains(string(source), fmt.Sprintf("import (\n\t\"%s\"", pkg)) ||
+			strings.Contains(string(source), fmt.Sprintf("\"%s\"", pkg)) {
 			fmt.Fprintf(os.Stderr, "Warning: Use of package '%s' may pose security risks\n", pkg)
 		}
 	}
