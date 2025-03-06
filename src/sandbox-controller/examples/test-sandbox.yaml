@@ -1,0 +1,16 @@
+apiVersion: llmsafespace.dev/v1
+kind: Sandbox
+metadata:
+  name: test-sandbox
+  namespace: default
+spec:
+  runtime: python:3.10
+  securityLevel: standard
+  timeout: 300
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  networkAccess:
+    egress:
+      - domain: pypi.org
+      - domain: files.pythonhosted.org

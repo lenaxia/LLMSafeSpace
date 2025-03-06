@@ -1,0 +1,21 @@
+apiVersion: llmsafespace.dev/v1
+kind: WarmPool
+metadata:
+  name: test-python-pool
+  namespace: default
+spec:
+  runtime: python:3.10
+  minSize: 2
+  maxSize: 5
+  securityLevel: standard
+  ttl: 3600
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  preloadPackages:
+    - numpy
+    - pandas
+  autoScaling:
+    enabled: true
+    targetUtilization: 80
+    scaleDownDelay: 300

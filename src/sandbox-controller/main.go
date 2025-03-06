@@ -8,10 +8,12 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/yourusername/llmsafespace/sandbox-controller/internal/resources"
+	"github.com/llmsafespace/sandbox-controller/internal/controller"
+	"github.com/llmsafespace/sandbox-controller/internal/resources"
 )
 
 var (
@@ -27,7 +29,9 @@ func init() {
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
+	var probeAddr string
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -36,11 +40,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsAddr,
-		Port:               9443,
-		LeaderElection:     enableLeaderElection,
-		LeaderElectionID:   "llmsafespace-controller-leader-election",
+		Scheme:                 scheme,
+		MetricsBindAddress:     metricsAddr,
+		Port:                   9443,
+		HealthProbeBindAddress: probeAddr,
+		LeaderElection:         enableLeaderElection,
+		LeaderElectionID:       "llmsafespace-controller-leader-election",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -67,6 +72,22 @@ func main() {
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &resources.RuntimeEnvironmentValidator{},
 	})
+
+	// Set up controllers
+	if err := controller.SetupControllers(mgr); err != nil {
+		setupLog.Error(err, "unable to set up controllers")
+		os.Exit(1)
+	}
+
+	// Add health check endpoints
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
