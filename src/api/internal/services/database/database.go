@@ -13,9 +13,9 @@ import (
 
 // Service handles database operations
 type Service struct {
-	logger *logger.Logger
-	config *config.Config
-	db     *sql.DB
+	Logger *logger.Logger
+	Config *config.Config
+	DB     *sql.DB
 }
 
 // New creates a new database service
@@ -50,9 +50,9 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 	}
 
 	return &Service{
-		logger: log,
-		config: cfg,
-		db:     db,
+		Logger: log,
+		Config: cfg,
+		DB:     db,
 	}, nil
 }
 
@@ -65,18 +65,18 @@ func (s *Service) Start() error {
 // Stop stops the database service
 func (s *Service) Stop() error {
 	s.logger.Info("Stopping database service")
-	return s.db.Close()
+	return s.DB.Close()
 }
 
 // Ping checks the database connection
 func (s *Service) Ping(ctx context.Context) error {
-	return s.db.PingContext(ctx)
+	return s.DB.PingContext(ctx)
 }
 
 // GetUserIDByAPIKey gets the user ID associated with an API key
 func (s *Service) GetUserIDByAPIKey(apiKey string) (string, error) {
 	var userID string
-	err := s.db.QueryRow("SELECT user_id FROM api_keys WHERE key = $1 AND active = true", apiKey).Scan(&userID)
+	err := s.DB.QueryRow("SELECT user_id FROM api_keys WHERE key = $1 AND active = true", apiKey).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -100,7 +100,7 @@ func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string
 		return false, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}
 
-	err := s.db.QueryRow(query, resourceID, userID).Scan(&count)
+	err := s.DB.QueryRow(query, resourceID, userID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check resource ownership: %w", err)
 	}
@@ -119,7 +119,7 @@ func (s *Service) CheckPermission(userID, resourceType, resourceID, action strin
 		AND (action = $4 OR action = '*')
 	`
 
-	err := s.db.QueryRow(query, userID, resourceType, resourceID, action).Scan(&count)
+	err := s.DB.QueryRow(query, userID, resourceType, resourceID, action).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check permission: %w", err)
 	}
@@ -134,7 +134,7 @@ func (s *Service) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, 
 		VALUES ($1, $2, $3, $4)
 	`
 
-	_, err := s.db.ExecContext(ctx, query, sandboxID, userID, runtime, time.Now())
+	_, err := s.DB.ExecContext(ctx, query, sandboxID, userID, runtime, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox metadata: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *Service) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, 
 func (s *Service) DeleteSandboxMetadata(ctx context.Context, sandboxID string) error {
 	query := `DELETE FROM sandboxes WHERE id = $1`
 
-	_, err := s.db.ExecContext(ctx, query, sandboxID)
+	_, err := s.DB.ExecContext(ctx, query, sandboxID)
 	if err != nil {
 		return fmt.Errorf("failed to delete sandbox metadata: %w", err)
 	}
@@ -165,7 +165,7 @@ func (s *Service) GetSandboxMetadata(ctx context.Context, sandboxID string) (map
 	var id, userID, runtime string
 	var createdAt time.Time
 
-	err := s.db.QueryRowContext(ctx, query, sandboxID).Scan(&id, &userID, &runtime, &createdAt)
+	err := s.DB.QueryRowContext(ctx, query, sandboxID).Scan(&id, &userID, &runtime, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -191,7 +191,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		LIMIT $2 OFFSET $3
 	`
 
-	rows, err := s.db.QueryContext(ctx, query, userID, limit, offset)
+	rows, err := s.DB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
