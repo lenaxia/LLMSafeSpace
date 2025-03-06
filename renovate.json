@@ -1,26 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
-    ":dependencyDashboard",
-    ":semanticCommits"
+    "config:base"
   ],
   "packageRules": [
     {
       "matchDatasources": ["docker"],
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
-    },
-    {
-      "description": "Python ML package versions in Dockerfile",
-      "matchFiles": ["runtimes/python/Dockerfile.ml"],
-      "matchStrings": [
-        "ARG (?<package>[A-Z_]+)_VERSION=(?<currentValue>.*?)\\s"
-      ],
-      "datasourceTemplate": "pypi",
-      "depNameTemplate": "{{{package}}}",
-      "versioningTemplate": "semver",
-      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)"
     }
   ],
   "regexManagers": [
@@ -30,13 +17,8 @@
         "ARG (?<depName>[A-Z_]+)_VERSION=(?<currentValue>.*?)\\s"
       ],
       "datasourceTemplate": "pypi",
-      "versioningTemplate": "semver",
-      "depNameTemplate": "{{#replace}}NUMPY_VERSION|numpy{{/replace}}{{#replace}}PANDAS_VERSION|pandas{{/replace}}{{#replace}}MATPLOTLIB_VERSION|matplotlib{{/replace}}{{#replace}}SCIKIT_LEARN_VERSION|scikit-learn{{/replace}}{{#replace}}TENSORFLOW_VERSION|tensorflow{{/replace}}{{#replace}}PYTORCH_VERSION|torch{{/replace}}"
+      "depNameTemplate": "{{#if depName}}{{depName}}{{/if}}",
+      "packageNameTemplate": "{{#replace}}NUMPY_VERSION|numpy{{/replace}}{{#replace}}PANDAS_VERSION|pandas{{/replace}}{{#replace}}MATPLOTLIB_VERSION|matplotlib{{/replace}}{{#replace}}SCIKIT_LEARN_VERSION|scikit-learn{{/replace}}{{#replace}}TENSORFLOW_VERSION|tensorflow{{/replace}}{{#replace}}PYTORCH_VERSION|torch{{/replace}}"
     }
-  ],
-  "prConcurrentLimit": 5,
-  "prHourlyLimit": 2,
-  "labels": ["dependencies"],
-  "schedule": ["after 10pm and before 5am every weekday"],
-  "timezone": "UTC"
+  ]
 }
