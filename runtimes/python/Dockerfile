@@ -27,9 +27,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pytest==7.3.1
 
 # Install ML packages (CPU versions)
-RUN pip install --no-cache-dir \
-    tensorflow==2.12.0 \
-    torch==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir tensorflow==2.12.0 && \
+    pip install --no-cache-dir torch==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Copy Python-specific security configurations
 COPY --chown=root:root security/python/restricted_modules.json /etc/llmsafespace/python/
