@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
 )
@@ -58,24 +59,18 @@ func IsConditionTrue(conditions []metav1.Condition, conditionType string) bool {
 
 // AddFinalizer adds a finalizer to an object if it doesn't already exist
 func AddFinalizer(obj client.Object, finalizer string) bool {
-	finalizers := obj.GetFinalizers()
-	for _, f := range finalizers {
-		if f == finalizer {
-			return false
-		}
+	if !controllerutil.ContainsFinalizer(obj, finalizer) {
+		controllerutil.AddFinalizer(obj, finalizer)
+		return true
 	}
-	obj.SetFinalizers(append(finalizers, finalizer))
-	return true
+	return false
 }
 
 // RemoveFinalizer removes a finalizer from an object if it exists
 func RemoveFinalizer(obj client.Object, finalizer string) bool {
-	finalizers := obj.GetFinalizers()
-	for i, f := range finalizers {
-		if f == finalizer {
-			obj.SetFinalizers(append(finalizers[:i], finalizers[i+1:]...))
-			return true
-		}
+	if controllerutil.ContainsFinalizer(obj, finalizer) {
+		controllerutil.RemoveFinalizer(obj, finalizer)
+		return true
 	}
 	return false
 }
@@ -99,7 +94,11 @@ func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resour
 	warmPodList := &resources.WarmPodList{}
 	
 	// List all warm pods in the same namespace
-	if err := c.List(ctx, warmPodList, client.InNamespace(sandbox.Namespace)); err != nil {
+	if err := c.List(ctx, warmPodList, client.InNamespace(sandbox.Namespace), client.MatchingLabels{
+		LabelComponent: ComponentWarmPod,
+		LabelRuntime: sandbox.Spec.Runtime,
+		LabelStatus: "ready",
+	}); err != nil {
 		return nil, err
 	}
 	
@@ -128,14 +127,13 @@ func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resour
 	return nil, fmt.Errorf("no suitable warm pod found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 }
 
-// CreateSandboxPod creates a pod for a sandbox
-func CreateSandboxPod(sandbox *resources.Sandbox, warmPod *resources.WarmPod) *corev1.Pod {
-	// Implementation will be added in the sandbox controller
-	return nil
-}
-
-// CreateWarmPod creates a pod for a warm pod
-func CreateWarmPod(warmPool *resources.WarmPool, warmPod *resources.WarmPod) *corev1.Pod {
-	// Implementation will be added in the warm pod controller
-	return nil
+// GenerateRandomString generates a random string of the specified length
+func GenerateRandomString(length int) string {
+	// In a real implementation, this would generate a random string
+	// For simplicity, we'll just use the current timestamp
+	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
+	if len(timestamp) > length {
+		return timestamp[:length]
+	}
+	return timestamp
 }
