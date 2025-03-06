@@ -26,9 +26,14 @@ This document outlines the implementation plan for LLMSafeSpace, a Kubernetes-na
 ### Low-Level Design Documents
 
 1. **Sandbox Controller Design**
-   - Custom Resource Definitions (CRDs)
-   - Controller reconciliation loops
-   - Resource lifecycle management
+   - Custom Resource Definitions (CRDs) - see design/CONTROLLER-CRDS.md
+   - Controller reconciliation loops - see design/CONTROLLER-RECONCILIATION.md
+   - Resource lifecycle management - see design/CONTROLLER-COMPONENTS.md
+   - Warm pool management - see design/CONTROLLER-WARMPOOL.md
+   - High availability - see design/CONTROLLER-HA.md
+   - Monitoring and metrics - see design/CONTROLLER-MONITORING.md
+   - Error handling - see design/CONTROLLER-ERROR.md
+   - Work queue processing - see design/CONTROLLER-WORKQUEUE.md
 
 2. **Runtime Environment Design**
    - Base container image specifications
@@ -70,16 +75,18 @@ Define and implement the core Custom Resource Definitions (CRDs) for LLMSafeSpac
 #### Step 1.2: Combined Sandbox and Warm Pool Controller Implementation
 
 **Description:**
-Implement a unified Kubernetes operator that manages both sandbox and warm pool lifecycles, including creation, monitoring, termination, scaling, and pod recycling.
+Implement a unified Kubernetes operator that manages both sandbox and warm pool lifecycles, including creation, monitoring, termination, scaling, and pod recycling. The controller design is detailed across multiple files in the design/CONTROLLER-*.md documents.
 
 **Requirements:**
 - Implement controller using the Operator SDK
-- Support reconciliation of Sandbox, WarmPool, and WarmPod resources
-- Handle pod creation with appropriate security contexts for both sandboxes and warm pods
+- Support reconciliation of Sandbox, WarmPool, and WarmPod resources (see CONTROLLER-RECONCILIATION.md)
+- Handle pod creation with appropriate security contexts for both sandboxes and warm pods (see CONTROLLER-COMPONENTS.md)
 - Implement status updates for all managed resources
-- Support integration of warm pools for faster sandbox creation
+- Support integration of warm pools for faster sandbox creation (see CONTROLLER-WARMPOOL.md)
 - Implement auto-scaling for warm pools based on usage patterns
 - Support pod recycling for efficient resource usage
+- Implement high availability with leader election (see CONTROLLER-HA.md)
+- Expose comprehensive metrics for monitoring (see CONTROLLER-MONITORING.md)
 
 **Acceptance Criteria:**
 - Controller successfully creates and manages pods for both sandboxes and warm pools
