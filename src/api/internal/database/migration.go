@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 )
 
 // Migration represents a database migration
@@ -23,12 +24,12 @@ type Migration struct {
 
 // MigrationService handles database migrations
 type MigrationService struct {
-	db     *Service
+	db     *database.Service
 	logger *logger.Logger
 }
 
 // NewMigrationService creates a new migration service
-func NewMigrationService(db *Service, logger *logger.Logger) *MigrationService {
+func NewMigrationService(db *database.Service, logger *logger.Logger) *MigrationService {
 	return &MigrationService{
 		db:     db,
 		logger: logger,
