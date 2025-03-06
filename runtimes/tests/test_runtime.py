@@ -7,10 +7,10 @@ import requests
 from pathlib import Path
 
 # Test configuration
-TEST_IMAGE = "llmsafespace/base:latest"
-TEST_PYTHON_IMAGE = "llmsafespace/python:latest"
-TEST_NODEJS_IMAGE = "llmsafespace/nodejs:latest"
-TEST_GO_IMAGE = "llmsafespace/go:latest"
+TEST_IMAGE = "ghcr.io/lenaxia/llmsafespace/base:latest"
+TEST_PYTHON_IMAGE = "ghcr.io/lenaxia/llmsafespace/python:latest"
+TEST_NODEJS_IMAGE = "ghcr.io/lenaxia/llmsafespace/nodejs:latest"
+TEST_GO_IMAGE = "ghcr.io/lenaxia/llmsafespace/go:latest"
 
 @pytest.fixture
 def docker_client():
