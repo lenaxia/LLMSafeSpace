@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apparmor \
     bc \
     iproute2 \
+    iputils-ping \
+    stress \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

@@ -19,6 +19,8 @@ echo $$ > "$PID_FILE"
 
 # Initialize log files
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$METRICS_FILE")"
+touch "$LOG_FILE" "$METRICS_FILE"
+chmod 644 "$LOG_FILE" "$METRICS_FILE"
 
 log() {
     local level="$1"

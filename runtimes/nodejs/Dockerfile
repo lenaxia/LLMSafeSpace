@@ -40,7 +40,8 @@ COPY --chown=root:root security/nodejs/restricted_modules.json /etc/llmsafespace
 
 # Copy Node.js security wrapper
 COPY --chown=root:root tools/nodejs-security-wrapper.js /opt/llmsafespace/bin/nodejs-security-wrapper.js
-RUN chmod +x /opt/llmsafespace/bin/nodejs-security-wrapper.js
+RUN chmod 755 /opt/llmsafespace/bin/nodejs-security-wrapper.js && \
+    node -c /opt/llmsafespace/bin/nodejs-security-wrapper.js
 
 USER sandbox
 CMD ["nodejs-security-wrapper.js"]

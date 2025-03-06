@@ -12,7 +12,7 @@ log() {
 # Clean workspace directory
 cleanup_workspace() {
     log "Cleaning workspace directory"
-    find "$WORKSPACE_DIR" -mindepth 1 -delete
+    find "$WORKSPACE_DIR" -mindepth 1 -delete || true
     mkdir -p "$WORKSPACE_DIR"
     chmod 755 "$WORKSPACE_DIR"
 }
