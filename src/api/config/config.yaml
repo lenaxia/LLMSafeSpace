@@ -1,0 +1,50 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  shutdownTimeout: 30s
+
+kubernetes:
+  configPath: ""  # Empty for in-cluster config
+  inCluster: true
+  namespace: "llmsafespace"
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "llmsafespace"
+  password: ""  # Set via environment variable
+  database: "llmsafespace"
+  sslMode: "disable"
+  maxOpenConns: 25
+  maxIdleConns: 10
+  connMaxLifetime: 5m
+
+redis:
+  host: "redis"
+  port: 6379
+  password: ""  # Set via environment variable
+  db: 0
+  poolSize: 20
+
+auth:
+  jwtSecret: ""  # Set via environment variable
+  tokenDuration: 24h
+  apiKeyPrefix: "lsp_"
+
+logging:
+  level: "info"
+  development: false
+  encoding: "json"  # "json" or "console"
+
+rateLimiting:
+  enabled: true
+  limits:
+    default:
+      requests: 1000
+      window: 1h
+    create_sandbox:
+      requests: 100
+      window: 1h
+    execute_code:
+      requests: 500
+      window: 1h
