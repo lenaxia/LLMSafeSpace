@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir --timeout 300 --retries 5 \
     torch==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
 
 USER sandbox
-CMD ["python-security-wrapper.py"]
+CMD ["/opt/llmsafespace/bin/python-security-wrapper.py"]
