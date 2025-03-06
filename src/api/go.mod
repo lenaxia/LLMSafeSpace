@@ -1,4 +1,4 @@
-module github.com/llmsafespace/api
+module github.com/lenaxia/llmsafespace/api
 
 go 1.19
 
