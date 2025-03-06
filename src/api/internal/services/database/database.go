@@ -68,6 +68,11 @@ func (s *Service) Stop() error {
 	return s.db.Close()
 }
 
+// Ping checks the database connection
+func (s *Service) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 // GetUserIDByAPIKey gets the user ID associated with an API key
 func (s *Service) GetUserIDByAPIKey(apiKey string) (string, error) {
 	var userID string
