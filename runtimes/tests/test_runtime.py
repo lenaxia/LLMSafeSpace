@@ -134,7 +134,7 @@ def test_resource_limits(docker_client):
     # Install stress package first
     setup = docker_client.containers.run(
         TEST_IMAGE,
-        ["apt-get", "update", "&&", "apt-get", "install", "-y", "stress"],
+        ["/bin/bash", "-c", "apt-get update && apt-get install -y stress"],
         remove=True,
         user="root"
     )
