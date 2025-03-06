@@ -10,8 +10,8 @@ import (
 	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/warmpod"
 )
 
-// SetupControllers sets up all controllers with the manager
-func SetupControllers(mgr ctrl.Manager) error {
+// InitializeControllers initializes all controllers with the manager
+func InitializeControllers(mgr ctrl.Manager) error {
 	// Set up sandbox controller
 	if err := (&sandbox.SandboxReconciler{
 		Client: mgr.GetClient(),
