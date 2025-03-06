@@ -1,23 +1,136 @@
 #!/bin/bash
 
-# Track code execution and resource utilization
+# Configuration
 EXEC_LOG="/var/log/llmsafespace/execution.log"
-mkdir -p "$(dirname "$EXEC_LOG")"
+PROFILE_DIR="/var/log/llmsafespace/profiles"
+TRACE_LOG="/var/log/llmsafespace/syscall_trace.log"
 
+# Ensure log directories exist
+mkdir -p "$(dirname "$EXEC_LOG")" "$PROFILE_DIR"
+
+# Initialize logging
+log_json() {
+    local level="$1"
+    local message="$2"
+    local data="$3"
+    echo "{\"timestamp\":\"$(date -Iseconds)\",\"level\":\"$level\",\"message\":\"$message\",\"data\":$data}" >> "$EXEC_LOG"
+}
+
+# Memory profiling
+profile_memory() {
+    local pid="$1"
+    local profile_file="${PROFILE_DIR}/memory_${pid}_$(date +%s).prof"
+    
+    # Capture memory maps
+    cat "/proc/$pid/maps" > "${profile_file}.maps"
+    
+    # Capture memory stats
+    cat "/proc/$pid/status" > "${profile_file}.status"
+    
+    # Get detailed memory info using pmap
+    pmap -x "$pid" > "${profile_file}.pmap"
+    
+    echo "$profile_file"
+}
+
+# File operation tracking
+track_file_ops() {
+    local pid="$1"
+    local start_time="$2"
+    local duration="$3"
+    
+    # Get list of opened files
+    local open_files=$(lsof -p "$pid" 2>/dev/null | awk '{print $9}' | grep -v "^$")
+    
+    # Calculate file statistics
+    local file_count=$(echo "$open_files" | wc -l)
+    local write_ops=$(echo "$open_files" | grep -c "^/workspace/")
+    
+    echo "{\"total_files\":$file_count,\"workspace_writes\":$write_ops}"
+}
+
+# Process tracking
+track_processes() {
+    local pid="$1"
+    
+    # Get child processes
+    local children=$(pgrep -P "$pid" | tr '\n' ',' | sed 's/,$//')
+    
+    # Get thread count
+    local threads=$(ps -p "$pid" -L | wc -l)
+    
+    echo "{\"child_processes\":\"$children\",\"thread_count\":$threads}"
+}
+
+# System call tracing
+trace_syscalls() {
+    local pid="$1"
+    local duration="$2"
+    
+    # Use strace to capture system calls for a short period
+    timeout "$duration" strace -p "$pid" -c 2>"${TRACE_LOG}.${pid}" || true
+    
+    # Parse strace output
+    local syscall_summary=$(cat "${TRACE_LOG}.${pid}" | grep -v "^%" | tr '\n' '|')
+    
+    echo "{\"syscall_trace\":\"$syscall_summary\"}"
+}
+
+# Enhanced execution logging
 log_execution() {
     local cmd="$1"
     local start_time="$2"
     local end_time="$3"
     local exit_code="$4"
+    local pid="$5"
+    
+    # Calculate duration
     local duration=$(( end_time - start_time ))
     
     # Get resource usage
-    local cpu_usage=$(ps -p $$ -o %cpu | tail -n 1)
-    local mem_usage=$(ps -p $$ -o %mem | tail -n 1)
+    local cpu_usage=$(ps -p "$pid" -o %cpu | tail -n 1)
+    local mem_usage=$(ps -p "$pid" -o %mem | tail -n 1)
+    local mem_rss=$(ps -p "$pid" -o rss | tail -n 1)
     
-    # Log execution details
-    echo "$(date '+%Y-%m-%d %H:%M:%S') CMD:${cmd} DURATION:${duration}s EXIT:${exit_code} CPU:${cpu_usage}% MEM:${mem_usage}%" >> "$EXEC_LOG"
+    # Get memory profile
+    local memory_profile=$(profile_memory "$pid")
+    
+    # Get file operations
+    local file_ops=$(track_file_ops "$pid" "$start_time" "$duration")
+    
+    # Get process information
+    local process_info=$(track_processes "$pid")
+    
+    # Get system call trace for short commands
+    local syscall_info="{}"
+    if [ "$duration" -lt 10 ]; then
+        syscall_info=$(trace_syscalls "$pid" 1)
+    fi
+    
+    # Create detailed execution record
+    local execution_data=$(cat << EOF
+{
+    "command": "$cmd",
+    "pid": $pid,
+    "start_time": $start_time,
+    "end_time": $end_time,
+    "duration": $duration,
+    "exit_code": $exit_code,
+    "resources": {
+        "cpu_usage": $cpu_usage,
+        "memory_usage": $mem_usage,
+        "memory_rss": $mem_rss
+    },
+    "memory_profile": "$memory_profile",
+    "file_operations": $file_ops,
+    "process_info": $process_info,
+    "syscalls": $syscall_info
+}
+EOF
+)
+    
+    log_json "INFO" "Command execution completed" "$execution_data"
 }
 
 # Set up trap to log all command executions
-trap 'log_execution "$BASH_COMMAND" "$SECONDS" "$?" "$BASHPID"' DEBUG
+trap 'log_execution "$BASH_COMMAND" "$SECONDS" "$(date +%s)" "$?" "$$"' DEBUG

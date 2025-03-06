@@ -1,29 +1,124 @@
 #!/bin/bash
 
-# Monitor system resource usage and security events
-while true; do
-    # CPU usage
-    CPU_USAGE=$(ps -p 1 -o %cpu | tail -n 1)
-    
-    # Memory usage
-    MEM_USAGE=$(ps -p 1 -o %mem | tail -n 1)
-    
-    # Disk usage
-    DISK_USAGE=$(df -h /workspace | tail -n 1 | awk '{print $5}')
-    
-    # Network connections
-    NETWORK_CONNS=$(netstat -an | grep ESTABLISHED | wc -l)
-    
-    # Log metrics
-    echo "$(date '+%Y-%m-%d %H:%M:%S') CPU:${CPU_USAGE}% MEM:${MEM_USAGE}% DISK:${DISK_USAGE} CONN:${NETWORK_CONNS}"
-    
-    # Check for security events in audit log
+# Configuration
+LOG_FILE="/var/log/llmsafespace/sandbox-monitor.log"
+METRICS_FILE="/var/log/llmsafespace/metrics.json"
+PID_FILE="/var/run/sandbox-monitor.pid"
+INTERVAL=10
+
+# Signal handling
+cleanup() {
+    rm -f "$PID_FILE"
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT SIGQUIT
+
+# Ensure we're the only instance running
+echo $$ > "$PID_FILE"
+
+# Initialize log files
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$METRICS_FILE")"
+
+log() {
+    local level="$1"
+    local message="$2"
+    echo "{\"timestamp\":\"$(date -Iseconds)\",\"level\":\"$level\",\"message\":\"$message\"}" >> "$LOG_FILE"
+}
+
+collect_metrics() {
+    # CPU metrics
+    local cpu_usage=$(ps -p 1 -o %cpu | tail -n 1)
+    local load_avg=$(cat /proc/loadavg | awk '{print $1}')
+    local cpu_throttling=$(cat /sys/fs/cgroup/cpu.stat 2>/dev/null || echo '{"throttled_usec": 0}')
+
+    # Memory metrics
+    local mem_usage=$(ps -p 1 -o %mem | tail -n 1)
+    local mem_rss=$(ps -p 1 -o rss | tail -n 1)
+    local mem_swap=$(cat /proc/1/status | grep VmSwap | awk '{print $2}')
+
+    # Disk metrics
+    local disk_usage=$(df /workspace --output=pcent | tail -n 1 | tr -d '% ')
+    local disk_iops=$(cat /sys/fs/cgroup/io.stat 2>/dev/null || echo '{"rios": 0, "wios": 0}')
+    local disk_bytes=$(cat /sys/fs/cgroup/io.stat 2>/dev/null || echo '{"rbytes": 0, "wbytes": 0}')
+
+    # Network metrics
+    local net_conns=$(ss -H state established | wc -l)
+    local net_bytes=$(cat /proc/net/dev | grep eth0 | awk '{print $2 "," $10}')
+
+    # Process metrics
+    local proc_count=$(ps -ef | wc -l)
+    local thread_count=$(ps -eLf | wc -l)
+    local open_files=$(lsof -p 1 | wc -l)
+
+    # Create JSON metrics
+    cat > "$METRICS_FILE" << EOF
+{
+    "timestamp": "$(date -Iseconds)",
+    "cpu": {
+        "usage_percent": $cpu_usage,
+        "load_average": $load_avg,
+        "throttled_usec": ${cpu_throttling:-0}
+    },
+    "memory": {
+        "usage_percent": $mem_usage,
+        "rss_kb": $mem_rss,
+        "swap_kb": ${mem_swap:-0}
+    },
+    "disk": {
+        "usage_percent": $disk_usage,
+        "read_ops": ${disk_iops:-0},
+        "write_ops": ${disk_iops:-0},
+        "read_bytes": ${disk_bytes:-0},
+        "write_bytes": ${disk_bytes:-0}
+    },
+    "network": {
+        "connections": $net_conns,
+        "rx_bytes": $(echo $net_bytes | cut -d, -f1),
+        "tx_bytes": $(echo $net_bytes | cut -d, -f2)
+    },
+    "processes": {
+        "total": $proc_count,
+        "threads": $thread_count,
+        "open_files": $open_files
+    }
+}
+EOF
+}
+
+monitor_security_events() {
+    # Check AppArmor events
     if [ -f /var/log/audit/audit.log ]; then
-        SECURITY_EVENTS=$(ausearch -ts recent -i | grep -i denied || true)
-        if [ ! -z "$SECURITY_EVENTS" ]; then
-            echo "SECURITY EVENT: $SECURITY_EVENTS"
+        local apparmor_events=$(ausearch -ts recent -m AVC -m APPARMOR_DENIED -i 2>/dev/null || true)
+        if [ ! -z "$apparmor_events" ]; then
+            log "WARNING" "AppArmor denial: $apparmor_events"
         fi
     fi
-    
-    sleep 10
+
+    # Check seccomp events
+    local seccomp_events=$(dmesg | grep -i seccomp | tail -n 5 || true)
+    if [ ! -z "$seccomp_events" ]; then
+        log "WARNING" "Seccomp event: $seccomp_events"
+    fi
+
+    # Check for suspicious processes
+    local suspicious=$(ps -ef | grep -E "nc|netcat|wget|curl|bash" | grep -v grep || true)
+    if [ ! -z "$suspicious" ]; then
+        log "WARNING" "Suspicious process detected: $suspicious"
+    fi
+
+    # Check for unauthorized network connections
+    local unauthorized=$(ss -Htnp | grep -vE ":(80|443|8080)" || true)
+    if [ ! -z "$unauthorized" ]; then
+        log "WARNING" "Unauthorized network connection: $unauthorized"
+    }
+}
+
+# Main monitoring loop
+log "INFO" "Starting sandbox monitoring"
+
+while true; do
+    collect_metrics
+    monitor_security_events
+    sleep "$INTERVAL"
 done
