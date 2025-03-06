@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 # Install ML packages (CPU versions)
 RUN pip install --no-cache-dir \
-    tensorflow-cpu==2.12.0 \
+    tensorflow==2.12.0 \
     torch==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Copy Python-specific security configurations
