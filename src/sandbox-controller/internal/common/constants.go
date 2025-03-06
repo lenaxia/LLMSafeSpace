@@ -16,6 +16,9 @@ const (
 	AnnotationSandboxID = "llmsafespace.dev/sandbox-id"
 	AnnotationPoolName = "llmsafespace.dev/pool-name"
 	AnnotationRecyclable = "llmsafespace.dev/recyclable"
+	AnnotationRecycleCount = "llmsafespace.dev/recycle-count"
+	AnnotationLastRecycled = "llmsafespace.dev/last-recycled"
+	AnnotationLastSandbox = "llmsafespace.dev/last-sandbox"
 	
 	// Label keys
 	LabelApp = "app"
@@ -24,6 +27,7 @@ const (
 	LabelPoolName = "pool-name"
 	LabelWarmPodID = "warm-pod-id"
 	LabelRuntime = "runtime"
+	LabelStatus = "status"
 	
 	// Component values
 	ComponentSandbox = "sandbox"

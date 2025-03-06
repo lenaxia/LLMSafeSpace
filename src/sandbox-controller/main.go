@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/controller"
+	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/metrics"
 	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
 )
 
@@ -38,6 +39,9 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+
+	// Set up metrics
+	metrics.SetupMetrics()
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
