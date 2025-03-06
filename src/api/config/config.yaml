@@ -7,6 +7,12 @@ kubernetes:
   configPath: ""  # Empty for in-cluster config
   inCluster: true
   namespace: "llmsafespace"
+  podName: ""  # Set via environment variable
+  leaderElection:
+    enabled: true
+    leaseDuration: 15s
+    renewDeadline: 10s
+    retryPeriod: 2s
 
 database:
   host: "postgres"
