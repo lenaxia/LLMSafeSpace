@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Check system resources
+check_resources() {
+    # Check CPU load
+    load=$(uptime | awk '{print $10}' | tr -d ',')
+    if (( $(echo "$load > 0.9" | bc -l) )); then
+        echo "High CPU load: $load"
+        return 1
+    fi
+
+    # Check memory usage
+    mem_used=$(free | grep Mem | awk '{print $3/$2 * 100.0}')
+    if (( $(echo "$mem_used > 90" | bc -l) )); then
+        echo "High memory usage: $mem_used%"
+        return 1
+    fi
+
+    # Check disk space
+    disk_used=$(df /workspace | tail -n 1 | awk '{print $5}' | tr -d '%')
+    if [ "$disk_used" -gt 90 ]; then
+        echo "High disk usage: $disk_used%"
+        return 1
+    fi
+
+    return 0
+}
+
+# Check runtime-specific components
+check_runtime() {
+    # Check if required processes are running
+    if ! pgrep -f "sandbox-monitor" > /dev/null; then
+        echo "sandbox-monitor not running"
+        return 1
+    fi
+
+    if ! pgrep -f "execution-tracker" > /dev/null; then
+        echo "execution-tracker not running"
+        return 1
+    fi
+
+    return 0
+}
+
+# Main health check
+main() {
+    check_resources || exit 1
+    check_runtime || exit 1
+    echo "Health check passed"
+    exit 0
+}
+
+main
