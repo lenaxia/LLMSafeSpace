@@ -83,12 +83,19 @@ Implement a unified Kubernetes operator that manages both sandbox and warm pool 
 
 **Requirements:**
 - Implement controller using the Operator SDK
-- Support reconciliation of Sandbox, WarmPool, and WarmPod resources (see CONTROLLER-RECONCILIATION.md)
+- Support reconciliation of Sandbox, WarmPool, and WarmPod resources with unified controller architecture
+  - Implement state machine pattern for Sandbox lifecycle (Pending → Creating → Running → Terminating → Terminated/Failed)
+  - Integrate warm pod allocation directly into Sandbox reconciliation loop
+  - Manage WarmPool scaling based on utilization metrics and configuration
+  - Track WarmPod lifecycle and status with proper owner references
 - Handle pod creation with appropriate security contexts for both sandboxes and warm pods (see CONTROLLER-COMPONENTS.md)
-- Implement status updates for all managed resources
-- Support integration of warm pools for faster sandbox creation (see CONTROLLER-WARMPOOL.md)
-- Implement auto-scaling for warm pools based on usage patterns
-- Support pod recycling for efficient resource usage
+- Implement status updates for all managed resources with proper condition tracking
+- Support seamless integration of warm pools for faster sandbox creation
+  - Implement efficient warm pod finding and claiming mechanism
+  - Support fallback to regular sandbox creation when warm pods aren't available
+  - Track warm pod usage metrics for optimization
+- Implement auto-scaling for warm pools based on usage patterns and time-based policies
+- Support pod recycling for efficient resource usage with proper security cleanup
 - Implement high availability with leader election (see CONTROLLER-HA.md)
 - Expose comprehensive metrics for monitoring (see CONTROLLER-MONITORING.md)
 
