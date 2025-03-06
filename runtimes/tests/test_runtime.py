@@ -299,8 +299,8 @@ def test_warm_pool_integration(docker_client):
             result = container.exec_run(f"find {path} -mindepth 1")
             assert not result.output.strip(), f"Directory {path} not empty after cleanup"
         
-        # Check no user processes - use simpler command that won't error
-        result = container.exec_run("ps -u sandbox -o pid= | wc -l || echo 0")
+        # Check no user processes - use pgrep which is more compatible across distributions
+        result = container.exec_run("pgrep -u sandbox | wc -l || echo 0")
         assert result.output.strip() == b"0", "User processes still running after cleanup"
         
     finally:
