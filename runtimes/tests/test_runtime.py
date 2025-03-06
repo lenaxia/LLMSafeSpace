@@ -281,6 +281,15 @@ def test_warm_pool_integration(docker_client):
             user="root"  # Run as root to avoid permission issues
         )
         
+        # Print man pages for ps and pgrep to understand available options
+        print("\n=== pgrep help ===")
+        help_result = container.exec_run("pgrep --help || man pgrep || echo 'No help available for pgrep'")
+        print(help_result.output.decode('utf-8', errors='replace'))
+        
+        print("\n=== ps help ===")
+        help_result = container.exec_run("ps --help || man ps || echo 'No help available for ps'")
+        print(help_result.output.decode('utf-8', errors='replace'))
+        
         # Create workspace and tmp directories if they don't exist
         container.exec_run("mkdir -p /workspace /tmp")
         
