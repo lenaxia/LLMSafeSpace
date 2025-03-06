@@ -43,14 +43,28 @@ func main() {
 	// Set up metrics
 	metrics.SetupMetrics()
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// Create manager options
+	options := ctrl.Options{
 		Scheme:                 scheme,
 		MetricsBindAddress:     metricsAddr,
 		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "llmsafespace-controller-leader-election",
-	})
+	}
+
+	// Configure leader election if enabled
+	if enableLeaderElection {
+		options.LeaderElectionConfig = &common.LeaderElectionConfig{
+			LeaseDuration: 15 * time.Second,
+			RenewDeadline: 10 * time.Second,
+			RetryPeriod:   2 * time.Second,
+			Namespace:     "llmsafespace",
+			Name:         "llmsafespace-controller",
+		}
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
