@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Track code execution and resource utilization
+EXEC_LOG="/var/log/llmsafespace/execution.log"
+mkdir -p "$(dirname "$EXEC_LOG")"
+
+log_execution() {
+    local cmd="$1"
+    local start_time="$2"
+    local end_time="$3"
+    local exit_code="$4"
+    local duration=$(( end_time - start_time ))
+    
+    # Get resource usage
+    local cpu_usage=$(ps -p $$ -o %cpu | tail -n 1)
+    local mem_usage=$(ps -p $$ -o %mem | tail -n 1)
+    
+    # Log execution details
+    echo "$(date '+%Y-%m-%d %H:%M:%S') CMD:${cmd} DURATION:${duration}s EXIT:${exit_code} CPU:${cpu_usage}% MEM:${mem_usage}%" >> "$EXEC_LOG"
+}
+
+# Set up trap to log all command executions
+trap 'log_execution "$BASH_COMMAND" "$SECONDS" "$?" "$BASHPID"' DEBUG

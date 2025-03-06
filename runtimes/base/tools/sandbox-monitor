@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Monitor system resource usage and security events
+while true; do
+    # CPU usage
+    CPU_USAGE=$(ps -p 1 -o %cpu | tail -n 1)
+    
+    # Memory usage
+    MEM_USAGE=$(ps -p 1 -o %mem | tail -n 1)
+    
+    # Disk usage
+    DISK_USAGE=$(df -h /workspace | tail -n 1 | awk '{print $5}')
+    
+    # Network connections
+    NETWORK_CONNS=$(netstat -an | grep ESTABLISHED | wc -l)
+    
+    # Log metrics
+    echo "$(date '+%Y-%m-%d %H:%M:%S') CPU:${CPU_USAGE}% MEM:${MEM_USAGE}% DISK:${DISK_USAGE} CONN:${NETWORK_CONNS}"
+    
+    # Check for security events in audit log
+    if [ -f /var/log/audit/audit.log ]; then
+        SECURITY_EVENTS=$(ausearch -ts recent -i | grep -i denied || true)
+        if [ ! -z "$SECURITY_EVENTS" ]; then
+            echo "SECURITY EVENT: $SECURITY_EVENTS"
+        fi
+    fi
+    
+    sleep 10
+done
