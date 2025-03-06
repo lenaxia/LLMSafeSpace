@@ -132,5 +132,12 @@ EOF
     log_json "INFO" "Command execution completed" "$execution_data"
 }
 
+# Create initial log entry
+log_json "INFO" "Execution tracker started" "{\"pid\": $$, \"start_time\": $(date +%s)}"
+
 # Set up trap to log all command executions
 trap 'log_execution "$BASH_COMMAND" "$SECONDS" "$(date +%s)" "$?" "$$"' DEBUG
+
+# Ensure the execution log exists and has initial content
+mkdir -p "$(dirname "$EXEC_LOG")"
+echo "{\"timestamp\":\"$(date -Iseconds)\",\"level\":\"INFO\",\"message\":\"Execution tracking initialized\",\"data\":{}}" > "$EXEC_LOG"
