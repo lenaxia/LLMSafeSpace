@@ -98,6 +98,21 @@ func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox
 				Egress: []networkingv1.NetworkPolicyEgressRule{
 					{
 						// Configure egress rule based on the domain and ports
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								IPBlock: &networkingv1.IPBlock{
+									CIDR: "0.0.0.0/0",
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Port: &intstr.IntOrString{Type: intstr.Int, IntVal: 80},
+							},
+							{
+								Port: &intstr.IntOrString{Type: intstr.Int, IntVal: 443},
+							},
+						},
 					},
 				},
 			},
