@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
@@ -66,6 +67,7 @@ func New(
 	fileSvc *file.Service,
 	executionSvc *execution.Service,
 	metricsSvc *metrics.Service,
+	cacheService *cache.Service,
 ) (*Service, error) {
 	return &Service{
 		logger:       logger,
@@ -75,7 +77,7 @@ func New(
 		fileSvc:      fileSvc,
 		executionSvc: executionSvc,
 		metricsSvc:   metricsSvc,
-		sessionMgr:   NewSessionManager(),
+		sessionMgr:   NewSessionManager(cacheService),
 	}, nil
 }
 

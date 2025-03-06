@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 )
 
@@ -17,12 +19,13 @@ type Service struct {
 	logger        *logger.Logger
 	config        *config.Config
 	dbService     *database.Service
+	cacheService  *cache.Service
 	jwtSecret     []byte
 	tokenDuration time.Duration
 }
 
 // New creates a new auth service
-func New(cfg *config.Config, log *logger.Logger, dbService *database.Service) (*Service, error) {
+func New(cfg *config.Config, log *logger.Logger, dbService *database.Service, cacheService *cache.Service) (*Service, error) {
 	if cfg.Auth.JWTSecret == "" {
 		return nil, errors.New("JWT secret is required")
 	}
@@ -31,6 +34,7 @@ func New(cfg *config.Config, log *logger.Logger, dbService *database.Service) (*
 		logger:        log,
 		config:        cfg,
 		dbService:     dbService,
+		cacheService:  cacheService,
 		jwtSecret:     []byte(cfg.Auth.JWTSecret),
 		tokenDuration: cfg.Auth.TokenDuration,
 	}, nil
@@ -141,6 +145,15 @@ func (s *Service) GenerateToken(userID string) (string, error) {
 
 // validateToken validates a JWT token
 func (s *Service) validateToken(tokenString string) (string, error) {
+	// Check if token is cached
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("token:%s", tokenString)
+	
+	// Try to get from cache first
+	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
+		return cachedUserID, nil
+	}
+
 	// Parse token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
@@ -171,11 +184,45 @@ func (s *Service) validateToken(tokenString string) (string, error) {
 		return "", errors.New("invalid user ID in token")
 	}
 
+	// Get expiration time
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return "", errors.New("invalid expiration time in token")
+	}
+	
+	// Calculate remaining time until expiration
+	expTime := time.Unix(int64(exp), 0)
+	remainingTime := time.Until(expTime)
+	
+	// Cache the token if it's valid
+	if remainingTime > 0 {
+		// Cache for the remaining time of the token, but not more than 1 hour
+		cacheDuration := remainingTime
+		if cacheDuration > time.Hour {
+			cacheDuration = time.Hour
+		}
+		
+		err = s.cacheService.Set(ctx, cacheKey, userID, cacheDuration)
+		if err != nil {
+			s.logger.Error("Failed to cache token", err, "user_id", userID)
+			// Continue even if caching fails
+		}
+	}
+
 	return userID, nil
 }
 
 // validateAPIKey validates an API key
 func (s *Service) validateAPIKey(apiKey string) (string, error) {
+	// Check if API key is cached
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
+	
+	// Try to get from cache first
+	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
+		return cachedUserID, nil
+	}
+
 	// Get user ID from database
 	userID, err := s.dbService.GetUserIDByAPIKey(apiKey)
 	if err != nil {
@@ -184,6 +231,13 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 
 	if userID == "" {
 		return "", errors.New("invalid API key")
+	}
+
+	// Cache the API key for 15 minutes
+	err = s.cacheService.Set(ctx, cacheKey, userID, 15*time.Minute)
+	if err != nil {
+		s.logger.Error("Failed to cache API key", err, "user_id", userID)
+		// Continue even if caching fails
 	}
 
 	return userID, nil
