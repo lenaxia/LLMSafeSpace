@@ -1,8 +1,8 @@
-# Architecture Overview: SecureAgent
+# Architecture Overview: LLMSafeSpace
 
 ## System Components and Interactions
 
-SecureAgent consists of three primary components that work together to provide secure code execution environments:
+LLMSafeSpace consists of three primary components that work together to provide secure code execution environments:
 
 ### Core Components
 
@@ -15,7 +15,7 @@ SecureAgent consists of three primary components that work together to provide s
    - Maintains session state and user context
    - Coordinates warm pool usage for faster sandbox creation
 
-2. **Combined Controller (`controller`)**
+2. **Sandbox Controller (`controller`)**
    - Unified Kubernetes operator that implements control loops for all custom resources
    - Manages the lifecycle of sandboxes, warm pools, and warm pods
    - Enforces security policies, resource limits, and isolation boundaries
@@ -59,20 +59,20 @@ SecureAgent consists of three primary components that work together to provide s
    - Requests are validated and authorized before processing
    - Real-time output is streamed via WebSockets
 
-2. **API Service to Combined Controller**:
+2. **API Service to Sandbox Controller**:
    - API service creates/updates Kubernetes custom resources (CRs)
    - Controller watches for changes to these resources
    - Status updates flow back from controller to API service
    - API service requests warm pods when available
 
-3. **Combined Controller Internal Coordination**:
+3. **Sandbox Controller Internal Coordination**:
    - Unified controller manages all resource types with shared utilities
    - Warm pod allocation is handled internally without cross-controller communication
    - Single work queue processes all resource types with appropriate handlers
    - Shared components handle common tasks like pod creation and security configuration
    - Integrated metrics collection for all resource types
 
-4. **Combined Controller to Runtime**:
+4. **Sandbox Controller to Runtime**:
    - Controller creates pods with appropriate runtime images
    - Security contexts and resource limits are applied
    - Network policies and service accounts are configured
@@ -88,7 +88,7 @@ SecureAgent consists of three primary components that work together to provide s
 
 ### Kubernetes-Native Architecture
 
-SecureAgent is designed as a Kubernetes-native application with the following deployment characteristics:
+LLMSafeSpace is designed as a Kubernetes-native application with the following deployment characteristics:
 
 1. **Namespace Isolation**:
    - Core components deployed in dedicated namespace (`llmsafespace`)
@@ -160,7 +160,7 @@ SecureAgent is designed as a Kubernetes-native application with the following de
 
 ### Docker Compatibility
 
-For non-Kubernetes environments, SecureAgent supports deployment via Docker Compose:
+For non-Kubernetes environments, LLMSafeSpace supports deployment via Docker Compose:
 
 - API service runs as a container with access to Docker socket
 - Sandboxes are created as Docker containers instead of Kubernetes pods
@@ -169,7 +169,7 @@ For non-Kubernetes environments, SecureAgent supports deployment via Docker Comp
 
 ## Security Model Overview
 
-SecureAgent implements a defense-in-depth security approach with multiple layers of protection:
+LLMSafeSpace implements a defense-in-depth security approach with multiple layers of protection:
 
 ### 1. Container Isolation
 
@@ -220,7 +220,7 @@ SecureAgent implements a defense-in-depth security approach with multiple layers
 
 ### Security Levels
 
-SecureAgent provides predefined security configurations:
+LLMSafeSpace provides predefined security configurations:
 
 - **Standard**: Balanced security and performance
 - **High**: Enhanced security with gVisor and stricter policies
@@ -250,12 +250,12 @@ SecureAgent provides predefined security configurations:
    - Installation results are returned to SDK
 
 4. **Warm Pool Flow**:
-   - Combined controller maintains pools of pre-initialized pods
+   - Sandbox Controller maintains pools of pre-initialized pods
    - When SDK requests a sandbox, API service checks for matching warm pods
    - If available, warm pod is assigned to the sandbox
-   - Combined controller adopts the warm pod and configures it for the specific sandbox
+   - Sandbox Controller adopts the warm pod and configures it for the specific sandbox
    - When sandbox is terminated, pod may be recycled back to warm pool if appropriate
 
 ## Conclusion
 
-SecureAgent's architecture provides a robust, scalable, and secure platform for LLM agent code execution. By leveraging Kubernetes native concepts and implementing multiple layers of security, it achieves strong isolation while maintaining flexibility and ease of use. The warm pool functionality significantly improves startup performance for common runtime environments, making the platform more responsive for interactive use cases. The modular design allows for future enhancements in areas like persistent storage, inter-sandbox communication, and specialized ML runtimes.
+LLMSafeSpace's architecture provides a robust, scalable, and secure platform for LLM agent code execution. By leveraging Kubernetes native concepts and implementing multiple layers of security, it achieves strong isolation while maintaining flexibility and ease of use. The warm pool functionality significantly improves startup performance for common runtime environments, making the platform more responsive for interactive use cases. The modular design allows for future enhancements in areas like persistent storage, inter-sandbox communication, and specialized ML runtimes.

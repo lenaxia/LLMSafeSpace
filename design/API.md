@@ -1,8 +1,8 @@
-# API Design for SecureAgent
+# API Design for LLMSafeSpace
 
 ## Overview
 
-The SecureAgent API is designed to provide a secure, scalable interface for managing sandbox environments and executing code. The API consists of:
+The LLMSafeSpace API is designed to provide a secure, scalable interface for managing sandbox environments and executing code. The API consists of:
 
 1. **REST API** - For resource management and control operations
 2. **WebSocket API** - For real-time streaming of execution outputs

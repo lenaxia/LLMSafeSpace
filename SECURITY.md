@@ -1,10 +1,10 @@
-# SecureAgent Security Model
+# LLMSafeSpace Security Model
 
-This document outlines the security architecture and configuration options for SecureAgent, a self-hosted platform for secure code execution focused on LLM agents.
+This document outlines the security architecture and configuration options for LLMSafeSpace, a self-hosted platform for secure code execution focused on LLM agents.
 
 ## Security Architecture Overview
 
-SecureAgent is designed with a defense-in-depth approach to provide strong isolation for untrusted code execution while maintaining the simplicity of a container-based architecture. The platform leverages Kubernetes security features to create a robust security boundary around each sandbox.
+LLMSafeSpace is designed with a defense-in-depth approach to provide strong isolation for untrusted code execution while maintaining the simplicity of a container-based architecture. The platform leverages Kubernetes security features to create a robust security boundary around each sandbox.
 
 ## Container Security Features
 
@@ -12,7 +12,7 @@ SecureAgent is designed with a defense-in-depth approach to provide strong isola
 
 #### gVisor Runtime
 
-SecureAgent supports the gVisor container runtime, which provides a user-space kernel that intercepts system calls, significantly reducing the attack surface:
+LLMSafeSpace supports the gVisor container runtime, which provides a user-space kernel that intercepts system calls, significantly reducing the attack surface:
 
 ```yaml
 # Example sandbox with gVisor runtime
@@ -29,7 +29,7 @@ When `securityLevel: high` is specified, the sandbox controller automatically ap
 
 #### Seccomp Profiles
 
-SecureAgent applies restrictive seccomp profiles to limit available system calls:
+LLMSafeSpace applies restrictive seccomp profiles to limit available system calls:
 
 - **Default Profile**: A restrictive profile that blocks dangerous syscalls
 - **Language-Specific Profiles**: Optimized profiles for Python, Node.js, etc.
@@ -67,7 +67,7 @@ spec:
 
 #### CPU Pinning
 
-For high-security workloads, SecureAgent supports CPU pinning to reduce side-channel risks:
+For high-security workloads, LLMSafeSpace supports CPU pinning to reduce side-channel risks:
 
 ```yaml
 apiVersion: llmsafespace.dev/v1
@@ -85,7 +85,7 @@ spec:
 
 #### Network Policies
 
-SecureAgent applies default-deny network policies with specific allowances:
+LLMSafeSpace applies default-deny network policies with specific allowances:
 
 ```yaml
 apiVersion: llmsafespace.dev/v1
@@ -103,7 +103,7 @@ spec:
 
 #### Service Mesh Integration
 
-For enterprise deployments, SecureAgent integrates with service mesh solutions like Istio to provide:
+For enterprise deployments, LLMSafeSpace integrates with service mesh solutions like Istio to provide:
 
 - mTLS encryption between services
 - Fine-grained access control
@@ -165,11 +165,11 @@ spec:
 
 #### User Namespaces
 
-SecureAgent leverages user namespaces for additional isolation between the container user and host user.
+LLMSafeSpace leverages user namespaces for additional isolation between the container user and host user.
 
 ## Security Levels
 
-SecureAgent provides predefined security levels to simplify configuration:
+LLMSafeSpace provides predefined security levels to simplify configuration:
 
 - **Standard**: Balanced security and performance
 - **High**: Enhanced security with gVisor and stricter policies
@@ -189,7 +189,7 @@ spec:
 
 ### Security Monitoring
 
-SecureAgent includes comprehensive security monitoring:
+LLMSafeSpace includes comprehensive security monitoring:
 
 - Runtime anomaly detection
 - Resource usage monitoring
@@ -207,9 +207,9 @@ All sandbox activities are logged for audit purposes:
 
 ## Comparison with VM-based Isolation
 
-While SecureAgent's container-based approach doesn't provide the same level of isolation as Firecracker VMs, the combination of security features significantly narrows the gap:
+While LLMSafeSpace's container-based approach doesn't provide the same level of isolation as Firecracker VMs, the combination of security features significantly narrows the gap:
 
-| Feature | SecureAgent Containers | Firecracker VMs |
+| Feature | LLMSafeSpace Containers | Firecracker VMs |
 |---------|------------------------|-----------------|
 | Kernel Isolation | Partial (with gVisor) | Complete |
 | Memory Isolation | Strong | Stronger |
@@ -234,10 +234,10 @@ For production deployments, we recommend:
 
 ### Regular Updates
 
-Keep SecureAgent and its dependencies updated:
+Keep LLMSafeSpace and its dependencies updated:
 
 ```bash
-# Update SecureAgent using Helm
+# Update LLMSafeSpace using Helm
 helm upgrade llmsafespace llmsafespace/llmsafespace --namespace llmsafespace
 ```
 
@@ -273,8 +273,8 @@ The warm pool functionality introduces specific security considerations:
 
 ## Conclusion
 
-SecureAgent's security model provides robust protection for code execution environments while maintaining the simplicity and efficiency of a container-based architecture. By leveraging Kubernetes security features and adding specialized isolation mechanisms, SecureAgent delivers a secure platform suitable for most LLM agent execution scenarios.
+LLMSafeSpace's security model provides robust protection for code execution environments while maintaining the simplicity and efficiency of a container-based architecture. By leveraging Kubernetes security features and adding specialized isolation mechanisms, LLMSafeSpace delivers a secure platform suitable for most LLM agent execution scenarios.
 
 The warm pool functionality significantly improves startup performance without compromising security, thanks to careful pod lifecycle management and security verification during recycling.
 
-For use cases requiring the absolute highest level of isolation, consider deploying SecureAgent with a VM-based runtime or exploring our enterprise offerings with enhanced security features.
+For use cases requiring the absolute highest level of isolation, consider deploying LLMSafeSpace with a VM-based runtime or exploring our enterprise offerings with enhanced security features.
