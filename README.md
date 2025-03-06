@@ -1,10 +1,10 @@
-# SecureAgent: Self-Hosted LLM Agent Execution Platform
+# LLMSafeSpace: Self-Hosted LLM Agent Execution Platform
 
 A Kubernetes-first platform for secure code execution focused on LLM agents, with simplified architecture and easy maintenance.
 
 ## Architecture Overview
 
-SecureAgent provides a secure, isolated environment for executing code from LLM agents with a focus on security, simplicity, and Kubernetes integration.
+LLMSafeSpace provides a secure, isolated environment for executing code from LLM agents with a focus on security, simplicity, and Kubernetes integration.
 
 ### Core Components
 
@@ -128,7 +128,7 @@ sandbox.terminate()
 
 ## Kubernetes Integration
 
-SecureAgent uses custom resources to manage sandboxes and warm pools:
+LLMSafeSpace uses custom resources to manage sandboxes and warm pools:
 
 ```yaml
 # Sandbox resource
@@ -306,7 +306,7 @@ agent_executor.run("Analyze this dataset and create a visualization")
 
 ## Docker Compatibility
 
-For non-Kubernetes deployments, SecureAgent can run as a Docker Compose stack:
+For non-Kubernetes deployments, LLMSafeSpace can run as a Docker Compose stack:
 
 ```yaml
 version: '3'
@@ -412,10 +412,10 @@ Adding mechanisms to provide execution feedback to the LLM would help improve co
 ### Installation
 
 ```bash
-# Add the SecureAgent Helm repository
+# Add the LLMSafeSpace Helm repository
 helm repo add llmsafespace https://charts.llmsafespace.dev
 
-# Install SecureAgent
+# Install LLMSafeSpace
 helm install llmsafespace llmsafespace/llmsafespace \
   --namespace llmsafespace \
   --create-namespace \
@@ -428,4 +428,4 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 
 ## License
 
-SecureAgent is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full license text.
+LLMSafeSpace is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full license text.

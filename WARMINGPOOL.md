@@ -1,6 +1,6 @@
 # Adding Warm Pool Support to Sandbox Controller
 
-This document outlines the design and implementation plan for adding warm pool support to the Sandbox Controller in SecureAgent, allowing pods of specific runtime environments to be kept "warm" for immediate use.
+This document outlines the design and implementation plan for adding warm pool support to the Sandbox Controller in LLMSafeSpace, allowing pods of specific runtime environments to be kept "warm" for immediate use.
 
 ## 1. Architecture Changes
 

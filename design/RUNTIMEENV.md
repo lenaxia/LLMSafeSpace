@@ -1,8 +1,8 @@
-# Runtime Environment Design for SecureAgent
+# Runtime Environment Design for LLMSafeSpace
 
 ## Overview
 
-This document provides a detailed design for the runtime environments used in SecureAgent. Runtime environments are the container images that execute code within sandboxes, providing language-specific runtimes with appropriate security hardening. The design focuses on security, performance, and flexibility while maintaining compatibility with the warm pool architecture.
+This document provides a detailed design for the runtime environments used in LLMSafeSpace. Runtime environments are the container images that execute code within sandboxes, providing language-specific runtimes with appropriate security hardening. The design focuses on security, performance, and flexibility while maintaining compatibility with the warm pool architecture.
 
 ## Base Container Image Specifications
 
@@ -39,7 +39,7 @@ The base image provides the foundation for all runtime environments with securit
 - **Directory Structure**:
   - `/workspace`: Main directory for user code (writable)
   - `/tmp`: Temporary directory (writable)
-  - `/opt/llmsafespace`: SecureAgent tools and utilities (read-only)
+  - `/opt/llmsafespace`: LLMSafeSpace tools and utilities (read-only)
   - `/etc/llmsafespace`: Configuration files (read-only)
 
 #### Base Image Components
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     else:
         # Interactive mode
         import code
-        code.interact(banner="SecureAgent Python Environment", exitmsg="")
+        code.interact(banner="LLMSafeSpace Python Environment", exitmsg="")
 ```
 
 #### Restricted Modules Configuration
@@ -457,7 +457,7 @@ if (process.argv.length > 2) {
   // Interactive mode (REPL)
   const repl = require('repl');
   repl.start({
-    prompt: 'SecureAgent Node.js > ',
+    prompt: 'LLMSafeSpace Node.js > ',
     useGlobal: true
   });
 }
@@ -876,7 +876,7 @@ Runtime images are distributed through:
 
 ## Conclusion
 
-The runtime environment design for SecureAgent provides a secure, flexible, and efficient platform for executing code in isolated environments. The layered approach allows for customization while maintaining strong security boundaries. The integration with warm pools enables fast startup times without compromising security.
+The runtime environment design for LLMSafeSpace provides a secure, flexible, and efficient platform for executing code in isolated environments. The layered approach allows for customization while maintaining strong security boundaries. The integration with warm pools enables fast startup times without compromising security.
 
 The design addresses the key requirements:
 
@@ -886,4 +886,4 @@ The design addresses the key requirements:
 4. **Maintainability**: Clear versioning strategy and build process
 5. **Warm Pool Integration**: Seamless integration with the warm pool architecture for fast startup times
 
-This design provides a solid foundation for the SecureAgent platform, enabling secure code execution for LLM agents while maintaining flexibility and performance.
+This design provides a solid foundation for the LLMSafeSpace platform, enabling secure code execution for LLM agents while maintaining flexibility and performance.
