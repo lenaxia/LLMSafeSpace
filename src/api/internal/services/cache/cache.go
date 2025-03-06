@@ -53,6 +53,11 @@ func (s *Service) Stop() error {
 	return s.client.Close()
 }
 
+// Ping checks the Redis connection
+func (s *Service) Ping(ctx context.Context) error {
+	return s.client.Ping(ctx).Err()
+}
+
 // Get gets a value from the cache
 func (s *Service) Get(ctx context.Context, key string) (string, error) {
 	val, err := s.client.Get(ctx, key).Result()
