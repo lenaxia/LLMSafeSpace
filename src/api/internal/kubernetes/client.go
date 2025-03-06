@@ -123,7 +123,7 @@ func (c *Client) runLeaderElection() {
 		RenewDeadline:   10 * time.Second,
 		RetryPeriod:     2 * time.Second,
 		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx <-chan struct{}) {
+			OnStartedLeading: func(ctx context.Context) {
 				c.logger.Info("Started leading")
 			},
 			OnStoppedLeading: func() {

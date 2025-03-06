@@ -33,9 +33,9 @@ func setupMockDB(t *testing.T) (*database.Service, sqlmock.Sqlmock, func()) {
 
 	// Create the database service with the mock DB
 	service := &database.Service{
-		Logger: mockLogger,
-		Config: mockConfig,
-		DB:     db,
+		logger: mockLogger,
+		config: mockConfig,
+		db:     db,
 	}
 
 	// Return the service, mock, and a cleanup function

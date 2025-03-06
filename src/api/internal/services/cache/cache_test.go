@@ -27,7 +27,7 @@ func setupMockRedis(t *testing.T) (*Service, *miniredis.Miniredis, func()) {
 	// Create a mock config
 	mockConfig := &config.Config{}
 	mockConfig.Redis.Host = mr.Host()
-	mockConfig.Redis.Port = mr.Port()
+	mockConfig.Redis.Port, _ = strconv.Atoi(mr.Port())
 	mockConfig.Redis.Password = ""
 	mockConfig.Redis.DB = 0
 	mockConfig.Redis.PoolSize = 10
