@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/llmsafespace/sandbox-controller/internal/resources"
+	"github.com/yourusername/llmsafespace/sandbox-controller/internal/resources"
 )
 
 var (
