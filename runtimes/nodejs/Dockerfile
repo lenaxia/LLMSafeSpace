@@ -1,4 +1,4 @@
-FROM llmsafespace/base:latest
+FROM ghcr.io/lenaxia/llmsafespace/base:latest
 
 USER root
 
