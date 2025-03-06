@@ -107,9 +107,12 @@ func main() {
 }
 """
     
-    # Write test code to file
-    with open("/tmp/test.go", "w") as f:
+    import tempfile
+    
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(suffix='.go', mode='w', delete=False) as f:
         f.write(code)
+        temp_go_file = f.name
     
     result = docker_client.containers.run(
         TEST_GO_IMAGE,
@@ -117,7 +120,7 @@ func main() {
         remove=True,
         detach=False,
         volumes={
-            "/tmp/test.go": {
+            temp_go_file: {
                 "bind": "/workspace/test.go",
                 "mode": "ro"
             }
@@ -163,14 +166,14 @@ def test_network_restrictions(docker_client):
     try:
         docker_client.containers.run(
             TEST_IMAGE,
-            ["curl", "-s", "http://example.com"],
+            ["ping", "-c", "1", "8.8.8.8"],
             remove=True,
             detach=False,
             network_mode="none"
         )
         assert False, "Network request should have failed"
     except docker.errors.ContainerError as e:
-        assert b"network is unreachable" in e.stderr.lower() or b"error" in e.stderr.lower()
+        assert b"network is unreachable" in e.stderr.lower() or b"error" in e.stderr.lower() or b"network is down" in e.stderr.lower()
 
 def test_filesystem_restrictions(docker_client):
     """Test filesystem restrictions are enforced"""
@@ -195,14 +198,18 @@ def test_filesystem_restrictions(docker_client):
 
 def test_monitoring_tools(docker_client):
     """Test monitoring tools are functional"""
+    # Create log directory
+    import tempfile
+    log_dir = tempfile.mkdtemp()
+    
     # Start monitoring tools
     container = docker_client.containers.run(
         TEST_IMAGE,
-        ["/bin/bash", "-c", "/opt/llmsafespace/bin/sandbox-monitor & /opt/llmsafespace/bin/execution-tracker & sleep 30"],
+        ["/bin/bash", "-c", "mkdir -p /var/log/llmsafespace && /opt/llmsafespace/bin/sandbox-monitor & /opt/llmsafespace/bin/execution-tracker & sleep 30"],
         remove=True,
         detach=True,
         volumes={
-            "/var/log/llmsafespace": {
+            log_dir: {
                 "bind": "/var/log/llmsafespace",
                 "mode": "rw"
             }
