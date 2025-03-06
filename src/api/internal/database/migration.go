@@ -104,7 +104,7 @@ func (m *MigrationService) ApplyMigrations(ctx context.Context, migrations []Mig
 	}
 
 	// Get applied migrations
-	rows, err := m.db.db.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+	rows, err := m.db.DB.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return fmt.Errorf("failed to query migrations: %w", err)
 	}
@@ -133,7 +133,7 @@ func (m *MigrationService) ApplyMigrations(ctx context.Context, migrations []Mig
 		m.logger.Info("Applying migration", "version", migration.Version, "name", migration.Name)
 
 		// Start a transaction for the migration
-		tx, err := m.db.db.BeginTx(ctx, nil)
+		tx, err := m.db.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to start transaction for migration %d: %w", migration.Version, err)
 		}

@@ -17,7 +17,9 @@ import (
 
 // Initialize CRD scheme
 func init() {
-	// Add custom resource types to the default scheme
+	// TODO: Implement DeepCopyObject methods for custom resources
+	// Currently commented out due to missing DeepCopyObject implementation
+	/*
 	schemeBuilder := runtime.NewSchemeBuilder(
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
@@ -38,6 +40,7 @@ func init() {
 		},
 	)
 	schemeBuilder.AddToScheme(scheme.Scheme)
+	*/
 }
 
 // LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group

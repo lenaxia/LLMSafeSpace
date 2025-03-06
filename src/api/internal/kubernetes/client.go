@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -116,7 +117,7 @@ func (c *Client) runLeaderElection() {
 	}
 
 	// Configure leader election
-	leaderelection.RunOrDie(c.stopCh, leaderelection.LeaderElectionConfig{
+	leaderelection.RunOrDie(context.Background(), leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
 		LeaseDuration:   15 * time.Second,
