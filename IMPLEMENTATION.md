@@ -59,6 +59,10 @@ This document outlines the implementation plan for LLMSafeSpace, a Kubernetes-na
 **Description:**
 Define and implement the core Custom Resource Definitions (CRDs) for LLMSafeSpace, including Sandbox, SandboxProfile, WarmPool, WarmPod, and RuntimeEnvironment resources.
 
+**Relevant Design Files:**
+- design/CONTROLLER-CRDS.md - Detailed CRD specifications
+- design/CONTROLLER-OVERVIEW.md - Overview of controller architecture
+
 **Requirements:**
 - Define schema for Sandbox CRD with support for runtime selection, resource limits, and security settings
 - Define schema for SandboxProfile CRD to manage security profiles
@@ -103,6 +107,10 @@ Implement a unified Kubernetes operator that manages both sandbox and warm pool 
 **Description:**
 Create base container images for different language runtimes with security hardening.
 
+**Relevant Design Files:**
+- design/RUNTIMEENV.md - Detailed runtime environment specifications
+- design/CONTROLLER-COMPONENTS.md - Integration with controller components
+
 **Requirements:**
 - Create minimal base image with common security tools
 - Create language-specific images for Python, Node.js, and Go
@@ -121,6 +129,11 @@ Create base container images for different language runtimes with security harde
 
 **Description:**
 Implement the API service that provides the interface for SDK clients to interact with LLMSafeSpace.
+
+**Relevant Design Files:**
+- design/API.md - API service design and specifications
+- design/CONTROLLER-WORKQUEUE.md - Integration with controller work queue
+- design/CONTROLLER-COMPONENTS.md - Integration with controller components
 
 **Requirements:**
 - Implement REST API endpoints for sandbox and warm pool management
@@ -142,6 +155,10 @@ Implement the API service that provides the interface for SDK clients to interac
 **Description:**
 Implement the Python SDK for LLMSafeSpace.
 
+**Relevant Design Files:**
+- design/API.md - API specifications and SDK interface definitions
+- design/CONTROLLER-MONITORING.md - Integration with monitoring systems
+
 **Requirements:**
 - Implement client library for API communication
 - Support sandbox creation and management
@@ -161,6 +178,10 @@ Implement the Python SDK for LLMSafeSpace.
 
 **Description:**
 Implement the JavaScript/TypeScript SDK for LLMSafeSpace.
+
+**Relevant Design Files:**
+- design/API.md - API specifications and SDK interface definitions
+- design/CONTROLLER-MONITORING.md - Integration with monitoring systems
 
 **Requirements:**
 - Implement client library for API communication
@@ -184,6 +205,10 @@ Implement the JavaScript/TypeScript SDK for LLMSafeSpace.
 **Description:**
 Integrate gVisor as a runtime option for enhanced kernel isolation.
 
+**Relevant Design Files:**
+- design/RUNTIMEENV.md - Runtime environment specifications
+- design/CONTROLLER-COMPONENTS.md - Pod creation and configuration
+
 **Requirements:**
 - Configure gVisor as a RuntimeClass in Kubernetes
 - Update Sandbox controller to support gVisor runtime
@@ -201,6 +226,10 @@ Integrate gVisor as a runtime option for enhanced kernel isolation.
 **Description:**
 Implement network policies for sandbox isolation and egress filtering.
 
+**Relevant Design Files:**
+- design/CONTROLLER-NETWORK.md - Detailed network policy design
+- design/NETWORK.md - Network architecture and security model
+
 **Requirements:**
 - Design default-deny network policies
 - Implement domain-based egress filtering
@@ -217,6 +246,10 @@ Implement network policies for sandbox isolation and egress filtering.
 
 **Description:**
 Implement seccomp profiles for system call filtering.
+
+**Relevant Design Files:**
+- design/RUNTIMEENV.md - Security hardening details
+- design/CONTROLLER-COMPONENTS.md - Pod security context configuration
 
 **Requirements:**
 - Create default restrictive seccomp profile
@@ -237,6 +270,10 @@ Implement seccomp profiles for system call filtering.
 **Description:**
 Implement comprehensive audit logging for security events.
 
+**Relevant Design Files:**
+- design/CONTROLLER-MONITORING.md - Monitoring and metrics
+- design/API.md - API service logging requirements
+
 **Requirements:**
 - Log sandbox lifecycle events
 - Log code execution and command execution
@@ -254,6 +291,11 @@ Implement comprehensive audit logging for security events.
 
 **Description:**
 Implement resource usage monitoring for sandboxes and warm pools.
+
+**Relevant Design Files:**
+- design/CONTROLLER-MONITORING.md - Metrics collection and monitoring
+- design/CONTROLLER-WARMPOOL.md - Warm pool management and metrics
+- design/CONTROLLER-COMPONENTS.md - Resource management
 
 **Requirements:**
 - Monitor CPU, memory, and storage usage
@@ -274,6 +316,11 @@ Implement resource usage monitoring for sandboxes and warm pools.
 **Description:**
 Implement security monitoring for anomaly detection.
 
+**Relevant Design Files:**
+- design/CONTROLLER-MONITORING.md - Security metrics and monitoring
+- design/CONTROLLER-NETWORK.md - Network policy violation detection
+- design/RUNTIMEENV.md - Runtime security monitoring
+
 **Requirements:**
 - Monitor for suspicious system calls
 - Monitor for unusual network activity
@@ -293,6 +340,11 @@ Implement security monitoring for anomaly detection.
 **Description:**
 Create Helm charts for easy deployment of LLMSafeSpace.
 
+**Relevant Design Files:**
+- design/CONTROLLER-ARCHITECTURE.md - Component structure
+- design/CONTROLLER-HA.md - High availability configuration
+- design/CONTROLLER-OVERVIEW.md - System components
+
 **Requirements:**
 - Create charts for all components
 - Support configuration via values.yaml
@@ -310,6 +362,12 @@ Create Helm charts for easy deployment of LLMSafeSpace.
 **Description:**
 Create comprehensive documentation for LLMSafeSpace.
 
+**Relevant Design Files:**
+- design/API.md - API specifications for documentation
+- design/CONTROLLER-NETWORK.md - Network security documentation
+- design/RUNTIMEENV.md - Runtime environment documentation
+- design/CONTROLLER-CONCLUSION.md - Overall system architecture
+
 **Requirements:**
 - Create installation and deployment guides
 - Create API reference documentation
@@ -326,6 +384,11 @@ Create comprehensive documentation for LLMSafeSpace.
 
 **Description:**
 Create example applications demonstrating LLMSafeSpace usage.
+
+**Relevant Design Files:**
+- design/API.md - SDK interfaces and examples
+- design/CONTROLLER-NETWORK.md - Network policy examples
+- design/RUNTIMEENV.md - Runtime environment configurations
 
 **Requirements:**
 - Create examples for different language SDKs
