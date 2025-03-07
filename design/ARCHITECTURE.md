@@ -1,5 +1,7 @@
 # Architecture Overview: LLMSafeSpace
 
+This repo is located at github.com/lenaxia/llmsafespace
+
 ## System Components and Interactions
 
 LLMSafeSpace consists of three primary components that work together to provide secure code execution environments:

@@ -2,6 +2,8 @@
 
 A Kubernetes-first platform for secure code execution focused on LLM agents, with simplified architecture and easy maintenance.
 
+This repo is located at github.com/lenaxia/llmsafespace
+
 ## Architecture Overview
 
 LLMSafeSpace provides a secure, isolated environment for executing code from LLM agents with a focus on security, simplicity, and Kubernetes integration.

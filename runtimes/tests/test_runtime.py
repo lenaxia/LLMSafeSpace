@@ -309,7 +309,7 @@ def test_warm_pool_integration(docker_client):
             assert not result.output.strip(), f"Directory {path} not empty after cleanup"
         
         # Check no user processes - use correct pgrep syntax with numeric euid
-        result = container.exec_run("pgrep --euid 1000 | wc -l || echo 0")
+        result = container.exec_run("pgrep --euid 1000 . | wc -l || echo 0")
         assert result.output.strip() == b"0", "User processes still running after cleanup"
         
     finally:

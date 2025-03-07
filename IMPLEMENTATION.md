@@ -1,5 +1,7 @@
 # LLMSafeSpace Implementation Plan
 
+This repo is located at github.com/lenaxia/llmsafespace
+
 ## Overview
 
 This document outlines the implementation plan for LLMSafeSpace, a Kubernetes-native platform for secure code execution focused on LLM agents. The plan is divided into phases, with each phase containing specific implementation steps.
