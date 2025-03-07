@@ -103,8 +103,10 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 	// Replace with our mocks
-	service.dbService = mockDbService
-	service.cacheService = mockCacheService
+	service.dbService = &database.Service{}
+	service.dbService = mockDbService.(*database.Service)
+	service.cacheService = &cache.Service{}
+	service.cacheService = mockCacheService.(*cache.Service)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
@@ -199,7 +201,8 @@ func TestValidateToken(t *testing.T) {
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 	// Replace with our mock
-	service.cacheService = mockCacheService
+	service.cacheService = &cache.Service{}
+	service.cacheService = mockCacheService.(*cache.Service)
 
 	// Generate a valid token
 	userID := "user123"
@@ -279,18 +282,18 @@ func TestRevokeToken(t *testing.T) {
 	// Test case: Successful revocation
 	mockCacheService.On("Set", mock.Anything, "token:"+jti, "revoked", exp.Sub(time.Now())).Return(nil).Once()
 
-	err := service.RevokeToken(token)
+	err := service.revokeToken(token)
 	assert.NoError(t, err)
 
 	// Test case: Invalid token
-	err = service.RevokeToken("invalid-token")
+	err = service.revokeToken("invalid-token")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse token")
 
 	// Test case: Cache error
 	mockCacheService.On("Set", mock.Anything, "token:"+jti, "revoked", mock.Anything).Return(errors.New("cache error")).Once()
 
-	err = service.RevokeToken(token)
+	err = service.revokeToken(token)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to revoke token")
 
@@ -376,14 +379,14 @@ func TestGetUserFromContext(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set("userID", "user123")
 
-	userID, err := service.GetUserFromContext(c)
+	userID, err := service.GetUserID(c)
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
 	// Test case: No user ID in context
 	c, _ = gin.CreateTestContext(nil)
 
-	userID, err = service.GetUserFromContext(c)
+	userID, err = service.GetUserID(c)
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "user not authenticated")
