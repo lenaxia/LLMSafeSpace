@@ -283,15 +283,23 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 	assert.NotNil(t, service)
 	
 	// Replace with our mocks
-	service.k8sClient = mockK8sClient
-	service.dbService = mockDbService
-	service.warmPoolSvc = mockWarmPoolService
-	service.fileSvc = mockFileService
-	service.executionSvc = mockExecutionService
-	service.metricsSvc = mockMetricsService
+	var k8sClientInterface kubernetes.Client = mockK8sClient
+	var dbServiceInterface database.Service = mockDbService
+	var warmPoolServiceInterface warmpool.Service = mockWarmPoolService
+	var fileServiceInterface file.Service = mockFileService
+	var executionServiceInterface execution.Service = mockExecutionService
+	var metricsServiceInterface metrics.Service = mockMetricsService
+	var cacheServiceInterface cache.Service = mockCacheService
+
+	service.k8sClient = &k8sClientInterface
+	service.dbService = &dbServiceInterface
+	service.warmPoolSvc = &warmPoolServiceInterface
+	service.fileSvc = &fileServiceInterface
+	service.executionSvc = &executionServiceInterface
+	service.metricsSvc = &metricsServiceInterface
 	
 	if service.sessionMgr != nil {
-		service.sessionMgr.cacheService = mockCacheService
+		service.sessionMgr.cacheService = &cacheServiceInterface
 	}
 
 	return service, mockK8sClient, mockLLMSafespaceV1Client, mockSandboxInterface, mockDbService, mockWarmPoolService, mockFileService, mockExecutionService, mockMetricsService, mockCacheService

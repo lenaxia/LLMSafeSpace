@@ -51,7 +51,8 @@ func TestNew(t *testing.T) {
 	// Test successful creation
 	service, err := New(log, &kubernetes.Client{})
 	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
+	var k8sClientInterface kubernetes.Client = mockK8sClient
+	service.k8sClient = &k8sClientInterface
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)

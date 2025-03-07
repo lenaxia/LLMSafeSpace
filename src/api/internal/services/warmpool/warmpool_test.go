@@ -133,9 +133,12 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 	assert.NotNil(t, service)
 	
 	// Replace with our mocks
-	service.k8sClient = mockK8sClient
-	service.dbService = mockDbService
-	service.metricsSvc = mockMetricsService
+	var k8sClientInterface kubernetes.Client = mockK8sClient
+	var dbServiceInterface database.Service = mockDbService
+	var metricsServiceInterface metrics.Service = mockMetricsService
+	service.k8sClient = &k8sClientInterface
+	service.dbService = &dbServiceInterface
+	service.metricsSvc = &metricsServiceInterface
 
 	return service, mockK8sClient, mockLLMSafespaceV1Client, mockWarmPoolInterface, mockDbService, mockMetricsService
 }

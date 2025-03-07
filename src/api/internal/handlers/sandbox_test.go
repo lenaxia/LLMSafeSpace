@@ -23,10 +23,7 @@ import (
 )
 
 // MockSandboxService implementation
-type MockSandboxService struct {
-	mock.Mock
-	sandbox.Service
-}
+// Remove this duplicate declaration
 
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
 	args := m.Called(ctx, req)
@@ -127,9 +124,7 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 }
 
 // MockAuthService implementation
-type MockAuthService struct {
-	mock.Mock
-}
+// Remove this duplicate declaration
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)
@@ -148,10 +143,12 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 	mockAuthService := new(MockAuthService)
 
 	// Create handler
+	var sandboxServiceInterface sandbox.Service = mockSandboxService
+	var authServiceInterface auth.Service = mockAuthService
 	handler := &SandboxHandler{
 		logger:     log,
-		sandboxSvc: mockSandboxService,
-		authSvc:    mockAuthService,
+		sandboxSvc: &sandboxServiceInterface,
+		authSvc:    &authServiceInterface,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,

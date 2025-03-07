@@ -131,6 +131,14 @@ func TestNew(t *testing.T) {
 	originalNewExecution := newExecution
 	originalNewSandbox := newSandbox
 
+	originalNewDatabase := newDatabase
+	originalNewCache := newCache
+	originalNewAuth := newAuth
+	originalNewWarmPool := newWarmPool
+	originalNewFile := newFile
+	originalNewExecution := newExecution
+	originalNewSandbox := newSandbox
+
 	newDatabase = mockNewDatabase
 	newCache = mockNewCache
 	newAuth = mockNewAuth
