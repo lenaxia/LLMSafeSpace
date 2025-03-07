@@ -92,7 +92,7 @@ func (m *MigrationService) LoadMigrationsFromFS(migrationFS embed.FS) ([]Migrati
 // ApplyMigrations applies all migrations to the database
 func (m *MigrationService) ApplyMigrations(ctx context.Context, migrations []Migration) error {
 	// Create migrations table if it doesn't exist
-	_, err := m.db.DB().ExecContext(ctx, `
+	_, err := m.db.DB.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -104,7 +104,7 @@ func (m *MigrationService) ApplyMigrations(ctx context.Context, migrations []Mig
 	}
 
 	// Get applied migrations
-	rows, err := m.db.DB().QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+	rows, err := m.db.DB.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return fmt.Errorf("failed to query migrations: %w", err)
 	}
