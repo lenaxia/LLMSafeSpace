@@ -24,3 +24,8 @@ go.work.sum
 # env file
 .env
 .aider*
+
+#python
+__pycache__
+.coverage
+bin/*
