@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
