@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
-	clientset "k8s.io/client-go/kubernetes"
+	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
@@ -19,12 +19,12 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
+	*kubernetes.Client
 }
 
-func (m *MockK8sClient) Clientset() kubernetes.Interface {
+func (m *MockK8sClient) Clientset() k8s.Interface {
 	args := m.Called()
-	return args.Get(0).(kubernetes.Interface)
+	return args.Get(0).(k8s.Interface)
 }
 
 func (m *MockK8sClient) RESTConfig() *rest.Config {
@@ -34,11 +34,17 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 
 func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error) {
 	args := m.Called(ctx, namespace, name, execReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
 }
 
 func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest, outputCallback func(stream, content string)) (*kubernetes.ExecutionResult, error) {
 	args := m.Called(ctx, namespace, name, execReq, outputCallback)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
 }
 
@@ -75,7 +81,6 @@ func TestExecute(t *testing.T) {
 	// Create the service
 	service, _ := New(log, &kubernetes.Client{})
 	// Replace the client with our mock
-	var k8sClientInterface kubernetes.Client = mockK8sClient
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
@@ -108,8 +113,9 @@ func TestExecuteStream(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	var k8sClient kubernetes.Client = mockK8s
-	service, err := New(log, k8sClient)
+	service, err := New(log, &kubernetes.Client{})
+	// Replace with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
