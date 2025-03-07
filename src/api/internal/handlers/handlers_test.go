@@ -18,25 +18,27 @@ import (
 )
 
 // Mock implementations
-type MockAuthService struct {
-	mock.Mock
-	auth.Service
-}
-
-type MockSandboxService struct {
-	mock.Mock
-	sandbox.Service
-}
-
-type MockWarmPoolService struct {
-	mock.Mock
-	warmpool.Service
-}
-
-type MockMetricsService struct {
-	mock.Mock
-	metrics.Service
-}
+type (
+	MockAuthService struct {
+		mock.Mock
+		auth.Service
+	}
+	
+	MockSandboxService struct {
+		mock.Mock
+		sandbox.Service
+	}
+	
+	MockWarmPoolService struct {
+		mock.Mock
+		warmpool.Service
+	}
+	
+	MockMetricsService struct {
+		mock.Mock
+		metrics.Service
+	}
+)
 
 func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
 	m.Called(method, path, status, duration, size)
@@ -131,32 +133,20 @@ func TestLoggerMiddleware(t *testing.T) {
 }
 
 func TestMetricsMiddleware(t *testing.T) {
-	// Create mock metrics service
 	mockMetrics := new(MockMetricsService)
-
-	// Create a test router with the middleware
-	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(MetricsMiddleware(mockMetrics))
 
-	// Add a test route
 	router.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
-	// Set up expectations
 	mockMetrics.On("RecordRequest", "GET", "/test", http.StatusOK, mock.Anything, mock.Anything).Once()
 
-	// Create a test request
 	req := httptest.NewRequest("GET", "/test", nil)
 	w := httptest.NewRecorder()
-
-	// Serve the request
 	router.ServeHTTP(w, req)
 
-	// Check the response
 	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Verify metrics were recorded
 	mockMetrics.AssertExpectations(t)
 }
