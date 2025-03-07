@@ -9,6 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
@@ -251,16 +253,25 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 
 	service, err := New(
 		mockLogger,
-		mockK8sClient,
-		mockDbService,
-		mockWarmPoolService,
-		mockFileService,
-		mockExecutionService,
-		mockMetricsService,
-		mockCacheService,
+		&kubernetes.Client{},
+		&database.Service{},
+		&warmpool.Service{},
+		&file.Service{},
+		&execution.Service{},
+		&metrics.Service{},
+		&cache.Service{},
 	)
+	// Replace with our mocks
+	service.k8sClient = mockK8sClient
+	service.dbService = mockDbService
+	service.warmPoolSvc = mockWarmPoolService
+	service.fileSvc = mockFileService
+	service.executionSvc = mockExecutionService
+	service.metricsSvc = mockMetricsService
 	if err == nil {
-		service.sessionMgr = NewSessionManager(mockCacheService)
+		service.sessionMgr = NewSessionManager(&cache.Service{})
+		// Replace with our mock
+		service.sessionMgr.cacheService = mockCacheService
 	}
 	assert.NoError(t, err)
 	assert.NotNil(t, service)

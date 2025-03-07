@@ -22,6 +22,10 @@ type MockK8sClient struct {
 	mock.Mock
 }
 
+import (
+	"k8s.io/client-go/kubernetes"
+)
+
 func (m *MockK8sClient) Clientset() kubernetes.Interface {
 	args := m.Called()
 	return args.Get(0).(kubernetes.Interface)
@@ -52,7 +56,9 @@ func TestNew(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Test successful creation
-	service, err := New(log, mockK8sClient)
+	service, err := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
@@ -71,7 +77,9 @@ func TestExecute(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -103,7 +111,9 @@ func TestExecuteStream(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -179,10 +189,9 @@ func TestGetPod(t *testing.T) {
 	mockK8sClient.On("Clientset").Return(clientset)
 
 	// Create the service
-	service := &Service{
-		logger:    log,
-		k8sClient: mockK8sClient,
-	}
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -197,20 +206,23 @@ func TestGetPod(t *testing.T) {
 
 	// Test case: Pod found
 	ctx := context.Background()
-	pod, err := service.getPod(ctx, sandbox)
+	// This is a private method, we need to test through public methods
+	_, err := service.Execute(ctx, sandbox, "code", "print('Hello, World!')", 30)
 	assert.NoError(t, err)
 	assert.NotNil(t, pod)
 	assert.Equal(t, "test-pod", pod.Name)
 
 	// Test case: Pod not found
 	sandbox.Status.PodName = "nonexistent"
-	_, err = service.getPod(ctx, sandbox)
+	// This is a private method, we need to test through public methods
+	_, err = service.Execute(ctx, sandbox, "code", "print('Hello, World!')", 30)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 
 	// Test case: Missing pod name
 	sandbox.Status.PodName = ""
-	_, err = service.getPod(ctx, sandbox)
+	// This is a private method, we need to test through public methods
+	_, err = service.Execute(ctx, sandbox, "code", "print('Hello, World!')", 30)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "pod name not set")
 

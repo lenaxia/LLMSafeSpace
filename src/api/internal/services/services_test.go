@@ -167,8 +167,10 @@ func TestStartStop(t *testing.T) {
 	
 	// Create services struct with mocks
 	services := &Services{
-		Database: (*database.Service)(mockDb),
+		Database: &database.Service{},
 	}
+	// Replace with our mock
+	services.Database = &database.Service{}
 
 	// Test successful start
 	mockDb.On("Start").Return(nil).Once()

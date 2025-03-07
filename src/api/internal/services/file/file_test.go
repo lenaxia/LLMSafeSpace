@@ -42,7 +42,9 @@ func TestNew(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Test successful creation
-	service, err := New(log, mockK8sClient)
+	service, err := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
@@ -61,7 +63,9 @@ func TestListFiles(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -97,7 +101,9 @@ func TestDownloadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -129,7 +135,9 @@ func TestUploadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -162,7 +170,9 @@ func TestDeleteFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -201,10 +211,9 @@ func TestGetPod(t *testing.T) {
 	mockK8sClient.On("Clientset").Return(clientset)
 
 	// Create the service
-	service := &Service{
-		logger:    log,
-		k8sClient: mockK8sClient,
-	}
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -236,7 +245,8 @@ func TestGetPod(t *testing.T) {
 
 	// Test case: Missing pod name
 	sandbox.Status.PodName = ""
-	_, err = service.getPod(ctx, sandbox)
+	// This is a private method, we need to test through public methods
+	_, err = service.ListFiles(ctx, sandbox, "/workspace")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "pod name not set")
 
@@ -253,7 +263,9 @@ func TestValidatePath(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Test cases
 	testCases := []struct {

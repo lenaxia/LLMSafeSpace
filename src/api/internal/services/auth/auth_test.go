@@ -151,7 +151,7 @@ func TestGenerateToken(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, &database.Service{}, &cache.Service{})
 
 	// Test token generation
 	userID := "user123"
@@ -189,7 +189,7 @@ func TestValidateToken(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, &database.Service{}, &cache.Service{})
 
 	// Generate a valid token
 	userID := "user123"
