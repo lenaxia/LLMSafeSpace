@@ -24,10 +24,15 @@ type App struct {
 	services   *services.Services
 	handlers   *handlers.Handlers
 	shutdownCh chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // New creates a new application instance
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	// Set Gin mode
 	if cfg.Logging.Development {
 		gin.SetMode(gin.DebugMode)
@@ -38,12 +43,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Initialize Kubernetes client
 	k8sClient, err := kubernetes.New(cfg, log)
 	if err != nil {
+		cancel() // Clean up context
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
 	// Initialize services
 	svc, err := services.New(cfg, log, k8sClient)
 	if err != nil {
+		cancel() // Clean up context
 		return nil, fmt.Errorf("failed to initialize services: %w", err)
 	}
 
@@ -84,19 +91,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		services:   svc,
 		handlers:   h,
 		shutdownCh: make(chan struct{}),
+		ctx:        ctx,
+		cancel:     cancel,
 	}, nil
 }
 
 // Run starts the application
 func (a *App) Run() error {
-	// Start Kubernetes client
-	if err := a.k8sClient.Start(); err != nil {
-		return fmt.Errorf("failed to start Kubernetes client: %w", err)
-	}
-
-	// Start services
+	// Start services first
 	if err := a.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Then start Kubernetes client
+	if err := a.k8sClient.Start(); err != nil {
+		a.services.Stop() // Clean up services if k8s fails
+		return fmt.Errorf("failed to start Kubernetes client: %w", err)
 	}
 
 	// Log server start
@@ -113,20 +123,23 @@ func (a *App) Run() error {
 // Shutdown gracefully shuts down the application
 func (a *App) Shutdown() error {
 	a.logger.Info("Shutting down application")
+	
+	// Trigger context cancellation
+	a.cancel()
 
 	// Create shutdown context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.Server.ShutdownTimeout)
+	ctx, cancel := context.WithTimeout(a.ctx, a.config.Server.ShutdownTimeout)
 	defer cancel()
 
-	// Shutdown HTTP server
+	// Shutdown HTTP server first
 	if err := a.server.Shutdown(ctx); err != nil {
 		a.logger.Error("HTTP server shutdown error", err)
 	}
 
-	// Stop Kubernetes client
+	// Then stop Kubernetes client
 	a.k8sClient.Stop()
 
-	// Stop services
+	// Finally stop services
 	if err := a.services.Stop(); err != nil {
 		a.logger.Error("Services shutdown error", err)
 	}
