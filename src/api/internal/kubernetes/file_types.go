@@ -14,6 +14,7 @@ type FileRequest struct {
 type FileResult struct {
 	Path      string
 	Size      int64
+	IsDir     bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

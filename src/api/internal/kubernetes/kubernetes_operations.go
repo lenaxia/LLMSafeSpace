@@ -24,24 +24,9 @@ type ExecutionResult struct {
 	Stderr     string    `json:"stderr"`
 }
 
-// FileRequest defines a request to perform a file operation
-type FileRequest struct {
-	Path    string `json:"path"`
-	Content []byte `json:"content,omitempty"`
-}
-
-// FileResult defines the result of a file operation
-type FileResult struct {
-	Path      string    `json:"path"`
-	Size      int64     `json:"size"`
-	IsDir     bool      `json:"isDir"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
 // FileListResult defines the result of listing files
 type FileListResult struct {
-	Files []FileResult `json:"files"`
+	Files []FileInfo `json:"files"`
 }
 
 // ExecuteInSandbox executes code or a command in a sandbox
@@ -86,11 +71,11 @@ func (c *Client) ExecuteStreamInSandbox(
 }
 
 // ListFilesInSandbox lists files in a sandbox
-func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string, req *FileRequest) (*FileListResult, error) {
+func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string, req *FileRequest) (*FileList, error) {
 	// TODO: Implement actual file listing via Kubernetes API
 	// This is a placeholder implementation
-	return &FileListResult{
-		Files: []FileResult{
+	return &FileList{
+		Files: []FileInfo{
 			{
 				Path:      "/workspace/file1.txt",
 				Size:      100,
