@@ -95,7 +95,10 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, (*database.Service)(nil), (*cache.Service)(nil))
+	// Replace the nil services with our mocks
+	service.dbService = mockDbService
+	service.cacheService = mockCacheService
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
