@@ -1,13 +1,3 @@
-package services
-
-import (
-	"context"
-	"errors"
-	"testing"
-	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -272,6 +262,16 @@ func (m *MockSandboxService) GetMetrics() map[string]interface{} {
 	return args.Get(0).(map[string]interface{})
 }
 
+func (m *MockSandboxService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockSandboxService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 type MockWarmPoolService struct {
 	mock.Mock
 }
@@ -306,6 +306,16 @@ func (m *MockWarmPoolService) GetGlobalWarmPoolStatus(ctx context.Context) (map[
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+func (m *MockWarmPoolService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockWarmPoolService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 type MockExecutionService struct {
@@ -368,6 +378,16 @@ func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev
 
 func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
 	args := m.Called(ctx, sandbox, path)
+	return args.Error(0)
+}
+
+func (m *MockFileService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockFileService) Stop() error {
+	args := m.Called()
 	return args.Error(0)
 }
 
