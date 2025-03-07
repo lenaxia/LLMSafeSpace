@@ -33,6 +33,14 @@ func (m *MockMetricsService) RecordRequest(method, path string, status int, dura
 	m.Called(method, path, status, duration, size)
 }
 
+func (m *MockMetricsService) RecordSandboxCreation() {
+	m.Called()
+}
+
+func (m *MockMetricsService) RecordSandboxTermination() {
+	m.Called()
+}
+
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -122,7 +130,7 @@ func TestLoggerMiddleware(t *testing.T) {
 }
 
 func TestMetricsMiddleware(t *testing.T) {
-	mockMetrics := new(MockMetricsService)
+	mockMetrics := &MockMetricsService{}
 	router := gin.New()
 	
 	// Use interface type assertion
