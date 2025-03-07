@@ -1,4 +1,28 @@
+package services_test
 
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
+	"github.com/lenaxia/llmsafespace/api/internal/services/file"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+)
+
+// Mock implementations
 type MockAuthService struct {
 	mock.Mock
 }
@@ -473,7 +497,7 @@ func TestStartStop(t *testing.T) {
 	mockDb := new(MockDatabaseService)
 	
 	// Create services struct with mocks
-	services := &Services{
+	services := &services.Services{
 		Database: mockDb,
 	}
 	
@@ -502,13 +526,4 @@ func TestStartStop(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to stop database service")
 	mockDb.AssertExpectations(t)
-}
-func (m *MockFileService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockFileService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
 }
