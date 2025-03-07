@@ -1,9 +1,13 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -17,6 +21,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // Mock implementations
@@ -34,6 +39,36 @@ func (m *MockAuthService) Stop() error {
 	return args.Error(0)
 }
 
+func (m *MockAuthService) GetUserID(c *gin.Context) string {
+	args := m.Called(c)
+	return args.String(0)
+}
+
+func (m *MockAuthService) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
+	args := m.Called(userID, resourceType, resourceID, action)
+	return args.Bool(0)
+}
+
+func (m *MockAuthService) GenerateToken(userID string) (string, error) {
+	args := m.Called(userID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) ValidateToken(token string) (string, error) {
+	args := m.Called(token)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
+}
+
 type MockDatabaseService struct {
 	mock.Mock
 }
@@ -46,6 +81,35 @@ func (m *MockDatabaseService) Start() error {
 func (m *MockDatabaseService) Stop() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockDatabaseService) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+func (m *MockDatabaseService) GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]map[string]interface{}), args.Error(1)
+}
+
+func (m *MockDatabaseService) CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error) {
+	args := m.Called(userID, resourceType, resourceID)
+	return args.Bool(0), args.Error(1)
 }
 
 type MockCacheService struct {
@@ -62,68 +126,267 @@ func (m *MockCacheService) Stop() error {
 	return args.Error(0)
 }
 
-// Mock service factory functions
-func mockNewAuth(cfg *config.Config, log *logger.Logger, dbService *database.Service, cacheService *cache.Service) (*auth.Service, error) {
-	if cfg.Auth.JWTSecret == "" {
-		return nil, errors.New("JWT secret is required")
+func (m *MockCacheService) Get(key string) ([]byte, error) {
+	args := m.Called(key)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
 	}
-	return &auth.Service{}, nil
+	return args.Get(0).([]byte), args.Error(1)
 }
 
-func mockNewDatabase(cfg *config.Config, log *logger.Logger) (*database.Service, error) {
-	if cfg.Database.Host == "" {
-		return nil, errors.New("database host is required")
-	}
-	return &database.Service{}, nil
+func (m *MockCacheService) Set(key string, value []byte, expiration time.Duration) error {
+	args := m.Called(key, value, expiration)
+	return args.Error(0)
 }
 
-func mockNewCache(cfg *config.Config, log *logger.Logger) (*cache.Service, error) {
-	if cfg.Redis.Host == "" {
-		return nil, errors.New("redis host is required")
-	}
-	return &cache.Service{}, nil
+func (m *MockCacheService) Delete(key string) error {
+	args := m.Called(key)
+	return args.Error(0)
 }
 
-func mockNewWarmPool(log *logger.Logger, k8sClient *kubernetes.Client, dbService *database.Service, metricsService *metrics.Service) (*warmpool.Service, error) {
-	if k8sClient == nil {
-		return nil, errors.New("k8s client is required")
-	}
-	return &warmpool.Service{}, nil
+type MockSandboxService struct {
+	mock.Mock
 }
 
-func mockNewFile(log *logger.Logger, k8sClient *kubernetes.Client) (*file.Service, error) {
-	if k8sClient == nil {
-		return nil, errors.New("k8s client is required")
+func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
 	}
-	return &file.Service{}, nil
+	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
 }
 
-func mockNewExecution(log *logger.Logger, k8sClient *kubernetes.Client) (*execution.Service, error) {
-	if k8sClient == nil {
-		return nil, errors.New("k8s client is required")
+func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
 	}
-	return &execution.Service{}, nil
+	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
 }
 
-func mockNewSandbox(log *logger.Logger, k8sClient *kubernetes.Client, dbService *database.Service, warmPoolService *warmpool.Service, fileService *file.Service, executionService *execution.Service, metricsService *metrics.Service, cacheService *cache.Service) (*sandbox.Service, error) {
-	if k8sClient == nil {
-		return nil, errors.New("k8s client is required")
+func (m *MockSandboxService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
 	}
-	return &sandbox.Service{}, nil
+	return args.Get(0).([]map[string]interface{}), args.Error(1)
+}
+
+func (m *MockSandboxService) TerminateSandbox(ctx context.Context, sandboxID string) error {
+	args := m.Called(ctx, sandboxID)
+	return args.Error(0)
+}
+
+func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llmsafespacev1.SandboxStatus), args.Error(1)
+}
+
+func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*execution.Result, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*execution.Result), args.Error(1)
+}
+
+func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
+	args := m.Called(ctx, sandboxID, path)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]file.FileInfo), args.Error(1)
+}
+
+func (m *MockSandboxService) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
+	args := m.Called(ctx, sandboxID, path)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*file.FileInfo, error) {
+	args := m.Called(ctx, sandboxID, path, content)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*file.FileInfo), args.Error(1)
+}
+
+func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path string) error {
+	args := m.Called(ctx, sandboxID, path)
+	return args.Error(0)
+}
+
+func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*execution.Result, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*execution.Result), args.Error(1)
+}
+
+func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*sandbox.Session, error) {
+	args := m.Called(userID, sandboxID, conn)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*sandbox.Session), args.Error(1)
+}
+
+func (m *MockSandboxService) CloseSession(sessionID string) {
+	m.Called(sessionID)
+}
+
+func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
+	m.Called(session)
+}
+
+func (m *MockSandboxService) GetMetrics() map[string]interface{} {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(map[string]interface{})
+}
+
+type MockWarmPoolService struct {
+	mock.Mock
+}
+
+func (m *MockWarmPoolService) GetWarmSandbox(ctx context.Context, runtime string) (string, error) {
+	args := m.Called(ctx, runtime)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockWarmPoolService) AddToWarmPool(ctx context.Context, sandboxID, runtime string) error {
+	args := m.Called(ctx, sandboxID, runtime)
+	return args.Error(0)
+}
+
+func (m *MockWarmPoolService) RemoveFromWarmPool(ctx context.Context, sandboxID string) error {
+	args := m.Called(ctx, sandboxID)
+	return args.Error(0)
+}
+
+func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+type MockExecutionService struct {
+	mock.Mock
+}
+
+func (m *MockExecutionService) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error) {
+	args := m.Called(ctx, sandboxID, code, timeout)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*execution.Result), args.Error(1)
+}
+
+func (m *MockExecutionService) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*execution.Result, error) {
+	args := m.Called(ctx, sandboxID, command, timeout)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*execution.Result), args.Error(1)
+}
+
+type MockFileService struct {
+	mock.Mock
+}
+
+func (m *MockFileService) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
+	args := m.Called(ctx, sandboxID, path)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]file.FileInfo), args.Error(1)
+}
+
+func (m *MockFileService) ReadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
+	args := m.Called(ctx, sandboxID, path)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockFileService) WriteFile(ctx context.Context, sandboxID, path string, content []byte) error {
+	args := m.Called(ctx, sandboxID, path, content)
+	return args.Error(0)
+}
+
+func (m *MockFileService) DeleteFile(ctx context.Context, sandboxID, path string) error {
+	args := m.Called(ctx, sandboxID, path)
+	return args.Error(0)
+}
+
+type MockMetricsService struct {
+	mock.Mock
+}
+
+func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
+	m.Called(method, path, status, duration, size)
+}
+
+func (m *MockMetricsService) RecordSandboxCreation() {
+	m.Called()
+}
+
+func (m *MockMetricsService) RecordSandboxTermination() {
+	m.Called()
+}
+
+func (m *MockMetricsService) RecordExecution(duration time.Duration) {
+	m.Called(duration)
+}
+
+func (m *MockMetricsService) IncActiveConnections() {
+	m.Called()
+}
+
+func (m *MockMetricsService) DecActiveConnections() {
+	m.Called()
+}
+
+func (m *MockMetricsService) RecordWarmPoolHit() {
+	m.Called()
+}
+
+// Helper function to create a valid test config
+func createTestConfig() *config.Config {
+	return &config.Config{
+		Auth: config.AuthConfig{
+			JWTSecret: "test-secret",
+		},
+		Database: config.DatabaseConfig{
+			Host: "localhost",
+			Port: 5432,
+		},
+		Redis: config.RedisConfig{
+			Host: "localhost",
+		},
+		Kubernetes: config.KubernetesConfig{
+			ConfigPath: "test-config-path",
+		},
+	}
 }
 
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	cfg := &config.Config{}
-	cfg.Auth.JWTSecret = "test-secret"
-	cfg.Database.Host = "localhost"
-	cfg.Database.Port = 5432 // Set a valid port
-	cfg.Redis.Host = "localhost"
+	cfg := createTestConfig()
 	k8sClient := &kubernetes.Client{}
-
-	// Skip this test as it relies on unexported functions
-	t.Skip("Skipping test that relies on unexported functions")
 
 	// Test successful initialization
 	services, err := New(cfg, log, k8sClient)
@@ -138,28 +401,25 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, services.WarmPool)
 
 	// Test database service initialization failure
-	cfg.Database.Host = ""
-	services, err = New(cfg, log, k8sClient)
+	badCfg := createTestConfig()
+	badCfg.Database.Host = ""
+	services, err = New(badCfg, log, k8sClient)
 	assert.Error(t, err)
 	assert.Nil(t, services)
 	assert.Contains(t, err.Error(), "failed to initialize database service")
 
-	// Restore database host for subsequent tests
-	cfg.Database.Host = "localhost"
-
 	// Test cache service initialization failure
-	cfg.Redis.Host = ""
-	services, err = New(cfg, log, k8sClient)
+	badCfg = createTestConfig()
+	badCfg.Redis.Host = ""
+	services, err = New(badCfg, log, k8sClient)
 	assert.Error(t, err)
 	assert.Nil(t, services)
 	assert.Contains(t, err.Error(), "failed to initialize cache service")
 
-	// Restore redis host for subsequent tests
-	cfg.Redis.Host = "localhost"
-
 	// Test auth service initialization failure
-	cfg.Auth.JWTSecret = ""
-	services, err = New(cfg, log, k8sClient)
+	badCfg = createTestConfig()
+	badCfg.Auth.JWTSecret = ""
+	services, err = New(badCfg, log, k8sClient)
 	assert.Error(t, err)
 	assert.Nil(t, services)
 	assert.Contains(t, err.Error(), "failed to initialize auth service")
@@ -171,11 +431,8 @@ func TestStartStop(t *testing.T) {
 	
 	// Create services struct with mocks
 	services := &Services{
-		Database: &database.Service{},
+		Database: mockDb,
 	}
-	
-	// Skip the test if we can't properly mock the database service
-	t.Skip("Skipping test that requires proper mocking of database.Service")
 	
 	// Test successful start
 	mockDb.On("Start").Return(nil).Once()

@@ -29,7 +29,7 @@ type MockSandboxService struct {
 }
 
 // Ensure mock implements the interface
-var _ sandbox.Service = (*MockSandboxService)(nil)
+var _ services.SandboxService = (*MockSandboxService)(nil)
 
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
         args := m.Called(ctx, req)
@@ -143,7 +143,7 @@ type MockAuthService struct {
 }
 
 // Ensure mock implements the interface
-var _ auth.Service = (*MockAuthService)(nil)
+var _ services.AuthService = (*MockAuthService)(nil)
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)
