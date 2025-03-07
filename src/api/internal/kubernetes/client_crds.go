@@ -164,7 +164,7 @@ func (s *sandboxes) List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, 
 		Namespace(s.ns).
 		Resource("sandboxes").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Do().
+		Do(context.TODO()).
 		Into(result)
 	return result, err
 }
