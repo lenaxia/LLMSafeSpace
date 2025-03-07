@@ -27,6 +27,9 @@ type MockSandboxService struct {
         mock.Mock
 }
 
+// Ensure mock implements the interface
+var _ sandbox.Service = (*MockSandboxService)(nil)
+
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
         args := m.Called(ctx, req)
         if args.Get(0) == nil {
@@ -138,6 +141,9 @@ type MockAuthService struct {
 	mock.Mock
 }
 
+// Ensure mock implements the interface
+var _ auth.Service = (*MockAuthService)(nil)
+
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)
 	return args.String(0), args.Error(1)
@@ -158,6 +164,16 @@ func (m *MockAuthService) ValidateToken(token string) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) Middleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
+}
+
 func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *MockAuthService, *gin.Engine) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -167,8 +183,8 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 	// Create handler
 	handler := &SandboxHandler{
 		logger:     log,
-		sandboxSvc: mockSandboxService,
-		authSvc:    mockAuthService,
+		sandboxSvc: mockSandboxService, // Interface-compatible
+		authSvc:    mockAuthService,    // Interface-compatible
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,

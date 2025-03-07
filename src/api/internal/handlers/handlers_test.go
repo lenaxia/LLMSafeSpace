@@ -41,6 +41,18 @@ func (m *MockMetricsService) RecordSandboxTermination() {
 	m.Called()
 }
 
+func (m *MockMetricsService) RecordExecution(duration time.Duration) {
+	m.Called(duration)
+}
+
+func (m *MockMetricsService) IncActiveConnections() {
+	m.Called()
+}
+
+func (m *MockMetricsService) DecActiveConnections() {
+	m.Called()
+}
+
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -133,9 +145,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	mockMetrics := &MockMetricsService{}
 	router := gin.New()
 	
-	// Use interface type assertion
-	var metricsSvc metrics.Service = mockMetrics
-	router.Use(MetricsMiddleware(metricsSvc))
+	router.Use(MetricsMiddleware(mockMetrics))
 
 	router.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
