@@ -116,7 +116,11 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
 	mockLLMSafespaceV1Client.On("WarmPools", mock.Anything).Return(mockWarmPoolInterface)
 
-	service, err := New(mockLogger, mockK8sClient, mockDbService, mockMetricsService)
+	service, err := New(mockLogger, &kubernetes.Client{}, &database.Service{}, &metrics.Service{})
+	// Replace with our mocks
+	service.k8sClient = mockK8sClient
+	service.dbService = mockDbService
+	service.metricsSvc = mockMetricsService
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 
