@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	k8s "k8s.io/client-go/kubernetes"
 
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
@@ -19,12 +20,12 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
+	*kubernetes.Client
 }
 
-func (m *MockK8sClient) Clientset() kubernetes.Interface {
+func (m *MockK8sClient) Clientset() k8s.Interface {
 	args := m.Called()
-	return args.Get(0).(kubernetes.Interface)
+	return args.Get(0).(k8s.Interface)
 }
 
 func (m *MockK8sClient) RESTConfig() *rest.Config {
@@ -94,7 +95,6 @@ func TestListFiles(t *testing.T) {
 	k8sClient := &kubernetes.Client{}
 	service, _ := New(log, k8sClient)
 	// Replace with our mock
-	var k8sClientInterface kubernetes.Client = mockK8sClient
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox

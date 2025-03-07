@@ -75,8 +75,8 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
 	assert.Equal(t, cfg, service.config)
-	assert.Equal(t, mockDbService, service.dbService)
-	assert.Equal(t, mockCacheService, service.cacheService)
+	assert.Equal(t, mockDb, service.dbService)
+	assert.Equal(t, mockCache, service.cacheService)
 	assert.Equal(t, []byte("test-secret"), service.jwtSecret)
 	assert.Equal(t, 24*time.Hour, service.tokenDuration)
 
@@ -101,12 +101,10 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
-	var dbService database.Service = mockDbService
 	mockCacheService := new(MockCacheService)
-	var cacheService cache.Service = mockCacheService
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
@@ -201,7 +199,7 @@ func TestValidateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, &database.Service{}, mockCacheService)
+	service, _ := New(cfg, log, &MockDatabaseService{}, mockCacheService)
 
 	// Generate a valid token
 	userID := "user123"
