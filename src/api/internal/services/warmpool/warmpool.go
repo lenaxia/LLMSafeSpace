@@ -233,6 +233,41 @@ func (s *Service) DeleteWarmPool(ctx context.Context, name, namespace string) er
 
 // Helper methods for database operations
 
+// Function type definitions for easier mocking in tests
+type storeWarmPoolMetadataFunc func(ctx context.Context, name, namespace, userID, runtime string) error
+type getWarmPoolMetadataFunc func(ctx context.Context, name string) (map[string]interface{}, error)
+type deleteWarmPoolMetadataFunc func(ctx context.Context, name string) error
+
+// Default implementations
+var defaultStoreWarmPoolMetadata = func(ctx context.Context, name, namespace, userID, runtime string) error {
+	// In a real implementation, this would store the data in the database
+	// For now, we'll just log it
+	return nil
+}
+
+var defaultGetWarmPoolMetadata = func(ctx context.Context, name string) (map[string]interface{}, error) {
+	// In a real implementation, this would retrieve data from the database
+	// For now, we'll return a mock response
+	return map[string]interface{}{
+		"name":      name,
+		"user_id":   "mock-user",
+		"runtime":   "python:3.10",
+		"namespace": "default",
+	}, nil
+}
+
+var defaultDeleteWarmPoolMetadata = func(ctx context.Context, name string) error {
+	// In a real implementation, this would delete data from the database
+	return nil
+}
+
+// Function variables that can be overridden in tests
+var (
+	storeWarmPoolMetadata  = defaultStoreWarmPoolMetadata
+	getWarmPoolMetadata    = defaultGetWarmPoolMetadata
+	deleteWarmPoolMetadata = defaultDeleteWarmPoolMetadata
+)
+
 // storeWarmPoolMetadata stores warm pool metadata in the database
 func (s *Service) storeWarmPoolMetadata(ctx context.Context, name, namespace, userID, runtime string) error {
 	// In a real implementation, this would store the data in the database
