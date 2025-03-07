@@ -141,7 +141,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 	}
 
 	// Create the sandbox in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(ctx, sandbox, metav1.CreateOptions{})
+	result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(sandbox)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
@@ -150,7 +150,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 	err = s.dbService.CreateSandboxMetadata(ctx, result.Name, req.UserID, req.Runtime)
 	if err != nil {
 		// Attempt to clean up the Kubernetes resource
-		_ = s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(ctx, result.Name, metav1.DeleteOptions{})
+		_ = s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(result.Name, metav1.DeleteOptions{})
 		return nil, fmt.Errorf("failed to store sandbox metadata: %w", err)
 	}
 
@@ -173,7 +173,7 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespa
 	}
 
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -192,7 +192,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	// Enrich with Kubernetes data
 	for i, sandbox := range sandboxes {
 		id := sandbox["id"].(string)
-		k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, id, metav1.GetOptions{})
+		k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(id, metav1.GetOptions{})
 		if err == nil {
 			sandboxes[i]["status"] = k8sSandbox.Status.Phase
 			sandboxes[i]["endpoint"] = k8sSandbox.Status.Endpoint
@@ -215,7 +215,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	}
 
 	// Delete sandbox from Kubernetes
-	err = s.k8sClient.LlmsafespaceV1().Sandboxes("default").Delete(ctx, sandboxID, metav1.DeleteOptions{})
+	err = s.k8sClient.LlmsafespaceV1().Sandboxes("default").Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
@@ -229,7 +229,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 // GetSandboxStatus gets the status of a sandbox
 func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -240,7 +240,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*llms
 // Execute executes code or a command in a sandbox
 func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*execution.Result, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, req.SandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -270,7 +270,7 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*execution.R
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -292,7 +292,7 @@ func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]file
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -314,7 +314,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 // UploadFile uploads a file to a sandbox
 func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*file.FileInfo, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
@@ -380,7 +380,7 @@ func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesReques
 // CreateSession creates a new WebSocket session
 func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*Session, error) {
 	// Get sandbox from Kubernetes
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(context.Background(), sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
