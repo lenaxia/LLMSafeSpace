@@ -36,7 +36,13 @@ func New(logger *logger.Logger, k8sClient *kubernetes.Client) (*Service, error) 
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]FileInfo, error) {
+	// Get sandbox first
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox: %w", err)
+	}
+
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -65,7 +71,13 @@ func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox
 }
 
 // DownloadFile downloads a file from a sandbox
-func (s *Service) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
+	// Get sandbox first
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox: %w", err)
+	}
+
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -81,7 +93,13 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sand
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*FileInfo, error) {
+	// Get sandbox first
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox: %w", err)
+	}
+
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path:    path,
@@ -106,14 +124,20 @@ func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbo
 }
 
 // DeleteFile deletes a file from a sandbox
-func (s *Service) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error {
+	// Get sandbox first
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox: %w", err)
+	}
+
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
 	}
 
 	// Delete file via Kubernetes API
-	err := s.k8sClient.DeleteFileInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	err = s.k8sClient.DeleteFileInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
 	if err != nil {
 		return fmt.Errorf("failed to delete file in sandbox: %w", err)
 	}

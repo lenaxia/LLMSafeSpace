@@ -24,10 +24,33 @@ type Service struct {
 	tokenDuration time.Duration
 }
 
-func (s *Service) AuthenticateAPIKey(apiKey string) (string, error) {
-	// Implementation of AuthenticateAPIKey
-	// This is a placeholder implementation. You should replace it with the actual logic.
-	return s.dbService.GetUserIDByAPIKey(apiKey)
+func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
+	// Check if API key is cached
+	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
+	
+	// Try to get from cache first
+	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
+		return cachedUserID, nil
+	}
+
+	// Get user ID from database
+	userID, err := s.dbService.GetUserIDByAPIKey(apiKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to authenticate API key: %w", err)
+	}
+
+	if userID == "" {
+		return "", errors.New("invalid API key")
+	}
+
+	// Cache the API key for 15 minutes
+	err = s.cacheService.Set(ctx, cacheKey, userID, 15*time.Minute)
+	if err != nil {
+		s.logger.Error("Failed to cache API key", err, "user_id", userID)
+		// Continue even if caching fails
+	}
+
+	return userID, nil
 }
 
 // New creates a new auth service

@@ -283,6 +283,72 @@ func (s *Service) deleteWarmPoolMetadata(ctx context.Context, name string) error
 	return nil
 }
 
+// GetWarmSandbox gets a warm sandbox for a given runtime
+func (s *Service) GetWarmSandbox(ctx context.Context, runtime string) (string, error) {
+	// List warm pods with the given runtime
+	selector := labels.SelectorFromSet(labels.Set{
+		"runtime": strings.Replace(runtime, ":", "-", -1),
+		"status":  "available",
+	})
+
+	// List warm pods
+	warmPods, err := s.k8sClient.LlmsafespaceV1().WarmPods("default").List(metav1.ListOptions{
+		LabelSelector: selector.String(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list warm pods: %w", err)
+	}
+
+	// Check if any pods are available
+	if len(warmPods.Items) == 0 {
+		return "", fmt.Errorf("no warm pods available for runtime: %s", runtime)
+	}
+
+	// Get the first available pod
+	pod := warmPods.Items[0]
+
+	// Record warm pool hit in metrics
+	s.metricsSvc.RecordWarmPoolHit()
+
+	return pod.Name, nil
+}
+
+// RemoveFromWarmPool removes a sandbox from the warm pool
+func (s *Service) RemoveFromWarmPool(ctx context.Context, sandboxID string) error {
+	// Delete the warm pod
+	err := s.k8sClient.LlmsafespaceV1().WarmPods("default").Delete(sandboxID, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to remove sandbox from warm pool: %w", err)
+	}
+
+	return nil
+}
+
+// AddToWarmPool adds a sandbox to the warm pool
+func (s *Service) AddToWarmPool(ctx context.Context, sandboxID, runtime string) error {
+	// Create a new warm pod
+	warmPod := &llmsafespacev1.WarmPod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: sandboxID,
+			Labels: map[string]string{
+				"runtime": strings.Replace(runtime, ":", "-", -1),
+				"status":  "available",
+			},
+		},
+		Spec: llmsafespacev1.WarmPodSpec{
+			Runtime: runtime,
+		},
+	}
+
+	// Create the warm pod
+	_, err := s.k8sClient.LlmsafespaceV1().WarmPods("default").Create(warmPod)
+	if err != nil {
+		return fmt.Errorf("failed to add sandbox to warm pool: %w", err)
+	}
+
+	return nil
+}
+
 // GetWarmPoolStatus gets the status of a warm pool
 func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
 	// Set default namespace if not provided
@@ -297,6 +363,42 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 	}
 
 	return &warmPool.Status, nil
+}
+
+// GetWarmPoolStatus gets the status of all warm pools
+func (s *Service) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
+	// List all warm pools
+	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list warm pools: %w", err)
+	}
+
+	// Collect status information
+	status := make(map[string]interface{})
+	runtimes := make(map[string]map[string]interface{})
+
+	for _, pool := range warmPools.Items {
+		runtime := pool.Spec.Runtime
+		if _, exists := runtimes[runtime]; !exists {
+			runtimes[runtime] = map[string]interface{}{
+				"available": 0,
+				"pending":   0,
+				"assigned":  0,
+				"total":     0,
+			}
+		}
+
+		runtimeStats := runtimes[runtime]
+		runtimeStats["available"] = runtimeStats["available"].(int) + pool.Status.AvailablePods
+		runtimeStats["pending"] = runtimeStats["pending"].(int) + pool.Status.PendingPods
+		runtimeStats["assigned"] = runtimeStats["assigned"].(int) + pool.Status.AssignedPods
+		runtimeStats["total"] = runtimeStats["total"].(int) + pool.Status.TotalPods
+	}
+
+	status["runtimes"] = runtimes
+	status["total_pools"] = len(warmPools.Items)
+
+	return status, nil
 }
 
 // CreateWarmPoolRequest defines the request for creating a warm pool
