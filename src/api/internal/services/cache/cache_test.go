@@ -145,7 +145,7 @@ func TestGetSetObject(t *testing.T) {
 	if retrievedValue["name"] != value["name"] {
 		t.Errorf("Expected name %v, got %v", value["name"], retrievedValue["name"])
 	}
-	if retrievedValue["value"] != value["value"] {
+	if retrievedValue["value"].(float64) != float64(value["value"].(int)) {
 		t.Errorf("Expected value %v, got %v", value["value"], retrievedValue["value"])
 	}
 

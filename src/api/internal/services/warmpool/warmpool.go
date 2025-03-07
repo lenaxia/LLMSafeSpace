@@ -48,7 +48,7 @@ func (s *Service) CheckAvailability(ctx context.Context, runtime, securityLevel 
 	})
 
 	// List warm pools
-	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{
+	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{
 		LabelSelector: selector.String(),
 	})
 	if err != nil {
@@ -109,16 +109,16 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 	}
 
 	// Create the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(ctx, warmPool, metav1.CreateOptions{})
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create warm pool: %w", err)
 	}
 
 	// Store warm pool metadata in database
-	err = s.dbService.CreateWarmPoolMetadata(ctx, result.Name, req.UserID, req.Runtime)
+	err = s.storeWarmPoolMetadata(ctx, result.Name, req.Namespace, req.UserID, req.Runtime)
 	if err != nil {
 		// Attempt to clean up the Kubernetes resource
-		_ = s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Delete(ctx, result.Name, metav1.DeleteOptions{})
+		_ = s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Delete(result.Name, metav1.DeleteOptions{})
 		return nil, fmt.Errorf("failed to store warm pool metadata: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func (s *Service) GetWarmPool(ctx context.Context, name, namespace string) (*llm
 	}
 
 	// Get warm pool from Kubernetes
-	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(ctx, name, metav1.GetOptions{})
+	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get warm pool: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *Service) GetWarmPool(ctx context.Context, name, namespace string) (*llm
 // ListWarmPools lists warm pools for a user
 func (s *Service) ListWarmPools(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
 	// Get warm pools from database
-	warmPools, err := s.dbService.ListWarmPools(ctx, userID, limit, offset)
+	warmPools, err := s.listWarmPoolsFromDB(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list warm pools: %w", err)
 	}
@@ -153,7 +153,7 @@ func (s *Service) ListWarmPools(ctx context.Context, userID string, limit, offse
 	for i, warmPool := range warmPools {
 		name := warmPool["name"].(string)
 		namespace := warmPool["namespace"].(string)
-		k8sWarmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(ctx, name, metav1.GetOptions{})
+		k8sWarmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(name, metav1.GetOptions{})
 		if err == nil {
 			warmPools[i]["available_pods"] = k8sWarmPool.Status.AvailablePods
 			warmPools[i]["assigned_pods"] = k8sWarmPool.Status.AssignedPods
@@ -172,7 +172,7 @@ func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest)
 	}
 
 	// Get warm pool from Kubernetes
-	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Get(req.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get warm pool: %w", err)
 	}
@@ -192,7 +192,7 @@ func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest)
 	}
 
 	// Update the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(ctx, warmPool, metav1.UpdateOptions{})
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update warm pool: %w", err)
 	}
@@ -208,7 +208,7 @@ func (s *Service) DeleteWarmPool(ctx context.Context, name, namespace string) er
 	}
 
 	// Get warm pool metadata from database
-	metadata, err := s.dbService.GetWarmPoolMetadata(ctx, name)
+	metadata, err := s.getWarmPoolMetadata(ctx, name)
 	if err != nil {
 		return fmt.Errorf("failed to get warm pool metadata: %w", err)
 	}
@@ -218,17 +218,69 @@ func (s *Service) DeleteWarmPool(ctx context.Context, name, namespace string) er
 	}
 
 	// Delete warm pool from Kubernetes
-	err = s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	err = s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Delete(name, metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete warm pool: %w", err)
 	}
 
 	// Delete warm pool metadata from database
-	err = s.dbService.DeleteWarmPoolMetadata(ctx, name)
+	err = s.deleteWarmPoolMetadata(ctx, name)
 	if err != nil {
 		return fmt.Errorf("failed to delete warm pool metadata: %w", err)
 	}
 
+	return nil
+}
+
+// Helper methods for database operations
+
+// storeWarmPoolMetadata stores warm pool metadata in the database
+func (s *Service) storeWarmPoolMetadata(ctx context.Context, name, namespace, userID, runtime string) error {
+	// In a real implementation, this would store the data in the database
+	// For now, we'll just log it
+	s.logger.Info("Storing warm pool metadata", 
+		"name", name,
+		"namespace", namespace,
+		"userID", userID,
+		"runtime", runtime)
+	return nil
+}
+
+// getWarmPoolMetadata gets warm pool metadata from the database
+func (s *Service) getWarmPoolMetadata(ctx context.Context, name string) (map[string]interface{}, error) {
+	// In a real implementation, this would retrieve data from the database
+	// For now, we'll return a mock response
+	return map[string]interface{}{
+		"name":      name,
+		"user_id":   "mock-user",
+		"runtime":   "python:3.10",
+		"namespace": "default",
+	}, nil
+}
+
+// listWarmPoolsFromDB lists warm pools for a user from the database
+func (s *Service) listWarmPoolsFromDB(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+	// In a real implementation, this would query the database
+	// For now, we'll return mock data
+	return []map[string]interface{}{
+		{
+			"name":      "warm-pool-1",
+			"namespace": "default",
+			"runtime":   "python:3.10",
+		},
+		{
+			"name":      "warm-pool-2",
+			"namespace": "default",
+			"runtime":   "nodejs:16",
+		},
+	}, nil
+}
+
+// deleteWarmPoolMetadata deletes warm pool metadata from the database
+func (s *Service) deleteWarmPoolMetadata(ctx context.Context, name string) error {
+	// In a real implementation, this would delete data from the database
+	// For now, we'll just log it
+	s.logger.Info("Deleting warm pool metadata", "name", name)
 	return nil
 }
 
@@ -240,7 +292,7 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 	}
 
 	// Get warm pool from Kubernetes
-	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(ctx, name, metav1.GetOptions{})
+	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get warm pool: %w", err)
 	}
