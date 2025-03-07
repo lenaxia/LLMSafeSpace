@@ -144,7 +144,17 @@ func (s *Service) IncrementActiveConnections(connType string) {
 	s.activeConnections.WithLabelValues(connType).Inc()
 }
 
+// IncActiveConnections increments the active connections counter
+func (s *Service) IncActiveConnections() {
+	s.activeConnections.WithLabelValues("ws").Inc()
+}
+
 // DecrementActiveConnections decrements the active connections counter
 func (s *Service) DecrementActiveConnections(connType string) {
 	s.activeConnections.WithLabelValues(connType).Dec()
+}
+
+// DecActiveConnections decrements the active connections counter
+func (s *Service) DecActiveConnections() {
+	s.activeConnections.WithLabelValues("ws").Dec()
 }
