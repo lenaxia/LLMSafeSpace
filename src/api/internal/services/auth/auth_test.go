@@ -106,7 +106,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	var cacheService cache.Service = mockCacheService
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()

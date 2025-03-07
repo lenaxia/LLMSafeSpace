@@ -29,7 +29,7 @@ type MockSandboxService struct {
 }
 
 // Ensure mock implements the interface
-var _ services.SandboxService = (*MockSandboxService)(nil)
+var _ SandboxService = (*MockSandboxService)(nil)
 
 func (m *MockSandboxService) Start() error {
 	args := m.Called()
@@ -153,7 +153,7 @@ type MockAuthService struct {
 }
 
 // Ensure mock implements the interface
-var _ services.AuthService = (*MockAuthService)(nil)
+var _ AuthService = (*MockAuthService)(nil)
 
 func (m *MockAuthService) Start() error {
 	args := m.Called()

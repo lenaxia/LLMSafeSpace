@@ -14,13 +14,13 @@ import (
 // SandboxHandler handles sandbox-related API endpoints
 type SandboxHandler struct {
 	logger        *logger.Logger
-	sandboxSvc    services.SandboxService
-	authSvc       services.AuthService
+	sandboxSvc    SandboxService
+	authSvc       AuthService
 	upgrader      websocket.Upgrader
 }
 
 // NewSandboxHandler creates a new SandboxHandler
-func NewSandboxHandler(log *logger.Logger, sandboxSvc services.SandboxService, authSvc services.AuthService) *SandboxHandler {
+func NewSandboxHandler(log *logger.Logger, sandboxSvc SandboxService, authSvc AuthService) *SandboxHandler {
 	return &SandboxHandler{
 		logger:     log,
 		sandboxSvc: sandboxSvc,
