@@ -34,8 +34,8 @@ type MockMetricsService struct {
 	mock.Mock
 }
 
-func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
-	m.Called(method, path, status, duration, size)
+func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int, responseTime float64) {
+	m.Called(method, path, status, duration, size, responseTime)
 }
 
 func TestNew(t *testing.T) {
@@ -141,7 +141,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	})
 
 	// Set up expectations
-	mockMetrics.On("RecordRequest", "GET", "/test", http.StatusOK, mock.Anything, mock.Anything).Once()
+	mockMetrics.On("RecordRequest", "GET", "/test", http.StatusOK, mock.Anything, mock.Anything, mock.Anything).Once()
 
 	// Create a test request
 	req := httptest.NewRequest("GET", "/test", nil)
