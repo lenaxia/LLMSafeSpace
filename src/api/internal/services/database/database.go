@@ -68,6 +68,9 @@ func (s *Service) Stop() error {
 	return s.DB.Close()
 }
 
+// Ensure Service implements the DatabaseService interface
+var _ services.DatabaseService = (*Service)(nil)
+
 // Ping checks the database connection
 func (s *Service) Ping(ctx context.Context) error {
 	return s.DB.PingContext(ctx)
