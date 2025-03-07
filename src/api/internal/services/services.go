@@ -1,8 +1,12 @@
 package services
 
 import (
+	"context"
 	"fmt"
+	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -14,6 +18,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
+	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // Service interfaces

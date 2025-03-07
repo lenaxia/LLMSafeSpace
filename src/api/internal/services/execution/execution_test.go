@@ -22,6 +22,15 @@ type MockK8sClient struct {
 	*kubernetes.Client
 }
 
+func (m *MockK8sClient) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockK8sClient) Stop() {
+	m.Called()
+}
+
 func (m *MockK8sClient) Clientset() k8s.Interface {
 	args := m.Called()
 	return args.Get(0).(k8s.Interface)
@@ -56,11 +65,11 @@ func TestNew(t *testing.T) {
 	mockK8sClient := new(MockK8sClient)
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
+	mockK8sClient.On("Start").Return(nil)
+	mockK8sClient.On("Stop").Return()
 
 	// Test successful creation
-	service, err := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
+	service, err := New(log, mockK8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
@@ -79,9 +88,7 @@ func TestExecute(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -113,9 +120,7 @@ func TestExecuteStream(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, err := New(log, &kubernetes.Client{})
-	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	service, err := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -148,9 +153,7 @@ func TestInstallPackages(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
