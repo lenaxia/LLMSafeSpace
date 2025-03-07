@@ -25,11 +25,17 @@ import (
 
 // MockSandboxService implementation
 type MockSandboxService struct {
-	mock.Mock
-	*sandbox.Service
+        mock.Mock
+        *sandbox.Service
 }
 
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+        args := m.Called(ctx, req)
+        if args.Get(0) == nil {
+                return nil, args.Error(1)
+        }
+        return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+}
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
