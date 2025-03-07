@@ -66,7 +66,7 @@ func TestNew(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	service, err := New(cfg, log, mockDbService, mockCacheService)
+	service, err := New(cfg, log, (*database.Service)(mockDbService), (*cache.Service)(mockCacheService))
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
