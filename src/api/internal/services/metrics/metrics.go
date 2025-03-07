@@ -173,3 +173,9 @@ func (s *Service) DecrementActiveConnections(connType string) {
 func (s *Service) DecActiveConnections() {
 	s.activeConnections.WithLabelValues("ws").Dec()
 }
+
+// RecordWarmPoolHit records a warm pool hit
+func (s *Service) RecordWarmPoolHit() {
+	// Increment counter for warm pool hits
+	s.warmPoolHitRatio.WithLabelValues("total").Inc()
+}
