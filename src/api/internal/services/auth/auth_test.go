@@ -75,8 +75,8 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
 	assert.Equal(t, cfg, service.config)
-	assert.Equal(t, dbService, service.dbService)
-	assert.Equal(t, cacheService, service.cacheService)
+	assert.Equal(t, mockDbService, service.dbService)
+	assert.Equal(t, mockCacheService, service.cacheService)
 	assert.Equal(t, []byte("test-secret"), service.jwtSecret)
 	assert.Equal(t, 24*time.Hour, service.tokenDuration)
 
