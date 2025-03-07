@@ -24,6 +24,16 @@ type Service struct {
 	tokenDuration time.Duration
 }
 
+// Start initializes the auth service
+func (s *Service) Start() error {
+	return nil
+}
+
+// Stop cleans up the auth service
+func (s *Service) Stop() error {
+	return nil
+}
+
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	// Check if API key is cached
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
@@ -34,7 +44,7 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 	}
 
 	// Get user ID from database
-	userID, err := s.dbService.GetUserIDByAPIKey(apiKey)
+	userID, err := s.dbService.GetUserIDByAPIKey(ctx, apiKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to authenticate API key: %w", err)
 	}

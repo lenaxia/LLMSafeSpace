@@ -147,21 +147,18 @@ func (m *MockCacheService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockCacheService) Get(key string) ([]byte, error) {
-	args := m.Called(key)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]byte), args.Error(1)
+func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Error(1)
 }
 
-func (m *MockCacheService) Set(key string, value []byte, expiration time.Duration) error {
-	args := m.Called(key, value, expiration)
+func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	args := m.Called(ctx, key, value, expiration)
 	return args.Error(0)
 }
 
-func (m *MockCacheService) Delete(key string) error {
-	args := m.Called(key)
+func (m *MockCacheService) Delete(ctx context.Context, key string) error {
+	args := m.Called(ctx, key)
 	return args.Error(0)
 }
 
@@ -294,13 +291,6 @@ func (m *MockWarmPoolService) RemoveFromWarmPool(ctx context.Context, sandboxID 
 	return args.Error(0)
 }
 
-func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
 
 func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
 	args := m.Called(ctx, name, namespace)

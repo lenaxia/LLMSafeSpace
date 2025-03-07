@@ -35,6 +35,16 @@ func New(logger *logger.Logger, k8sClient *kubernetes.Client) (*Service, error) 
 	}, nil
 }
 
+// Start initializes the file service
+func (s *Service) Start() error {
+	return nil
+}
+
+// Stop cleans up the file service
+func (s *Service) Stop() error {
+	return nil
+}
+
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]FileInfo, error) {
 	// Create file request
