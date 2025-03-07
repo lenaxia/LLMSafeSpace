@@ -123,6 +123,16 @@ func (m *MockDatabaseService) CheckResourceOwnership(userID, resourceType, resou
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
+	args := m.Called(userID, resourceType, resourceID, action)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockDatabaseService) GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
+	return args.String(0), args.Error(1)
+}
+
 type MockCacheService struct {
 	mock.Mock
 }
@@ -326,29 +336,32 @@ type MockFileService struct {
 	mock.Mock
 }
 
-func (m *MockFileService) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
-	args := m.Called(ctx, sandboxID, path)
+func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error) {
+	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) ReadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
-	args := m.Called(ctx, sandboxID, path)
+func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockFileService) WriteFile(ctx context.Context, sandboxID, path string, content []byte) error {
-	args := m.Called(ctx, sandboxID, path, content)
-	return args.Error(0)
+func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error) {
+	args := m.Called(ctx, sandbox, path, content)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DeleteFile(ctx context.Context, sandboxID, path string) error {
-	args := m.Called(ctx, sandboxID, path)
+func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+	args := m.Called(ctx, sandbox, path)
 	return args.Error(0)
 }
 
@@ -360,16 +373,16 @@ func (m *MockMetricsService) RecordRequest(method, path string, status int, dura
 	m.Called(method, path, status, duration, size)
 }
 
-func (m *MockMetricsService) RecordSandboxCreation() {
-	m.Called()
+func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
+	m.Called(runtime, warmPodUsed)
 }
 
-func (m *MockMetricsService) RecordSandboxTermination() {
-	m.Called()
+func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
+	m.Called(runtime)
 }
 
-func (m *MockMetricsService) RecordExecution(duration time.Duration) {
-	m.Called(duration)
+func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
+	m.Called(execType, runtime, status, duration)
 }
 
 func (m *MockMetricsService) IncActiveConnections() {
@@ -480,4 +493,13 @@ func TestStartStop(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to stop database service")
 	mockDb.AssertExpectations(t)
+}
+func (m *MockFileService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockFileService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
 }
