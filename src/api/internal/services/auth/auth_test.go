@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,16 @@ import (
 // Mock implementations
 type MockDatabaseService struct {
 	mock.Mock
+}
+
+func (m *MockDatabaseService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockDatabaseService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func (m *MockDatabaseService) Start() error {
@@ -146,20 +157,23 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	var dbService services.DatabaseService = mockDbService
+	var cacheService services.CacheService = mockCacheService
+	
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Test case: Valid API key
-	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "valid-key").Return("user123", nil).Once()
-	mockCacheService.On("Get", mock.Anything, "apikey:valid-key").Return("", errors.New("not found")).Once()
-	mockCacheService.On("Set", mock.Anything, "apikey:valid-key", "user123", mock.Anything).Return(nil).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "valid-key").Return("user123", nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:valid-key").Return("", errors.New("not found")).Once()
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:valid-key", "user123", mock.Anything).Return(nil).Once()
 
 	userID, err := service.AuthenticateAPIKey(context.Background(), "valid-key")
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
 	// Test case: Invalid API key
-	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "invalid-key").Return("", nil).Once()
-	mockCacheService.On("Get", mock.Anything, "apikey:invalid-key").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "invalid-key").Return("", nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:invalid-key").Return("", errors.New("not found")).Once()
 
 	userID, err = service.AuthenticateAPIKey(context.Background(), "invalid-key")
 	assert.Error(t, err)
@@ -167,8 +181,8 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid API key")
 
 	// Test case: Database error
-	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "error-key").Return("", errors.New("database error")).Once()
-	mockCacheService.On("Get", mock.Anything, "apikey:error-key").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "error-key").Return("", errors.New("database error")).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:error-key").Return("", errors.New("not found")).Once()
 
 	userID, err = service.AuthenticateAPIKey(context.Background(), "error-key")
 	assert.Error(t, err)
@@ -176,7 +190,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "database error")
 
 	// Test case: Cached API key
-	mockCacheService.On("Get", mock.Anything, "apikey:cached-key").Return("cached-user", nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:cached-key").Return("cached-user", nil).Once()
 
 	userID, err = service.AuthenticateAPIKey(context.Background(), "cached-key")
 	assert.NoError(t, err)
@@ -200,7 +214,10 @@ func TestGenerateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	var dbService services.DatabaseService = mockDbService
+	var cacheService services.CacheService = mockCacheService
+	
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Test token generation
 	userID := "user123"
@@ -241,15 +258,18 @@ func TestValidateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	var dbService services.DatabaseService = mockDbService
+	var cacheService services.CacheService = mockCacheService
+	
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Generate a valid token
 	userID := "user123"
 	token, _ := service.GenerateToken(userID)
 
 	// Test case: Valid token
-	mockCacheService.On("Get", mock.Anything, mock.Anything).Return("", errors.New("not found")).Once()
-	mockCacheService.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("", errors.New("not found")).Once()
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	extractedUserID, err := service.ValidateToken(token)
 	assert.NoError(t, err)
@@ -275,7 +295,7 @@ func TestValidateToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "token has expired")
 
 	// Test case: Revoked token
-	mockCacheService.On("Get", mock.Anything, mock.Anything).Return("revoked", nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("revoked", nil).Once()
 
 	extractedUserID, err = service.ValidateToken(token)
 	assert.Error(t, err)
@@ -391,9 +411,9 @@ func TestGetUserFromContext(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create service instances
+	var dbService services.DatabaseService = &database.Service{}
+	var cacheService services.CacheService = &cache.Service{}
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 

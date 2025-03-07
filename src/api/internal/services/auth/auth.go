@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 )
@@ -18,8 +19,8 @@ import (
 type Service struct {
 	logger        *logger.Logger
 	config        *config.Config
-	dbService     *database.Service
-	cacheService  *cache.Service
+	dbService     services.DatabaseService
+	cacheService  services.CacheService
 	jwtSecret     []byte
 	tokenDuration time.Duration
 }
@@ -64,7 +65,7 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 }
 
 // New creates a new auth service
-func New(cfg *config.Config, log *logger.Logger, dbService *database.Service, cacheService *cache.Service) (*Service, error) {
+func New(cfg *config.Config, log *logger.Logger, dbService services.DatabaseService, cacheService services.CacheService) (*Service, error) {
 	if cfg.Auth.JWTSecret == "" {
 		return nil, errors.New("JWT secret is required")
 	}
@@ -91,9 +92,12 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Get context from request
+		ctx := c.Request.Context()
+
 		// Check if token is an API key
 		if isAPIKey(token, s.config.Auth.APIKeyPrefix) {
-			userID, err := s.validateAPIKey(token)
+			userID, err := s.AuthenticateAPIKey(ctx, token)
 			if err != nil {
 				c.AbortWithStatusJSON(401, gin.H{
 					"error": "Invalid API key",
@@ -134,6 +138,9 @@ func (s *Service) GetUserID(c *gin.Context) string {
 
 // RevokeToken revokes a JWT token
 func (s *Service) RevokeToken(token string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
 	// Parse token
 	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
@@ -174,7 +181,6 @@ func (s *Service) RevokeToken(token string) error {
 	}
 
 	// Add token to blacklist
-	ctx := context.Background()
 	err = s.cacheService.Set(ctx, "token:"+jti, "revoked", remainingTime)
 	if err != nil {
 		return fmt.Errorf("failed to revoke token: %w", err)
@@ -236,7 +242,8 @@ func (s *Service) GenerateToken(userID string) (string, error) {
 // ValidateToken validates a JWT token
 func (s *Service) ValidateToken(tokenString string) (string, error) {
 	// Check if token is cached
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	cacheKey := fmt.Sprintf("token:%s", tokenString)
 	
 	// Try to get from cache first
@@ -305,7 +312,8 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 // validateAPIKey validates an API key (internal method)
 func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	// Check if API key is cached
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
 	
 	// Try to get from cache first
