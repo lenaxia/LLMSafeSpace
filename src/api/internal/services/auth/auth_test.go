@@ -19,6 +19,7 @@ import (
 // Mock implementations
 type MockDatabaseService struct {
 	mock.Mock
+	database.Service
 }
 
 func (m *MockDatabaseService) GetUserIDByAPIKey(apiKey string) (string, error) {
@@ -38,6 +39,7 @@ func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, 
 
 type MockCacheService struct {
 	mock.Mock
+	cache.Service
 }
 
 func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
@@ -68,11 +70,7 @@ func TestNew(t *testing.T) {
 	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
 	
-	// Create interfaces from mocks
-	var dbService database.Service = mockDbService
-	var cacheService cache.Service = mockCacheService
-	
-	service, err := New(cfg, log, dbService, cacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)

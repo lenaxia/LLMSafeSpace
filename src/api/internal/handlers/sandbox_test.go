@@ -24,7 +24,10 @@ import (
 )
 
 // MockSandboxService implementation
-// Remove this duplicate declaration
+type MockSandboxService struct {
+	mock.Mock
+	*sandbox.Service
+}
 
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
 	args := m.Called(ctx, req)
@@ -125,7 +128,10 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 }
 
 // MockAuthService implementation
-// Remove this duplicate declaration
+type MockAuthService struct {
+	mock.Mock
+	*auth.Service
+}
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)
