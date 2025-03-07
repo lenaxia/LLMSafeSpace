@@ -75,6 +75,11 @@ func LoggerMiddleware(log *logger.Logger) gin.HandlerFunc {
 	}
 }
 
+// MetricsService defines the interface for metrics services used by handlers
+type MetricsService interface {
+	RecordRequest(method, path string, status int, duration time.Duration, size int)
+}
+
 // MetricsMiddleware returns a middleware for collecting metrics
 func MetricsMiddleware(metrics MetricsService) gin.HandlerFunc {
 	return func(c *gin.Context) {

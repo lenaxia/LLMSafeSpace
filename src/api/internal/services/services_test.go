@@ -302,6 +302,22 @@ func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context) (map[string
 	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
+func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
+	args := m.Called(ctx, name, namespace)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llmsafespacev1.WarmPoolStatus), args.Error(1)
+}
+
+func (m *MockWarmPoolService) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
 type MockExecutionService struct {
 	mock.Mock
 }
@@ -395,6 +411,16 @@ func (m *MockMetricsService) DecActiveConnections() {
 
 func (m *MockMetricsService) RecordWarmPoolHit() {
 	m.Called()
+}
+
+func (m *MockMetricsService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockMetricsService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 // Helper function to create a valid test config

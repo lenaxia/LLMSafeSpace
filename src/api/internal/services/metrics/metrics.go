@@ -21,6 +21,18 @@ type Service struct {
 	executionDuration  *prometheus.HistogramVec
 }
 
+// Start initializes the metrics service
+func (s *Service) Start() error {
+	// Nothing to initialize for metrics service
+	return nil
+}
+
+// Stop cleans up the metrics service
+func (s *Service) Stop() error {
+	// Nothing to clean up for metrics service
+	return nil
+}
+
 // New creates a new metrics service
 func New() *Service {
 	requestCounter := promauto.NewCounterVec(

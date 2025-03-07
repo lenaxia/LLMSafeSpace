@@ -29,7 +29,7 @@ type (
 )
 
 // Ensure mock implements the interface
-var _ MetricsService = (*MockMetricsService)(nil)
+var _ handlers.MetricsService = (*MockMetricsService)(nil)
 var _ WarmPoolService = (*MockWarmPoolService)(nil)
 
 func (m *MockWarmPoolService) Start() error {
@@ -42,15 +42,6 @@ func (m *MockWarmPoolService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockMetricsService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockMetricsService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
-}
 
 func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
 	m.Called(method, path, status, duration, size)
