@@ -42,10 +42,7 @@ func TestNew(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Test successful creation
-	service := &Service{
-		logger:    log,
-		k8sClient: mockK8sClient,
-	}
+	service, err := New(log, mockK8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
