@@ -140,7 +140,7 @@ func (s *sandboxes) Delete(name string, options metav1.DeleteOptions) error {
 		Resource("sandboxes").
 		Name(name).
 		Body(&options).
-		Do().
+		Do(context.TODO()).
 		Error()
 }
 
