@@ -119,16 +119,32 @@ func (s *Service) RecordRequest(method, endpoint string, status int, duration ti
 }
 
 // RecordSandboxCreation records metrics for sandbox creation
+func (s *Service) RecordSandboxCreation() {
+	s.sandboxesCreated.WithLabelValues("unknown", "false").Inc()
+}
+
+// RecordSandboxCreation records metrics for sandbox creation with runtime and warm pod info
 func (s *Service) RecordSandboxCreation(runtime string, warmPodUsed bool) {
 	s.sandboxesCreated.WithLabelValues(runtime, fmt.Sprintf("%t", warmPodUsed)).Inc()
 }
 
 // RecordSandboxTermination records metrics for sandbox termination
+func (s *Service) RecordSandboxTermination() {
+	s.sandboxesTerminated.WithLabelValues("unknown").Inc()
+}
+
+// RecordSandboxTermination records metrics for sandbox termination with runtime
 func (s *Service) RecordSandboxTermination(runtime string) {
 	s.sandboxesTerminated.WithLabelValues(runtime).Inc()
 }
 
 // RecordExecution records metrics for code/command execution
+func (s *Service) RecordExecution(duration time.Duration) {
+	s.executionsTotal.WithLabelValues("unknown", "unknown", "unknown").Inc()
+	s.executionDuration.WithLabelValues("unknown", "unknown").Observe(duration.Seconds())
+}
+
+// RecordExecution records metrics for code/command execution with detailed info
 func (s *Service) RecordExecution(execType, runtime, status string, duration time.Duration) {
 	s.executionsTotal.WithLabelValues(execType, runtime, status).Inc()
 	s.executionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
