@@ -119,7 +119,7 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 	// Create real service instances
 	k8sClient := &kubernetes.Client{}
 	dbService := &database.Service{}
-	metricsService := &metrics.Service{}
+	var metricsService metrics.Service = &metrics.Service{}
 	
 	service, err := New(mockLogger, k8sClient, dbService, metricsService)
 	assert.NoError(t, err)

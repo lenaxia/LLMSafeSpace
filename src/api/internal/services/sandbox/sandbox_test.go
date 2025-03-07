@@ -291,6 +291,7 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 	service.metricsSvc = mockMetricsService
 	
 	if service.sessionMgr != nil {
+		var cacheService cache.Service = mockCacheService
 		service.sessionMgr.cacheService = mockCacheService
 	}
 

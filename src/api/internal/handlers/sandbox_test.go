@@ -36,12 +36,6 @@ func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.Crea
         }
         return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
 }
-	args := m.Called(ctx, req)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
-}
 
 func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
 	args := m.Called(ctx, sandboxID)
