@@ -336,7 +336,9 @@ func (s *Service) AddToWarmPool(ctx context.Context, sandboxID, runtime string) 
 			},
 		},
 		Spec: llmsafespacev1.WarmPodSpec{
-			Runtime: runtime,
+			PoolRef: llmsafespacev1.PoolReference{
+				Name: "default-" + strings.Replace(runtime, ":", "-", -1),
+			},
 		},
 	}
 
@@ -365,7 +367,7 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 	return &warmPool.Status, nil
 }
 
-// GetWarmPoolStatus gets the status of all warm pools
+// GetGlobalWarmPoolStatus gets the status of all warm pools
 func (s *Service) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
 	// List all warm pools
 	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{})
@@ -392,7 +394,8 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}
 		runtimeStats["available"] = runtimeStats["available"].(int) + pool.Status.AvailablePods
 		runtimeStats["pending"] = runtimeStats["pending"].(int) + pool.Status.PendingPods
 		runtimeStats["assigned"] = runtimeStats["assigned"].(int) + pool.Status.AssignedPods
-		runtimeStats["total"] = runtimeStats["total"].(int) + pool.Status.TotalPods
+		total := pool.Status.AvailablePods + pool.Status.PendingPods + pool.Status.AssignedPods
+		runtimeStats["total"] = runtimeStats["total"].(int) + total
 	}
 
 	status["runtimes"] = runtimes
