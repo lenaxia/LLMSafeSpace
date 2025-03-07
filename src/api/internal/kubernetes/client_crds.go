@@ -69,7 +69,7 @@ type SandboxInterface interface {
 	Delete(name string, options metav1.DeleteOptions) error
 	Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error)
 	List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error)
-	Watch(opts metav1.ListOptions) (k8s.watch.Interface, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
 // sandboxes implements SandboxInterface
@@ -115,7 +115,7 @@ type WarmPoolInterface interface {
 	Delete(name string, options metav1.DeleteOptions) error
 	Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPool, error)
 	List(opts metav1.ListOptions) (*llmsafespacev1.WarmPoolList, error)
-	Watch(opts metav1.ListOptions) (k8s.watch.Interface, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
 // warmPools implements WarmPoolInterface
