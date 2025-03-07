@@ -132,7 +132,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 	}
 
 	// Initialize auth service
-	authService, err := auth.New(cfg, log, dbService, cacheService)
+	authService, err := auth.New(cfg, log, dbService.(database.Service), cacheService.(cache.Service))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth service: %w", err)
 	}
