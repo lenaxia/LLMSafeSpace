@@ -19,6 +19,7 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
+	kubernetes.Client
 }
 
 func (m *MockK8sClient) Start() error {

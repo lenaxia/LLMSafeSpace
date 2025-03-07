@@ -145,7 +145,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 	}
 
 	// Initialize warm pool service
-	warmPoolService, err := warmpool.New(log, k8sClient, dbService, metricsService)
+	warmPoolService, err := warmpool.New(log, k8sClient, dbService.(database.Service), metricsService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize warm pool service: %w", err)
 	}

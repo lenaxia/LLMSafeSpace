@@ -368,7 +368,7 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 }
 
 // GetGlobalWarmPoolStatus gets the status of all warm pools
-func (s *Service) GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
+func (s *Service) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
 	// List all warm pools
 	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{})
 	if err != nil {
