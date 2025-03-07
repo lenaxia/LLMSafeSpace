@@ -10,6 +10,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/stretchr/testify/assert"
@@ -19,22 +20,26 @@ import (
 // Mock implementations
 type MockAuthService struct {
 	mock.Mock
+	auth.Service
 }
 
 type MockSandboxService struct {
 	mock.Mock
+	sandbox.Service
 }
 
 type MockWarmPoolService struct {
 	mock.Mock
+	warmpool.Service
 }
 
 type MockMetricsService struct {
 	mock.Mock
+	metrics.Service
 }
 
-func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int, responseTime float64) {
-	m.Called(method, path, status, duration, size, responseTime)
+func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
+	m.Called(method, path, status, duration, size)
 }
 
 func TestNew(t *testing.T) {
@@ -132,7 +137,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	// Create a test router with the middleware
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(MetricsMiddleware(&metrics.Service{}))
+	router.Use(MetricsMiddleware(mockMetrics))
 
 	// Add a test route
 	router.GET("/test", func(c *gin.Context) {

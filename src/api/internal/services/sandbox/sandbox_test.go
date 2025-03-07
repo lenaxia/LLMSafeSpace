@@ -25,14 +25,17 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
+	kubernetes.Client
 }
 
 type MockLLMSafespaceV1Client struct {
 	mock.Mock
+	kubernetes.LLMSafespaceV1Interface
 }
 
 type MockSandboxInterface struct {
 	mock.Mock
+	kubernetes.SandboxInterface
 }
 
 func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
@@ -97,6 +100,7 @@ func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (interface{}, erro
 
 type MockDatabaseService struct {
 	mock.Mock
+	database.Service
 }
 
 func (m *MockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
@@ -122,6 +126,7 @@ func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, 
 
 type MockWarmPoolService struct {
 	mock.Mock
+	warmpool.Service
 }
 
 func (m *MockWarmPoolService) CheckAvailability(ctx context.Context, runtime, securityLevel string) (bool, error) {
@@ -131,6 +136,7 @@ func (m *MockWarmPoolService) CheckAvailability(ctx context.Context, runtime, se
 
 type MockFileService struct {
 	mock.Mock
+	file.Service
 }
 
 func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error) {
@@ -164,6 +170,7 @@ func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev
 
 type MockExecutionService struct {
 	mock.Mock
+	execution.Service
 }
 
 func (m *MockExecutionService) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, execType, content string, timeout int) (*execution.Result, error) {
@@ -192,6 +199,7 @@ func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *llm
 
 type MockMetricsService struct {
 	mock.Mock
+	metrics.Service
 }
 
 func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
@@ -216,6 +224,7 @@ func (m *MockMetricsService) DecrementActiveConnections(connType string) {
 
 type MockCacheService struct {
 	mock.Mock
+	cache.Service
 }
 
 func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
@@ -251,16 +260,28 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
 	mockLLMSafespaceV1Client.On("Sandboxes", mock.Anything).Return(mockSandboxInterface)
 
+	// Create real service instances
+	k8sClient := &kubernetes.Client{}
+	dbService := &database.Service{}
+	warmPoolSvc := &warmpool.Service{}
+	fileSvc := &file.Service{}
+	executionSvc := &execution.Service{}
+	metricsSvc := &metrics.Service{}
+	cacheSvc := &cache.Service{}
+	
 	service, err := New(
 		mockLogger,
-		&kubernetes.Client{},
-		&database.Service{},
-		&warmpool.Service{},
-		&file.Service{},
-		&execution.Service{},
-		&metrics.Service{},
-		&cache.Service{},
+		k8sClient,
+		dbService,
+		warmPoolSvc,
+		fileSvc,
+		executionSvc,
+		metricsSvc,
+		cacheSvc,
 	)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	
 	// Replace with our mocks
 	service.k8sClient = mockK8sClient
 	service.dbService = mockDbService
@@ -268,13 +289,10 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 	service.fileSvc = mockFileService
 	service.executionSvc = mockExecutionService
 	service.metricsSvc = mockMetricsService
-	if err == nil {
-		service.sessionMgr = NewSessionManager(&cache.Service{})
-		// Replace with our mock
+	
+	if service.sessionMgr != nil {
 		service.sessionMgr.cacheService = mockCacheService
 	}
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
 
 	return service, mockK8sClient, mockLLMSafespaceV1Client, mockSandboxInterface, mockDbService, mockWarmPoolService, mockFileService, mockExecutionService, mockMetricsService, mockCacheService
 }
@@ -615,9 +633,9 @@ func TestFileOperations(t *testing.T) {
 	// Test case: List files
 	mockFileService.On("ListFiles", ctx, mock.Anything, "/workspace").Return([]file.FileInfo{
 		{
-			Path:        "/workspace/file.txt",
-			Size:        13,
-			IsDir: false,
+			Path:      "/workspace/file.txt",
+			Size:      13,
+			IsDir:     false,
 		},
 	}, nil).Once()
 
@@ -635,9 +653,9 @@ func TestFileOperations(t *testing.T) {
 
 	// Test case: Upload file
 	mockFileService.On("UploadFile", ctx, mock.Anything, path, content).Return(&file.FileInfo{
-		Path:        path,
-		Size:        13,
-		IsDir:       false,
+		Path:      path,
+		Size:      13,
+		IsDir:     false,
 	}, nil).Once()
 
 	fileInfo, err := service.UploadFile(ctx, sandboxID, path, content)
@@ -723,12 +741,22 @@ func TestInstallPackages(t *testing.T) {
 }
 
 func TestWebSocketSession(t *testing.T) {
-	service, _, _, _, _, _, _, _, mockMetricsService, mockCacheService := setupSandboxService(t)
+	service, _, _, mockSandboxInterface, _, _, _, _, mockMetricsService, mockCacheService := setupSandboxService(t)
 
 	// Mock websocket connection
 	mockConn := &websocket.Conn{}
 	userID := "user123"
 	sandboxID := "sb-12345"
+
+	// Setup sandbox mock
+	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&llmsafespacev1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: sandboxID,
+		},
+		Status: llmsafespacev1.SandboxStatus{
+			Phase: "Running",
+		},
+	}, nil).Once()
 
 	// Test case: Create session
 	mockCacheService.On("SetSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()

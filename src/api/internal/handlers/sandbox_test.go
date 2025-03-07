@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
@@ -23,6 +22,27 @@ import (
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
+// MockSandboxService implementation
+type MockSandboxService struct {
+	mock.Mock
+	sandbox.Service
+}
+
+func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+}
+
+func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+}
 
 func (m *MockSandboxService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
 	args := m.Called(ctx, userID, limit, offset)
@@ -106,7 +126,10 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 	m.Called(session)
 }
 
-// Remove this duplicate declaration
+// MockAuthService implementation
+type MockAuthService struct {
+	mock.Mock
+}
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)
@@ -125,7 +148,18 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 	mockAuthService := new(MockAuthService)
 
 	// Create handler
-	handler := NewSandboxHandler(log, mockSandboxService, mockAuthService)
+	handler := &SandboxHandler{
+		logger:     log,
+		sandboxSvc: mockSandboxService,
+		authSvc:    mockAuthService,
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		},
+	}
 
 	// Create a test router
 	gin.SetMode(gin.TestMode)
@@ -139,7 +173,7 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 }
 
 func TestCreateSandbox(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful creation
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
@@ -215,7 +249,7 @@ func TestCreateSandbox(t *testing.T) {
 }
 
 func TestGetSandbox(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful get
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
@@ -283,7 +317,7 @@ func TestGetSandbox(t *testing.T) {
 }
 
 func TestListSandboxes(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful list
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
@@ -342,7 +376,7 @@ func TestListSandboxes(t *testing.T) {
 }
 
 func TestTerminateSandbox(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful termination
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
@@ -394,7 +428,7 @@ func TestTerminateSandbox(t *testing.T) {
 }
 
 func TestGetSandboxStatus(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful get status
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
@@ -455,7 +489,7 @@ func TestGetSandboxStatus(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
-	handler, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
+	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful execution
 	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
