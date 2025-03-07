@@ -68,6 +68,9 @@ func (s *Service) Stop() error {
 	return s.DB.Close()
 }
 
+// Import the services package
+import "github.com/lenaxia/llmsafespace/api/internal/services"
+
 // Ensure Service implements the DatabaseService interface
 var _ services.DatabaseService = (*Service)(nil) // Compile-time interface check
 
