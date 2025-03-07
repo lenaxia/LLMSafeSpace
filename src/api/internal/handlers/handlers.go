@@ -76,7 +76,7 @@ func LoggerMiddleware(log *logger.Logger) gin.HandlerFunc {
 }
 
 // MetricsMiddleware returns a middleware for collecting metrics
-func MetricsMiddleware(metrics *metrics.Service) gin.HandlerFunc {
+func MetricsMiddleware(metrics metrics.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path

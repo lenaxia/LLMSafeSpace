@@ -19,16 +19,6 @@ import (
 
 // Mock implementations
 type (
-	MockAuthService struct {
-		mock.Mock
-		auth.Service
-	}
-	
-	MockSandboxService struct {
-		mock.Mock
-		sandbox.Service
-	}
-	
 	MockWarmPoolService struct {
 		mock.Mock
 		warmpool.Service
@@ -36,7 +26,6 @@ type (
 	
 	MockMetricsService struct {
 		mock.Mock
-		metrics.Service
 	}
 )
 
@@ -135,7 +124,10 @@ func TestLoggerMiddleware(t *testing.T) {
 func TestMetricsMiddleware(t *testing.T) {
 	mockMetrics := new(MockMetricsService)
 	router := gin.New()
-	router.Use(MetricsMiddleware(mockMetrics))
+	
+	// Use interface type assertion
+	var metricsSvc metrics.Service = mockMetrics
+	router.Use(MetricsMiddleware(metricsSvc))
 
 	router.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
