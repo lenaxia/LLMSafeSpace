@@ -155,11 +155,10 @@ func TestGenerateToken(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
-	var dbService database.Service = mockDbService
 	mockCacheService := new(MockCacheService)
-	var cacheService cache.Service = mockCacheService
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	// Create service with mocks
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test token generation
 	userID := "user123"
