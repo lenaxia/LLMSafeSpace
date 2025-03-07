@@ -130,7 +130,7 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 // MockAuthService implementation
 type MockAuthService struct {
 	mock.Mock
-	*auth.Service
+	auth.Service
 }
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
