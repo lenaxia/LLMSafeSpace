@@ -19,6 +19,7 @@ import (
 // Mock implementations
 type MockDatabaseService struct {
 	mock.Mock
+	database.Service
 }
 
 func (m *MockDatabaseService) GetUserIDByAPIKey(apiKey string) (string, error) {
@@ -38,6 +39,7 @@ func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, 
 
 type MockCacheService struct {
 	mock.Mock
+	cache.Service
 }
 
 func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
@@ -51,7 +53,7 @@ func (m *MockCacheService) Set(ctx context.Context, key string, value string, ex
 }
 
 func (m *MockCacheService) Delete(ctx context.Context, key string) error {
-	args := m.Called(ctx, key, key)
+	args := m.Called(ctx, key)
 	return args.Error(0)
 }
 

@@ -167,7 +167,7 @@ func TestStartStop(t *testing.T) {
 	
 	// Create services struct with mocks
 	services := &Services{
-		Database: mockDb,
+		Database: (*database.Service)(mockDb),
 	}
 
 	// Test successful start
