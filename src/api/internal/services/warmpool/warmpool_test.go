@@ -105,35 +105,40 @@ type MockMetricsService struct {
 	metrics.Service
 }
 
-func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
+func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafespaceV1Client, *MockWarmPoolInterface, *MockDatabaseService, *MockMetricsService) {
 	log, _ := logger.New(true, "debug", "console")
 	mockK8s := new(MockK8sClient)
 	mockLLMClient := new(MockLLMSafespaceV1Client)
 	mockWarmPool := new(MockWarmPoolInterface)
+	mockDbService := new(MockDatabaseService)
+	mockMetricsService := new(MockMetricsService)
 
 	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
 	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
-	metricsService := &metrics.Service{} // Pointer initialization
-
 	service := &Service{
 		logger:     log,
 		k8sClient:  mockK8s,
-		metricsSvc: metricsService,
+		dbService:  mockDbService,
+		metricsSvc: mockMetricsService,
 	}
 
-	return service, mockK8s
+	return service, mockK8s, mockLLMClient, mockWarmPool, mockDbService, mockMetricsService
 }
 
 func TestCheckAvailability(t *testing.T) {
-	service, _, mockLLMSafespaceV1Client, _, _, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Get the mock LLM client from the mock K8s client
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
 
 	ctx := context.Background()
 	runtime := "python:3.10"
 	securityLevel := "standard"
 
 	// Test case: Available warm pods
-	mockLLMSafespaceV1Client.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+	mockLLMClient.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
 		selector, err := labels.Parse("runtime=python-3.10,security-level=standard")
 		if err != nil {
 			return false
@@ -154,7 +159,7 @@ func TestCheckAvailability(t *testing.T) {
 	assert.True(t, available)
 
 	// Test case: No available warm pods
-	mockLLMSafespaceV1Client.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
+	mockLLMClient.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
 		Items: []llmsafespacev1.WarmPool{
 			{
 				Status: llmsafespacev1.WarmPoolStatus{
@@ -169,7 +174,7 @@ func TestCheckAvailability(t *testing.T) {
 	assert.False(t, available)
 
 	// Test case: No matching warm pools
-	mockLLMSafespaceV1Client.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
+	mockLLMClient.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
 		Items: []llmsafespacev1.WarmPool{},
 	}, nil).Once()
 
@@ -178,18 +183,25 @@ func TestCheckAvailability(t *testing.T) {
 	assert.False(t, available)
 
 	// Test case: Error listing warm pools
-	mockLLMSafespaceV1Client.On("List", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
+	mockLLMClient.On("List", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
 
 	available, err = service.CheckAvailability(ctx, runtime, securityLevel)
 	assert.Error(t, err)
 	assert.False(t, available)
 	assert.Contains(t, err.Error(), "failed to list warm pools")
 
-	mockLLMSafespaceV1Client.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
 
 func TestCreateWarmPool(t *testing.T) {
-	service, _, _, mockWarmPoolInterface, mockDbService, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Setup mocks
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
 	ctx := context.Background()
 	req := CreateWarmPoolRequest{
@@ -203,7 +215,7 @@ func TestCreateWarmPool(t *testing.T) {
 	}
 
 	// Test case: Successful creation
-	mockWarmPoolInterface.On("Create", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
+	mockWarmPool.On("Create", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
 		return warmPool.Name == "test-pool" && 
 		       warmPool.Spec.Runtime == "python:3.10" && 
 		       warmPool.Spec.MinSize == 5
@@ -213,31 +225,42 @@ func TestCreateWarmPool(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockDbService.On("storeWarmPoolMetadata", ctx, "test-pool", "default", "user123", "python:3.10").Return(nil).Once()
+	// Mock the database service method
+	service.storeWarmPoolMetadata = func(ctx context.Context, name, namespace, userID, runtime string) error {
+		return nil
+	}
 
 	result, err := service.CreateWarmPool(ctx, req)
 	assert.NoError(t, err)
 	assert.Equal(t, "test-pool", result.Name)
 
 	// Test case: Creation error
-	mockWarmPoolInterface.On("Create", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
+	mockWarmPool.On("Create", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
 
 	_, err = service.CreateWarmPool(ctx, req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create warm pool")
 
-	mockWarmPoolInterface.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
 
 func TestGetWarmPool(t *testing.T) {
-	service, _, _, mockWarmPoolInterface, _, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Setup mocks
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
 	ctx := context.Background()
 	name := "test-pool"
 	namespace := "default"
 
 	// Test case: Successful get
-	mockWarmPoolInterface.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -254,17 +277,25 @@ func TestGetWarmPool(t *testing.T) {
 	assert.Equal(t, 5, result.Spec.MinSize)
 
 	// Test case: Get error
-	mockWarmPoolInterface.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
+	mockWarmPool.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
 
 	_, err = service.GetWarmPool(ctx, "nonexistent", namespace)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get warm pool")
 
-	mockWarmPoolInterface.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
 
 func TestUpdateWarmPool(t *testing.T) {
-	service, _, _, mockWarmPoolInterface, _, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Setup mocks
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
 	ctx := context.Background()
 	req := UpdateWarmPoolRequest{
@@ -275,7 +306,7 @@ func TestUpdateWarmPool(t *testing.T) {
 	}
 
 	// Test case: Successful update
-	mockWarmPoolInterface.On("Get", "test-pool", mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", "test-pool", mock.Anything).Return(&llmsafespacev1.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-pool",
 		},
@@ -286,7 +317,7 @@ func TestUpdateWarmPool(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockWarmPoolInterface.On("Update", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
+	mockWarmPool.On("Update", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
 		return warmPool.Name == "test-pool" && 
 		       warmPool.Spec.MinSize == 10 && 
 		       warmPool.Spec.MaxSize == 20
@@ -308,7 +339,7 @@ func TestUpdateWarmPool(t *testing.T) {
 	assert.Equal(t, 20, result.Spec.MaxSize)
 
 	// Test case: Get error
-	mockWarmPoolInterface.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
+	mockWarmPool.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
 
 	req.Name = "nonexistent"
 	_, err = service.UpdateWarmPool(ctx, req)
@@ -316,84 +347,109 @@ func TestUpdateWarmPool(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get warm pool")
 
 	// Test case: Update error
-	mockWarmPoolInterface.On("Get", "update-error", mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", "update-error", mock.Anything).Return(&llmsafespacev1.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "update-error",
 		},
 	}, nil).Once()
 
-	mockWarmPoolInterface.On("Update", mock.Anything).Return(nil, errors.New("update error")).Once()
+	mockWarmPool.On("Update", mock.Anything).Return(nil, errors.New("update error")).Once()
 
 	req.Name = "update-error"
 	_, err = service.UpdateWarmPool(ctx, req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to update warm pool")
 
-	mockWarmPoolInterface.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
 
 func TestDeleteWarmPool(t *testing.T) {
-	service, _, _, mockWarmPoolInterface, mockDbService, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Setup mocks
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
 	ctx := context.Background()
 	name := "test-pool"
 	namespace := "default"
 
-	// Test case: Successful delete
-	mockDbService.On("getWarmPoolMetadata", ctx, name).Return(map[string]interface{}{
-		"name":      name,
-		"user_id":   "user123",
-		"runtime":   "python:3.10",
-		"namespace": namespace,
-	}, nil).Once()
+	// Override the getWarmPoolMetadata method for testing
+	service.getWarmPoolMetadata = func(ctx context.Context, name string) (map[string]interface{}, error) {
+		if name == "test-pool" {
+			return map[string]interface{}{
+				"name":      name,
+				"user_id":   "user123",
+				"runtime":   "python:3.10",
+				"namespace": namespace,
+			}, nil
+		} else if name == "nonexistent" {
+			return nil, nil
+		} else if name == "metadata-error" {
+			return nil, errors.New("database error")
+		} else if name == "delete-error" {
+			return map[string]interface{}{
+				"name":      "delete-error",
+				"user_id":   "user123",
+				"runtime":   "python:3.10",
+				"namespace": namespace,
+			}, nil
+		}
+		return nil, errors.New("unexpected name")
+	}
 
-	mockWarmPoolInterface.On("Delete", name, mock.Anything).Return(nil).Once()
-	mockDbService.On("deleteWarmPoolMetadata", ctx, name).Return(nil).Once()
+	// Override the deleteWarmPoolMetadata method for testing
+	service.deleteWarmPoolMetadata = func(ctx context.Context, name string) error {
+		return nil
+	}
+
+	// Test case: Successful delete
+	mockWarmPool.On("Delete", name, mock.Anything).Return(nil).Once()
 
 	err := service.DeleteWarmPool(ctx, name, namespace)
 	assert.NoError(t, err)
 
 	// Test case: Metadata not found
-	mockDbService.On("getWarmPoolMetadata", ctx, "nonexistent").Return(nil, nil).Once()
-
 	err = service.DeleteWarmPool(ctx, "nonexistent", namespace)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "warm pool not found")
 
 	// Test case: Metadata error
-	mockDbService.On("getWarmPoolMetadata", ctx, "metadata-error").Return(nil, errors.New("database error")).Once()
-
 	err = service.DeleteWarmPool(ctx, "metadata-error", namespace)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get warm pool metadata")
 
 	// Test case: Delete error
-	mockDbService.On("getWarmPoolMetadata", ctx, "delete-error").Return(map[string]interface{}{
-		"name":      "delete-error",
-		"user_id":   "user123",
-		"runtime":   "python:3.10",
-		"namespace": namespace,
-	}, nil).Once()
-
-	mockWarmPoolInterface.On("Delete", "delete-error", mock.Anything).Return(errors.New("kubernetes error")).Once()
+	mockWarmPool.On("Delete", "delete-error", mock.Anything).Return(errors.New("kubernetes error")).Once()
 
 	err = service.DeleteWarmPool(ctx, "delete-error", namespace)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete warm pool")
 
-	mockWarmPoolInterface.AssertExpectations(t)
-	mockDbService.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
 
 func TestGetWarmPoolStatus(t *testing.T) {
-	service, _, _, mockWarmPoolInterface, _, _ := setupWarmPoolService(t)
+	service, mockK8s := setupWarmPoolService(t)
+	
+	// Setup mocks
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
 	ctx := context.Background()
 	name := "test-pool"
 	namespace := "default"
 
 	// Test case: Successful get status
-	mockWarmPoolInterface.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -411,11 +467,13 @@ func TestGetWarmPoolStatus(t *testing.T) {
 	assert.Equal(t, 1, status.PendingPods)
 
 	// Test case: Get error
-	mockWarmPoolInterface.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
+	mockWarmPool.On("Get", "nonexistent", mock.Anything).Return(nil, errors.New("not found")).Once()
 
 	_, err = service.GetWarmPoolStatus(ctx, "nonexistent", namespace)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get warm pool")
 
-	mockWarmPoolInterface.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockLLMClient.AssertExpectations(t)
+	mockK8s.AssertExpectations(t)
 }
