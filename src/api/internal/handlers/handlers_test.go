@@ -35,7 +35,7 @@ type MockWarmPoolService struct {
 
 type MockMetricsService struct {
 	mock.Mock
-	*metrics.Service
+	metrics.Service
 }
 
 func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {

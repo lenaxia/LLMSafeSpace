@@ -44,13 +44,6 @@ func (m *MockLLMSafespaceV1Client) WarmPools(namespace string) kubernetes.WarmPo
 	return args.Get(0).(kubernetes.WarmPoolInterface)
 }
 
-func (m *MockLLMSafespaceV1Client) List(opts metav1.ListOptions) (*llmsafespacev1.WarmPoolList, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*llmsafespacev1.WarmPoolList), args.Error(1)
-}
 
 func (m *MockWarmPoolInterface) Create(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
 	args := m.Called(warmPool)

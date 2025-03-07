@@ -22,9 +22,9 @@ type MockK8sClient struct {
 	kubernetes.Client
 }
 
-func (m *MockK8sClient) Clientset() interface{} {
+func (m *MockK8sClient) Clientset() kubernetes.Interface {
 	args := m.Called()
-	return args.Get(0)
+	return args.Get(0).(kubernetes.Interface)
 }
 
 func (m *MockK8sClient) RESTConfig() *rest.Config {
