@@ -25,6 +25,17 @@ import (
 )
 
 // Mock implementations
+// Verify mock interfaces compliance
+var (
+	_ services.AuthService = (*MockAuthService)(nil)
+	_ services.DatabaseService = (*MockDatabaseService)(nil)
+	_ services.SandboxService = (*MockSandboxService)(nil)
+	_ services.WarmPoolService = (*MockWarmPoolService)(nil)
+	_ services.ExecutionService = (*MockExecutionService)(nil)
+	_ services.FileService = (*MockFileService)(nil)
+	_ services.MetricsService = (*MockMetricsService)(nil)
+)
+
 type MockAuthService struct {
 	mock.Mock
 }

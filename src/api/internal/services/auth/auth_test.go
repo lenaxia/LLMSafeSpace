@@ -106,7 +106,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	var cacheService cache.Service = mockCacheService
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
@@ -155,9 +155,11 @@ func TestGenerateToken(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	var dbService database.Service = mockDbService
+	mockCacheService := new(MockCacheService)
+	var cacheService cache.Service = mockCacheService
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 
