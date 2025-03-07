@@ -75,6 +75,7 @@ func TestExecute(t *testing.T) {
 	// Create the service
 	service, _ := New(log, &kubernetes.Client{})
 	// Replace the client with our mock
+	var k8sClientInterface kubernetes.Client = mockK8sClient
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox

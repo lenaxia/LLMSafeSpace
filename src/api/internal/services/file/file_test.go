@@ -94,6 +94,7 @@ func TestListFiles(t *testing.T) {
 	k8sClient := &kubernetes.Client{}
 	service, _ := New(log, k8sClient)
 	// Replace with our mock
+	var k8sClientInterface kubernetes.Client = mockK8sClient
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox

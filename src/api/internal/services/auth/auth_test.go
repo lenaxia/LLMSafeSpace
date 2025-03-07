@@ -84,8 +84,8 @@ func TestNew(t *testing.T) {
 	cfg.Auth.JWTSecret = ""
 	service, err = New(cfg, log, dbService, cacheService)
 	assert.Error(t, err)
-	assert.Nil(t, service)
 	assert.Contains(t, err.Error(), "JWT secret is required")
+	assert.Nil(t, service)
 }
 
 func TestAuthenticateAPIKey(t *testing.T) {
@@ -101,10 +101,12 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
+	var dbService database.Service = mockDbService
 	mockCacheService := new(MockCacheService)
+	var cacheService cache.Service = mockCacheService
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
