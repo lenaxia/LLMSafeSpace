@@ -17,9 +17,6 @@ import (
 
 // Initialize CRD scheme
 func init() {
-	// TODO: Implement DeepCopyObject methods for custom resources
-	// Currently commented out due to missing DeepCopyObject implementation
-	/*
 	schemeBuilder := runtime.NewSchemeBuilder(
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
@@ -39,8 +36,9 @@ func init() {
 			return nil
 		},
 	)
-	schemeBuilder.AddToScheme(scheme.Scheme)
-	*/
+	if err := schemeBuilder.AddToScheme(scheme.Scheme); err != nil {
+		panic(fmt.Sprintf("failed to add LLMSafeSpace types to scheme: %v", err))
+	}
 }
 
 // LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group
