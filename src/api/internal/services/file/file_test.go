@@ -9,7 +9,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -95,7 +94,8 @@ func TestListFiles(t *testing.T) {
 	k8sClient := &kubernetes.Client{}
 	service, _ := New(log, k8sClient)
 	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	var k8sClientInterface kubernetes.Client = mockK8sClient
+	service.k8sClient = &k8sClientInterface
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{

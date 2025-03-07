@@ -137,7 +137,8 @@ func TestMetricsMiddleware(t *testing.T) {
 	// Create a test router with the middleware
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(MetricsMiddleware(mockMetrics))
+	var metricsServiceInterface metrics.Service = mockMetrics
+	router.Use(MetricsMiddleware(&metricsServiceInterface))
 
 	// Add a test route
 	router.GET("/test", func(c *gin.Context) {

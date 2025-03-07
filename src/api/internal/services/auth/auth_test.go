@@ -282,7 +282,7 @@ func TestRevokeToken(t *testing.T) {
 	// Test case: Successful revocation
 	mockCacheService.On("Set", mock.Anything, "token:"+jti, "revoked", exp.Sub(time.Now())).Return(nil).Once()
 
-	err := service.revokeToken(token)
+	err := service.RevokeToken(token)
 	assert.NoError(t, err)
 
 	// Test case: Invalid token
@@ -379,7 +379,7 @@ func TestGetUserFromContext(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
 	c.Set("userID", "user123")
 
-	userID, err := service.GetUserID(c)
+	userID := service.GetUserID(c)
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
