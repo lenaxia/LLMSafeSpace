@@ -314,7 +314,7 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	}
 
 	// Get user ID from database
-	userID, err := s.dbService.GetUserIDByAPIKey(apiKey)
+	userID, err := s.dbService.GetUserIDByAPIKey(ctx, apiKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user ID by API key: %w", err)
 	}

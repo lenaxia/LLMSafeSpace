@@ -74,9 +74,9 @@ func (s *Service) Ping(ctx context.Context) error {
 }
 
 // GetUserIDByAPIKey gets the user ID associated with an API key
-func (s *Service) GetUserIDByAPIKey(apiKey string) (string, error) {
+func (s *Service) GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error) {
 	var userID string
-	err := s.DB.QueryRow("SELECT user_id FROM api_keys WHERE key = $1 AND active = true", apiKey).Scan(&userID)
+	err := s.DB.QueryRowContext(ctx, "SELECT user_id FROM api_keys WHERE key = $1 AND active = true", apiKey).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
