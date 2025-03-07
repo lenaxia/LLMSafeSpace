@@ -105,32 +105,24 @@ type MockMetricsService struct {
 	metrics.Service
 }
 
-func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafespaceV1Client, *MockWarmPoolInterface, *MockDatabaseService, *MockMetricsService) {
-	mockLogger, _ := logger.New(true, "debug", "console")
-	mockK8sClient := new(MockK8sClient)
-	mockLLMSafespaceV1Client := new(MockLLMSafespaceV1Client)
-	mockWarmPoolInterface := new(MockWarmPoolInterface)
-	mockDbService := new(MockDatabaseService)
-	mockMetricsService := new(MockMetricsService)
+func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
+	log, _ := logger.New(true, "debug", "console")
+	mockK8s := new(MockK8sClient)
+	mockLLMClient := new(MockLLMSafespaceV1Client)
+	mockWarmPool := new(MockWarmPoolInterface)
 
-	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
-	mockLLMSafespaceV1Client.On("WarmPools", mock.Anything).Return(mockWarmPoolInterface)
+	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
 
-	// Create real service instances
-	k8sClient := &kubernetes.Client{}
-	dbService := &database.Service{}
-	var metricsService metrics.Service = &metrics.Service{}
-	
-	service, err := New(mockLogger, k8sClient, dbService, metricsService)
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
-	
-	// Replace with our mocks
-	service.k8sClient = mockK8sClient
-	service.dbService = mockDbService
-	service.metricsSvc = mockMetricsService
+	metricsService := &metrics.Service{} // Pointer initialization
 
-	return service, mockK8sClient, mockLLMSafespaceV1Client, mockWarmPoolInterface, mockDbService, mockMetricsService
+	service := &Service{
+		logger:     log,
+		k8sClient:  mockK8s,
+		metricsSvc: metricsService,
+	}
+
+	return service, mockK8s
 }
 
 func TestCheckAvailability(t *testing.T) {

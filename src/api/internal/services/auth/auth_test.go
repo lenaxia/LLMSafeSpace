@@ -19,7 +19,6 @@ import (
 // Mock implementations
 type MockDatabaseService struct {
 	mock.Mock
-	database.Service
 }
 
 func (m *MockDatabaseService) GetUserIDByAPIKey(apiKey string) (string, error) {
@@ -39,7 +38,6 @@ func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, 
 
 type MockCacheService struct {
 	mock.Mock
-	cache.Service
 }
 
 func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
@@ -66,11 +64,13 @@ func TestNew(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create mock service instances for the test
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDb := new(MockDatabaseService)
+	mockCache := new(MockCacheService)
+
+	var dbService database.Service = mockDb
+	var cacheService cache.Service = mockCache
 	
-	service, err := New(cfg, log, mockDbService, mockCacheService)
+	service, err := New(cfg, log, dbService, cacheService)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
@@ -82,7 +82,7 @@ func TestNew(t *testing.T) {
 
 	// Test missing JWT secret
 	cfg.Auth.JWTSecret = ""
-	service, err = New(cfg, log, dbService, cacheService)
+	service, err = New(cfg, log, mockDbService, mockCacheService)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT secret is required")
 	assert.Nil(t, service)
