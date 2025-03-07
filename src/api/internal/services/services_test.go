@@ -296,6 +296,16 @@ type MockExecutionService struct {
 	mock.Mock
 }
 
+func (m *MockExecutionService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockExecutionService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 func (m *MockExecutionService) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error) {
 	args := m.Called(ctx, sandboxID, code, timeout)
 	if args.Get(0) == nil {
