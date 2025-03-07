@@ -21,12 +21,10 @@ import (
 type (
 	MockWarmPoolService struct {
 		mock.Mock
-		warmpool.Service
 	}
 	
 	MockMetricsService struct {
 		mock.Mock
-		metrics.Service
 	}
 )
 

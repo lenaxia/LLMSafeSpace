@@ -16,15 +16,53 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 )
 
+// Service interfaces
+type (
+	// AuthService defines the interface for authentication services
+	AuthService interface {
+		auth.Service
+	}
+
+	// DatabaseService defines the interface for database services
+	DatabaseService interface {
+		database.Service
+	}
+
+	// ExecutionService defines the interface for execution services
+	ExecutionService interface {
+		execution.Service
+	}
+
+	// FileService defines the interface for file services
+	FileService interface {
+		file.Service
+	}
+
+	// MetricsService defines the interface for metrics services
+	MetricsService interface {
+		metrics.Service
+	}
+
+	// SandboxService defines the interface for sandbox services
+	SandboxService interface {
+		sandbox.Service
+	}
+
+	// WarmPoolService defines the interface for warm pool services
+	WarmPoolService interface {
+		warmpool.Service
+	}
+)
+
 // Services holds all application services
 type Services struct {
-	Auth      *auth.Service
-	Database  *database.Service
-	Execution *execution.Service
-	File      *file.Service
-	Metrics   *metrics.Service
-	Sandbox   *sandbox.Service
-	WarmPool  *warmpool.Service
+	Auth      AuthService
+	Database  DatabaseService
+	Execution ExecutionService
+	File      FileService
+	Metrics   MetricsService
+	Sandbox   SandboxService
+	WarmPool  WarmPoolService
 }
 
 // New creates and initializes all services
