@@ -22,6 +22,9 @@ type MockDatabaseService struct {
 	mock.Mock
 }
 
+// Ensure MockDatabaseService implements the DatabaseService interface
+var _ services.DatabaseService = (*MockDatabaseService)(nil)
+
 func (m *MockDatabaseService) Start() error {
 	args := m.Called()
 	return args.Error(0)

@@ -69,7 +69,7 @@ func (s *Service) Stop() error {
 }
 
 // Ensure Service implements the DatabaseService interface
-var _ services.DatabaseService = (*Service)(nil)
+var _ services.DatabaseService = (*Service)(nil) // Compile-time interface check
 
 // Ping checks the database connection
 func (s *Service) Ping(ctx context.Context) error {
@@ -184,6 +184,48 @@ func (s *Service) GetSandboxMetadata(ctx context.Context, sandboxID string) (map
 	}, nil
 }
 
+// GetUserByID gets a user by ID
+func (s *Service) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
+    query := `
+        SELECT id, username, email, created_at 
+        FROM users 
+        WHERE id = $1
+    `
+    
+    var user struct {
+        ID        string
+        Username  string
+        Email     string
+        CreatedAt time.Time
+    }
+    
+    err := s.DB.QueryRowContext(ctx, query, userID).Scan(
+        &user.ID,
+        &user.Username,
+        &user.Email,
+        &user.CreatedAt,
+    )
+    
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, nil
+        }
+        return nil, fmt.Errorf("failed to get user by ID: %w", err)
+    }
+    
+    return map[string]interface{}{
+        "id":         user.ID,
+        "username":   user.Username,
+        "email":      user.Email,
+        "created_at": user.CreatedAt,
+    }, nil
+}
+
+// GetSandboxByID gets a sandbox by ID
+func (s *Service) GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+    return s.GetSandboxMetadata(ctx, sandboxID)
+}
+
 // ListSandboxes lists sandboxes for a user
 func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
 	query := `
@@ -210,8 +252,8 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		}
 
 		sandboxes = append(sandboxes, map[string]interface{}{
-			"id":        id,
-			"runtime":   runtime,
+			"id":         id,
+			"runtime":    runtime,
 			"created_at": createdAt,
 		})
 	}
