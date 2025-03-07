@@ -223,8 +223,8 @@ func (s *Service) GenerateToken(userID string) (string, error) {
 	return tokenString, nil
 }
 
-// validateToken validates a JWT token
-func (s *Service) validateToken(tokenString string) (string, error) {
+// ValidateToken validates a JWT token
+func (s *Service) ValidateToken(tokenString string) (string, error) {
 	// Check if token is cached
 	ctx := context.Background()
 	cacheKey := fmt.Sprintf("token:%s", tokenString)
