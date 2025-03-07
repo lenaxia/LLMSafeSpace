@@ -175,8 +175,53 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 // Start starts all services
 func (s *Services) Start() error {
 	// Start services in appropriate order
+	if err := s.Metrics.Start(); err != nil {
+		return fmt.Errorf("failed to start metrics service: %w", err)
+	}
+	
 	if err := s.Database.Start(); err != nil {
+		s.Metrics.Stop() // Clean up metrics if database fails
 		return fmt.Errorf("failed to start database service: %w", err)
+	}
+	
+	if err := s.Auth.Start(); err != nil {
+		s.Database.Stop() // Clean up database if auth fails
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start auth service: %w", err)
+	}
+	
+	if err := s.File.Start(); err != nil {
+		s.Auth.Stop() // Clean up previous services
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start file service: %w", err)
+	}
+	
+	if err := s.Execution.Start(); err != nil {
+		s.File.Stop() // Clean up previous services
+		s.Auth.Stop()
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start execution service: %w", err)
+	}
+	
+	if err := s.WarmPool.Start(); err != nil {
+		s.Execution.Stop() // Clean up previous services
+		s.File.Stop()
+		s.Auth.Stop()
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start warm pool service: %w", err)
+	}
+	
+	if err := s.Sandbox.Start(); err != nil {
+		s.WarmPool.Stop() // Clean up previous services
+		s.Execution.Stop()
+		s.File.Stop()
+		s.Auth.Stop()
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start sandbox service: %w", err)
 	}
 
 	return nil
@@ -184,10 +229,41 @@ func (s *Services) Start() error {
 
 // Stop stops all services
 func (s *Services) Stop() error {
-	// Stop services in reverse order
-	if err := s.Database.Stop(); err != nil {
-		return fmt.Errorf("failed to stop database service: %w", err)
+	var errs []error
+	
+	// Stop services in reverse order of initialization
+	if err := s.Sandbox.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop sandbox service: %w", err))
 	}
-
+	
+	if err := s.WarmPool.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop warm pool service: %w", err))
+	}
+	
+	if err := s.Execution.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop execution service: %w", err))
+	}
+	
+	if err := s.File.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop file service: %w", err))
+	}
+	
+	if err := s.Auth.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop auth service: %w", err))
+	}
+	
+	if err := s.Database.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop database service: %w", err))
+	}
+	
+	if err := s.Metrics.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop metrics service: %w", err))
+	}
+	
+	// If we have errors, return the first one
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	
 	return nil
 }
