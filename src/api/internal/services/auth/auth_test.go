@@ -237,10 +237,11 @@ func TestValidateToken(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, &MockDatabaseService{}, mockCacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Generate a valid token
 	userID := "user123"
@@ -299,8 +300,6 @@ func TestRevokeToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
-	// Replace with our mock
-	service.cacheService = mockCacheService
 
 	// Generate a token
 	token, _ := service.GenerateToken("user123")

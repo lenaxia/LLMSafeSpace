@@ -104,7 +104,6 @@ type (
 		GetWarmSandbox(ctx context.Context, runtime string) (string, error)
 		AddToWarmPool(ctx context.Context, sandboxID, runtime string) error
 		RemoveFromWarmPool(ctx context.Context, sandboxID string) error
-		GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 		GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error)
 		GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 		Start() error

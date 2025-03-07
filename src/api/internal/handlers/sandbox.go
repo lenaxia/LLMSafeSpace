@@ -106,7 +106,7 @@ func (h *SandboxHandler) CreateSandbox(c *gin.Context) {
 		return
 	}
 	
-	c.JSON(http.StatusOK, sb)
+	c.JSON(http.StatusCreated, sb)
 }
 
 // GetSandbox gets a sandbox by ID

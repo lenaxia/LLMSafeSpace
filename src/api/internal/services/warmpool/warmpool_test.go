@@ -105,7 +105,7 @@ type MockMetricsService struct {
 	metrics.Service
 }
 
-func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafespaceV1Client, *MockWarmPoolInterface, *MockDatabaseService, *MockMetricsService) {
+func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
 	log, _ := logger.New(true, "debug", "console")
 	mockK8s := new(MockK8sClient)
 	mockLLMClient := new(MockLLMSafespaceV1Client)
@@ -123,15 +123,11 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 		metricsSvc: mockMetricsService,
 	}
 
-	return service, mockK8s, mockLLMClient, mockWarmPool, mockDbService, mockMetricsService
+	return service, mockK8s
 }
 
 func TestCheckAvailability(t *testing.T) {
 	service, mockK8s := setupWarmPoolService(t)
-	
-	// Get the mock LLM client from the mock K8s client
-	mockLLMClient := new(MockLLMSafespaceV1Client)
-	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
 
 	ctx := context.Background()
 	runtime := "python:3.10"

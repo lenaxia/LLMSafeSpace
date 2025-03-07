@@ -43,6 +43,9 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 
 func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
 	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
 	return args.Get(0).(kubernetes.LLMSafespaceV1Interface)
 }
 
