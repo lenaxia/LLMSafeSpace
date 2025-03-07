@@ -147,7 +147,7 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 	mockAuthService := new(MockAuthService)
 
 	// Create handler
-	handler := NewSandboxHandler(log, mockSandboxService, mockAuthService)
+	handler := NewSandboxHandler(log, &sandbox.Service{}, &auth.Service{})
 
 	// Create a test router
 	gin.SetMode(gin.TestMode)
