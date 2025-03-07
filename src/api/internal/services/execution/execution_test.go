@@ -32,6 +32,16 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
+func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error) {
+	args := m.Called(ctx, namespace, name, execReq)
+	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
+}
+
+func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest, outputCallback func(stream, content string)) (*kubernetes.ExecutionResult, error) {
+	args := m.Called(ctx, namespace, name, execReq, outputCallback)
+	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
+}
+
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")

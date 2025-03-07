@@ -106,9 +106,7 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 	m.Called(session)
 }
 
-type MockAuthService struct {
-	mock.Mock
-}
+// Remove this duplicate declaration
 
 func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 	args := m.Called(c)

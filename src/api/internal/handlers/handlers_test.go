@@ -10,7 +10,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/stretchr/testify/assert"
