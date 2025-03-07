@@ -105,6 +105,8 @@ type (
 		AddToWarmPool(ctx context.Context, sandboxID, runtime string) error
 		RemoveFromWarmPool(ctx context.Context, sandboxID string) error
 		GetWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
+		GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error)
+		GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 		Start() error
 		Stop() error
 	}
@@ -139,13 +141,13 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 	}
 
 	// Initialize auth service
-	authService, err := auth.New(cfg, log, dbService.(database.Service), cacheService.(cache.Service))
+	authService, err := auth.New(cfg, log, dbService, cacheService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth service: %w", err)
 	}
 
 	// Initialize warm pool service
-	warmPoolService, err := warmpool.New(log, k8sClient, dbService.(database.Service), metricsService)
+	warmPoolService, err := warmpool.New(log, k8sClient, dbService, metricsService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize warm pool service: %w", err)
 	}

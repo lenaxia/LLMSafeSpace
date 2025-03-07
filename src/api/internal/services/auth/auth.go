@@ -99,7 +99,7 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate JWT token
-		userID, err := s.validateToken(token)
+		userID, err := s.ValidateToken(token)
 		if err != nil {
 			c.AbortWithStatusJSON(401, gin.H{
 				"error": "Invalid or expired token",
@@ -292,7 +292,7 @@ func (s *Service) validateToken(tokenString string) (string, error) {
 	return userID, nil
 }
 
-// validateAPIKey validates an API key
+// validateAPIKey validates an API key (internal method)
 func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	// Check if API key is cached
 	ctx := context.Background()

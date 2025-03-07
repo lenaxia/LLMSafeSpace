@@ -42,6 +42,11 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
+func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
+	args := m.Called()
+	return args.Get(0).(kubernetes.LLMSafespaceV1Interface)
+}
+
 func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error) {
 	args := m.Called(ctx, namespace, name, fileReq)
 	if args.Get(0) == nil {

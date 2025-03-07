@@ -250,12 +250,12 @@ func TestValidateToken(t *testing.T) {
 	mockCacheService.On("Get", mock.Anything, mock.Anything).Return("", errors.New("not found")).Once()
 	mockCacheService.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	extractedUserID, err := service.validateToken(token)
+	extractedUserID, err := service.ValidateToken(token)
 	assert.NoError(t, err)
 	assert.Equal(t, userID, extractedUserID)
 
 	// Test case: Invalid token
-	extractedUserID, err = service.validateToken("invalid-token")
+	extractedUserID, err = service.ValidateToken("invalid-token")
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
 
@@ -268,7 +268,7 @@ func TestValidateToken(t *testing.T) {
 	})
 	tokenString, _ := expiredToken.SignedString(service.jwtSecret)
 
-	extractedUserID, err = service.validateToken(tokenString)
+	extractedUserID, err = service.ValidateToken(tokenString)
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
 	assert.Contains(t, err.Error(), "token has expired")
@@ -276,7 +276,7 @@ func TestValidateToken(t *testing.T) {
 	// Test case: Revoked token
 	mockCacheService.On("Get", mock.Anything, mock.Anything).Return("revoked", nil).Once()
 
-	extractedUserID, err = service.validateToken(token)
+	extractedUserID, err = service.ValidateToken(token)
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
 	assert.Contains(t, err.Error(), "token has been revoked")
