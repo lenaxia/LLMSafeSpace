@@ -64,9 +64,13 @@ func TestNew(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances for the test
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances for the test
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
+	
+	// Create interfaces from mocks
+	var dbService database.Service = mockDbService
+	var cacheService cache.Service = mockCacheService
 	
 	service, err := New(cfg, log, dbService, cacheService)
 	assert.NoError(t, err)
@@ -97,16 +101,12 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
-	// Replace with our mocks
-	var dbServiceInterface database.Service = mockDbService
-	var cacheServiceInterface cache.Service = mockCacheService
-	service.dbService = &dbServiceInterface
-	service.cacheService = &cacheServiceInterface
+	// Create service with mocks
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
@@ -195,14 +195,11 @@ func TestValidateToken(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances
+	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
-	// Replace with our mock
-	var cacheServiceInterface cache.Service = mockCacheService
-	service.cacheService = &cacheServiceInterface
+	// Create service with mocks
+	service, _ := New(cfg, log, &database.Service{}, mockCacheService)
 
 	// Generate a valid token
 	userID := "user123"
@@ -279,8 +276,9 @@ func TestRevokeToken(t *testing.T) {
 	}
 	exp := time.Unix(int64(claims["exp"].(float64)), 0)
 
-	// Skip token revocation tests since the method is not implemented
-	// We'll need to implement RevokeToken in the auth service first
+	// Test token revocation
+	err := service.RevokeToken(token)
+	// Since we haven't set up the mock expectations, this should fail
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to revoke token")
 
@@ -297,14 +295,11 @@ func TestCheckResourceAccess(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
-	// Replace with our mock
-	var dbServiceInterface database.Service = mockDbService
-	service.dbService = &dbServiceInterface
+	// Create service with mocks
+	service, _ := New(cfg, log, mockDbService, &cache.Service{})
 
 	// Create a mock gin context
 	gin.SetMode(gin.TestMode)
