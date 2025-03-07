@@ -605,7 +605,7 @@ func TestFileOperations(t *testing.T) {
 		{
 			Path:        "/workspace/file.txt",
 			Size:        13,
-			IsDirectory: false,
+			IsDir: false,
 		},
 	}, nil).Once()
 
