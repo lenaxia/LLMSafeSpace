@@ -26,6 +26,7 @@ type (
 	
 	MockMetricsService struct {
 		mock.Mock
+		metrics.Service
 	}
 )
 
@@ -50,6 +51,10 @@ func (m *MockMetricsService) IncActiveConnections() {
 }
 
 func (m *MockMetricsService) DecActiveConnections() {
+	m.Called()
+}
+
+func (m *MockMetricsService) RecordWarmPoolHit() {
 	m.Called()
 }
 
