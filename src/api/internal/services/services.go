@@ -38,31 +38,31 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 	}
 
 	// Initialize auth service
-	authService, err := auth.New(cfg, log, dbService)
+	authService, err := auth.New(cfg, log, dbService, cacheService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth service: %w", err)
 	}
 
 	// Initialize warm pool service
-	warmPoolService, err := warmpool.New(cfg, log, k8sClient, dbService, metricsService)
+	warmPoolService, err := warmpool.New(log, k8sClient, dbService, metricsService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize warm pool service: %w", err)
 	}
 
 	// Initialize file service
-	fileService, err := file.New(cfg, log, k8sClient)
+	fileService, err := file.New(log, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize file service: %w", err)
 	}
 
 	// Initialize execution service
-	executionService, err := execution.New(cfg, log, k8sClient)
+	executionService, err := execution.New(log, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize execution service: %w", err)
 	}
 
 	// Initialize sandbox service
-	sandboxService, err := sandbox.New(cfg, log, k8sClient, dbService, warmPoolService, fileService, executionService, metricsService)
+	sandboxService, err := sandbox.New(log, k8sClient, dbService, warmPoolService, fileService, executionService, metricsService, cacheService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
 	}
