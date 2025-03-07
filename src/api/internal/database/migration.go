@@ -104,7 +104,7 @@ func (m *MigrationService) ApplyMigrations(ctx context.Context, migrations []Mig
 	}
 
 	// Get applied migrations
-	rows, err := m.db.DB.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+	rows, err := m.db.DB().QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return fmt.Errorf("failed to query migrations: %w", err)
 	}
