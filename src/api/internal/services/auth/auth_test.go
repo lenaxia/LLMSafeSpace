@@ -21,6 +21,40 @@ type MockDatabaseService struct {
 	mock.Mock
 }
 
+func (m *MockDatabaseService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockDatabaseService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockDatabaseService) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+func (m *MockDatabaseService) GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]map[string]interface{}), args.Error(1)
+}
+
 func (m *MockDatabaseService) GetUserIDByAPIKey(apiKey string) (string, error) {
 	args := m.Called(apiKey)
 	return args.String(0), args.Error(1)
@@ -38,6 +72,16 @@ func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, 
 
 type MockCacheService struct {
 	mock.Mock
+}
+
+func (m *MockCacheService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockCacheService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
@@ -82,7 +126,7 @@ func TestNew(t *testing.T) {
 
 	// Test missing JWT secret
 	cfg.Auth.JWTSecret = ""
-	service, err = New(cfg, log, mockDbService, mockCacheService)
+	service, err = New(cfg, log, dbService, cacheService)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT secret is required")
 	assert.Nil(t, service)
@@ -91,8 +135,6 @@ func TestNew(t *testing.T) {
 func TestAuthenticateAPIKey(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
 	
 	// Create service
 	cfg := &config.Config{}
@@ -252,11 +294,11 @@ func TestRevokeToken(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create real service instances
-	dbService := &database.Service{}
-	cacheService := &cache.Service{}
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 	// Replace with our mock
 	service.cacheService = mockCacheService
 

@@ -23,6 +23,15 @@ type MockK8sClient struct {
 	*kubernetes.Client
 }
 
+func (m *MockK8sClient) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockK8sClient) Stop() {
+	m.Called()
+}
+
 func (m *MockK8sClient) Clientset() k8s.Interface {
 	args := m.Called()
 	return args.Get(0).(k8s.Interface)
@@ -72,12 +81,11 @@ func TestNew(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Test successful creation
-	k8sClient := &kubernetes.Client{}
-	service, err := New(log, k8sClient)
+	service, err := New(log, mockK8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
-	assert.Equal(t, k8sClient, service.k8sClient)
+	assert.Equal(t, mockK8sClient, service.k8sClient)
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -92,10 +100,7 @@ func TestListFiles(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	k8sClient := &kubernetes.Client{}
-	service, _ := New(log, k8sClient)
-	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -144,10 +149,7 @@ func TestDownloadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	k8sClient := &kubernetes.Client{}
-	service, _ := New(log, k8sClient)
-	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -185,10 +187,7 @@ func TestUploadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	k8sClient := &kubernetes.Client{}
-	service, _ := New(log, k8sClient)
-	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
@@ -232,10 +231,7 @@ func TestDeleteFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	k8sClient := &kubernetes.Client{}
-	service, _ := New(log, k8sClient)
-	// Replace with our mock
-	service.k8sClient = mockK8sClient
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
