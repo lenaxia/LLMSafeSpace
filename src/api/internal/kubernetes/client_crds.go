@@ -101,7 +101,7 @@ func (s *sandboxes) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.San
 		Namespace(s.ns).
 		Resource("sandboxes").
 		Body(sandbox).
-		Do().
+		Do(context.TODO()).
 		Into(result)
 	return result, err
 }
@@ -114,7 +114,7 @@ func (s *sandboxes) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.San
 		Resource("sandboxes").
 		Name(sandbox.Name).
 		Body(sandbox).
-		Do().
+		Do(context.TODO()).
 		Into(result)
 	return result, err
 }
@@ -128,7 +128,7 @@ func (s *sandboxes) UpdateStatus(sandbox *llmsafespacev1.Sandbox) (*llmsafespace
 		Name(sandbox.Name).
 		SubResource("status").
 		Body(sandbox).
-		Do().
+		Do(context.TODO()).
 		Into(result)
 	return result, err
 }
@@ -152,7 +152,7 @@ func (s *sandboxes) Get(name string, options metav1.GetOptions) (*llmsafespacev1
 		Resource("sandboxes").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do().
+		Do(context.TODO()).
 		Into(result)
 	return result, err
 }
