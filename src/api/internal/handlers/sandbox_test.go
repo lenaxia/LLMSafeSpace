@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
@@ -126,6 +125,14 @@ func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
 	m.Called(session)
 }
 
+func (m *MockSandboxService) GetMetrics() map[string]interface{} {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(map[string]interface{})
+}
+
 // MockAuthService implementation
 type MockAuthService struct {
 	mock.Mock
@@ -139,6 +146,16 @@ func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
 func (m *MockAuthService) CheckResourceAccess(c *gin.Context, resourceType, resourceID, action string) bool {
 	args := m.Called(c, resourceType, resourceID, action)
 	return args.Bool(0)
+}
+
+func (m *MockAuthService) GenerateToken(userID string) (string, error) {
+	args := m.Called(userID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) ValidateToken(token string) (string, error) {
+	args := m.Called(token)
+	return args.String(0), args.Error(1)
 }
 
 func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *MockAuthService, *gin.Engine) {
