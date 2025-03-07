@@ -175,7 +175,7 @@ func (s *sandboxes) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 		Namespace(s.ns).
 		Resource("sandboxes").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch()
+		Watch(context.TODO())
 }
 
 // Similar interfaces would be implemented for WarmPool, WarmPod, RuntimeEnvironment, and SandboxProfile
