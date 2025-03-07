@@ -31,6 +31,16 @@ type MockSandboxService struct {
 // Ensure mock implements the interface
 var _ services.SandboxService = (*MockSandboxService)(nil)
 
+func (m *MockSandboxService) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockSandboxService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
         args := m.Called(ctx, req)
         if args.Get(0) == nil {
@@ -145,13 +155,23 @@ type MockAuthService struct {
 // Ensure mock implements the interface
 var _ services.AuthService = (*MockAuthService)(nil)
 
-func (m *MockAuthService) GetUserFromContext(c *gin.Context) (string, error) {
-	args := m.Called(c)
-	return args.String(0), args.Error(1)
+func (m *MockAuthService) Start() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
-func (m *MockAuthService) CheckResourceAccess(c *gin.Context, resourceType, resourceID, action string) bool {
-	args := m.Called(c, resourceType, resourceID, action)
+func (m *MockAuthService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockAuthService) GetUserID(c *gin.Context) string {
+	args := m.Called(c)
+	return args.String(0)
+}
+
+func (m *MockAuthService) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
+	args := m.Called(userID, resourceType, resourceID, action)
 	return args.Bool(0)
 }
 
@@ -170,7 +190,7 @@ func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockAuthService) Middleware() gin.HandlerFunc {
+func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
 	args := m.Called()
 	return args.Get(0).(gin.HandlerFunc)
 }
@@ -210,7 +230,7 @@ func TestCreateSandbox(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful creation
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockSandboxService.On("CreateSandbox", mock.Anything, mock.MatchedBy(func(req sandbox.CreateSandboxRequest) bool {
 		return req.Runtime == "python:3.10" && req.UserID == "user123"
 	})).Return(&llmsafespacev1.Sandbox{
@@ -248,7 +268,7 @@ func TestCreateSandbox(t *testing.T) {
 	assert.Equal(t, "Creating", response["status"])
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -258,7 +278,7 @@ func TestCreateSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Invalid request body
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes", bytes.NewBuffer([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -268,7 +288,7 @@ func TestCreateSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Test case: Service error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockSandboxService.On("CreateSandbox", mock.Anything, mock.Anything).Return(nil, errors.New("service error")).Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes", bytes.NewBuffer(jsonBody))
@@ -286,8 +306,8 @@ func TestGetSandbox(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful get
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "read").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(true).Once()
 	mockSandboxService.On("GetSandbox", mock.Anything, "sb-12345").Return(&llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
@@ -317,7 +337,7 @@ func TestGetSandbox(t *testing.T) {
 	assert.Equal(t, "Running", response["status"])
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/sb-12345", nil)
 	w = httptest.NewRecorder()
@@ -326,8 +346,8 @@ func TestGetSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Access denied
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "read").Return(false).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(false).Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/sb-12345", nil)
 	w = httptest.NewRecorder()
@@ -336,8 +356,8 @@ func TestGetSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	// Test case: Sandbox not found
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "nonexistent", "read").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "nonexistent", "read").Return(true).Once()
 	mockSandboxService.On("GetSandbox", mock.Anything, "nonexistent").Return(nil, errors.New("sandbox not found")).Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/nonexistent", nil)
@@ -354,7 +374,7 @@ func TestListSandboxes(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful list
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockSandboxService.On("ListSandboxes", mock.Anything, "user123", 10, 0).Return([]map[string]interface{}{
 		{
 			"id":      "sb-12345",
@@ -387,7 +407,7 @@ func TestListSandboxes(t *testing.T) {
 	assert.Len(t, sandboxes, 2)
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes", nil)
 	w = httptest.NewRecorder()
@@ -396,7 +416,7 @@ func TestListSandboxes(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Service error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockSandboxService.On("ListSandboxes", mock.Anything, "user123", 10, 0).Return(nil, errors.New("service error")).Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes?limit=10&offset=0", nil)
@@ -413,8 +433,8 @@ func TestTerminateSandbox(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful termination
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "delete").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "delete").Return(true).Once()
 	mockSandboxService.On("TerminateSandbox", mock.Anything, "sb-12345").Return(nil).Once()
 
 	// Create request
@@ -428,7 +448,7 @@ func TestTerminateSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("DELETE", "/api/v1/sandboxes/sb-12345", nil)
 	w = httptest.NewRecorder()
@@ -437,8 +457,8 @@ func TestTerminateSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Access denied
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "delete").Return(false).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "delete").Return(false).Once()
 
 	req = httptest.NewRequest("DELETE", "/api/v1/sandboxes/sb-12345", nil)
 	w = httptest.NewRecorder()
@@ -447,8 +467,8 @@ func TestTerminateSandbox(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	// Test case: Service error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-error", "delete").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-error", "delete").Return(true).Once()
 	mockSandboxService.On("TerminateSandbox", mock.Anything, "sb-error").Return(errors.New("service error")).Once()
 
 	req = httptest.NewRequest("DELETE", "/api/v1/sandboxes/sb-error", nil)
@@ -465,8 +485,8 @@ func TestGetSandboxStatus(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful get status
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "read").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(true).Once()
 	mockSandboxService.On("GetSandboxStatus", mock.Anything, "sb-12345").Return(&llmsafespacev1.SandboxStatus{
 		Phase:    "Running",
 		Endpoint: "sb-12345.default.svc.cluster.local",
@@ -489,7 +509,7 @@ func TestGetSandboxStatus(t *testing.T) {
 	assert.Equal(t, "sb-12345.default.svc.cluster.local", response["endpoint"])
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/sb-12345/status", nil)
 	w = httptest.NewRecorder()
@@ -498,8 +518,8 @@ func TestGetSandboxStatus(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Access denied
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "read").Return(false).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(false).Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/sb-12345/status", nil)
 	w = httptest.NewRecorder()
@@ -508,8 +528,8 @@ func TestGetSandboxStatus(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	// Test case: Service error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-error", "read").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-error", "read").Return(true).Once()
 	mockSandboxService.On("GetSandboxStatus", mock.Anything, "sb-error").Return(nil, errors.New("service error")).Once()
 
 	req = httptest.NewRequest("GET", "/api/v1/sandboxes/sb-error/status", nil)
@@ -526,8 +546,8 @@ func TestExecute(t *testing.T) {
 	_, mockSandboxService, mockAuthService, router := setupSandboxHandler(t)
 
 	// Test case: Successful execution
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "execute").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "execute").Return(true).Once()
 	mockSandboxService.On("Execute", mock.Anything, mock.MatchedBy(func(req sandbox.ExecuteRequest) bool {
 		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.SandboxID == "sb-12345"
 	})).Return(&execution.Result{
@@ -562,7 +582,7 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, "Hello, World!\n", response["stdout"])
 
 	// Test case: Authentication error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("", errors.New("unauthorized")).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("").Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes/sb-12345/execute", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -572,8 +592,8 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Test case: Access denied
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "execute").Return(false).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "execute").Return(false).Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes/sb-12345/execute", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -583,8 +603,8 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	// Test case: Invalid request body
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-12345", "execute").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "execute").Return(true).Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes/sb-12345/execute", bytes.NewBuffer([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -594,8 +614,8 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Test case: Service error
-	mockAuthService.On("GetUserFromContext", mock.Anything).Return("user123", nil).Once()
-	mockAuthService.On("CheckResourceAccess", mock.Anything, "sandbox", "sb-error", "execute").Return(true).Once()
+	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
+	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-error", "execute").Return(true).Once()
 	mockSandboxService.On("Execute", mock.Anything, mock.Anything).Return(nil, errors.New("service error")).Once()
 
 	req = httptest.NewRequest("POST", "/api/v1/sandboxes/sb-error/execute", bytes.NewBuffer(jsonBody))
