@@ -56,16 +56,16 @@ func (m *MockMetricsService) RecordRequest(method, path string, status int, dura
 	m.Called(method, path, status, duration, size)
 }
 
-func (m *MockMetricsService) RecordSandboxCreation() {
-	m.Called()
+func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
+	m.Called(runtime, warmPodUsed)
 }
 
-func (m *MockMetricsService) RecordSandboxTermination() {
-	m.Called()
+func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
+	m.Called(runtime)
 }
 
-func (m *MockMetricsService) RecordExecution(duration time.Duration) {
-	m.Called(duration)
+func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
+	m.Called(execType, runtime, status, duration)
 }
 
 func (m *MockMetricsService) IncActiveConnections() {

@@ -55,8 +55,8 @@ func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, 
 	return args.Get(0).([]map[string]interface{}), args.Error(1)
 }
 
-func (m *MockDatabaseService) GetUserIDByAPIKey(apiKey string) (string, error) {
-	args := m.Called(apiKey)
+func (m *MockDatabaseService) GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
 	return args.String(0), args.Error(1)
 }
 
@@ -149,28 +149,28 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
-	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "valid-key").Return("user123", nil).Once()
 	mockCacheService.On("Get", mock.Anything, "apikey:valid-key").Return("", errors.New("not found")).Once()
 	mockCacheService.On("Set", mock.Anything, "apikey:valid-key", "user123", mock.Anything).Return(nil).Once()
 
-	userID, err := service.AuthenticateAPIKey("valid-key")
+	userID, err := service.AuthenticateAPIKey(context.Background(), "valid-key")
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
 	// Test case: Invalid API key
-	mockDbService.On("GetUserIDByAPIKey", "invalid-key").Return("", nil).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "invalid-key").Return("", nil).Once()
 	mockCacheService.On("Get", mock.Anything, "apikey:invalid-key").Return("", errors.New("not found")).Once()
 
-	userID, err = service.AuthenticateAPIKey("invalid-key")
+	userID, err = service.AuthenticateAPIKey(context.Background(), "invalid-key")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "invalid API key")
 
 	// Test case: Database error
-	mockDbService.On("GetUserIDByAPIKey", "error-key").Return("", errors.New("database error")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.Anything, "error-key").Return("", errors.New("database error")).Once()
 	mockCacheService.On("Get", mock.Anything, "apikey:error-key").Return("", errors.New("not found")).Once()
 
-	userID, err = service.AuthenticateAPIKey("error-key")
+	userID, err = service.AuthenticateAPIKey(context.Background(), "error-key")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "database error")
@@ -178,7 +178,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	// Test case: Cached API key
 	mockCacheService.On("Get", mock.Anything, "apikey:cached-key").Return("cached-user", nil).Once()
 
-	userID, err = service.AuthenticateAPIKey("cached-key")
+	userID, err = service.AuthenticateAPIKey(context.Background(), "cached-key")
 	assert.NoError(t, err)
 	assert.Equal(t, "cached-user", userID)
 

@@ -41,6 +41,8 @@ type (
 		GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error)
 		ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
 		CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+		CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
+		GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error)
 		Start() error
 		Stop() error
 	}
@@ -55,10 +57,10 @@ type (
 
 	// FileService defines the interface for file services
 	FileService interface {
-		ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error)
-		ReadFile(ctx context.Context, sandboxID, path string) ([]byte, error)
-		WriteFile(ctx context.Context, sandboxID, path string, content []byte) error
-		DeleteFile(ctx context.Context, sandboxID, path string) error
+		ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error)
+		DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error)
+		UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error)
+		DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error
 		Start() error
 		Stop() error
 	}
@@ -66,9 +68,9 @@ type (
 	// MetricsService defines the interface for metrics services
 	MetricsService interface {
 		RecordRequest(method, path string, status int, duration time.Duration, size int)
-		RecordSandboxCreation()
-		RecordSandboxTermination()
-		RecordExecution(duration time.Duration)
+		RecordSandboxCreation(runtime string, warmPodUsed bool)
+		RecordSandboxTermination(runtime string)
+		RecordExecution(execType, runtime, status string, duration time.Duration)
 		IncActiveConnections()
 		DecActiveConnections()
 		RecordWarmPoolHit()
