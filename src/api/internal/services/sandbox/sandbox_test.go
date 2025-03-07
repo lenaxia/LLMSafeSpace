@@ -261,6 +261,9 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 		mockMetricsService,
 		mockCacheService,
 	)
+	if err == nil {
+		service.sessionMgr = NewSessionManager(mockCacheService)
+	}
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 
