@@ -24,6 +24,12 @@ type Service struct {
 	tokenDuration time.Duration
 }
 
+func (s *Service) AuthenticateAPIKey(apiKey string) (string, error) {
+	// Implementation of AuthenticateAPIKey
+	// This is a placeholder implementation. You should replace it with the actual logic.
+	return s.dbService.GetUserIDByAPIKey(apiKey)
+}
+
 // New creates a new auth service
 func New(cfg *config.Config, log *logger.Logger, dbService *database.Service, cacheService *cache.Service) (*Service, error) {
 	if cfg.Auth.JWTSecret == "" {
