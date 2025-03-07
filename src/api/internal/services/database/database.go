@@ -58,13 +58,13 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 
 // Start starts the database service
 func (s *Service) Start() error {
-	s.logger.Info("Database service started")
+	s.Logger.Info("Database service started")
 	return nil
 }
 
 // Stop stops the database service
 func (s *Service) Stop() error {
-	s.logger.Info("Stopping database service")
+	s.Logger.Info("Stopping database service")
 	return s.DB.Close()
 }
 
