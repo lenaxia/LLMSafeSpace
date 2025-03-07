@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/kubernetes"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
@@ -21,9 +21,9 @@ type MockK8sClient struct {
 	mock.Mock
 }
 
-func (m *MockK8sClient) Clientset() kubernetes.Interface {
+func (m *MockK8sClient) Clientset() clientset.Interface {
 	args := m.Called()
-	return args.Get(0).(kubernetes.Interface)
+	return args.Get(0).(clientset.Interface)
 }
 
 func (m *MockK8sClient) RESTConfig() *rest.Config {
@@ -142,7 +142,9 @@ func TestInstallPackages(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, &kubernetes.Client{})
+	// Replace the client with our mock
+	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{

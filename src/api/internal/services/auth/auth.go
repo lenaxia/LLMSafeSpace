@@ -99,6 +99,57 @@ func (s *Service) GetUserID(c *gin.Context) string {
 	return userID.(string)
 }
 
+// RevokeToken revokes a JWT token
+func (s *Service) RevokeToken(token string) error {
+	// Parse token
+	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+		// Validate signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return s.jwtSecret, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	// Get claims
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return errors.New("invalid token claims")
+	}
+
+	// Get token ID
+	jti, ok := claims["jti"].(string)
+	if !ok {
+		jti = fmt.Sprintf("%v", claims["sub"]) // Use subject as fallback
+	}
+
+	// Get expiration time
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return errors.New("invalid expiration time in token")
+	}
+	
+	// Calculate remaining time until expiration
+	expTime := time.Unix(int64(exp), 0)
+	remainingTime := time.Until(expTime)
+	
+	if remainingTime <= 0 {
+		return errors.New("token has already expired")
+	}
+
+	// Add token to blacklist
+	ctx := context.Background()
+	err = s.cacheService.Set(ctx, "token:"+jti, "revoked", remainingTime)
+	if err != nil {
+		return fmt.Errorf("failed to revoke token: %w", err)
+	}
+
+	return nil
+}
+
 // CheckResourceAccess checks if a user has access to a resource
 func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
 	// Check resource ownership

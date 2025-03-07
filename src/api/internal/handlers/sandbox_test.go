@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
@@ -143,12 +144,10 @@ func setupSandboxHandler(t *testing.T) (*SandboxHandler, *MockSandboxService, *M
 	mockAuthService := new(MockAuthService)
 
 	// Create handler
-	var sandboxServiceInterface sandbox.Service = mockSandboxService
-	var authServiceInterface auth.Service = mockAuthService
 	handler := &SandboxHandler{
 		logger:     log,
-		sandboxSvc: &sandboxServiceInterface,
-		authSvc:    &authServiceInterface,
+		sandboxSvc: mockSandboxService,
+		authSvc:    mockAuthService,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
