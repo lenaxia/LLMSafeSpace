@@ -2,17 +2,13 @@ package execution
 
 import (
 	"context"
-	"errors"
 	"testing"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
