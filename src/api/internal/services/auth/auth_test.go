@@ -32,16 +32,6 @@ func (m *MockDatabaseService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockDatabaseService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockDatabaseService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
 func (m *MockDatabaseService) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
@@ -122,8 +112,8 @@ func TestNew(t *testing.T) {
 	mockDb := new(MockDatabaseService)
 	mockCache := new(MockCacheService)
 
-	var dbService database.Service = mockDb
-	var cacheService cache.Service = mockCache
+	var dbService services.DatabaseService = mockDb
+	var cacheService services.CacheService = mockCache
 	
 	service, err := New(cfg, log, dbService, cacheService)
 	assert.NoError(t, err)
