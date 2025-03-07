@@ -7,6 +7,8 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,14 +21,17 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
+	kubernetes.Client
 }
 
 type MockLLMSafespaceV1Client struct {
 	mock.Mock
+	kubernetes.LLMSafespaceV1Interface
 }
 
 type MockWarmPoolInterface struct {
 	mock.Mock
+	kubernetes.WarmPoolInterface
 }
 
 func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
@@ -99,10 +104,12 @@ func (m *MockWarmPoolInterface) Watch(opts metav1.ListOptions) (watch.Interface,
 
 type MockDatabaseService struct {
 	mock.Mock
+	database.Service
 }
 
 type MockMetricsService struct {
 	mock.Mock
+	metrics.Service
 }
 
 func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafespaceV1Client, *MockWarmPoolInterface, *MockDatabaseService, *MockMetricsService) {
@@ -116,13 +123,19 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
 	mockLLMSafespaceV1Client.On("WarmPools", mock.Anything).Return(mockWarmPoolInterface)
 
-	service, err := New(mockLogger, &kubernetes.Client{}, &database.Service{}, &metrics.Service{})
+	// Create real service instances
+	k8sClient := &kubernetes.Client{}
+	dbService := &database.Service{}
+	metricsService := &metrics.Service{}
+	
+	service, err := New(mockLogger, k8sClient, dbService, metricsService)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	
 	// Replace with our mocks
 	service.k8sClient = mockK8sClient
 	service.dbService = mockDbService
 	service.metricsSvc = mockMetricsService
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
 
 	return service, mockK8sClient, mockLLMSafespaceV1Client, mockWarmPoolInterface, mockDbService, mockMetricsService
 }

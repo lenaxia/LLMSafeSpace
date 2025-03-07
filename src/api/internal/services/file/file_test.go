@@ -2,8 +2,8 @@ package file
 
 import (
 	"context"
-	"errors"
 	"testing"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -20,6 +20,7 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
+	kubernetes.Client
 }
 
 func (m *MockK8sClient) Clientset() interface{} {
@@ -32,6 +33,35 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
+func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*kubernetes.FileList), args.Error(1)
+}
+
+func (m *MockK8sClient) DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) ([]byte, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockK8sClient) UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileResult, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*kubernetes.FileResult), args.Error(1)
+}
+
+func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error {
+	args := m.Called(ctx, namespace, name, fileReq)
+	return args.Error(0)
+}
+
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -42,13 +72,12 @@ func TestNew(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Test successful creation
-	service, err := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
+	k8sClient := &kubernetes.Client{}
+	service, err := New(log, k8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
-	assert.Equal(t, mockK8sClient, service.k8sClient)
+	assert.Equal(t, k8sClient, service.k8sClient)
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -63,30 +92,44 @@ func TestListFiles(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
+	k8sClient := &kubernetes.Client{}
+	service, _ := New(log, k8sClient)
+	// Replace with our mock
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
-		},
-		Status: llmsafespacev1.SandboxStatus{
-			PodName:      "test-pod",
-			PodNamespace: "default",
+			Namespace: "default",
 		},
 	}
 
-	// Mock the exec command
-	// Note: We can't fully test this without mocking the exec interface,
-	// which is quite complex. We'll just test the error case.
+	// Test case: Successful list
+	mockK8sClient.On("ListFilesInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.FileRequest) bool {
+		return req.Path == "/workspace"
+	})).Return(&kubernetes.FileList{
+		Files: []kubernetes.FileInfo{
+			{
+				Path: "/workspace/file.txt",
+				Size: 100,
+				IsDir: false,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+		},
+	}, nil).Once()
 
-	// Test case: Pod not found
-	ctx := context.Background()
-	_, err := service.ListFiles(ctx, sandbox, "/workspace")
+	files, err := service.ListFiles(context.Background(), sandbox, "/workspace")
+	assert.NoError(t, err)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "/workspace/file.txt", files[0].Path)
+
+	// Test case: Error
+	mockK8sClient.On("ListFilesInSandbox", mock.Anything, "default", "test-sandbox", mock.Anything).Return(nil, assert.AnError).Once()
+
+	_, err = service.ListFiles(context.Background(), sandbox, "/workspace")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get pod")
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -101,26 +144,33 @@ func TestDownloadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
+	k8sClient := &kubernetes.Client{}
+	service, _ := New(log, k8sClient)
+	// Replace with our mock
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
-		},
-		Status: llmsafespacev1.SandboxStatus{
-			PodName:      "test-pod",
-			PodNamespace: "default",
+			Namespace: "default",
 		},
 	}
 
-	// Test case: Pod not found
-	ctx := context.Background()
-	_, err := service.DownloadFile(ctx, sandbox, "/workspace/file.txt")
+	// Test case: Successful download
+	mockK8sClient.On("DownloadFileFromSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.FileRequest) bool {
+		return req.Path == "/workspace/file.txt"
+	})).Return([]byte("test content"), nil).Once()
+
+	content, err := service.DownloadFile(context.Background(), sandbox, "/workspace/file.txt")
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("test content"), content)
+
+	// Test case: Error
+	mockK8sClient.On("DownloadFileFromSandbox", mock.Anything, "default", "test-sandbox", mock.Anything).Return(nil, assert.AnError).Once()
+
+	_, err = service.DownloadFile(context.Background(), sandbox, "/workspace/file.txt")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get pod")
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -135,27 +185,39 @@ func TestUploadFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
+	k8sClient := &kubernetes.Client{}
+	service, _ := New(log, k8sClient)
+	// Replace with our mock
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
-		},
-		Status: llmsafespacev1.SandboxStatus{
-			PodName:      "test-pod",
-			PodNamespace: "default",
+			Namespace: "default",
 		},
 	}
 
-	// Test case: Pod not found
-	ctx := context.Background()
-	content := []byte("test content")
-	_, err := service.UploadFile(ctx, sandbox, "/workspace/file.txt", content)
+	// Test case: Successful upload
+	mockK8sClient.On("UploadFileToSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.FileRequest) bool {
+		return req.Path == "/workspace/file.txt" && string(req.Content) == "test content"
+	})).Return(&kubernetes.FileResult{
+		Path: "/workspace/file.txt",
+		Size: 12,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}, nil).Once()
+
+	fileInfo, err := service.UploadFile(context.Background(), sandbox, "/workspace/file.txt", []byte("test content"))
+	assert.NoError(t, err)
+	assert.Equal(t, "/workspace/file.txt", fileInfo.Path)
+	assert.Equal(t, int64(12), fileInfo.Size)
+
+	// Test case: Error
+	mockK8sClient.On("UploadFileToSandbox", mock.Anything, "default", "test-sandbox", mock.Anything).Return(nil, assert.AnError).Once()
+
+	_, err = service.UploadFile(context.Background(), sandbox, "/workspace/file.txt", []byte("test content"))
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get pod")
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -170,212 +232,31 @@ func TestDeleteFile(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
+	k8sClient := &kubernetes.Client{}
+	service, _ := New(log, k8sClient)
+	// Replace with our mock
 	service.k8sClient = mockK8sClient
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
-		},
-		Status: llmsafespacev1.SandboxStatus{
-			PodName:      "test-pod",
-			PodNamespace: "default",
-		},
-	}
-
-	// Test case: Pod not found
-	ctx := context.Background()
-	err := service.DeleteFile(ctx, sandbox, "/workspace/file.txt")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get pod")
-
-	mockK8sClient.AssertExpectations(t)
-}
-
-func TestGetPod(t *testing.T) {
-	// Create test dependencies
-	log, _ := logger.New(true, "debug", "console")
-	
-	// Create a fake clientset with a pod
-	clientset := fake.NewSimpleClientset(&corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
 			Namespace: "default",
 		},
-	})
-	
-	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(clientset)
-
-	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
-
-	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-sandbox",
-		},
-		Status: llmsafespacev1.SandboxStatus{
-			PodName:      "test-pod",
-			PodNamespace: "default",
-		},
 	}
 
-	// Test case: Pod found
-	ctx := context.Background()
-	// Since getPod is not exported, we'll need to test the public methods that use it
-	// This is a placeholder for the actual test
-	_, err := service.ListFiles(ctx, sandbox, "/workspace")
+	// Test case: Successful delete
+	mockK8sClient.On("DeleteFileInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.FileRequest) bool {
+		return req.Path == "/workspace/file.txt"
+	})).Return(nil).Once()
+
+	err := service.DeleteFile(context.Background(), sandbox, "/workspace/file.txt")
 	assert.NoError(t, err)
-	assert.NotNil(t, pod)
-	assert.Equal(t, "test-pod", pod.Name)
 
-	// Test case: Pod not found
-	sandbox.Status.PodName = "nonexistent"
-	// Since getPod is not exported, we'll need to test the public methods that use it
-	// This is a placeholder for the actual test
-	_, err = service.ListFiles(ctx, sandbox, "/workspace")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	// Test case: Error
+	mockK8sClient.On("DeleteFileInSandbox", mock.Anything, "default", "test-sandbox", mock.Anything).Return(assert.AnError).Once()
 
-	// Test case: Missing pod name
-	sandbox.Status.PodName = ""
-	// This is a private method, we need to test through public methods
-	_, err = service.ListFiles(ctx, sandbox, "/workspace")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "pod name not set")
-
-	mockK8sClient.AssertExpectations(t)
-}
-
-func TestValidatePath(t *testing.T) {
-	// Create test dependencies
-	log, _ := logger.New(true, "debug", "console")
-	
-	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
-
-	// Create the service
-	service, _ := New(log, &kubernetes.Client{})
-	// Replace the client with our mock
-	service.k8sClient = mockK8sClient
-
-	// Test cases
-	testCases := []struct {
-		path      string
-		expectErr bool
-		errMsg    string
-	}{
-		{"/workspace/file.txt", false, ""},
-		{"/workspace/dir/file.txt", false, ""},
-		{"../etc/passwd", true, "path must be absolute"},
-		{"", true, "path cannot be empty"},
-		{"/etc/passwd", true, "path must be under /workspace"},
-		{"/workspace/../etc/passwd", true, "path contains invalid components"},
-	}
-
-	for _, tc := range testCases {
-		err := service.validatePath(tc.path)
-		if tc.expectErr {
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tc.errMsg)
-		} else {
-			assert.NoError(t, err)
-		}
-	}
-}
-
-func TestParseFileInfo(t *testing.T) {
-	// Create test dependencies
-	log, _ := logger.New(true, "debug", "console")
-	
-	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
-
-	// Create the service
-	service, _ := New(log, mockK8sClient)
-
-	// Test cases
-	testCases := []struct {
-		output    string
-		expectErr bool
-		numFiles  int
-	}{
-		{
-			output: `-rw-r--r-- 1 user user 1024 Jan 1 12:00 file1.txt
--rw-r--r-- 1 user user 2048 Jan 2 13:00 file2.txt
-drwxr-xr-x 2 user user 4096 Jan 3 14:00 dir1`,
-			expectErr: false,
-			numFiles:  3,
-		},
-		{
-			output:    "invalid output",
-			expectErr: true,
-			numFiles:  0,
-		},
-		{
-			output:    "",
-			expectErr: false,
-			numFiles:  0,
-		},
-	}
-
-	for _, tc := range testCases {
-		files, err := service.parseFileInfo(tc.output, "/workspace")
-		if tc.expectErr {
-			assert.Error(t, err)
-		} else {
-			assert.NoError(t, err)
-			assert.Len(t, files, tc.numFiles)
-			
-			if tc.numFiles > 0 {
-				// Check first file
-				assert.Equal(t, "/workspace/file1.txt", files[0].Path)
-				assert.Equal(t, int64(1024), files[0].Size)
-				assert.False(t, files[0].IsDirectory)
-				
-				// Check directory
-				assert.Equal(t, "/workspace/dir1", files[2].Path)
-				assert.True(t, files[2].IsDirectory)
-			}
-		}
-	}
-}
-
-func TestExecCommand(t *testing.T) {
-	// Create test dependencies
-	log, _ := logger.New(true, "debug", "console")
-	
-	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{
-		Host: "https://localhost:8443",  // Invalid host to force error
-	})
-
-	// Create the service
-	service, _ := New(log, mockK8sClient)
-
-	// Create a test pod
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "default",
-		},
-	}
-
-	// Test case: Exec error
-	ctx := context.Background()
-	_, err := service.execCommand(ctx, pod, []string{"ls", "-la"})
+	err = service.DeleteFile(context.Background(), sandbox, "/workspace/file.txt")
 	assert.Error(t, err)
 
 	mockK8sClient.AssertExpectations(t)
