@@ -37,6 +37,12 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (
 		return nil, fmt.Errorf("failed to initialize database service: %w", err)
 	}
 
+	// Initialize cache service
+	cacheService, err := cache.New(cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize cache service: %w", err)
+	}
+
 	// Initialize auth service
 	authService, err := auth.New(cfg, log, dbService, cacheService)
 	if err != nil {
