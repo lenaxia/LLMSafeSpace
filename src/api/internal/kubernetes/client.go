@@ -13,7 +13,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -155,4 +154,14 @@ func (c *Client) RESTConfig() *rest.Config {
 // InformerFactory returns the informer factory
 func (c *Client) InformerFactory() informers.SharedInformerFactory {
 	return c.informerFactory
+}
+
+// LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group
+func (c *Client) LlmsafespaceV1() LLMSafespaceV1Interface {
+	client, err := newLLMSafespaceV1Client(c.restConfig)
+	if err != nil {
+		c.logger.Error("Failed to create LLMSafespaceV1Client", err)
+		return nil
+	}
+	return client
 }
