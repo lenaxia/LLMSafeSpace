@@ -90,9 +90,9 @@ func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*llmsafespacev1.Sa
 	return args.Get(0).(*llmsafespacev1.SandboxList), args.Error(1)
 }
 
-func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (interface{}, error) {
 	args := m.Called(opts)
-	return args.Get(0).(watch.Interface), args.Error(1)
+	return args.Get(0), args.Error(1)
 }
 
 type MockDatabaseService struct {
@@ -625,7 +625,7 @@ func TestFileOperations(t *testing.T) {
 	mockFileService.On("UploadFile", ctx, mock.Anything, path, content).Return(&file.FileInfo{
 		Path:        path,
 		Size:        13,
-		IsDirectory: false,
+		IsDir:       false,
 	}, nil).Once()
 
 	fileInfo, err := service.UploadFile(ctx, sandboxID, path, content)

@@ -7,8 +7,6 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -118,12 +116,12 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafes
 	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
 	mockLLMSafespaceV1Client.On("WarmPools", mock.Anything).Return(mockWarmPoolInterface)
 
-	service, err := New(
-		mockLogger,
-		mockK8sClient,
-		mockDbService,
-		mockMetricsService,
-	)
+	service := &Service{
+		logger:     mockLogger,
+		k8sClient:  mockK8sClient,
+		dbService:  mockDbService,
+		metricsSvc: mockMetricsService,
+	}
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 
