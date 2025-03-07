@@ -103,10 +103,10 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 	// Replace with our mocks
-	service.dbService = &database.Service{}
-	service.dbService = mockDbService.(*database.Service)
-	service.cacheService = &cache.Service{}
-	service.cacheService = mockCacheService.(*cache.Service)
+	var dbServiceInterface database.Service = mockDbService
+	var cacheServiceInterface cache.Service = mockCacheService
+	service.dbService = &dbServiceInterface
+	service.cacheService = &cacheServiceInterface
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", "valid-key").Return("user123", nil).Once()
