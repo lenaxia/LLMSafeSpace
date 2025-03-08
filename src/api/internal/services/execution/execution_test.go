@@ -2,7 +2,9 @@ package execution
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
@@ -139,6 +141,11 @@ func TestExecute(t *testing.T) {
 		},
 	}
 
+	// Set up mock expectation for ExecuteInSandbox
+	mockK8sClient.On("ExecuteInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
+		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.Timeout == 30
+	})).Return(nil, fmt.Errorf("pod not found")).Once()
+
 	// Test case: Pod not found
 	ctx := context.Background()
 	_, err := service.Execute(ctx, sandbox, "code", "print('Hello, World!')", 30)
@@ -170,6 +177,11 @@ func TestExecuteStream(t *testing.T) {
 			PodNamespace: "default",
 		},
 	}
+
+	// Set up mock expectation for ExecuteStreamInSandbox
+	mockK8sClient.On("ExecuteStreamInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
+		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.Timeout == 30 && req.Stream == true
+	}), mock.AnythingOfType("func(string, string)")).Return(nil, fmt.Errorf("pod not found")).Once()
 
 	// Test case: Pod not found
 	ctx := context.Background()
@@ -206,6 +218,11 @@ func TestInstallPackages(t *testing.T) {
 			PodNamespace: "default",
 		},
 	}
+
+	// Set up mock expectation for ExecuteInSandbox
+	mockK8sClient.On("ExecuteInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
+		return req.Type == "command" && req.Content == "pip install numpy pandas" && req.Timeout == 300
+	})).Return(nil, fmt.Errorf("pod not found")).Once()
 
 	// Test case: Pod not found
 	ctx := context.Background()
