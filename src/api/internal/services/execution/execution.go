@@ -13,7 +13,7 @@ import (
 // Service handles code and command execution
 type Service struct {
 	logger    *logger.Logger
-	k8sClient *kubernetes.Client
+	k8sClient interfaces.KubernetesClient
 }
 
 // Result represents the result of code or command execution
@@ -28,7 +28,7 @@ type Result struct {
 }
 
 // New creates a new execution service
-func New(logger *logger.Logger, k8sClient *kubernetes.Client) (*Service, error) {
+func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
