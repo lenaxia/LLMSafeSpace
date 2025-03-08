@@ -333,10 +333,12 @@ func TestRevokeToken(t *testing.T) {
 	}
 
 	// Test token revocation
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
+		mock.MatchedBy(func(key string) bool { return key[:6] == "token:" }), 
+		"revoked", mock.Anything).Return(nil).Once()
+	
 	err = service.RevokeToken(token)
-	// Since we haven't set up the mock expectations, this should fail
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to revoke token")
+	assert.NoError(t, err)
 
 	mockCacheService.AssertExpectations(t)
 }
