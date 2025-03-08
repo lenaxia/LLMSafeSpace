@@ -50,6 +50,11 @@ type CacheService interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key string, value string, expiration time.Duration) error
 	Delete(ctx context.Context, key string) error
+	GetObject(ctx context.Context, key string, value interface{}) error
+	SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
+	SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error
+	DeleteSession(ctx context.Context, sessionID string) error
 	Start() error
 	Stop() error
 }
