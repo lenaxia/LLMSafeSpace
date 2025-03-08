@@ -65,6 +65,35 @@ func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, n
 	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
 }
 
+func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*kubernetes.FileList), args.Error(1)
+}
+
+func (m *MockK8sClient) DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) ([]byte, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockK8sClient) UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileResult, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*kubernetes.FileResult), args.Error(1)
+}
+
+func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error {
+	args := m.Called(ctx, namespace, name, fileReq)
+	return args.Error(0)
+}
+
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
