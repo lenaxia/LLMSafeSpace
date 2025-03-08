@@ -65,14 +65,6 @@ func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, n
 	return args.Get(0).(*kubernetes.ExecutionResult), args.Error(1)
 }
 
-func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(kubernetes.LLMSafespaceV1Interface)
-}
-
 func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error) {
 	args := m.Called(ctx, namespace, name, fileReq)
 	if args.Get(0) == nil {
