@@ -107,9 +107,9 @@ type MockMetricsService struct {
 
 func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
 	log, _ := logger.New(true, "debug", "console")
-	mockK8s := new(MockK8sClient)
+	mockK8sClient := new(MockK8sClient)
 	mockLLMClient := new(MockLLMSafespaceV1Client)
-	mockWarmPool := new(MockWarmPoolInterface)
+	mockWarmPoolInterface := new(MockWarmPoolInterface)
 	mockDbService := new(MockDatabaseService)
 	mockMetricsService := new(MockMetricsService)
 
@@ -118,7 +118,7 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
 
 	service := &Service{
 		logger:     log,
-		k8sClient:  mockK8s,
+		k8sClient:  mockK8sClient,
 		dbService:  mockDbService,
 		metricsSvc: mockMetricsService,
 	}
