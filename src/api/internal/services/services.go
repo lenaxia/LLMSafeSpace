@@ -8,7 +8,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
