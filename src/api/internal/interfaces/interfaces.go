@@ -46,17 +46,17 @@ type CacheService interface {
 
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (interface{}, error)
-	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (interface{}, error)
+	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*kubernetes.ExecutionResult, error)
+	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*kubernetes.ExecutionResult, error)
 	Start() error
 	Stop() error
 }
 
 // FileService defines the interface for file services
 type FileService interface {
-	ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) (interface{}, error)
+	ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error)
 	DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error)
-	UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (interface{}, error)
+	UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error)
 	DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error
 	Start() error
 	Stop() error

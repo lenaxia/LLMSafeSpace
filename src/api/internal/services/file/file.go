@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
@@ -14,7 +15,7 @@ import (
 // Service handles file operations
 type Service struct {
 	logger    *logger.Logger
-	k8sClient *kubernetes.Client
+	k8sClient interfaces.KubernetesClient
 }
 
 // FileInfo represents information about a file
@@ -28,7 +29,7 @@ type FileInfo struct {
 }
 
 // New creates a new file service
-func New(logger *logger.Logger, k8sClient *kubernetes.Client) (*Service, error) {
+func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
