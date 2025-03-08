@@ -94,11 +94,6 @@ func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name
 	return args.Error(0)
 }
 
-func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error {
-	args := m.Called(ctx, namespace, name, fileReq)
-	return args.Error(0)
-}
-
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
