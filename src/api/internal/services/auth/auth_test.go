@@ -126,7 +126,7 @@ func TestNew(t *testing.T) {
 
 	// Test missing JWT secret
 	cfg.Auth.JWTSecret = ""
-	service, err = New(cfg, log, dbService, cacheService)
+	service, err = New(cfg, log, mockDb, mockCache)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT secret is required")
 	assert.Nil(t, service)
