@@ -403,15 +403,14 @@ func TestGetUserFromContext(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create service instances
-	var dbService services.DatabaseService = &database.Service{}
-	var cacheService services.CacheService = &cache.Service{}
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: User ID in context
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(nil)
+	c := &gin.Context{}
 	c.Set("userID", "user123")
 
 	userID := service.GetUserID(c)

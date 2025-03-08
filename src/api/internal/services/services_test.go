@@ -433,17 +433,17 @@ func (m *MockMetricsService) Stop() error {
 // Helper function to create a valid test config
 func createTestConfig() *config.Config {
 	return &config.Config{
-		Auth: config.AuthConfig{
+		Auth: config.Auth{
 			JWTSecret: "test-secret",
 		},
-		Database: config.DatabaseConfig{
+		Database: config.Database{
 			Host: "localhost",
 			Port: 5432,
 		},
-		Redis: config.RedisConfig{
+		Redis: config.Redis{
 			Host: "localhost",
 		},
-		Kubernetes: config.KubernetesConfig{
+		Kubernetes: config.Kubernetes{
 			ConfigPath: "test-config-path",
 		},
 	}
