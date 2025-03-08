@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
@@ -15,6 +16,9 @@ type Service struct {
 	logger    *logger.Logger
 	k8sClient interfaces.KubernetesClient
 }
+
+// Ensure Service implements the ExecutionService interface
+var _ interfaces.ExecutionService = (*Service)(nil)
 
 // Result represents the result of code or command execution
 type Result struct {

@@ -312,7 +312,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*file.FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*interfaces.FileInfo, error) {
 	// Get sandbox from Kubernetes
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {

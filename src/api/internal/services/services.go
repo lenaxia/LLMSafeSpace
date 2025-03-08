@@ -29,7 +29,7 @@ type Services struct {
 }
 
 // New creates and initializes all services
-func New(cfg *config.Config, log *logger.Logger, k8sClient *kubernetes.Client) (*Services, error) {
+func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
 	// Initialize metrics service first as other services may use it
 	metricsService := metrics.New()
 
