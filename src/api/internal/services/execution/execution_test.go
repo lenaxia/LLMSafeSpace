@@ -101,10 +101,6 @@ func TestNew(t *testing.T) {
 	
 	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
-	mockK8sClient.On("Start").Return(nil)
-	mockK8sClient.On("Stop").Return()
 	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
@@ -133,6 +129,7 @@ func TestExecute(t *testing.T) {
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
+			Namespace: "default",
 		},
 		Status: llmsafespacev1.SandboxStatus{
 			PodName:      "test-pod",
@@ -170,6 +167,7 @@ func TestExecuteStream(t *testing.T) {
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
+			Namespace: "default",
 		},
 		Status: llmsafespacev1.SandboxStatus{
 			PodName:      "test-pod",
@@ -208,6 +206,7 @@ func TestInstallPackages(t *testing.T) {
 	sandbox := &llmsafespacev1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
+			Namespace: "default",
 		},
 		Spec: llmsafespacev1.SandboxSpec{
 			Runtime: "python:3.10",
