@@ -9,12 +9,23 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Service handles code and command execution
 type Service struct {
 	logger    *logger.Logger
 	k8sClient interfaces.KubernetesClient
+}
+
+// Start initializes the execution service
+func (s *Service) Start() error {
+	return nil
+}
+
+// Stop cleans up the execution service
+func (s *Service) Stop() error {
+	return nil
 }
 
 // Ensure Service implements the ExecutionService interface
