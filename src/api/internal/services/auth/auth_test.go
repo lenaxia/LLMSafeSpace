@@ -119,8 +119,8 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
 	assert.Equal(t, cfg, service.config)
-	assert.Equal(t, dbService, service.dbService)
-	assert.Equal(t, cacheService, service.cacheService)
+	assert.Equal(t, mockDb, service.dbService)
+	assert.Equal(t, mockCache, service.cacheService)
 	assert.Equal(t, []byte("test-secret"), service.jwtSecret)
 	assert.Equal(t, 24*time.Hour, service.tokenDuration)
 
@@ -200,9 +200,6 @@ func TestGenerateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService interfaces.DatabaseService = mockDbService
-	var cacheService interfaces.CacheService = mockCacheService
-	
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test token generation
