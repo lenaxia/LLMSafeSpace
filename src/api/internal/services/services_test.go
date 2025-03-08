@@ -316,7 +316,6 @@ func (m *MockWarmPoolService) RemoveFromWarmPool(ctx context.Context, sandboxID 
 	return args.Error(0)
 }
 
-
 func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
 	args := m.Called(ctx, name, namespace)
 	if args.Get(0) == nil {
