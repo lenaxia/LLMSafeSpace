@@ -113,10 +113,8 @@ func TestNew(t *testing.T) {
 	
 	mockDb := new(MockDatabaseService)
 	mockCache := new(MockCacheService)
-	var dbService interfaces.DatabaseService = mockDb
-	var cacheService interfaces.CacheService = mockCache
 	
-	service, err := New(cfg, log, dbService, cacheService)
+	service, err := New(cfg, log, mockDb, mockCache)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
@@ -148,8 +146,6 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService interfaces.DatabaseService = mockDbService
-	var cacheService interfaces.CacheService = mockCacheService
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
@@ -318,13 +314,12 @@ func TestRevokeToken(t *testing.T) {
 	claims := parsedToken.Claims.(jwt.MapClaims)
 	
 	// Get token ID (jti) or use subject as fallback
-	jti, ok := claims["jti"].(string)
+	jti, _ := claims["jti"].(string)
 	if jti == "" {
 		jti = fmt.Sprintf("%v", claims["sub"])
 	}
 	
 	// Get expiration time
-	exp, _ := claims["exp"].(float64)
 
 	// Test token revocation
 	err = service.RevokeToken(token)
