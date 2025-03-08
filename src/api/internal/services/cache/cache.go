@@ -151,3 +151,63 @@ func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
 	}
 	return nil
 }
+
+// GetObject gets an object from the cache and unmarshals it into the provided value
+func (s *Service) GetObject(ctx context.Context, key string, value interface{}) error {
+	data, err := s.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get object from cache: %w", err)
+	}
+
+	err = json.Unmarshal(data, value)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal object from cache: %w", err)
+	}
+
+	return nil
+}
+
+// SetObject sets an object in the cache
+func (s *Service) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("failed to marshal object for cache: %w", err)
+	}
+
+	err = s.client.Set(ctx, key, data, expiration).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set object in cache: %w", err)
+	}
+
+	return nil
+}
+
+// GetSession gets a session from the cache
+func (s *Service) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
+	var session map[string]interface{}
+	err := s.GetObject(ctx, fmt.Sprintf("session:%s", sessionID), &session)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session from cache: %w", err)
+	}
+	return session, nil
+}
+
+// SetSession sets a session in the cache
+func (s *Service) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
+	err := s.SetObject(ctx, fmt.Sprintf("session:%s", sessionID), session, expiration)
+	if err != nil {
+		return fmt.Errorf("failed to set session in cache: %w", err)
+	}
+	return nil
+}
+
+// DeleteSession deletes a session from the cache
+func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
+	err := s.Delete(ctx, fmt.Sprintf("session:%s", sessionID))
+	if err != nil {
+		return fmt.Errorf("failed to delete session from cache: %w", err)
+	}
+	return nil
+}
