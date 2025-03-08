@@ -140,6 +140,8 @@ func TestExecute(t *testing.T) {
 	// Set up mock expectations
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
 	
 	// Set up mock expectation for ExecuteInSandbox
 	mockK8sClient.On("ExecuteInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
@@ -180,6 +182,8 @@ func TestExecuteStream(t *testing.T) {
 	}
 
 	// Set up mock expectations
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
 	
@@ -226,6 +230,8 @@ func TestInstallPackages(t *testing.T) {
 	}
 
 	// Set up mock expectations
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
 	
