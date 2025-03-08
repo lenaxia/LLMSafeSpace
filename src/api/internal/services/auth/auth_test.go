@@ -322,15 +322,14 @@ func TestRevokeToken(t *testing.T) {
 		jti = fmt.Sprintf("%v", claims["sub"])
 	}
 	
-	// Get expiration time
+	// Get and validate expiration time
 	expClaim, ok := claims["exp"]
 	if !ok {
-		return errors.New("token missing expiration claim")
+		t.Fatal("token missing expiration claim")
 	}
 	
-	exp, ok := expClaim.(float64)
-	if !ok {
-		return errors.New("invalid expiration time format in token")
+	if _, ok := expClaim.(float64); !ok {
+		t.Fatal("invalid expiration time format in token")
 	}
 
 	// Test token revocation
