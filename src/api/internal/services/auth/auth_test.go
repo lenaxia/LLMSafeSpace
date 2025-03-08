@@ -130,11 +130,6 @@ func (m *MockCacheService) DeleteSession(ctx context.Context, sessionID string) 
 	return args.Error(0)
 }
 
-func (m *MockCacheService) DeleteSession(ctx context.Context, sessionID string) error {
-	args := m.Called(ctx, sessionID)
-	return args.Error(0)
-}
-
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
