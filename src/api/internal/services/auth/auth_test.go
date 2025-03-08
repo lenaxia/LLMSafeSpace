@@ -112,8 +112,6 @@ func TestNew(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	mockDb := new(MockDatabaseService)
-	mockCache := new(MockCacheService)
-
 	var dbService interfaces.DatabaseService = mockDb
 	var cacheService interfaces.CacheService = mockCache
 	
@@ -143,10 +141,6 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
-	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
 	var dbService interfaces.DatabaseService = mockDbService
@@ -319,7 +313,7 @@ func TestRevokeToken(t *testing.T) {
 	claims := parsedToken.Claims.(jwt.MapClaims)
 	
 	// Get token ID (jti) or use subject as fallback
-	jti, _ := claims["jti"].(string)
+	jti, ok := claims["jti"].(string)
 	if jti == "" {
 		jti = fmt.Sprintf("%v", claims["sub"])
 	}
@@ -328,7 +322,7 @@ func TestRevokeToken(t *testing.T) {
 	exp, _ := claims["exp"].(float64)
 
 	// Test token revocation
-	err := service.RevokeToken(token)
+	err = service.RevokeToken(token)
 	// Since we haven't set up the mock expectations, this should fail
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to revoke token")
