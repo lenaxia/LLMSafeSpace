@@ -6,11 +6,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
-	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// FileInfo represents file metadata
+type FileInfo struct {
+	Path      string    `json:"path"`
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	IsDir     bool      `json:"is_dir"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 
 // AuthService defines the interface for authentication services
 type AuthService interface {
@@ -55,9 +64,9 @@ type ExecutionService interface {
 
 // FileService defines the interface for file services
 type FileService interface {
-	ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error)
+	ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]FileInfo, error)
 	DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error)
-	UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error)
+	UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*FileInfo, error)
 	DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error
 	Start() error
 	Stop() error
