@@ -278,7 +278,7 @@ func TestValidateToken(t *testing.T) {
 	extractedUserID, err = service.ValidateToken(tokenString)
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
-	assert.Contains(t, err.Error(), "token has expired")
+	assert.Contains(t, err.Error(), "token is expired", "should detect expired token")
 
 	// Test case: Revoked token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("revoked", nil).Once()
@@ -323,6 +323,15 @@ func TestRevokeToken(t *testing.T) {
 	}
 	
 	// Get expiration time
+	expClaim, ok := claims["exp"]
+	if !ok {
+		return errors.New("token missing expiration claim")
+	}
+	
+	exp, ok := expClaim.(float64)
+	if !ok {
+		return errors.New("invalid expiration time format in token")
+	}
 
 	// Test token revocation
 	err = service.RevokeToken(token)
