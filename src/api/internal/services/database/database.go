@@ -69,11 +69,11 @@ func (s *Service) Stop() error {
 }
 
 import (
-	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 )
 
 // Ensure Service implements the DatabaseService interface
-var _ services.DatabaseService = (*Service)(nil) // Compile-time interface check
+var _ interfaces.DatabaseService = (*Service)(nil) // Compile-time interface check
 
 // Ping checks the database connection
 func (s *Service) Ping(ctx context.Context) error {

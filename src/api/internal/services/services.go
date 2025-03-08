@@ -1,13 +1,10 @@
 package services
 
 import (
-	"context"
 	"fmt"
-	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
@@ -18,108 +15,17 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
-)
-
-// Service interfaces
-type (
-	// AuthService defines the interface for authentication services
-	AuthService interface {
-		GetUserID(c *gin.Context) string
-		CheckResourceAccess(userID, resourceType, resourceID, action string) bool
-		GenerateToken(userID string) (string, error)
-		ValidateToken(token string) (string, error)
-		AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
-		AuthMiddleware() gin.HandlerFunc
-		Start() error
-		Stop() error
-	}
-
-	// DatabaseService defines the interface for database services
-	DatabaseService interface {
-		GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error)
-		GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error)
-		ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
-		CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
-		CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
-		GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error)
-		Start() error
-		Stop() error
-	}
-
-	// ExecutionService defines the interface for execution services
-	ExecutionService interface {
-		ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error)
-		ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*execution.Result, error)
-		Start() error
-		Stop() error
-	}
-
-	// FileService defines the interface for file services
-	FileService interface {
-		ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error)
-		DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error)
-		UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error)
-		DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error
-		Start() error
-		Stop() error
-	}
-
-	// MetricsService defines the interface for metrics services
-	MetricsService interface {
-		RecordRequest(method, path string, status int, duration time.Duration, size int)
-		RecordSandboxCreation(runtime string, warmPodUsed bool)
-		RecordSandboxTermination(runtime string)
-		RecordExecution(execType, runtime, status string, duration time.Duration)
-		IncActiveConnections()
-		DecActiveConnections()
-		RecordWarmPoolHit()
-		Start() error
-		Stop() error
-	}
-
-	// SandboxService defines the interface for sandbox services
-	SandboxService interface {
-		CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error)
-		GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error)
-		ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
-		TerminateSandbox(ctx context.Context, sandboxID string) error
-		GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error)
-		Execute(ctx context.Context, req sandbox.ExecuteRequest) (*execution.Result, error)
-		ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error)
-		DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error)
-		UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*file.FileInfo, error)
-		DeleteFile(ctx context.Context, sandboxID, path string) error
-		InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*execution.Result, error)
-		CreateSession(userID, sandboxID string, conn *websocket.Conn) (*sandbox.Session, error)
-		CloseSession(sessionID string)
-		HandleSession(session *sandbox.Session)
-		GetMetrics() map[string]interface{}
-		Start() error
-		Stop() error
-	}
-
-	// WarmPoolService defines the interface for warm pool services
-	WarmPoolService interface {
-		GetWarmSandbox(ctx context.Context, runtime string) (string, error)
-		AddToWarmPool(ctx context.Context, sandboxID, runtime string) error
-		RemoveFromWarmPool(ctx context.Context, sandboxID string) error
-		GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error)
-		GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
-		Start() error
-		Stop() error
-	}
 )
 
 // Services holds all application services
 type Services struct {
-	Auth      AuthService
-	Database  DatabaseService
-	Execution ExecutionService
-	File      FileService
-	Metrics   MetricsService
-	Sandbox   SandboxService
-	WarmPool  WarmPoolService
+	Auth      interfaces.AuthService
+	Database  interfaces.DatabaseService
+	Execution interfaces.ExecutionService
+	File      interfaces.FileService
+	Metrics   interfaces.MetricsService
+	Sandbox   interfaces.SandboxService
+	WarmPool  interfaces.WarmPoolService
 }
 
 // New creates and initializes all services

@@ -10,8 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services"
-	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -23,7 +22,7 @@ type MockDatabaseService struct {
 }
 
 // Ensure MockDatabaseService implements the DatabaseService interface
-var _ services.DatabaseService = (*MockDatabaseService)(nil)
+var _ interfaces.DatabaseService = (*MockDatabaseService)(nil)
 
 func (m *MockDatabaseService) Start() error {
 	args := m.Called()
@@ -115,8 +114,8 @@ func TestNew(t *testing.T) {
 	mockDb := new(MockDatabaseService)
 	mockCache := new(MockCacheService)
 
-	var dbService services.DatabaseService = mockDb
-	var cacheService services.CacheService = mockCache
+	var dbService interfaces.DatabaseService = mockDb
+	var cacheService interfaces.CacheService = mockCache
 	
 	service, err := New(cfg, log, dbService, cacheService)
 	assert.NoError(t, err)

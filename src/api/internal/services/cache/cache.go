@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 )
 
@@ -17,6 +18,9 @@ type Service struct {
 	config *config.Config
 	client *redis.Client
 }
+
+// Ensure Service implements the CacheService interface
+var _ interfaces.CacheService = (*Service)(nil) // Compile-time interface check
 
 // New creates a new cache service
 func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
