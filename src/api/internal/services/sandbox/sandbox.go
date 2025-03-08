@@ -24,14 +24,17 @@ import (
 // Service handles sandbox operations
 type Service struct {
 	logger        *logger.Logger
-	k8sClient     *kubernetes.Client
-	dbService     *database.Service
-	warmPoolSvc   *warmpool.Service
-	fileSvc       *file.Service
-	executionSvc  *execution.Service
-	metricsSvc    *metrics.Service
+	k8sClient     interfaces.KubernetesClient
+	dbService     interfaces.DatabaseService
+	warmPoolSvc   interfaces.WarmPoolService
+	fileSvc       interfaces.FileService
+	executionSvc  interfaces.ExecutionService
+	metricsSvc    interfaces.MetricsService
 	sessionMgr    *SessionManager
 }
+
+// Ensure Service implements interfaces.SandboxService
+var _ interfaces.SandboxService = (*Service)(nil)
 
 // CreateSandboxRequest defines the request for creating a sandbox
 type CreateSandboxRequest struct {

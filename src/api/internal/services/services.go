@@ -29,6 +29,9 @@ type Services struct {
 	WarmPool  interfaces.WarmPoolService
 }
 
+// Ensure Services implements the required interfaces
+var _ interfaces.Services = (*Services)(nil)
+
 // New creates and initializes all services
 func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
 	// Initialize metrics service first as other services may use it
