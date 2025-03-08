@@ -237,7 +237,6 @@ func TestGenerateToken(t *testing.T) {
 func TestValidateToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	mockCacheService := new(MockCacheService)
 	
 	// Create service
 	cfg := &config.Config{}
@@ -249,10 +248,8 @@ func TestValidateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService interfaces.DatabaseService = mockDbService
-	var cacheService interfaces.CacheService = mockCacheService
-	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	assert.NoError(t, err)
 
 	// Generate a valid token
 	userID := "user123"
@@ -299,7 +296,6 @@ func TestValidateToken(t *testing.T) {
 func TestRevokeToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	mockCacheService := new(MockCacheService)
 	
 	// Create service
 	cfg := &config.Config{}
@@ -310,7 +306,8 @@ func TestRevokeToken(t *testing.T) {
 	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	assert.NoError(t, err)
 
 	// Generate a token
 	token, _ := service.GenerateToken("user123")
@@ -329,7 +326,6 @@ func TestRevokeToken(t *testing.T) {
 	
 	// Get expiration time
 	exp, _ := claims["exp"].(float64)
-	expTime := time.Unix(int64(exp), 0)
 
 	// Test token revocation
 	err := service.RevokeToken(token)
@@ -343,7 +339,6 @@ func TestRevokeToken(t *testing.T) {
 func TestCheckResourceAccess(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	mockDbService := new(MockDatabaseService)
 	
 	// Create service
 	cfg := &config.Config{}
@@ -352,9 +347,11 @@ func TestCheckResourceAccess(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	assert.NoError(t, err)
 
 	// Create a mock gin context
 	gin.SetMode(gin.TestMode)
