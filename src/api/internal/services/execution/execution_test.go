@@ -137,6 +137,10 @@ func TestExecute(t *testing.T) {
 		},
 	}
 
+	// Set up mock expectations
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
+	
 	// Set up mock expectation for ExecuteInSandbox
 	mockK8sClient.On("ExecuteInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
 		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.Timeout == 30
@@ -175,6 +179,10 @@ func TestExecuteStream(t *testing.T) {
 		},
 	}
 
+	// Set up mock expectations
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
+	
 	// Set up mock expectation for ExecuteStreamInSandbox
 	mockK8sClient.On("ExecuteStreamInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
 		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.Timeout == 30 && req.Stream == true
@@ -217,6 +225,10 @@ func TestInstallPackages(t *testing.T) {
 		},
 	}
 
+	// Set up mock expectations
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Once()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Once()
+	
 	// Set up mock expectation for ExecuteInSandbox
 	mockK8sClient.On("ExecuteInSandbox", mock.Anything, "default", "test-sandbox", mock.MatchedBy(func(req *kubernetes.ExecutionRequest) bool {
 		return req.Type == "command" && req.Content == "pip install numpy pandas" && req.Timeout == 300
