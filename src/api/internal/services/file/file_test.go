@@ -85,9 +85,9 @@ func TestNew(t *testing.T) {
 	
 	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
+	var k8sClient interfaces.KubernetesClient = mockK8sClient
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
-	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
 	service, err := New(log, k8sClient)
