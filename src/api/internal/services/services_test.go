@@ -496,16 +496,22 @@ func TestStartStop(t *testing.T) {
 	// Create mock services
 	mockDb := new(MockDatabaseService)
 	
+	// Create mock cache service
+	mockCache := new(MockCacheService)
+	
 	// Create services struct with mocks
 	services := &Services{
 		Database: mockDb,
+		Cache: mockCache,
 	}
 	
 	// Test successful start
 	mockDb.On("Start").Return(nil).Once()
+	mockCache.On("Start").Return(nil).Once()
 	err := services.Start()
 	assert.NoError(t, err)
 	mockDb.AssertExpectations(t)
+	mockCache.AssertExpectations(t)
 
 	// Test start failure
 	mockDb.On("Start").Return(errors.New("start error")).Once()
@@ -516,9 +522,11 @@ func TestStartStop(t *testing.T) {
 
 	// Test successful stop
 	mockDb.On("Stop").Return(nil).Once()
+	mockCache.On("Stop").Return(nil).Once()
 	err = services.Stop()
 	assert.NoError(t, err)
 	mockDb.AssertExpectations(t)
+	mockCache.AssertExpectations(t)
 
 	// Test stop failure
 	mockDb.On("Stop").Return(errors.New("stop error")).Once()
