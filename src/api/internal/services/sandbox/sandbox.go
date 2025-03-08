@@ -239,7 +239,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*llms
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*execution.Result, error) {
+func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.Result, error) {
 	// Get sandbox from Kubernetes
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
 	if err != nil {
@@ -357,7 +357,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 }
 
 // InstallPackages installs packages in a sandbox
-func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesRequest) (*execution.Result, error) {
+func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesRequest) (*interfaces.Result, error) {
 	// Get sandbox from Kubernetes
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
 	if err != nil {
