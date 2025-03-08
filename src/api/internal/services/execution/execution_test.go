@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,6 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
 }
 
 func (m *MockK8sClient) Start() error {
@@ -69,15 +69,16 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create a mock K8s client
+	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 	mockK8sClient.On("Start").Return(nil)
 	mockK8sClient.On("Stop").Return()
+	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
-	service, err := New(log, mockK8sClient)
+	service, err := New(log, k8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)

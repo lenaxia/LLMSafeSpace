@@ -20,7 +20,6 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
 }
 
 func (m *MockK8sClient) Start() error {
@@ -83,13 +82,14 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create a mock K8s client
+	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
 	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
+	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
-	service, err := New(log, mockK8sClient)
+	service, err := New(log, k8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
