@@ -145,6 +145,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	var cacheService interfaces.CacheService = mockCacheService
 	
 	// Create service with mocks
