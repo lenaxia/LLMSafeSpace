@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/rest"
 	k8s "k8s.io/client-go/kubernetes"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 

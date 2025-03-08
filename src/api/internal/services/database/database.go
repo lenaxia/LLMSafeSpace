@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 )
 
@@ -67,10 +68,6 @@ func (s *Service) Stop() error {
 	s.Logger.Info("Stopping database service")
 	return s.DB.Close()
 }
-
-import (
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-)
 
 // Ensure Service implements the DatabaseService interface
 var _ interfaces.DatabaseService = (*Service)(nil) // Compile-time interface check
