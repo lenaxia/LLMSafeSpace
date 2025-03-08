@@ -9,18 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services"
-	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 )
 
 // Service handles authentication and authorization
 type Service struct {
 	logger        *logger.Logger
 	config        *config.Config
-	dbService     services.DatabaseService
-	cacheService  services.CacheService
+	dbService     interfaces.DatabaseService
+	cacheService  interfaces.CacheService
 	jwtSecret     []byte
 	tokenDuration time.Duration
 }
@@ -65,7 +63,7 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 }
 
 // New creates a new auth service
-func New(cfg *config.Config, log *logger.Logger, dbService services.DatabaseService, cacheService services.CacheService) (*Service, error) {
+func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseService, cacheService interfaces.CacheService) (*Service, error) {
 	if cfg.Auth.JWTSecret == "" {
 		return nil, errors.New("JWT secret is required")
 	}
