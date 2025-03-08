@@ -30,8 +30,8 @@ type Client struct {
 	stopCh          chan struct{}
 }
 
-// Ensure Client implements interfaces.KubernetesClient
-var _ interfaces.KubernetesClient = (*Client)(nil)
+// Ensure Client implements KubernetesClient
+var _ KubernetesClient = (*Client)(nil)
 
 // New creates a new Kubernetes client
 func New(cfg *config.Config, logger *logger.Logger) (*Client, error) {
