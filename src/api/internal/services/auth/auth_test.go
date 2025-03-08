@@ -149,8 +149,8 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService services.DatabaseService = mockDbService
-	var cacheService services.CacheService = mockCacheService
+	var dbService interfaces.DatabaseService = mockDbService
+	var cacheService interfaces.CacheService = mockCacheService
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 
@@ -206,8 +206,8 @@ func TestGenerateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService services.DatabaseService = mockDbService
-	var cacheService services.CacheService = mockCacheService
+	var dbService interfaces.DatabaseService = mockDbService
+	var cacheService interfaces.CacheService = mockCacheService
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 
@@ -250,8 +250,8 @@ func TestValidateToken(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
-	var dbService services.DatabaseService = mockDbService
-	var cacheService services.CacheService = mockCacheService
+	var dbService interfaces.DatabaseService = mockDbService
+	var cacheService interfaces.CacheService = mockCacheService
 	
 	service, _ := New(cfg, log, dbService, cacheService)
 
