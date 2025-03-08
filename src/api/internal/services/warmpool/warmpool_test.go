@@ -123,7 +123,7 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
 		metricsSvc: mockMetricsService,
 	}
 
-	return service, mockK8s
+	return service, mockK8sClient
 }
 
 func TestCheckAvailability(t *testing.T) {
@@ -134,7 +134,7 @@ func TestCheckAvailability(t *testing.T) {
 	securityLevel := "standard"
 
 	// Test case: Available warm pods
-	mockLLMClient.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+	mockWarmPoolInterface.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
 		selector, err := labels.Parse("runtime=python-3.10,security-level=standard")
 		if err != nil {
 			return false
@@ -155,7 +155,7 @@ func TestCheckAvailability(t *testing.T) {
 	assert.True(t, available)
 
 	// Test case: No available warm pods
-	mockLLMClient.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
+	mockWarmPoolInterface.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
 		Items: []llmsafespacev1.WarmPool{
 			{
 				Status: llmsafespacev1.WarmPoolStatus{
@@ -170,7 +170,7 @@ func TestCheckAvailability(t *testing.T) {
 	assert.False(t, available)
 
 	// Test case: No matching warm pools
-	mockLLMClient.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
+	mockWarmPoolInterface.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
 		Items: []llmsafespacev1.WarmPool{},
 	}, nil).Once()
 
@@ -179,14 +179,14 @@ func TestCheckAvailability(t *testing.T) {
 	assert.False(t, available)
 
 	// Test case: Error listing warm pools
-	mockLLMClient.On("List", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
+	mockWarmPoolInterface.On("List", mock.Anything).Return(nil, errors.New("kubernetes error")).Once()
 
 	available, err = service.CheckAvailability(ctx, runtime, securityLevel)
 	assert.Error(t, err)
 	assert.False(t, available)
 	assert.Contains(t, err.Error(), "failed to list warm pools")
 
-	mockLLMClient.AssertExpectations(t)
+	mockWarmPoolInterface.AssertExpectations(t)
 	mockK8s.AssertExpectations(t)
 }
 

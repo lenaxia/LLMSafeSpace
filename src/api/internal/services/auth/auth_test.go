@@ -146,13 +146,11 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
-	var cacheService interfaces.CacheService = mockCacheService
 	
 	// Create service with mocks
 	var dbService interfaces.DatabaseService = mockDbService
-	var cacheService interfaces.CacheService = mockCacheService
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
 	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "valid-key").Return("user123", nil).Once()
@@ -209,7 +207,7 @@ func TestGenerateToken(t *testing.T) {
 	var dbService interfaces.DatabaseService = mockDbService
 	var cacheService interfaces.CacheService = mockCacheService
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test token generation
 	userID := "user123"
@@ -253,7 +251,7 @@ func TestValidateToken(t *testing.T) {
 	var dbService interfaces.DatabaseService = mockDbService
 	var cacheService interfaces.CacheService = mockCacheService
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Generate a valid token
 	userID := "user123"
@@ -311,7 +309,7 @@ func TestRevokeToken(t *testing.T) {
 	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, dbService, cacheService)
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Generate a token
 	token, _ := service.GenerateToken("user123")

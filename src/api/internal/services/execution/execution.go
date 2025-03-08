@@ -40,13 +40,13 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service
 }
 
 // ExecuteCode executes code in a sandbox
-func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*kubernetes.ExecutionResult, error) {
+func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*Result, error) {
 	sandbox := &llmsafespacev1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: sandboxID}}
 	return s.Execute(ctx, sandbox, "code", code, timeout)
 }
 
 // ExecuteCommand executes a command in a sandbox
-func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*kubernetes.ExecutionResult, error) {
+func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*Result, error) {
 	sandbox := &llmsafespacev1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: sandboxID}}
 	return s.Execute(ctx, sandbox, "command", command, timeout)
 }
