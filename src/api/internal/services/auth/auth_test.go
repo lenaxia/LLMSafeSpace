@@ -256,6 +256,9 @@ func TestValidateToken(t *testing.T) {
 	assert.Equal(t, userID, extractedUserID)
 
 	// Test case: Invalid token
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:invalid-token").
+		Return("", errors.New("not found")).Once()
+	
 	extractedUserID, err = service.ValidateToken("invalid-token")
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
@@ -268,6 +271,9 @@ func TestValidateToken(t *testing.T) {
 		"iat": time.Now().Add(-2 * time.Hour).Unix(),
 	})
 	tokenString, _ := expiredToken.SignedString(service.jwtSecret)
+
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+tokenString).
+		Return("", errors.New("not found")).Once()
 
 	extractedUserID, err = service.ValidateToken(tokenString)
 	assert.Error(t, err)
