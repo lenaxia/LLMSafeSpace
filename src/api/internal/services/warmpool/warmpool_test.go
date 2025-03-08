@@ -196,8 +196,8 @@ func TestCreateWarmPool(t *testing.T) {
 	// Setup mocks
 	mockLLMClient := new(MockLLMSafespaceV1Client)
 	mockWarmPool := new(MockWarmPoolInterface)
-	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
-	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
+	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPoolInterface)
 
 	ctx := context.Background()
 	req := CreateWarmPoolRequest{
