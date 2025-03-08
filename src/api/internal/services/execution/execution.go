@@ -18,6 +18,9 @@ type Service struct {
 	k8sClient interfaces.KubernetesClient
 }
 
+// Ensure Service implements interfaces.ExecutionService
+var _ interfaces.ExecutionService = (*Service)(nil)
+
 // Start initializes the execution service
 func (s *Service) Start() error {
 	return nil

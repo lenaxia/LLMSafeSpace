@@ -18,6 +18,9 @@ type Service struct {
 	k8sClient interfaces.KubernetesClient
 }
 
+// Ensure Service implements interfaces.FileService
+var _ interfaces.FileService = (*Service)(nil)
+
 // Ensure Service implements the FileService interface
 var _ interfaces.FileService = (*Service)(nil)
 
