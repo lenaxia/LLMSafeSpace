@@ -351,7 +351,7 @@ func TestCheckResourceAccess(t *testing.T) {
 	mockDbService := new(MockDatabaseService)
 	
 	// Create service with mocks
-	service, _ := New(cfg, log, mockDbService, &cache.Service{})
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Create a mock gin context
 	gin.SetMode(gin.TestMode)
