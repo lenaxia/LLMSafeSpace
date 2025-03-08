@@ -21,6 +21,7 @@ import (
 type Services struct {
 	Auth      interfaces.AuthService
 	Database  interfaces.DatabaseService
+	Cache     interfaces.CacheService
 	Execution interfaces.ExecutionService
 	File      interfaces.FileService
 	Metrics   interfaces.MetricsService
@@ -78,6 +79,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 	return &Services{
 		Auth:      authService,
 		Database:  dbService,
+		Cache:     cacheService,
 		Execution: executionService,
 		File:      fileService,
 		Metrics:   metricsService,
@@ -98,8 +100,15 @@ func (s *Services) Start() error {
 		return fmt.Errorf("failed to start database service: %w", err)
 	}
 	
+	if err := s.Cache.Start(); err != nil {
+		s.Database.Stop() // Clean up database if cache fails
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start cache service: %w", err)
+	}
+	
 	if err := s.Auth.Start(); err != nil {
-		s.Database.Stop() // Clean up database if auth fails
+		s.Cache.Stop() // Clean up cache if auth fails
+		s.Database.Stop()
 		s.Metrics.Stop()
 		return fmt.Errorf("failed to start auth service: %w", err)
 	}
@@ -164,6 +173,10 @@ func (s *Services) Stop() error {
 	
 	if err := s.Auth.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to stop auth service: %w", err))
+	}
+	
+	if err := s.Cache.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop cache service: %w", err))
 	}
 	
 	if err := s.Database.Stop(); err != nil {
