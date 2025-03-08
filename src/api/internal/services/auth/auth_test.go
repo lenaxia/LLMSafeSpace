@@ -112,8 +112,8 @@ func TestNew(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	mockDb := new(MockDatabaseService)
-	var dbService interfaces.DatabaseService = mockDb
 	mockCache := new(MockCacheService)
+	var dbService interfaces.DatabaseService = mockDb
 	var cacheService interfaces.CacheService = mockCache
 	
 	service, err := New(cfg, log, dbService, cacheService)
@@ -148,6 +148,8 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService := new(MockCacheService)
 	
 	// Create service with mocks
+	var dbService interfaces.DatabaseService = mockDbService
+	var cacheService interfaces.CacheService = mockCacheService
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
@@ -306,8 +308,8 @@ func TestRevokeToken(t *testing.T) {
 	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
 
-	// Generate a token
-	token, _ := service.GenerateToken("user123")
+	// Generate a valid token
+	token, err := service.GenerateToken("user123")
 
 	// Parse the token to get the jti claim
 	parsedToken, _ := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
