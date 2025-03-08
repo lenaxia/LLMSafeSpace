@@ -18,16 +18,6 @@ type Service struct {
 	k8sClient interfaces.KubernetesClient
 }
 
-// FileInfo represents information about a file
-type FileInfo struct {
-	Path      string    `json:"path"`
-	Name      string    `json:"name"`
-	Size      int64     `json:"size"`
-	IsDir     bool      `json:"isDir"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
 // New creates a new file service
 func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{
@@ -47,7 +37,7 @@ func (s *Service) Stop() error {
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]interfaces.FileInfo, error) {
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -60,9 +50,9 @@ func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox
 	}
 
 	// Convert to FileInfo
-	files := make([]FileInfo, len(fileList.Files))
+	files := make([]interfaces.FileInfo, len(fileList.Files))
 	for i, file := range fileList.Files {
-		files[i] = FileInfo{
+		files[i] = interfaces.FileInfo{
 			Path:      file.Path,
 			Name:      filepath.Base(file.Path),
 			Size:      file.Size,
@@ -92,7 +82,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sand
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*interfaces.FileInfo, error) {
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path:    path,
@@ -106,7 +96,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbo
 	}
 
 	// Return file info
-	return &FileInfo{
+	return &interfaces.FileInfo{
 		Path:      fileResult.Path,
 		Name:      filepath.Base(fileResult.Path),
 		Size:      fileResult.Size,
