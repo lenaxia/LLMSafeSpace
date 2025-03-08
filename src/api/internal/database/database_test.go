@@ -71,6 +71,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 	// Test case: Valid API key
 	apiKey := "test_api_key"
 	expectedUserID := "user123"
+	ctx := context.Background()
 
 	// Set up expectations for valid API key
 	rows := sqlmock.NewRows([]string{"user_id"}).AddRow(expectedUserID)
@@ -79,7 +80,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	userID, err := service.GetUserIDByAPIKey(apiKey)
+	userID, err := service.GetUserIDByAPIKey(ctx, apiKey)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -89,12 +90,13 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 
 	// Test case: Invalid API key
 	invalidKey := "invalid_key"
+	ctx = context.Background()
 	mock.ExpectQuery("SELECT user_id FROM api_keys WHERE key = \\$1 AND active = true").
 		WithArgs(invalidKey).
 		WillReturnError(sql.ErrNoRows)
 
 	// Call the method
-	userID, err = service.GetUserIDByAPIKey(invalidKey)
+	userID, err = service.GetUserIDByAPIKey(ctx, invalidKey)
 	if err != nil {
 		t.Errorf("Expected no error for invalid key, got %v", err)
 	}
