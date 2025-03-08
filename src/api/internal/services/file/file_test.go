@@ -41,6 +41,14 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
+func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(kubernetes.LLMSafespaceV1Interface)
+}
+
 func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error) {
 	args := m.Called(ctx, namespace, name, execReq)
 	if args.Get(0) == nil {
@@ -87,11 +95,6 @@ func (m *MockK8sClient) UploadFileToSandbox(ctx context.Context, namespace, name
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*kubernetes.FileResult), args.Error(1)
-}
-
-func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error {
-	args := m.Called(ctx, namespace, name, fileReq)
-	return args.Error(0)
 }
 
 func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error {
