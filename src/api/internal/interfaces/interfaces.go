@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	servicesexecution "github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -56,8 +57,8 @@ type CacheService interface {
 
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error)
-	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*execution.Result, error)
+	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*servicesexecution.Result, error)
+	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*servicesexecution.Result, error)
 	Start() error
 	Stop() error
 }
