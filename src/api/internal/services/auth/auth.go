@@ -254,6 +254,9 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
+		if cachedUserID == "revoked" {
+			return "", errors.New("token has been revoked")
+		}
 		return cachedUserID, nil
 	}
 
