@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
