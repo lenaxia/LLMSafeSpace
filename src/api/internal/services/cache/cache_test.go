@@ -10,20 +10,18 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupMockRedis(t *testing.T) (*Service, *miniredis.Miniredis, func()) {
 	// Create a mock Redis server
 	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("Failed to create mock Redis: %v", err)
-	}
+	require.NoError(t, err, "Failed to create mock Redis")
 
 	// Create a mock logger
 	mockLogger, err := logger.New(true, "debug", "console")
-	if err != nil {
-		t.Fatalf("Failed to create mock logger: %v", err)
-	}
+	require.NoError(t, err, "Failed to create mock logger")
 
 	// Create a mock config
 	mockConfig := &config.Config{}
@@ -55,6 +53,45 @@ func setupMockRedis(t *testing.T) (*Service, *miniredis.Miniredis, func()) {
 	}
 }
 
+// TestNew tests the New function
+func TestNew(t *testing.T) {
+	// Start a mock Redis server
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	// Create test dependencies
+	log, err := logger.New(true, "debug", "console")
+	require.NoError(t, err)
+	
+	// Create a valid config
+	cfg := &config.Config{}
+	cfg.Redis.Host = mr.Host()
+	cfg.Redis.Port, _ = strconv.Atoi(mr.Port())
+	cfg.Redis.Password = ""
+	cfg.Redis.DB = 0
+	cfg.Redis.PoolSize = 10
+
+	// Test successful creation
+	service, err := New(cfg, log)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	
+	// Clean up
+	err = service.Stop()
+	assert.NoError(t, err)
+
+	// Test connection failure
+	badCfg := &config.Config{}
+	badCfg.Redis.Host = "nonexistent"
+	badCfg.Redis.Port = 6379
+	
+	service, err = New(badCfg, log)
+	assert.Error(t, err)
+	assert.Nil(t, service)
+	assert.Contains(t, err.Error(), "failed to connect to Redis")
+}
+
 func TestPingCache(t *testing.T) {
 	service, _, cleanup := setupMockRedis(t)
 	defer cleanup()
@@ -62,9 +99,7 @@ func TestPingCache(t *testing.T) {
 	// Call the Ping method
 	ctx := context.Background()
 	err := service.Ping(ctx)
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from Ping")
 }
 
 func TestGetSetDelete(t *testing.T) {
@@ -77,43 +112,29 @@ func TestGetSetDelete(t *testing.T) {
 
 	// Test Set
 	err := service.Set(ctx, key, value, time.Minute)
-	if err != nil {
-		t.Errorf("Expected no error from Set, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from Set")
 
 	// Verify value was set in mock Redis
-	if got, err := mr.Get(key); err != nil || got != value {
-		t.Errorf("Expected value %q in Redis, got %q, err: %v", value, got, err)
-	}
+	got, err := mr.Get(key)
+	assert.NoError(t, err, "Expected no error getting value from miniredis")
+	assert.Equal(t, value, got, "Expected value %q in Redis, got %q", value, got)
 
 	// Test Get
 	gotValue, err := service.Get(ctx, key)
-	if err != nil {
-		t.Errorf("Expected no error from Get, got %v", err)
-	}
-	if gotValue != value {
-		t.Errorf("Expected value %q, got %q", value, gotValue)
-	}
+	assert.NoError(t, err, "Expected no error from Get")
+	assert.Equal(t, value, gotValue, "Expected value %q, got %q", value, gotValue)
 
 	// Test Delete
 	err = service.Delete(ctx, key)
-	if err != nil {
-		t.Errorf("Expected no error from Delete, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from Delete")
 
 	// Verify key was deleted
-	if mr.Exists(key) {
-		t.Errorf("Expected key %q to be deleted", key)
-	}
+	assert.False(t, mr.Exists(key), "Expected key %q to be deleted", key)
 
 	// Test Get non-existent key
 	gotValue, err = service.Get(ctx, "non_existent_key")
-	if err != nil {
-		t.Errorf("Expected no error for non-existent key, got %v", err)
-	}
-	if gotValue != "" {
-		t.Errorf("Expected empty string for non-existent key, got %q", gotValue)
-	}
+	assert.NoError(t, err, "Expected no error for non-existent key")
+	assert.Equal(t, "", gotValue, "Expected empty string for non-existent key")
 }
 
 func TestGetSetObject(t *testing.T) {
@@ -130,34 +151,22 @@ func TestGetSetObject(t *testing.T) {
 
 	// Test SetObject
 	err := service.SetObject(ctx, key, value, time.Minute)
-	if err != nil {
-		t.Errorf("Expected no error from SetObject, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from SetObject")
 
 	// Test GetObject
 	var retrievedValue map[string]interface{}
 	err = service.GetObject(ctx, key, &retrievedValue)
-	if err != nil {
-		t.Errorf("Expected no error from GetObject, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from GetObject")
 
 	// Check if retrieved value matches original
-	if retrievedValue["name"] != value["name"] {
-		t.Errorf("Expected name %v, got %v", value["name"], retrievedValue["name"])
-	}
-	if retrievedValue["value"].(float64) != float64(value["value"].(int)) {
-		t.Errorf("Expected value %v, got %v", value["value"], retrievedValue["value"])
-	}
+	assert.Equal(t, value["name"], retrievedValue["name"], "Expected name %v, got %v", value["name"], retrievedValue["name"])
+	assert.Equal(t, float64(value["value"].(int)), retrievedValue["value"].(float64), "Expected value %v, got %v", value["value"], retrievedValue["value"])
 
 	// Test GetObject for non-existent key
 	var emptyValue map[string]interface{}
 	err = service.GetObject(ctx, "non_existent_key", &emptyValue)
-	if err != nil {
-		t.Errorf("Expected no error for non-existent key, got %v", err)
-	}
-	if emptyValue != nil {
-		t.Errorf("Expected nil for non-existent key, got %v", emptyValue)
-	}
+	assert.NoError(t, err, "Expected no error for non-existent key")
+	assert.Nil(t, emptyValue, "Expected nil for non-existent key")
 }
 
 func TestSessionOperations(t *testing.T) {
@@ -174,31 +183,33 @@ func TestSessionOperations(t *testing.T) {
 
 	// Test SetSession
 	err := service.SetSession(ctx, sessionID, sessionData, time.Minute)
-	if err != nil {
-		t.Errorf("Expected no error from SetSession, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from SetSession")
 
 	// Test GetSession
 	retrievedSession, err := service.GetSession(ctx, sessionID)
-	if err != nil {
-		t.Errorf("Expected no error from GetSession, got %v", err)
-	}
-	if retrievedSession["user_id"] != sessionData["user_id"] {
-		t.Errorf("Expected user_id %v, got %v", sessionData["user_id"], retrievedSession["user_id"])
-	}
+	assert.NoError(t, err, "Expected no error from GetSession")
+	assert.Equal(t, sessionData["user_id"], retrievedSession["user_id"], 
+		"Expected user_id %v, got %v", sessionData["user_id"], retrievedSession["user_id"])
 
 	// Test DeleteSession
 	err = service.DeleteSession(ctx, sessionID)
-	if err != nil {
-		t.Errorf("Expected no error from DeleteSession, got %v", err)
-	}
+	assert.NoError(t, err, "Expected no error from DeleteSession")
 
 	// Verify session was deleted
 	retrievedSession, err = service.GetSession(ctx, sessionID)
-	if err != nil {
-		t.Errorf("Expected no error after DeleteSession, got %v", err)
-	}
-	if retrievedSession != nil {
-		t.Errorf("Expected nil after DeleteSession, got %v", retrievedSession)
-	}
+	assert.NoError(t, err, "Expected no error after DeleteSession")
+	assert.Nil(t, retrievedSession, "Expected nil after DeleteSession")
+}
+
+func TestStartStop(t *testing.T) {
+	service, _, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	// Test Start
+	err := service.Start()
+	assert.NoError(t, err, "Expected no error from Start")
+
+	// Test Stop - this is already called in cleanup, but we test it explicitly
+	err = service.Stop()
+	assert.NoError(t, err, "Expected no error from Stop")
 }
