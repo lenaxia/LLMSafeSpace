@@ -113,6 +113,7 @@ func TestNew(t *testing.T) {
 	
 	mockDb := new(MockDatabaseService)
 	var dbService interfaces.DatabaseService = mockDb
+	mockCache := new(MockCacheService)
 	var cacheService interfaces.CacheService = mockCache
 	
 	service, err := New(cfg, log, dbService, cacheService)
@@ -120,8 +121,8 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
 	assert.Equal(t, cfg, service.config)
-	assert.Equal(t, mockDb, service.dbService)
-	assert.Equal(t, mockCache, service.cacheService)
+	assert.Equal(t, dbService, service.dbService)
+	assert.Equal(t, cacheService, service.cacheService)
 	assert.Equal(t, []byte("test-secret"), service.jwtSecret)
 	assert.Equal(t, 24*time.Hour, service.tokenDuration)
 
@@ -142,9 +143,11 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	// Create service with mocks
-	var dbService interfaces.DatabaseService = mockDbService
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
 	
+	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key
