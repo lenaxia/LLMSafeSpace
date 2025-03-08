@@ -18,15 +18,13 @@ import (
 // Helper function to create a test config
 func createTestConfig(redisAddr string) *config.Config {
 	host, port, _ := splitHostPort(redisAddr)
-	return &config.Config{
-		Redis: config.Redis{
-			Host:     host,
-			Port:     port,
-			Password: "",
-			DB:       0,
-			PoolSize: 10,
-		},
-	}
+	cfg := &config.Config{}
+	cfg.Redis.Host = host
+	cfg.Redis.Port = port
+	cfg.Redis.Password = ""
+	cfg.Redis.DB = 0
+	cfg.Redis.PoolSize = 10
+	return cfg
 }
 
 // Helper function to split host:port into separate values
