@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -14,6 +15,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Helper function to create a test config
+func createTestConfig(redisAddr string) *config.Config {
+	host, port, _ := splitHostPort(redisAddr)
+	return &config.Config{
+		Redis: config.Redis{
+			Host:     host,
+			Port:     port,
+			Password: "",
+			DB:       0,
+			PoolSize: 10,
+		},
+	}
+}
+
+// Helper function to split host:port into separate values
+func splitHostPort(addr string) (string, int, error) {
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			port, err := strconv.Atoi(addr[i+1:])
+			if err != nil {
+				return "", 0, err
+			}
+			return addr[:i], port, nil
+		}
+	}
+	return "", 0, errors.New("invalid address format")
+}
+
 func setupMockRedis(t *testing.T) (*Service, *miniredis.Miniredis, func()) {
 	// Create a mock Redis server
 	mr, err := miniredis.Run()
@@ -24,12 +53,7 @@ func setupMockRedis(t *testing.T) (*Service, *miniredis.Miniredis, func()) {
 	require.NoError(t, err, "Failed to create mock logger")
 
 	// Create a mock config
-	mockConfig := &config.Config{}
-	mockConfig.Redis.Host = mr.Host()
-	mockConfig.Redis.Port, _ = strconv.Atoi(mr.Port())
-	mockConfig.Redis.Password = ""
-	mockConfig.Redis.DB = 0
-	mockConfig.Redis.PoolSize = 10
+	mockConfig := createTestConfig(mr.Addr())
 
 	// Create Redis client
 	client := redis.NewClient(&redis.Options{
@@ -65,12 +89,7 @@ func TestNew(t *testing.T) {
 	require.NoError(t, err)
 	
 	// Create a valid config
-	cfg := &config.Config{}
-	cfg.Redis.Host = mr.Host()
-	cfg.Redis.Port, _ = strconv.Atoi(mr.Port())
-	cfg.Redis.Password = ""
-	cfg.Redis.DB = 0
-	cfg.Redis.PoolSize = 10
+	cfg := createTestConfig(mr.Addr())
 
 	// Test successful creation
 	service, err := New(cfg, log)

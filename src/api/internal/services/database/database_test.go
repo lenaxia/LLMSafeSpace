@@ -10,7 +10,25 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// Helper function to create a test config
+func createTestConfig() *config.Config {
+	return &config.Config{
+		Database: config.Database{
+			Host:            "localhost",
+			Port:            5432,
+			User:            "test",
+			Password:        "test",
+			Database:        "test",
+			SSLMode:         "disable",
+			MaxOpenConns:    10,
+			MaxIdleConns:    5,
+			ConnMaxLifetime: time.Hour,
+		},
+	}
+}
 
 func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
 	// Create a mock database connection
@@ -44,6 +62,32 @@ func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
 	}
 }
 
+func TestNew(t *testing.T) {
+	// Create test dependencies
+	log, _ := logger.New(true, "debug", "console")
+	cfg := createTestConfig()
+
+	// Mock the database
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to create mock database: %v", err)
+	}
+	defer db.Close()
+
+	// Create service with mocked DB
+	service := &Service{
+		Logger: log,
+		Config: cfg,
+		DB:     db,
+	}
+
+	// Test service creation
+	assert.NotNil(t, service)
+	assert.Equal(t, log, service.Logger)
+	assert.Equal(t, cfg, service.Config)
+	assert.Equal(t, db, service.DB)
+}
+
 func TestPing(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
@@ -69,6 +113,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 	defer cleanup()
 
 	// Test case: Valid API key
+	ctx := context.Background()
 	apiKey := "test_api_key"
 	expectedUserID := "user123"
 
@@ -79,7 +124,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	userID, err := service.GetUserIDByAPIKey(context.Background(), apiKey)
+	userID, err := service.GetUserIDByAPIKey(ctx, apiKey)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -94,7 +139,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 
 	// Call the method
-	userID, err = service.GetUserIDByAPIKey(context.Background(), invalidKey)
+	userID, err = service.GetUserIDByAPIKey(ctx, invalidKey)
 	if err != nil {
 		t.Errorf("Expected no error for invalid key, got %v", err)
 	}
@@ -204,6 +249,46 @@ func TestCheckPermission(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("Unfulfilled expectations: %v", err)
 	}
+}
+
+func TestGetUserByID(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// Test case: User exists
+	ctx := context.Background()
+	userID := "user123"
+	username := "testuser"
+	email := "test@example.com"
+	createdAt := time.Now()
+
+	// Set up expectations
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at"}).
+		AddRow(userID, username, email, createdAt)
+	mock.ExpectQuery("SELECT id, username, email, created_at FROM users WHERE id = \\$1").
+		WithArgs(userID).
+		WillReturnRows(rows)
+
+	// Call the method
+	user, err := service.GetUserByID(ctx, userID)
+	assert.NoError(t, err)
+	assert.NotNil(t, user)
+	assert.Equal(t, userID, user["id"])
+	assert.Equal(t, username, user["username"])
+	assert.Equal(t, email, user["email"])
+
+	// Test case: User not found
+	mock.ExpectQuery("SELECT id, username, email, created_at FROM users WHERE id = \\$1").
+		WithArgs("nonexistent").
+		WillReturnError(sql.ErrNoRows)
+
+	// Call the method
+	user, err = service.GetUserByID(ctx, "nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, user)
+
+	// Verify all expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCreateSandboxMetadata(t *testing.T) {
