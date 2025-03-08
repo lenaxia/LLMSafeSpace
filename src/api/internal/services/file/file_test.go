@@ -100,6 +100,8 @@ func TestNew(t *testing.T) {
 	
 	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Maybe()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Maybe()
 	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
@@ -118,6 +120,8 @@ func TestListFiles(t *testing.T) {
 	
 	// Create a mock K8s client
 	mockK8sClient := new(MockK8sClient)
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Maybe()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Maybe()
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -165,6 +169,8 @@ func TestDownloadFile(t *testing.T) {
 	
 	// Create a mock K8s client
 	mockK8sClient := new(MockK8sClient)
+	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset()).Maybe()
+	mockK8sClient.On("RESTConfig").Return(&rest.Config{}).Maybe()
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
