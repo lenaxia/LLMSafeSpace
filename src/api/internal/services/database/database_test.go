@@ -14,19 +14,17 @@ import (
 
 // Helper function to create a test config
 func createTestConfig() *config.Config {
-	return &config.Config{
-		Database: config.Database{
-			Host:            "localhost",
-			Port:            5432,
-			User:            "test",
-			Password:        "test",
-			Database:        "test",
-			SSLMode:         "disable",
-			MaxOpenConns:    10,
-			MaxIdleConns:    5,
-			ConnMaxLifetime: time.Hour,
-		},
-	}
+	cfg := &config.Config{}
+	cfg.Database.Host = "localhost"
+	cfg.Database.Port = 5432
+	cfg.Database.User = "test"
+	cfg.Database.Password = "test"
+	cfg.Database.Database = "test"
+	cfg.Database.SSLMode = "disable"
+	cfg.Database.MaxOpenConns = 10
+	cfg.Database.MaxIdleConns = 5
+	cfg.Database.ConnMaxLifetime = time.Hour
+	return cfg
 }
 
 func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
