@@ -17,6 +17,9 @@ type Service struct {
 	k8sClient interfaces.KubernetesClient
 }
 
+// Ensure Service implements the FileService interface
+var _ interfaces.FileService = (*Service)(nil)
+
 // New creates a new file service
 func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{

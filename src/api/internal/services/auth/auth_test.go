@@ -11,7 +11,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -146,7 +145,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	
 	// Create mock service instances
 	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	var cacheService interfaces.CacheService = mockCacheService
 	
 	// Create service with mocks
 	var dbService interfaces.DatabaseService = mockDbService
@@ -311,7 +310,7 @@ func TestRevokeToken(t *testing.T) {
 	mockDbService := new(MockDatabaseService)
 	mockCacheService := new(MockCacheService)
 	
-	service, _ := New(cfg, log, mockDbService, mockCacheService)
+	service, _ := New(cfg, log, dbService, cacheService)
 
 	// Generate a token
 	token, _ := service.GenerateToken("user123")
@@ -321,12 +320,16 @@ func TestRevokeToken(t *testing.T) {
 		return service.jwtSecret, nil
 	})
 	claims := parsedToken.Claims.(jwt.MapClaims)
-	jti, exists := claims["jti"].(string)
-	if !exists {
-		// If jti doesn't exist, we'll use a mock value for testing
-		jti = "mock-jti"
+	
+	// Get token ID (jti) or use subject as fallback
+	jti, _ := claims["jti"].(string)
+	if jti == "" {
+		jti = fmt.Sprintf("%v", claims["sub"])
 	}
-	exp := time.Unix(int64(claims["exp"].(float64)), 0)
+	
+	// Get expiration time
+	exp, _ := claims["exp"].(float64)
+	expTime := time.Unix(int64(exp), 0)
 
 	// Test token revocation
 	err := service.RevokeToken(token)
