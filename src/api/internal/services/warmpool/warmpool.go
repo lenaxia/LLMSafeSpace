@@ -23,6 +23,18 @@ type Service struct {
 	metricsSvc *metrics.Service
 }
 
+// Start initializes the warm pool service
+func (s *Service) Start() error {
+	// Initialize any required resources
+	return nil
+}
+
+// Stop cleans up the warm pool service
+func (s *Service) Stop() error {
+	// Clean up any resources
+	return nil
+}
+
 // New creates a new warm pool service
 func New(
 	logger *logger.Logger,
