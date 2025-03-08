@@ -4,23 +4,25 @@ import (
 	"context"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
-// KubernetesClient defines the interface for Kubernetes operations
-type KubernetesClient interface {
-	Start() error
-	Stop()
-	Clientset() k8s.Interface
-	RESTConfig() *rest.Config
-	LlmsafespaceV1() LLMSafespaceV1Interface
-	ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *FileRequest) (*FileList, error)
-	DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *FileRequest) ([]byte, error)
-	UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *FileRequest) (*FileResult, error)
-	DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *FileRequest) error
-	ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *ExecutionRequest) (*ExecutionResult, error)
-	ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *ExecutionRequest, outputCallback func(stream, content string)) (*ExecutionResult, error)
+// LLMSafespaceV1Interface defines the interface for LLMSafespace v1 API operations
+type LLMSafespaceV1Interface interface {
+	Sandboxes(namespace string) SandboxInterface
+}
+
+// SandboxInterface defines the interface for Sandbox operations
+type SandboxInterface interface {
+	Create(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
+	Update(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
+	UpdateStatus(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
+	Delete(name string, options *metav1.DeleteOptions) error
+	Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error)
+	List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }

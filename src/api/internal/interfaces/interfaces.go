@@ -5,11 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 )
 
 // FileInfo represents file metadata
