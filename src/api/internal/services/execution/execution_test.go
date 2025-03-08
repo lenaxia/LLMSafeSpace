@@ -129,7 +129,7 @@ func TestExecuteStream(t *testing.T) {
 	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
-	service, err := New(log, mockK8sClient)
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &llmsafespacev1.Sandbox{

@@ -56,8 +56,8 @@ type CacheService interface {
 
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*kubernetes.ExecutionResult, error)
-	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*kubernetes.ExecutionResult, error)
+	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error)
+	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*execution.Result, error)
 	Start() error
 	Stop() error
 }
@@ -96,7 +96,7 @@ type WarmPoolService interface {
 	GetWarmSandbox(ctx context.Context, runtime string) (string, error)
 	AddToWarmPool(ctx context.Context, sandboxID, runtime string) error
 	RemoveFromWarmPool(ctx context.Context, sandboxID string) error
-	GetWarmPoolStatus(ctx context.Context, name, namespace string) (interface{}, error)
+	GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error)
 	GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 	Start() error
 	Stop() error
