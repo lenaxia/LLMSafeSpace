@@ -113,8 +113,8 @@ func setupWarmPoolService(t *testing.T) (*Service, *MockK8sClient) {
 	mockDbService := new(MockDatabaseService)
 	mockMetricsService := new(MockMetricsService)
 
-	mockK8s.On("LlmsafespaceV1").Return(mockLLMClient)
-	mockLLMClient.On("WarmPools", "default").Return(mockWarmPool)
+	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMClient)
+	mockLLMClient.On("WarmPools", "default").Return(mockWarmPoolInterface)
 
 	service := &Service{
 		logger:     log,

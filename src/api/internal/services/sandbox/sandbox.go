@@ -268,7 +268,7 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*execution.R
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]interfaces.FileInfo, error) {
 	// Get sandbox from Kubernetes
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {

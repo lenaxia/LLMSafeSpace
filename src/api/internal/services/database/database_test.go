@@ -79,7 +79,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	userID, err := service.GetUserIDByAPIKey(apiKey)
+	userID, err := service.GetUserIDByAPIKey(context.Background(), apiKey)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGetUserIDByAPIKey(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 
 	// Call the method
-	userID, err = service.GetUserIDByAPIKey(invalidKey)
+	userID, err = service.GetUserIDByAPIKey(context.Background(), invalidKey)
 	if err != nil {
 		t.Errorf("Expected no error for invalid key, got %v", err)
 	}
