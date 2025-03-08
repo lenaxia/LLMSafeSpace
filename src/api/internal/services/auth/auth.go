@@ -38,8 +38,12 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
 	
 	// Try to get from cache first
-	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
-		return cachedUserID, nil
+	cachedStatus, err := s.cacheService.Get(ctx, cacheKey)
+	if err == nil && cachedStatus != "" {
+		if cachedStatus == "revoked" {
+			return "", errors.New("token has been revoked")
+		}
+		return cachedStatus, nil
 	}
 
 	// Get user ID from database
@@ -158,10 +162,14 @@ func (s *Service) RevokeToken(token string) error {
 		return errors.New("invalid token claims")
 	}
 
-	// Get token ID
-	jti, ok := claims["jti"].(string)
-	if !ok {
-		jti = fmt.Sprintf("%v", claims["sub"]) // Use subject as fallback
+	// Get token ID with proper validation
+	jti, _ := claims["jti"].(string)
+	if jti == "" {
+		if sub, ok := claims["sub"].(string); ok && sub != "" {
+			jti = sub
+		} else {
+			return errors.New("token missing valid jti or sub claim")
+		}
 	}
 
 	// Get expiration time
