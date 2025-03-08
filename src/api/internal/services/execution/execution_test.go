@@ -119,8 +119,6 @@ func TestExecute(t *testing.T) {
 	
 	// Create a mock K8s client
 	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -160,8 +158,6 @@ func TestExecuteStream(t *testing.T) {
 	
 	// Create a mock K8s client
 	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -199,8 +195,6 @@ func TestInstallPackages(t *testing.T) {
 	
 	// Create a mock K8s client
 	mockK8sClient := new(MockK8sClient)
-	mockK8sClient.On("Clientset").Return(fake.NewSimpleClientset())
-	mockK8sClient.On("RESTConfig").Return(&rest.Config{})
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
