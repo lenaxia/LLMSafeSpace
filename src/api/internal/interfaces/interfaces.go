@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
@@ -123,7 +126,7 @@ type WarmPoolService interface {
 type KubernetesClient interface {
 	Start() error
 	Stop()
-	Clientset() kubernetes.Interface
+	Clientset() k8s.Interface
 	RESTConfig() *rest.Config
 	LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface
 	ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error)
