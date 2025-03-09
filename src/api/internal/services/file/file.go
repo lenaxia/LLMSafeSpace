@@ -7,7 +7,6 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
@@ -43,7 +42,8 @@ func (s *Service) Stop() error {
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]interfaces.FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]interfaces.FileInfo, error) {
+	sb := sandbox.(*llmsafespacev1.Sandbox)
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -72,7 +72,8 @@ func (s *Service) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox
 }
 
 // DownloadFile downloads a file from a sandbox
-func (s *Service) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error) {
+	sb := sandbox.(*llmsafespacev1.Sandbox)
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -88,7 +89,8 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sand
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*interfaces.FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*interfaces.FileInfo, error) {
+	sb := sandbox.(*llmsafespacev1.Sandbox)
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path:    path,
@@ -113,7 +115,8 @@ func (s *Service) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbo
 }
 
 // DeleteFile deletes a file from a sandbox
-func (s *Service) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path string) error {
+	sb := sandbox.(*llmsafespacev1.Sandbox)
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
