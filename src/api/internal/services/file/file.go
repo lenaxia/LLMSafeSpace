@@ -47,7 +47,7 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 	}
 
 	// List files via Kubernetes API
-	fileList, err := s.k8sClient.ListFilesInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	fileList, err := s.k8sClient.ListFilesInSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files in sandbox: %w", err)
 	}
@@ -77,7 +77,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path st
 	}
 
 	// Download file via Kubernetes API
-	fileContent, err := s.k8sClient.DownloadFileFromSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	fileContent, err := s.k8sClient.DownloadFileFromSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file from sandbox: %w", err)
 	}
@@ -95,7 +95,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path stri
 	}
 
 	// Upload file via Kubernetes API
-	fileResult, err := s.k8sClient.UploadFileToSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	fileResult, err := s.k8sClient.UploadFileToSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload file to sandbox: %w", err)
 	}
@@ -120,7 +120,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path stri
 	}
 
 	// Delete file via Kubernetes API
-	err := s.k8sClient.DeleteFileInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	err := s.k8sClient.DeleteFileInSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
 		return fmt.Errorf("failed to delete file in sandbox: %w", err)
 	}
