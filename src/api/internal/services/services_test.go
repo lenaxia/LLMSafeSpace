@@ -317,12 +317,12 @@ func (m *MockWarmPoolService) RemoveFromWarmPool(ctx context.Context, sandboxID 
 	return args.Error(0)
 }
 
-func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
+func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error) {
 	args := m.Called(ctx, name, namespace)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPoolStatus), args.Error(1)
+	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
 func (m *MockWarmPoolService) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {

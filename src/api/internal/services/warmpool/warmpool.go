@@ -399,7 +399,7 @@ func (s *Service) AddToWarmPool(ctx context.Context, sandboxID, runtime string) 
 }
 
 // GetWarmPoolStatus gets the status of a warm pool
-func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
+func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error) {
 	// Set default namespace if not provided
 	if namespace == "" {
 		namespace = "default"
@@ -411,7 +411,33 @@ func (s *Service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 		return nil, fmt.Errorf("failed to get warm pool: %w", err)
 	}
 
-	return &warmPool.Status, nil
+	// Convert status to map
+	status := map[string]interface{}{
+		"availablePods": warmPool.Status.AvailablePods,
+		"assignedPods":  warmPool.Status.AssignedPods,
+		"pendingPods":   warmPool.Status.PendingPods,
+	}
+
+	if warmPool.Status.LastScaleTime != nil {
+		status["lastScaleTime"] = warmPool.Status.LastScaleTime.Time
+	}
+
+	// Add conditions if present
+	if len(warmPool.Status.Conditions) > 0 {
+		conditions := make([]map[string]interface{}, len(warmPool.Status.Conditions))
+		for i, cond := range warmPool.Status.Conditions {
+			conditions[i] = map[string]interface{}{
+				"type":               cond.Type,
+				"status":             cond.Status,
+				"reason":             cond.Reason,
+				"message":            cond.Message,
+				"lastTransitionTime": cond.LastTransitionTime.Time,
+			}
+		}
+		status["conditions"] = conditions
+	}
+
+	return status, nil
 }
 
 // GetGlobalWarmPoolStatus gets the status of all warm pools
