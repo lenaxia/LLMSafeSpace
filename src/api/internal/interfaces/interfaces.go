@@ -85,6 +85,7 @@ type FileService interface {
 	DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error)
 	UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*FileInfo, error)
 	DeleteFile(ctx context.Context, sandbox interface{}, path string) error
+	CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*FileInfo, error)
 	Start() error
 	Stop() error
 }

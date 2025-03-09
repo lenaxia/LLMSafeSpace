@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
@@ -30,17 +32,31 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service
 
 // Start initializes the file service
 func (s *Service) Start() error {
+	s.logger.Info("Starting file service")
 	return nil
 }
 
 // Stop cleans up the file service
 func (s *Service) Stop() error {
+	s.logger.Info("Stopping file service")
 	return nil
 }
 
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]interfaces.FileInfo, error) {
+	startTime := time.Now()
 	sb := sandbox.(*llmsafespacev1.Sandbox)
+	
+	s.logger.Debug("Listing files in sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path)
+	
+	// Normalize path
+	if path == "" {
+		path = "/workspace"
+	}
+	
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -49,6 +65,10 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 	// List files via Kubernetes API
 	fileList, err := s.k8sClient.ListFilesInSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
+		s.logger.Error("Failed to list files in sandbox", err, 
+			"namespace", sb.Namespace, 
+			"name", sb.Name, 
+			"path", path)
 		return nil, fmt.Errorf("failed to list files in sandbox: %w", err)
 	}
 
@@ -65,12 +85,32 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 		}
 	}
 
+	duration := time.Since(startTime)
+	s.logger.Debug("Listed files in sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"file_count", len(files), 
+		"duration_ms", duration.Milliseconds())
+
 	return files, nil
 }
 
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error) {
+	startTime := time.Now()
 	sb := sandbox.(*llmsafespacev1.Sandbox)
+	
+	s.logger.Debug("Downloading file from sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path)
+	
+	// Validate path
+	if path == "" {
+		return nil, fmt.Errorf("file path cannot be empty")
+	}
+	
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -79,15 +119,45 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path st
 	// Download file via Kubernetes API
 	fileContent, err := s.k8sClient.DownloadFileFromSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
+		s.logger.Error("Failed to download file from sandbox", err, 
+			"namespace", sb.Namespace, 
+			"name", sb.Name, 
+			"path", path)
 		return nil, fmt.Errorf("failed to download file from sandbox: %w", err)
 	}
+
+	duration := time.Since(startTime)
+	s.logger.Debug("Downloaded file from sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"size", len(fileContent), 
+		"duration_ms", duration.Milliseconds())
 
 	return fileContent, nil
 }
 
 // UploadFile uploads a file to a sandbox
 func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*interfaces.FileInfo, error) {
+	startTime := time.Now()
 	sb := sandbox.(*llmsafespacev1.Sandbox)
+	
+	s.logger.Debug("Uploading file to sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"size", len(content))
+	
+	// Validate path
+	if path == "" {
+		return nil, fmt.Errorf("file path cannot be empty")
+	}
+	
+	// Ensure path is within workspace
+	if !strings.HasPrefix(path, "/workspace/") && path != "/workspace" {
+		path = filepath.Join("/workspace", path)
+	}
+	
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path:    path,
@@ -97,23 +167,54 @@ func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path stri
 	// Upload file via Kubernetes API
 	fileResult, err := s.k8sClient.UploadFileToSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
+		s.logger.Error("Failed to upload file to sandbox", err, 
+			"namespace", sb.Namespace, 
+			"name", sb.Name, 
+			"path", path)
 		return nil, fmt.Errorf("failed to upload file to sandbox: %w", err)
 	}
 
 	// Return file info
-	return &interfaces.FileInfo{
+	fileInfo := &interfaces.FileInfo{
 		Path:      fileResult.Path,
 		Name:      filepath.Base(fileResult.Path),
 		Size:      fileResult.Size,
 		IsDir:     false,
 		CreatedAt: fileResult.CreatedAt,
 		UpdatedAt: fileResult.UpdatedAt,
-	}, nil
+	}
+
+	duration := time.Since(startTime)
+	s.logger.Debug("Uploaded file to sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"size", fileInfo.Size, 
+		"duration_ms", duration.Milliseconds())
+
+	return fileInfo, nil
 }
 
 // DeleteFile deletes a file from a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path string) error {
+	startTime := time.Now()
 	sb := sandbox.(*llmsafespacev1.Sandbox)
+	
+	s.logger.Debug("Deleting file from sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path)
+	
+	// Validate path
+	if path == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+	
+	// Prevent deletion of workspace root
+	if path == "/workspace" {
+		return fmt.Errorf("cannot delete workspace root directory")
+	}
+	
 	// Create file request
 	fileReq := &kubernetes.FileRequest{
 		Path: path,
@@ -122,8 +223,75 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path stri
 	// Delete file via Kubernetes API
 	err := s.k8sClient.DeleteFileInSandbox(ctx, sb.Namespace, sb.Name, fileReq)
 	if err != nil {
+		s.logger.Error("Failed to delete file in sandbox", err, 
+			"namespace", sb.Namespace, 
+			"name", sb.Name, 
+			"path", path)
 		return fmt.Errorf("failed to delete file in sandbox: %w", err)
 	}
 
+	duration := time.Since(startTime)
+	s.logger.Debug("Deleted file from sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"duration_ms", duration.Milliseconds())
+
 	return nil
+}
+
+// CreateDirectory creates a directory in a sandbox
+func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*interfaces.FileInfo, error) {
+	startTime := time.Now()
+	sb := sandbox.(*llmsafespacev1.Sandbox)
+	
+	s.logger.Debug("Creating directory in sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path)
+	
+	// Validate path
+	if path == "" {
+		return nil, fmt.Errorf("directory path cannot be empty")
+	}
+	
+	// Ensure path is within workspace
+	if !strings.HasPrefix(path, "/workspace/") && path != "/workspace" {
+		path = filepath.Join("/workspace", path)
+	}
+	
+	// Create file request with directory flag
+	fileReq := &kubernetes.FileRequest{
+		Path:    path,
+		IsDir:   true,
+	}
+
+	// Create directory via Kubernetes API
+	fileResult, err := s.k8sClient.UploadFileToSandbox(ctx, sb.Namespace, sb.Name, fileReq)
+	if err != nil {
+		s.logger.Error("Failed to create directory in sandbox", err, 
+			"namespace", sb.Namespace, 
+			"name", sb.Name, 
+			"path", path)
+		return nil, fmt.Errorf("failed to create directory in sandbox: %w", err)
+	}
+
+	// Return file info
+	fileInfo := &interfaces.FileInfo{
+		Path:      fileResult.Path,
+		Name:      filepath.Base(fileResult.Path),
+		Size:      fileResult.Size,
+		IsDir:     true,
+		CreatedAt: fileResult.CreatedAt,
+		UpdatedAt: fileResult.UpdatedAt,
+	}
+
+	duration := time.Since(startTime)
+	s.logger.Debug("Created directory in sandbox", 
+		"namespace", sb.Namespace, 
+		"name", sb.Name, 
+		"path", path, 
+		"duration_ms", duration.Milliseconds())
+
+	return fileInfo, nil
 }
