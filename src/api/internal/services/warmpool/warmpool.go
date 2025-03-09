@@ -18,7 +18,7 @@ import (
 // Service handles warm pool operations
 type Service struct {
 	logger     *logger.Logger
-	k8sClient  *kubernetes.Client
+	k8sClient  k8sinterfaces.KubernetesClient
 	dbService  *database.Service
 	metricsSvc *metrics.Service
 }
@@ -38,7 +38,7 @@ func (s *Service) Stop() error {
 // New creates a new warm pool service
 func New(
 	logger *logger.Logger,
-	k8sClient *kubernetes.Client,
+	k8sClient k8sinterfaces.KubernetesClient,
 	dbService *database.Service,
 	metricsSvc *metrics.Service,
 ) (*Service, error) {

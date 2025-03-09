@@ -1,44 +1,15 @@
 package kubernetes
 
 import (
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	"time"
 )
 
-// FileRequest represents a file operation request
-type FileRequest struct {
-	Path    string  // Path to the file
-	Content []byte  // Content for upload operations
-	IsDir   bool    // Whether this is a directory operation
-}
-
-// FileResult represents the result of a file operation
-type FileResult struct {
-	Path      string    // Path to the file
-	Size      int64     // Size of the file in bytes
-	IsDir     bool      // Whether this is a directory
-	CreatedAt time.Time // Creation time
-	UpdatedAt time.Time // Last modification time
-	Checksum  string    // Optional checksum of the file
-}
-
-// FileInfo represents information about a file
-type FileInfo struct {
-	Path      string    // Path to the file
-	Size      int64     // Size of the file in bytes
-	IsDir     bool      // Whether this is a directory
-	CreatedAt time.Time // Creation time
-	UpdatedAt time.Time // Last modification time
-	Mode      uint32    // File mode/permissions
-	Owner     string    // Owner of the file
-	Group     string    // Group of the file
-}
-
-// FileList represents a list of files
-type FileList struct {
-	Files []FileInfo // List of files
-	Path  string     // Path that was listed
-	Total int        // Total number of files
-}
+// For backward compatibility
+type FileRequest = types.FileRequest
+type FileResult = types.FileResult
+type FileInfo = types.FileInfo
+type FileList = types.FileList
 
 // FileStat represents detailed file statistics
 type FileStat struct {

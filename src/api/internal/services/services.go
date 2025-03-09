@@ -6,6 +6,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
@@ -33,7 +34,7 @@ type Services struct {
 var _ interfaces.Services = (*Services)(nil)
 
 // New creates and initializes all services
-func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
+func New(cfg *config.Config, log *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Services, error) {
 	// Initialize metrics service first as other services may use it
 	metricsService := metrics.New()
 

@@ -5,11 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
-	k8s "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // FileInfo represents file metadata
@@ -119,23 +116,6 @@ type WarmPoolService interface {
 	CheckAvailability(ctx context.Context, runtime, securityLevel string) (bool, error)
 	Start() error
 	Stop() error
-}
-
-
-
-// KubernetesClient defines the interface for Kubernetes client operations
-type KubernetesClient interface {
-	Start() error
-	Stop()
-	Clientset() k8s.Interface
-	RESTConfig() *rest.Config
-	LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface
-	ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error)
-	ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest, outputCallback func(stream, content string)) (*kubernetes.ExecutionResult, error)
-	ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error)
-	DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) ([]byte, error)
-	UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileResult, error)
-	DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error
 }
 
 // Services holds all application services

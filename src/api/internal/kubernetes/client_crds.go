@@ -42,14 +42,12 @@ func init() {
 	}
 }
 
-// LLMSafespaceV1Interface defines the methods a client for the llmsafespace.dev/v1 API group should have
-type LLMSafespaceV1Interface interface {
-	SandboxesGetter
-	WarmPoolsGetter
-	WarmPodsGetter
-	RuntimeEnvironmentsGetter
-	SandboxProfilesGetter
+// For backward compatibility
+type LLMSafespaceV1Client struct {
+	restClient rest.Interface
 }
+
+var _ interfaces.LLMSafespaceV1Interface = (*LLMSafespaceV1Client)(nil)
 
 // LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group
 type LLMSafespaceV1Client struct {
@@ -58,7 +56,7 @@ type LLMSafespaceV1Client struct {
 
 // SandboxesGetter defines the interface for getting Sandboxes
 type SandboxesGetter interface {
-	Sandboxes(namespace string) SandboxInterface
+	Sandboxes(namespace string) interfaces.SandboxInterface
 }
 
 // SandboxInterface defines the interface for Sandbox operations
@@ -95,7 +93,7 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 }
 
 // Sandboxes returns a SandboxInterface for the given namespace
-func (c *LLMSafespaceV1Client) Sandboxes(namespace string) SandboxInterface {
+func (c *LLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
 	return &sandboxes{
 		client: c.restClient,
 		ns:     namespace,
@@ -104,7 +102,7 @@ func (c *LLMSafespaceV1Client) Sandboxes(namespace string) SandboxInterface {
 
 // WarmPoolsGetter defines the interface for getting WarmPools
 type WarmPoolsGetter interface {
-	WarmPools(namespace string) WarmPoolInterface
+	WarmPools(namespace string) interfaces.WarmPoolInterface
 }
 
 // WarmPoolInterface defines the interface for WarmPool operations
@@ -125,7 +123,7 @@ type warmPools struct {
 }
 
 // WarmPools returns a WarmPoolInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPools(namespace string) WarmPoolInterface {
+func (c *LLMSafespaceV1Client) WarmPools(namespace string) interfaces.WarmPoolInterface {
 	return &warmPools{
 		client: c.restClient,
 		ns:     namespace,
@@ -219,7 +217,7 @@ func (w *warmPools) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 
 // WarmPodsGetter defines the interface for getting WarmPods
 type WarmPodsGetter interface {
-	WarmPods(namespace string) WarmPodInterface
+	WarmPods(namespace string) interfaces.WarmPodInterface
 }
 
 // WarmPodInterface defines the interface for WarmPod operations
@@ -240,7 +238,7 @@ type warmPods struct {
 }
 
 // WarmPods returns a WarmPodInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPods(namespace string) WarmPodInterface {
+func (c *LLMSafespaceV1Client) WarmPods(namespace string) interfaces.WarmPodInterface {
 	return &warmPods{
 		client: c.restClient,
 		ns:     namespace,
@@ -334,7 +332,7 @@ func (w *warmPods) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 
 // RuntimeEnvironmentsGetter defines the interface for getting RuntimeEnvironments
 type RuntimeEnvironmentsGetter interface {
-	RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface
+	RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface
 }
 
 // RuntimeEnvironmentInterface defines the interface for RuntimeEnvironment operations
@@ -355,7 +353,7 @@ type runtimeEnvironments struct {
 }
 
 // RuntimeEnvironments returns a RuntimeEnvironmentInterface for the given namespace
-func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface {
+func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
 	return &runtimeEnvironments{
 		client: c.restClient,
 		ns:     namespace,
@@ -449,7 +447,7 @@ func (r *runtimeEnvironments) Watch(opts metav1.ListOptions) (watch.Interface, e
 
 // SandboxProfilesGetter defines the interface for getting SandboxProfiles
 type SandboxProfilesGetter interface {
-	SandboxProfiles(namespace string) SandboxProfileInterface
+	SandboxProfiles(namespace string) interfaces.SandboxProfileInterface
 }
 
 // SandboxProfileInterface defines the interface for SandboxProfile operations
@@ -469,7 +467,7 @@ type sandboxProfiles struct {
 }
 
 // SandboxProfiles returns a SandboxProfileInterface for the given namespace
-func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) SandboxProfileInterface {
+func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
 	return &sandboxProfiles{
 		client: c.restClient,
 		ns:     namespace,

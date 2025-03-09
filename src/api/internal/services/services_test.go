@@ -13,9 +13,9 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
@@ -481,7 +481,7 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	cfg := createTestConfig()
-	k8sClient := &kubernetes.Client{}
+	var k8sClient k8sinterfaces.KubernetesClient = &kubernetes.Client{}
 
 	// Test successful initialization
 	services, err := New(cfg, log, k8sClient)
