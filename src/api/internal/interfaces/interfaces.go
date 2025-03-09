@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // FileInfo represents file metadata
@@ -77,10 +76,10 @@ type ExecutionService interface {
 
 // FileService defines the interface for file services
 type FileService interface {
-	ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]FileInfo, error)
-	DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error)
-	UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*FileInfo, error)
-	DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error
+	ListFiles(ctx context.Context, sandbox interface{}, path string) ([]FileInfo, error)
+	DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error)
+	UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*FileInfo, error)
+	DeleteFile(ctx context.Context, sandbox interface{}, path string) error
 	Start() error
 	Stop() error
 }
