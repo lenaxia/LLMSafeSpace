@@ -112,6 +112,7 @@ type WarmPoolService interface {
 	RemoveFromWarmPool(ctx context.Context, sandboxID string) error
 	GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error)
 	GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
+	CheckAvailability(ctx context.Context, runtime, securityLevel string) (bool, error)
 	Start() error
 	Stop() error
 }
