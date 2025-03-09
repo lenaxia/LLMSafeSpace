@@ -7,7 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
@@ -23,7 +23,7 @@ import (
 // Service handles sandbox operations
 type Service struct {
 	logger        *logger.Logger
-	k8sClient     interfaces.KubernetesClient
+	k8sClient     k8sinterfaces.KubernetesClient
 	dbService     interfaces.DatabaseService
 	warmPoolSvc   interfaces.WarmPoolService
 	fileSvc       interfaces.FileService
@@ -65,7 +65,7 @@ type InstallPackagesRequest struct {
 // New creates a new sandbox service
 func New(
 	logger *logger.Logger,
-	k8sClient *kubernetes.Client,
+	k8sClient k8sinterfaces.KubernetesClient,
 	dbService *database.Service,
 	warmPoolSvc *warmpool.Service,
 	fileSvc *file.Service,

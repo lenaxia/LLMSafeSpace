@@ -17,27 +17,12 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-// ExecutionRequest defines a request to execute code or a command
-type ExecutionRequest struct {
-	Type    string `json:"type"`    // "code" or "command"
-	Content string `json:"content"` // Code or command to execute
-	Timeout int    `json:"timeout"` // Execution timeout in seconds
-	Stream  bool   `json:"stream"`  // Whether to stream the output
-}
-
-// ExecutionResult defines the result of code or command execution
-type ExecutionResult struct {
-	ID          string    `json:"id"`
-	Status      string    `json:"status"`
-	StartedAt   time.Time `json:"startedAt"`
-	CompletedAt time.Time `json:"completedAt"`
-	ExitCode    int       `json:"exitCode"`
-	Stdout      string    `json:"stdout"`
-	Stderr      string    `json:"stderr"`
-}
+// For backward compatibility
+type ExecutionRequest = types.ExecutionRequest
+type ExecutionResult = types.ExecutionResult
 
 // ExecuteInSandbox executes code or a command in a sandbox
-func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, req *ExecutionRequest) (*ExecutionResult, error) {
+func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, req *types.ExecutionRequest) (*types.ExecutionResult, error) {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
@@ -201,9 +186,9 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 func (c *Client) ExecuteStreamInSandbox(
 	ctx context.Context,
 	namespace, name string,
-	req *ExecutionRequest,
+	req *types.ExecutionRequest,
 	outputCallback func(stream, content string),
-) (*ExecutionResult, error) {
+) (*types.ExecutionResult, error) {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
@@ -340,7 +325,7 @@ func (w *streamWriter) Write(p []byte) (n int, err error) {
 }
 
 // ListFilesInSandbox lists files in a sandbox
-func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string, req *FileRequest) (*FileList, error) {
+func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string, req *types.FileRequest) (*types.FileList, error) {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
@@ -438,7 +423,7 @@ func parseFloat64(s string) (float64, error) {
 }
 
 // DownloadFileFromSandbox downloads a file from a sandbox
-func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name string, req *FileRequest) ([]byte, error) {
+func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name string, req *types.FileRequest) ([]byte, error) {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
@@ -503,7 +488,7 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 }
 
 // UploadFileToSandbox uploads a file to a sandbox
-func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string, req *FileRequest) (*FileResult, error) {
+func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string, req *types.FileRequest) (*types.FileResult, error) {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
@@ -670,7 +655,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 }
 
 // DeleteFileInSandbox deletes a file in a sandbox
-func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string, req *FileRequest) error {
+func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string, req *types.FileRequest) error {
 	// Get the sandbox to find the pod name
 	sandbox, err := c.LlmsafespaceV1().Sandboxes(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {

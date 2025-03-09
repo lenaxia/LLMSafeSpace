@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -15,7 +16,7 @@ import (
 // Service handles code and command execution
 type Service struct {
 	logger    *logger.Logger
-	k8sClient interfaces.KubernetesClient
+	k8sClient k8sinterfaces.KubernetesClient
 }
 
 // Ensure Service implements interfaces.ExecutionService
@@ -34,7 +35,7 @@ func (s *Service) Stop() error {
 }
 
 // New creates a new execution service
-func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -80,7 +81,7 @@ func (s *Service) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, 
 	}
 
 	// Create execution request
-	execReq := &kubernetes.ExecutionRequest{
+	execReq := &types.ExecutionRequest{
 		Type:    execType,
 		Content: content,
 		Timeout: timeout,
@@ -135,7 +136,7 @@ func (s *Service) ExecuteStream(
 	}
 
 	// Create execution request
-	execReq := &kubernetes.ExecutionRequest{
+	execReq := &types.ExecutionRequest{
 		Type:    execType,
 		Content: content,
 		Timeout: timeout,

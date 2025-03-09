@@ -8,22 +8,23 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // Service handles file operations
 type Service struct {
 	logger    *logger.Logger
-	k8sClient interfaces.KubernetesClient
+	k8sClient k8sinterfaces.KubernetesClient
 }
 
 // Ensure Service implements interfaces.FileService
 var _ interfaces.FileService = (*Service)(nil)
 
 // New creates a new file service
-func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -58,7 +59,7 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 	}
 	
 	// Create file request
-	fileReq := &kubernetes.FileRequest{
+	fileReq := &types.FileRequest{
 		Path: path,
 	}
 
@@ -112,7 +113,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path st
 	}
 	
 	// Create file request
-	fileReq := &kubernetes.FileRequest{
+	fileReq := &types.FileRequest{
 		Path: path,
 	}
 
@@ -159,7 +160,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path stri
 	}
 	
 	// Create file request
-	fileReq := &kubernetes.FileRequest{
+	fileReq := &types.FileRequest{
 		Path:    path,
 		Content: content,
 	}
@@ -216,7 +217,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path stri
 	}
 	
 	// Create file request
-	fileReq := &kubernetes.FileRequest{
+	fileReq := &types.FileRequest{
 		Path: path,
 	}
 
@@ -261,7 +262,7 @@ func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path
 	}
 	
 	// Create file request with directory flag
-	fileReq := &kubernetes.FileRequest{
+	fileReq := &types.FileRequest{
 		Path:    path,
 		IsDir:   true,
 	}

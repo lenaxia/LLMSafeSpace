@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
@@ -25,27 +25,81 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
 }
 
 type MockLLMSafespaceV1Client struct {
 	mock.Mock
-	kubernetes.LLMSafespaceV1Interface
 }
 
 type MockSandboxInterface struct {
 	mock.Mock
-	kubernetes.SandboxInterface
 }
 
-func (m *MockK8sClient) LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface {
+func (m *MockK8sClient) Start() error {
 	args := m.Called()
-	return args.Get(0).(kubernetes.LLMSafespaceV1Interface)
+	return args.Error(0)
 }
 
-func (m *MockLLMSafespaceV1Client) Sandboxes(namespace string) kubernetes.SandboxInterface {
+func (m *MockK8sClient) Stop() {
+	m.Called()
+}
+
+func (m *MockK8sClient) Clientset() k8s.Interface {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(k8s.Interface)
+}
+
+func (m *MockK8sClient) RESTConfig() *rest.Config {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*rest.Config)
+}
+
+func (m *MockK8sClient) LlmsafespaceV1() k8sinterfaces.LLMSafespaceV1Interface {
+	args := m.Called()
+	return args.Get(0).(k8sinterfaces.LLMSafespaceV1Interface)
+}
+
+func (m *MockLLMSafespaceV1Client) Sandboxes(namespace string) k8sinterfaces.SandboxInterface {
 	args := m.Called(namespace)
-	return args.Get(0).(kubernetes.SandboxInterface)
+	return args.Get(0).(k8sinterfaces.SandboxInterface)
+}
+
+func (m *MockLLMSafespaceV1Client) WarmPools(namespace string) k8sinterfaces.WarmPoolInterface {
+	args := m.Called(namespace)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(k8sinterfaces.WarmPoolInterface)
+}
+
+func (m *MockLLMSafespaceV1Client) WarmPods(namespace string) k8sinterfaces.WarmPodInterface {
+	args := m.Called(namespace)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(k8sinterfaces.WarmPodInterface)
+}
+
+func (m *MockLLMSafespaceV1Client) RuntimeEnvironments(namespace string) k8sinterfaces.RuntimeEnvironmentInterface {
+	args := m.Called(namespace)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(k8sinterfaces.RuntimeEnvironmentInterface)
+}
+
+func (m *MockLLMSafespaceV1Client) SandboxProfiles(namespace string) k8sinterfaces.SandboxProfileInterface {
+	args := m.Called(namespace)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(k8sinterfaces.SandboxProfileInterface)
 }
 
 func (m *MockSandboxInterface) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
@@ -260,40 +314,18 @@ func setupSandboxService(t *testing.T) (*Service, *MockK8sClient, *MockLLMSafesp
 	mockK8sClient.On("LlmsafespaceV1").Return(mockLLMSafespaceV1Client)
 	mockLLMSafespaceV1Client.On("Sandboxes", mock.Anything).Return(mockSandboxInterface)
 
-	// Create real service instances
-	k8sClient := &kubernetes.Client{}
-	dbService := &database.Service{}
-	warmPoolSvc := &warmpool.Service{}
-	fileSvc := &file.Service{}
-	executionSvc := &execution.Service{}
-	metricsSvc := &metrics.Service{}
-	cacheSvc := &cache.Service{}
-	
 	service, err := New(
 		mockLogger,
-		k8sClient,
-		dbService,
-		warmPoolSvc,
-		fileSvc,
-		executionSvc,
-		metricsSvc,
-		cacheSvc,
+		mockK8sClient,
+		mockDbService,
+		mockWarmPoolService,
+		mockFileService,
+		mockExecutionService,
+		mockMetricsService,
+		mockCacheService,
 	)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
-	
-	// Replace with our mocks
-	service.k8sClient = mockK8sClient
-	service.dbService = mockDbService
-	service.warmPoolSvc = mockWarmPoolService
-	service.fileSvc = mockFileService
-	service.executionSvc = mockExecutionService
-	service.metricsSvc = mockMetricsService
-	
-	if service.sessionMgr != nil {
-		var cacheService cache.Service = mockCacheService
-		service.sessionMgr.cacheService = mockCacheService
-	}
 
 	return service, mockK8sClient, mockLLMSafespaceV1Client, mockSandboxInterface, mockDbService, mockWarmPoolService, mockFileService, mockExecutionService, mockMetricsService, mockCacheService
 }
