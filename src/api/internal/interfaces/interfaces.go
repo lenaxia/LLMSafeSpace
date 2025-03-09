@@ -110,27 +110,27 @@ type WarmPoolService interface {
 	GetWarmSandbox(ctx context.Context, runtime string) (string, error)
 	AddToWarmPool(ctx context.Context, sandboxID, runtime string) error
 	RemoveFromWarmPool(ctx context.Context, sandboxID string) error
-	GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error)
+	GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error)
 	GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 	Start() error
 	Stop() error
 }
 
 
-// LLMSafespaceV1Interface defines the interface for LLMSafespace v1 API operations
-type LLMSafespaceV1Interface interface {
-	Sandboxes(namespace string) SandboxInterface
-}
 
-// SandboxInterface defines the interface for Sandbox operations
-type SandboxInterface interface {
-	Create(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
-	Update(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
-	UpdateStatus(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
-	Delete(name string, options *metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
+// KubernetesClient defines the interface for Kubernetes client operations
+type KubernetesClient interface {
+	Start() error
+	Stop()
+	Clientset() kubernetes.Interface
+	RESTConfig() *rest.Config
+	LlmsafespaceV1() kubernetes.LLMSafespaceV1Interface
+	ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest) (*kubernetes.ExecutionResult, error)
+	ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *kubernetes.ExecutionRequest, outputCallback func(stream, content string)) (*kubernetes.ExecutionResult, error)
+	ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileList, error)
+	DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) ([]byte, error)
+	UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) (*kubernetes.FileResult, error)
+	DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *kubernetes.FileRequest) error
 }
 
 // Services holds all application services
