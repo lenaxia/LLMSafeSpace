@@ -8,15 +8,25 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/stretchr/testify/mock"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // MockKubernetesClient implements the KubernetesClient interface for testing
 type MockKubernetesClient struct {
 	mock.Mock
+	clientset kubernetes.Interface
 }
 
 // Ensure MockKubernetesClient implements interfaces.KubernetesClient
 var _ interfaces.KubernetesClient = (*MockKubernetesClient)(nil)
+
+func (m *MockKubernetesClient) Clientset() kubernetes.Interface {
+	if m.clientset == nil {
+		m.clientset = fake.NewSimpleClientset()
+	}
+	return m.clientset
+}
 
 func (m *MockKubernetesClient) Start() error {
 	args := m.Called()
