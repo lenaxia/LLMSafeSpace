@@ -35,16 +35,7 @@ type Service struct {
 var _ interfaces.SandboxService = (*Service)(nil)
 
 // CreateSandboxRequest defines the request for creating a sandbox
-type CreateSandboxRequest struct {
-	Runtime       string                  `json:"runtime"`
-	SecurityLevel string                  `json:"securityLevel,omitempty"`
-	Timeout       int                     `json:"timeout,omitempty"`
-	Resources     *types.ResourceRequirements `json:"resources,omitempty"`
-	NetworkAccess *types.NetworkAccess        `json:"networkAccess,omitempty"`
-	UseWarmPool   bool                    `json:"useWarmPool,omitempty"`
-	UserID        string                  `json:"-"`
-	Namespace     string                  `json:"-"`
-}
+type CreateSandboxRequest = types.CreateSandboxRequest
 
 // ExecuteRequest defines the request for executing code or a command
 type ExecuteRequest struct {
