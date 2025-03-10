@@ -37,7 +37,7 @@ func (s *Service) Stop() error {
 // New creates a new warm pool service
 func New(
 	logger *logger.Logger,
-	k8sClient k8sinterfaces.KubernetesClient,
+	k8sClient kubernetes.KubernetesClient,
 	dbService *database.Service,
 	metricsSvc *metrics.Service,
 ) (*Service, error) {
@@ -93,7 +93,7 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 	}
 
 	// Create warm pool object
-	warmPool := &llmsafespacev1.WarmPool{
+	warmPool := &types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
 			Namespace: req.Namespace,
@@ -104,7 +104,7 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 				"security-level": req.SecurityLevel,
 			},
 		},
-		Spec: llmsafespacev1.WarmPoolSpec{
+		Spec: types.WarmPoolSpec{
 			Runtime:       req.Runtime,
 			MinSize:       req.MinSize,
 			MaxSize:       req.MaxSize,
@@ -119,7 +119,7 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 	}
 
 	// Create the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(warmPool)
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(&types.WarmPool{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create warm pool: %w", err)
 	}
@@ -202,7 +202,7 @@ func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest)
 	}
 
 	// Update the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(warmPool)
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(&types.WarmPool{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to update warm pool: %w", err)
 	}
@@ -484,11 +484,11 @@ type CreateWarmPoolRequest struct {
 	MaxSize         int                                   `json:"maxSize,omitempty"`
 	SecurityLevel   string                                `json:"securityLevel,omitempty"`
 	TTL             int                                   `json:"ttl,omitempty"`
-	Resources       *llmsafespacev1.ResourceRequirements  `json:"resources,omitempty"`
-	ProfileRef      *llmsafespacev1.ProfileReference      `json:"profileRef,omitempty"`
+	Resources       *types.ResourceRequirements  `json:"resources,omitempty"`
+	ProfileRef      *types.ProfileReference      `json:"profileRef,omitempty"`
 	PreloadPackages []string                              `json:"preloadPackages,omitempty"`
-	PreloadScripts  []llmsafespacev1.PreloadScript        `json:"preloadScripts,omitempty"`
-	AutoScaling     *llmsafespacev1.AutoScalingConfig     `json:"autoScaling,omitempty"`
+	PreloadScripts  []types.PreloadScript        `json:"preloadScripts,omitempty"`
+	AutoScaling     *types.AutoScalingConfig     `json:"autoScaling,omitempty"`
 	UserID          string                                `json:"-"`
 	Namespace       string                                `json:"-"`
 }
@@ -499,7 +499,7 @@ type UpdateWarmPoolRequest struct {
 	MinSize     int                               `json:"minSize,omitempty"`
 	MaxSize     int                               `json:"maxSize,omitempty"`
 	TTL         int                               `json:"ttl,omitempty"`
-	AutoScaling *llmsafespacev1.AutoScalingConfig `json:"autoScaling,omitempty"`
+	AutoScaling *types.AutoScalingConfig `json:"autoScaling,omitempty"`
 	UserID      string                            `json:"-"`
 	Namespace   string                            `json:"-"`
 }
