@@ -82,6 +82,12 @@ func (m *MockKubernetesClient) DeleteFileInSandbox(ctx context.Context, namespac
 	return args.Error(0)
 }
 
+// LlmsafespaceV1 returns a mock implementation of the LLMSafespaceV1Interface
+func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
+	args := m.Called()
+	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
+}
+
 // MockFileInfo creates a mock FileInfo for testing
 func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 	return types.FileInfo{
