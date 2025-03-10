@@ -130,7 +130,7 @@ func (m *MockSandboxInterface) Delete(name string, options metav1.DeleteOptions)
 	return args.Error(0)
 }
 
-func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
 	args := m.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
