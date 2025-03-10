@@ -16,14 +16,14 @@ import (
 // Service handles file operations
 type Service struct {
 	logger    *logger.Logger
-	k8sClient kubernetes.KubernetesClient
+	k8sClient interfaces.KubernetesClient
 }
 
 // Ensure Service implements interfaces.FileService
 var _ interfaces.FileService = (*Service)(nil)
 
 // New creates a new file service
-func New(logger *logger.Logger, k8sClient kubernetes.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -99,7 +99,7 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error) {
 	startTime := time.Now()
-	sb := sandbox.(*llmsafespacev1.Sandbox)
+	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Downloading file from sandbox", 
 		"namespace", sb.Namespace, 
@@ -241,9 +241,9 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path stri
 }
 
 // CreateDirectory creates a directory in a sandbox
-func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*interfaces.FileInfo, error) {
+func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*types.FileInfo, error) {
 	startTime := time.Now()
-	sb := sandbox.(*llmsafespacev1.Sandbox)
+	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Creating directory in sandbox", 
 		"namespace", sb.Namespace, 
@@ -277,7 +277,7 @@ func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path
 	}
 
 	// Return file info
-	fileInfo := &interfaces.FileInfo{
+	fileInfo := &types.FileInfo{
 		Path:      fileResult.Path,
 		Name:      filepath.Base(fileResult.Path),
 		Size:      fileResult.Size,
