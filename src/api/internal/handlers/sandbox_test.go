@@ -233,11 +233,11 @@ func TestCreateSandbox(t *testing.T) {
 	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockSandboxService.On("CreateSandbox", mock.Anything, mock.MatchedBy(func(req sandbox.CreateSandboxRequest) bool {
 		return req.Runtime == "python:3.10" && req.UserID == "user123"
-	})).Return(&llmsafespacev1.Sandbox{
+	})).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Creating",
 		},
 	}, nil).Once()
@@ -308,14 +308,14 @@ func TestGetSandbox(t *testing.T) {
 	// Test case: Successful get
 	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(true).Once()
-	mockSandboxService.On("GetSandbox", mock.Anything, "sb-12345").Return(&llmsafespacev1.Sandbox{
+	mockSandboxService.On("GetSandbox", mock.Anything, "sb-12345").Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()
@@ -487,7 +487,7 @@ func TestGetSandboxStatus(t *testing.T) {
 	// Test case: Successful get status
 	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "read").Return(true).Once()
-	mockSandboxService.On("GetSandboxStatus", mock.Anything, "sb-12345").Return(&llmsafespacev1.SandboxStatus{
+	mockSandboxService.On("GetSandboxStatus", mock.Anything, "sb-12345").Return(&types.SandboxStatus{
 		Phase:    "Running",
 		Endpoint: "sb-12345.default.svc.cluster.local",
 	}, nil).Once()
