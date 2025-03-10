@@ -166,8 +166,9 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(remotecommand.ExitError); ok {
-			exitCode = int(exitErr.ExitStatus())
+		// Try to extract exit code using type assertion with interface
+		if exitErr, ok := err.(interface{ ExitStatus() int }); ok {
+			exitCode = exitErr.ExitStatus()
 		} else if execCtx.Err() == context.DeadlineExceeded {
 			return 124, fmt.Errorf("command timed out after %v", options.Timeout)
 		} else {
