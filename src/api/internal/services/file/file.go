@@ -196,7 +196,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path stri
 // DeleteFile deletes a file from a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path string) error {
 	startTime := time.Now()
-	sb := sandbox.(*llmsafespacev1.Sandbox)
+	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Deleting file from sandbox", 
 		"namespace", sb.Namespace, 
@@ -239,9 +239,9 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path stri
 }
 
 // CreateDirectory creates a directory in a sandbox
-func (s *Service) CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*types.FileInfo, error) {
+func (s *Service) CreateDirectory(ctx context.Context, sandbox *types.Sandbox, path string) (*types.FileInfo, error) {
 	startTime := time.Now()
-	sb := sandbox.(*types.Sandbox)
+	sb := sandbox
 	
 	s.logger.Debug("Creating directory in sandbox", 
 		"namespace", sb.Namespace, 
