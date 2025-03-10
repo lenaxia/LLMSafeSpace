@@ -163,10 +163,8 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 
 // LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group
 func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
-	client, err := newLLMSafespaceV1Client(c.restConfig)
-	if err != nil {
-		c.logger.Error("Failed to create LLMSafespaceV1Client", err)
-		return nil
+	client := &LLMSafespaceV1Client{
+		restClient: c.restConfig.RESTClient(),
 	}
 	return client
 }
