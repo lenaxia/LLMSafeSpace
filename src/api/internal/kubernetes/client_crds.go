@@ -89,8 +89,8 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	return &LLMSafespaceV1Client{restClient: client}, nil
 }
 
-// Sandboxes returns a SandboxInterface for the given namespace
-func (c *LLMSafespaceV1Client) Sandboxes(namespace string) SandboxInterface {
+// Sandboxes returns an interfaces.SandboxInterface for the given namespace
+func (c *LLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
 	return &sandboxes{
 		client: c.restClient,
 		ns:     namespace,
