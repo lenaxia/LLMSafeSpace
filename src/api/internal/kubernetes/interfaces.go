@@ -1,7 +1,7 @@
 package kubernetes
 
 import (
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 )
 
 // For backward compatibility
