@@ -49,7 +49,7 @@ type LLMSafespaceV1Client struct {
 	restClient rest.Interface
 }
 
-var _ interfaces.LLMSafespaceV1Interface = (*LLMSafespaceV1Client)(nil)
+var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
 // SandboxesGetter defines the interface for getting Sandboxes
 type SandboxesGetter interface {
@@ -464,7 +464,7 @@ type sandboxProfiles struct {
 }
 
 // SandboxProfiles returns a SandboxProfileInterface for the given namespace
-func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) SandboxProfileInterface {
+func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
 	return &sandboxProfiles{
 		client: c.restClient,
 		ns:     namespace,
