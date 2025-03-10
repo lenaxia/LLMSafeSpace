@@ -197,11 +197,10 @@ func (s *Service) UploadFile(ctx context.Context, sandbox *types.Sandbox, path s
 // DeleteFile deletes a file from a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	startTime := time.Now()
-	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Deleting file from sandbox", 
-		"namespace", sb.Namespace, 
-		"name", sb.Name, 
+		"namespace", sandbox.Namespace, 
+		"name", sandbox.Name, 
 		"path", path)
 	
 	// Validate path
@@ -220,19 +219,19 @@ func (s *Service) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path s
 	}
 
 	// Delete file via Kubernetes API
-	err := s.k8sClient.DeleteFileInSandbox(ctx, sb.Namespace, sb.Name, fileReq)
+	err := s.k8sClient.DeleteFileInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
 	if err != nil {
 		s.logger.Error("Failed to delete file in sandbox", err, 
-			"namespace", sb.Namespace, 
-			"name", sb.Name, 
+			"namespace", sandbox.Namespace, 
+			"name", sandbox.Name, 
 			"path", path)
 		return fmt.Errorf("failed to delete file in sandbox: %w", err)
 	}
 
 	duration := time.Since(startTime)
 	s.logger.Debug("Deleted file from sandbox", 
-		"namespace", sb.Namespace, 
-		"name", sb.Name, 
+		"namespace", sandbox.Namespace, 
+		"name", sandbox.Name, 
 		"path", path, 
 		"duration_ms", duration.Milliseconds())
 
