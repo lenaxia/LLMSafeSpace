@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
@@ -17,7 +18,7 @@ import (
 // Service handles warm pool operations
 type Service struct {
 	logger     *logger.Logger
-	k8sClient  k8sinterfaces.KubernetesClient
+	k8sClient  kubernetes.KubernetesClient
 	dbService  *database.Service
 	metricsSvc *metrics.Service
 }
