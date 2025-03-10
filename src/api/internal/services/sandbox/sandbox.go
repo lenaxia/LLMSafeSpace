@@ -381,13 +381,22 @@ func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesReques
 
 // CreateSession creates a new WebSocket session
 func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*Session, error) {
-	// Get sandbox from Kubernetes
+	// Get sandbox metadata from database
+	metadata, err := s.dbService.GetSandboxMetadata(context.Background(), sandboxID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox metadata: %w", err)
+	}
+
+	if metadata == nil {
+		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+	}
+
+	// Check if sandbox is running
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox: %w", err)
 	}
 
-	// Check if sandbox is running
 	if sandbox.Status.Phase != "Running" {
 		return nil, fmt.Errorf("sandbox is not running: %s", sandboxID)
 	}
