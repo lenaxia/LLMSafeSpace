@@ -106,7 +106,7 @@ func (m *MockSandboxInterface) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafe
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxInterface) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
@@ -114,7 +114,7 @@ func (m *MockSandboxInterface) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafe
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxInterface) UpdateStatus(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
