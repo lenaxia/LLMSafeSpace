@@ -163,9 +163,6 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 	})
 
 	// Handle the error and extract exit code
-import (
-	"k8s.io/client-go/tools/remotecommand"
-)
 
 	exitCode := 0
 	if err != nil {
