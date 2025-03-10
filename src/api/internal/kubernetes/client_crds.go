@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -11,10 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-
-	// Import custom resource definitions
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // Initialize CRD scheme
@@ -43,17 +40,12 @@ func init() {
 	}
 }
 
-// For backward compatibility
+// LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group
 type LLMSafespaceV1Client struct {
 	restClient rest.Interface
 }
 
 var _ LLMSafespaceV1Interface = (*LLMSafespaceV1Client)(nil)
-
-// LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group
-type LLMSafespaceV1Client struct {
-	restClient rest.Interface
-}
 
 // SandboxesGetter defines the interface for getting Sandboxes
 type SandboxesGetter interface {
