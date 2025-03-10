@@ -15,11 +15,11 @@ import (
 // Service handles file operations
 type Service struct {
 	logger    *logger.Logger
-	k8sClient interfaces.KubernetesClient
+	k8sClient kubernetes.KubernetesClient
 }
 
 // Ensure Service implements interfaces.FileService
-var _ interfaces.FileService = (*Service)(nil)
+var _ interfaces.FileService = &Service{}
 
 // New creates a new file service
 func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
