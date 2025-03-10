@@ -19,10 +19,9 @@ func TestNew(t *testing.T) {
 
 	// Create mock service instance
 	mockK8sClient := new(MockKubernetesClient)
-	var k8sClient *kubernetes.Client = mockK8sClient
 
 	// Test successful creation
-	service, err := New(log, k8sClient)
+	service, err := New(log, mockK8sClient)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
