@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
@@ -194,7 +195,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox *types.Sandbox, path s
 }
 
 // DeleteFile deletes a file from a sandbox
-func (s *Service) DeleteFile(ctx context.Context, sandbox interface{}, path string) error {
+func (s *Service) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	startTime := time.Now()
 	sb := sandbox.(*types.Sandbox)
 	
