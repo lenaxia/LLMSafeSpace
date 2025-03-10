@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // MockSandboxService implementation
