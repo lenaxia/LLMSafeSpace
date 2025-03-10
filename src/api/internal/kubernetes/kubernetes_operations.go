@@ -3,10 +3,8 @@ package kubernetes
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -365,7 +363,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 	output := stdout.String()
 	lines := strings.Split(output, "\n")
 	
-	files := make([]FileInfo, 0, len(lines))
+	files := make([]types.FileInfo, 0, len(lines))
 	for _, line := range lines {
 		if line == "" {
 			continue
