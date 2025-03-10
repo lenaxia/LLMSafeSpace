@@ -19,6 +19,9 @@ type Service struct {
 }
 
 // Ensure Service implements interfaces.ExecutionService
+var _ interfaces.ExecutionService = &Service{}
+
+// Ensure Service implements interfaces.ExecutionService
 var _ interfaces.ExecutionService = (*Service)(nil)
 
 // Start initializes the execution service
