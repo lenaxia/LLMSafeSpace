@@ -122,7 +122,7 @@ func (m *MockSandboxInterface) UpdateStatus(sandbox *llmsafespacev1.Sandbox) (*l
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxInterface) Delete(name string, options metav1.DeleteOptions) error {
@@ -135,7 +135,7 @@ func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*llm
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error) {
