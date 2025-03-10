@@ -2,7 +2,6 @@ package execution
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -43,7 +42,7 @@ func TestNew(t *testing.T) {
 	
 	// Create mock service instance
 	mockK8sClient := new(MockK8sClient)
-	var k8sClient k8sinterfaces.KubernetesClient = mockK8sClient
+	var k8sClient interfaces.KubernetesClient = mockK8sClient
 
 	// Test successful creation
 	service, err := New(log, k8sClient)
