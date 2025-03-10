@@ -101,7 +101,7 @@ func (m *MockLLMSafespaceV1Client) SandboxProfiles(namespace string) k8sinterfac
 	return args.Get(0).(k8sinterfaces.SandboxProfileInterface)
 }
 
-func (m *MockSandboxInterface) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
 	args := m.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -109,7 +109,7 @@ func (m *MockSandboxInterface) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafe
 	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
-func (m *MockSandboxInterface) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
 	args := m.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -117,7 +117,7 @@ func (m *MockSandboxInterface) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafe
 	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
-func (m *MockSandboxInterface) UpdateStatus(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
 	args := m.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
