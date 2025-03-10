@@ -234,8 +234,8 @@ type warmPods struct {
 	ns     string
 }
 
-// WarmPods returns a WarmPodInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPods(namespace string) WarmPodInterface {
+// WarmPods returns an interfaces.WarmPodInterface for the given namespace
+func (c *LLMSafespaceV1Client) WarmPods(namespace string) interfaces.WarmPodInterface {
 	return &warmPods{
 		client: c.restClient,
 		ns:     namespace,
