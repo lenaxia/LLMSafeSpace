@@ -23,6 +23,9 @@ type Service struct {
 	metricsSvc *metrics.Service
 }
 
+// Ensure Service implements interfaces.WarmPoolService
+var _ interfaces.WarmPoolService = &Service{}
+
 // Start initializes the warm pool service
 func (s *Service) Start() error {
 	// Initialize any required resources

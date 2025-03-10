@@ -24,6 +24,9 @@ var _ interfaces.ExecutionService = &Service{}
 // Ensure Service implements interfaces.ExecutionService
 var _ interfaces.ExecutionService = (*Service)(nil)
 
+// Ensure Service implements interfaces.ExecutionService
+var _ interfaces.ExecutionService = (*Service)(nil)
+
 // Start initializes the execution service
 func (s *Service) Start() error {
 	s.logger.Info("Starting execution service")
