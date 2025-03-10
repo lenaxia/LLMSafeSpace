@@ -1,5 +1,3 @@
-package file
-
 import (
 	"context"
 	"fmt"
@@ -7,8 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces" 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
@@ -42,14 +39,13 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-// ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]types.FileInfo, error) {
-	startTime := time.Now()
+	startTime := time.Now() 
 	sb := sandbox.(*types.Sandbox)
-	
-	s.logger.Debug("Listing files in sandbox", 
-		"namespace", sb.Namespace, 
-		"name", sb.Name, 
+
+	s.logger.Debug("Listing files in sandbox",
+		"namespace", sb.Namespace,
+		"name", sb.Name,
 		"path", path)
 	
 	// Normalize path
