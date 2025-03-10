@@ -363,7 +363,7 @@ type MockFileService struct {
 	mock.Mock
 }
 
-func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error) {
+func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]file.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -379,7 +379,7 @@ func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandb
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error) {
+func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*file.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
