@@ -101,7 +101,7 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 		status = "failed"
 	}
 
-	return &ExecutionResult{
+	return &types.ExecutionResult{
 		ID:          execID,
 		Status:      status,
 		StartedAt:   startTime,
@@ -168,7 +168,7 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(remotecommand.ExitError); ok {
-			exitCode = exitErr.ExitStatus()
+			exitCode = int(exitErr.ExitStatus())
 		} else if execCtx.Err() == context.DeadlineExceeded {
 			return 124, fmt.Errorf("command timed out after %v", options.Timeout)
 		} else {
@@ -277,7 +277,7 @@ func (c *Client) ExecuteStreamInSandbox(
 		status = "failed"
 	}
 
-	return &ExecutionResult{
+	return &types.ExecutionResult{
 		ID:          execID,
 		Status:      status,
 		StartedAt:   startTime,
@@ -393,7 +393,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 		createdAt := time.Unix(int64(createdAtUnix), 0)
 		updatedAt := time.Unix(int64(updatedAtUnix), 0)
 		
-		files = append(files, FileInfo{
+		files = append(files, types.FileInfo{
 			Path:      filePath,
 			Size:      size,
 			IsDir:     isDir,
@@ -402,7 +402,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 		})
 	}
 	
-	return &FileList{Files: files}, nil
+	return &types.FileList{Files: files}, nil
 }
 
 // parseInt64 parses a string to int64
@@ -556,7 +556,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		modTime := time.Unix(modTimeUnix, 0)
 		changeTime := time.Unix(changeTimeUnix, 0)
 		
-		return &FileResult{
+		return &types.FileResult{
 			Path:      req.Path,
 			Size:      size,
 			IsDir:     true,
@@ -642,7 +642,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 	modTime := time.Unix(modTimeUnix, 0)
 	changeTime := time.Unix(changeTimeUnix, 0)
 	
-	return &FileResult{
+	return &types.FileResult{
 		Path:      req.Path,
 		Size:      size,
 		IsDir:     false,

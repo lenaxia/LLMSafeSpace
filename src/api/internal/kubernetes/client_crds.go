@@ -40,12 +40,12 @@ func init() {
 	}
 }
 
-// LLMSafespaceV1Client is a client for the llmsafespace.dev/v1 API group
+// LLMSafespaceV1Client implements the LLMSafespaceV1Interface
 type LLMSafespaceV1Client struct {
 	restClient rest.Interface
 }
 
-var _ LLMSafespaceV1Interface = (*LLMSafespaceV1Client)(nil)
+var _ interfaces.LLMSafespaceV1Interface = (*LLMSafespaceV1Client)(nil)
 
 // SandboxesGetter defines the interface for getting Sandboxes
 type SandboxesGetter interface {
