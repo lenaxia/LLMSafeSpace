@@ -11,15 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
 )
-
-// For backward compatibility
-type ExecutionRequest = types.ExecutionRequest
-type ExecutionResult = types.ExecutionResult
 
 // ExecuteInSandbox executes code or a command in a sandbox
 func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, req *types.ExecutionRequest) (*types.ExecutionResult, error) {

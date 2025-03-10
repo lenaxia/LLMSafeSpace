@@ -15,9 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // Client manages Kubernetes API interactions
@@ -31,8 +31,8 @@ type Client struct {
 	stopCh          chan struct{}
 }
 
-// Ensure Client implements k8sinterfaces.KubernetesClient
-var _ k8sinterfaces.KubernetesClient = (*Client)(nil)
+// Ensure Client implements interfaces.KubernetesClient
+var _ interfaces.KubernetesClient = (*Client)(nil)
 
 // New creates a new Kubernetes client
 func New(cfg *config.Config, logger *logger.Logger) (*Client, error) {
@@ -162,7 +162,7 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 }
 
 // LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group
-func (c *Client) LlmsafespaceV1() k8sinterfaces.LLMSafespaceV1Interface {
+func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	client, err := newLLMSafespaceV1Client(c.restConfig)
 	if err != nil {
 		c.logger.Error("Failed to create LLMSafespaceV1Client", err)
