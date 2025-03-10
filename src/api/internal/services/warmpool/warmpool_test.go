@@ -44,28 +44,28 @@ func (m *MockLLMSafespaceV1Client) WarmPools(namespace string) kubernetes.WarmPo
 }
 
 
-func (m *MockWarmPoolInterface) Create(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
+func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
 	args := m.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPool), args.Error(1)
+	return args.Get(0).(*types.WarmPool), args.Error(1)
 }
 
-func (m *MockWarmPoolInterface) Update(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
+func (m *MockWarmPoolInterface) Update(warmPool *types.WarmPool) (*types.WarmPool, error) {
 	args := m.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPool), args.Error(1)
+	return args.Get(0).(*types.WarmPool), args.Error(1)
 }
 
-func (m *MockWarmPoolInterface) UpdateStatus(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
+func (m *MockWarmPoolInterface) UpdateStatus(warmPool *types.WarmPool) (*types.WarmPool, error) {
 	args := m.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPool), args.Error(1)
+	return args.Get(0).(*types.WarmPool), args.Error(1)
 }
 
 func (m *MockWarmPoolInterface) Delete(name string, options metav1.DeleteOptions) error {
@@ -73,20 +73,20 @@ func (m *MockWarmPoolInterface) Delete(name string, options metav1.DeleteOptions
 	return args.Error(0)
 }
 
-func (m *MockWarmPoolInterface) Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPool, error) {
+func (m *MockWarmPoolInterface) Get(name string, options metav1.GetOptions) (*types.WarmPool, error) {
 	args := m.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPool), args.Error(1)
+	return args.Get(0).(*types.WarmPool), args.Error(1)
 }
 
-func (m *MockWarmPoolInterface) List(opts metav1.ListOptions) (*llmsafespacev1.WarmPoolList, error) {
+func (m *MockWarmPoolInterface) List(opts metav1.ListOptions) (*types.WarmPoolList, error) {
 	args := m.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPoolList), args.Error(1)
+	return args.Get(0).(*types.WarmPoolList), args.Error(1)
 }
 
 func (m *MockWarmPoolInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
@@ -139,10 +139,10 @@ func TestCheckAvailability(t *testing.T) {
 			return false
 		}
 		return opts.LabelSelector == selector.String()
-	})).Return(&llmsafespacev1.WarmPoolList{
-		Items: []llmsafespacev1.WarmPool{
+	})).Return(&types.WarmPoolList{
+		Items: []types.WarmPool{
 			{
-				Status: llmsafespacev1.WarmPoolStatus{
+				Status: types.WarmPoolStatus{
 					AvailablePods: 5,
 				},
 			},
@@ -154,10 +154,10 @@ func TestCheckAvailability(t *testing.T) {
 	assert.True(t, available)
 
 	// Test case: No available warm pods
-	mockWarmPoolInterface.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
-		Items: []llmsafespacev1.WarmPool{
+	mockWarmPoolInterface.On("List", mock.Anything).Return(&types.WarmPoolList{
+		Items: []types.WarmPool{
 			{
-				Status: llmsafespacev1.WarmPoolStatus{
+				Status: types.WarmPoolStatus{
 					AvailablePods: 0,
 				},
 			},
@@ -169,8 +169,8 @@ func TestCheckAvailability(t *testing.T) {
 	assert.False(t, available)
 
 	// Test case: No matching warm pools
-	mockWarmPoolInterface.On("List", mock.Anything).Return(&llmsafespacev1.WarmPoolList{
-		Items: []llmsafespacev1.WarmPool{},
+	mockWarmPoolInterface.On("List", mock.Anything).Return(&types.WarmPoolList{
+		Items: []types.WarmPool{},
 	}, nil).Once()
 
 	available, err = service.CheckAvailability(ctx, runtime, securityLevel)
@@ -210,11 +210,11 @@ func TestCreateWarmPool(t *testing.T) {
 	}
 
 	// Test case: Successful creation
-	mockWarmPool.On("Create", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
+	mockWarmPool.On("Create", mock.MatchedBy(func(warmPool *types.WarmPool) bool {
 		return warmPool.Name == "test-pool" && 
 		       warmPool.Spec.Runtime == "python:3.10" && 
 		       warmPool.Spec.MinSize == 5
-	})).Return(&llmsafespacev1.WarmPool{
+	})).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-pool",
 		},
@@ -255,11 +255,11 @@ func TestGetWarmPool(t *testing.T) {
 	namespace := "default"
 
 	// Test case: Successful get
-	mockWarmPool.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", name, mock.Anything).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Spec: llmsafespacev1.WarmPoolSpec{
+		Spec: types.WarmPoolSpec{
 			Runtime: "python:3.10",
 			MinSize: 5,
 		},
@@ -301,26 +301,26 @@ func TestUpdateWarmPool(t *testing.T) {
 	}
 
 	// Test case: Successful update
-	mockWarmPool.On("Get", "test-pool", mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", "test-pool", mock.Anything).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-pool",
 		},
-		Spec: llmsafespacev1.WarmPoolSpec{
+		Spec: types.WarmPoolSpec{
 			Runtime: "python:3.10",
 			MinSize: 5,
 			MaxSize: 10,
 		},
 	}, nil).Once()
 
-	mockWarmPool.On("Update", mock.MatchedBy(func(warmPool *llmsafespacev1.WarmPool) bool {
+	mockWarmPool.On("Update", mock.MatchedBy(func(warmPool *types.WarmPool) bool {
 		return warmPool.Name == "test-pool" && 
 		       warmPool.Spec.MinSize == 10 && 
 		       warmPool.Spec.MaxSize == 20
-	})).Return(&llmsafespacev1.WarmPool{
+	})).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-pool",
 		},
-		Spec: llmsafespacev1.WarmPoolSpec{
+		Spec: types.WarmPoolSpec{
 			Runtime: "python:3.10",
 			MinSize: 10,
 			MaxSize: 20,
@@ -342,7 +342,7 @@ func TestUpdateWarmPool(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get warm pool")
 
 	// Test case: Update error
-	mockWarmPool.On("Get", "update-error", mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", "update-error", mock.Anything).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "update-error",
 		},
@@ -444,11 +444,11 @@ func TestGetWarmPoolStatus(t *testing.T) {
 	namespace := "default"
 
 	// Test case: Successful get status
-	mockWarmPool.On("Get", name, mock.Anything).Return(&llmsafespacev1.WarmPool{
+	mockWarmPool.On("Get", name, mock.Anything).Return(&types.WarmPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Status: llmsafespacev1.WarmPoolStatus{
+		Status: types.WarmPoolStatus{
 			AvailablePods: 5,
 			AssignedPods:  2,
 			PendingPods:   1,

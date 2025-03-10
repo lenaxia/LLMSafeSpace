@@ -121,7 +121,7 @@ func TestListFiles(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
@@ -168,7 +168,7 @@ func TestDownloadFile(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
@@ -204,7 +204,7 @@ func TestUploadFile(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
@@ -246,7 +246,7 @@ func TestDeleteFile(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",

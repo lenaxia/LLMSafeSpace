@@ -46,7 +46,7 @@ func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.Crea
         if args.Get(0) == nil {
                 return nil, args.Error(1)
         }
-        return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+        return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
@@ -54,7 +54,7 @@ func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
