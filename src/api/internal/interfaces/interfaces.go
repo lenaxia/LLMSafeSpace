@@ -34,6 +34,8 @@ type DatabaseService interface {
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error)
+	CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error
+	GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error)
 	Start() error
 	Stop() error
 }
