@@ -163,9 +163,13 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 	})
 
 	// Handle the error and extract exit code
+import (
+	"k8s.io/client-go/tools/remotecommand"
+)
+
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(remotecommand.ExitError); ok {
+		if exitErr, ok := err.(*remotecommand.ExitError); ok {
 			exitCode = int(exitErr.ExitStatus())
 		} else if execCtx.Err() == context.DeadlineExceeded {
 			return 124, fmt.Errorf("command timed out after %v", options.Timeout)
