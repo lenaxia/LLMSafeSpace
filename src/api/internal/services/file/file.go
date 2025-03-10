@@ -15,14 +15,14 @@ import (
 // Service handles file operations
 type Service struct {
 	logger    *logger.Logger
-	k8sClient k8sinterfaces.KubernetesClient
+	k8sClient kubernetes.KubernetesClient
 }
 
 // Ensure Service implements interfaces.FileService
 var _ interfaces.FileService = (*Service)(nil)
 
 // New creates a new file service
-func New(logger *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient kubernetes.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -42,9 +42,9 @@ func (s *Service) Stop() error {
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]interfaces.FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]types.FileInfo, error) {
 	startTime := time.Now()
-	sb := sandbox.(*llmsafespacev1.Sandbox)
+	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Listing files in sandbox", 
 		"namespace", sb.Namespace, 
@@ -72,9 +72,9 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 	}
 
 	// Convert to FileInfo
-	files := make([]interfaces.FileInfo, len(fileList.Files))
+	files := make([]types.FileInfo, len(fileList.Files))
 	for i, file := range fileList.Files {
-		files[i] = interfaces.FileInfo{
+		files[i] = types.FileInfo{
 			Path:      file.Path,
 			Name:      filepath.Base(file.Path),
 			Size:      file.Size,
@@ -137,9 +137,9 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path st
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*interfaces.FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*types.FileInfo, error) {
 	startTime := time.Now()
-	sb := sandbox.(*llmsafespacev1.Sandbox)
+	sb := sandbox.(*types.Sandbox)
 	
 	s.logger.Debug("Uploading file to sandbox", 
 		"namespace", sb.Namespace, 
@@ -174,7 +174,7 @@ func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path stri
 	}
 
 	// Return file info
-	fileInfo := &interfaces.FileInfo{
+	fileInfo := &types.FileInfo{
 		Path:      fileResult.Path,
 		Name:      filepath.Base(fileResult.Path),
 		Size:      fileResult.Size,
