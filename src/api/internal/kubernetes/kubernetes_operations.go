@@ -177,7 +177,6 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 	return exitCode, nil
 }
 
-import "k8s.io/client-go/tools/remotecommand"
 
 // ExecuteStreamInSandbox executes code or a command in a sandbox and streams the output
 func (c *Client) ExecuteStreamInSandbox(
