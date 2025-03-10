@@ -5,19 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
-
-// FileInfo represents file metadata
-type FileInfo struct {
-	Path      string    `json:"path"`
-	Name      string    `json:"name"`
-	Size      int64     `json:"size"`
-	IsDir     bool      `json:"is_dir"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
 
 // AuthService defines the interface for authentication services
 type AuthService interface {
@@ -70,19 +59,20 @@ type Result struct {
 
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*Result, error)
-	ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*Result, error)
+	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*Result, error)
+	ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(stream, content string)) (*Result, error)
+	InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*Result, error)
 	Start() error
 	Stop() error
 }
 
 // FileService defines the interface for file services
 type FileService interface {
-	ListFiles(ctx context.Context, sandbox interface{}, path string) ([]FileInfo, error)
-	DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error)
-	UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*FileInfo, error)
-	DeleteFile(ctx context.Context, sandbox interface{}, path string) error
-	CreateDirectory(ctx context.Context, sandbox interface{}, path string) (*FileInfo, error)
+	ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]types.FileInfo, error)
+	DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error)
+	UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*types.FileInfo, error)
+	DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error
+	CreateDirectory(ctx context.Context, sandbox *types.Sandbox, path string) (*types.FileInfo, error)
 	Start() error
 	Stop() error
 }
@@ -93,8 +83,8 @@ type MetricsService interface {
 	RecordSandboxCreation(runtime string, warmPodUsed bool)
 	RecordSandboxTermination(runtime string)
 	RecordExecution(execType, runtime, status string, duration time.Duration)
-	IncActiveConnections()
-	DecActiveConnections()
+	IncrementActiveConnections(connType string)
+	DecrementActiveConnections(connType string)
 	RecordWarmPoolHit()
 	Start() error
 	Stop() error
@@ -102,6 +92,20 @@ type MetricsService interface {
 
 // SandboxService defines the interface for sandbox services
 type SandboxService interface {
+	CreateSandbox(ctx context.Context, req types.CreateSandboxRequest) (*types.Sandbox, error)
+	GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error)
+	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
+	TerminateSandbox(ctx context.Context, sandboxID string) error
+	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
+	Execute(ctx context.Context, req types.ExecuteRequest) (*Result, error)
+	ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error)
+	DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error)
+	UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error)
+	DeleteFile(ctx context.Context, sandboxID, path string) error
+	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*Result, error)
+	CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error)
+	CloseSession(sessionID string)
+	HandleSession(session *types.Session)
 	Start() error
 	Stop() error
 }
@@ -114,6 +118,11 @@ type WarmPoolService interface {
 	GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error)
 	GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error)
 	CheckAvailability(ctx context.Context, runtime, securityLevel string) (bool, error)
+	CreateWarmPool(ctx context.Context, req types.CreateWarmPoolRequest) (*types.WarmPool, error)
+	GetWarmPool(ctx context.Context, name, namespace string) (*types.WarmPool, error)
+	ListWarmPools(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
+	UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRequest) (*types.WarmPool, error)
+	DeleteWarmPool(ctx context.Context, name, namespace string) error
 	Start() error
 	Stop() error
 }
