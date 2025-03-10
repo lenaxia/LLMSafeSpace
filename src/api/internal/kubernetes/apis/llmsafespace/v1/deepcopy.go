@@ -2,10 +2,12 @@ package v1
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
+	
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *Sandbox) DeepCopyObject() runtime.Object {
+func (in *types.Sandbox) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -13,17 +15,17 @@ func (in *Sandbox) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of Sandbox
-func (in *Sandbox) DeepCopy() *Sandbox {
+func (in *types.Sandbox) DeepCopy() *types.Sandbox {
 	if in == nil {
 		return nil
 	}
-	out := new(Sandbox)
+	out := new(types.Sandbox)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *Sandbox) DeepCopyInto(out *Sandbox) {
+func (in *types.Sandbox) DeepCopyInto(out *types.Sandbox) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
@@ -32,56 +34,56 @@ func (in *Sandbox) DeepCopyInto(out *Sandbox) {
 }
 
 // DeepCopyInto copies all properties of SandboxSpec into another object of the same type
-func (in *SandboxSpec) DeepCopyInto(out *SandboxSpec) {
+func (in *types.SandboxSpec) DeepCopyInto(out *types.SandboxSpec) {
 	*out = *in
 	if in.Resources != nil {
 		in, out := &in.Resources, &out.Resources
-		*out = new(ResourceRequirements)
+		*out = new(types.ResourceRequirements)
 		**out = **in
 	}
 	if in.NetworkAccess != nil {
 		in, out := &in.NetworkAccess, &out.NetworkAccess
-		*out = new(NetworkAccess)
+		*out = new(types.NetworkAccess)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.Filesystem != nil {
 		in, out := &in.Filesystem, &out.Filesystem
-		*out = new(FilesystemConfig)
+		*out = new(types.FilesystemConfig)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.Storage != nil {
 		in, out := &in.Storage, &out.Storage
-		*out = new(StorageConfig)
+		*out = new(types.StorageConfig)
 		**out = **in
 	}
 	if in.SecurityContext != nil {
 		in, out := &in.SecurityContext, &out.SecurityContext
-		*out = new(SecurityContext)
+		*out = new(types.SecurityContext)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.ProfileRef != nil {
 		in, out := &in.ProfileRef, &out.ProfileRef
-		*out = new(ProfileReference)
+		*out = new(types.ProfileReference)
 		**out = **in
 	}
 }
 
 // DeepCopy creates a deep copy of SandboxSpec
-func (in *SandboxSpec) DeepCopy() *SandboxSpec {
+func (in *types.SandboxSpec) DeepCopy() *types.SandboxSpec {
 	if in == nil {
 		return nil
 	}
-	out := new(SandboxSpec)
+	out := new(types.SandboxSpec)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of NetworkAccess into another object of the same type
-func (in *NetworkAccess) DeepCopyInto(out *NetworkAccess) {
+func (in *types.NetworkAccess) DeepCopyInto(out *types.NetworkAccess) {
 	*out = *in
 	if in.Egress != nil {
 		in, out := &in.Egress, &out.Egress
-		*out = make([]EgressRule, len(*in))
+		*out = make([]types.EgressRule, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -89,11 +91,11 @@ func (in *NetworkAccess) DeepCopyInto(out *NetworkAccess) {
 }
 
 // DeepCopyInto copies all properties of EgressRule into another object of the same type
-func (in *EgressRule) DeepCopyInto(out *EgressRule) {
+func (in *types.EgressRule) DeepCopyInto(out *types.EgressRule) {
 	*out = *in
 	if in.Ports != nil {
 		in, out := &in.Ports, &out.Ports
-		*out = make([]PortRule, len(*in))
+		*out = make([]types.PortRule, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -101,12 +103,12 @@ func (in *EgressRule) DeepCopyInto(out *EgressRule) {
 }
 
 // DeepCopyInto copies all properties of PortRule into another object of the same type
-func (in *PortRule) DeepCopyInto(out *PortRule) {
+func (in *types.PortRule) DeepCopyInto(out *types.PortRule) {
 	*out = *in
 }
 
 // DeepCopyInto copies all properties of FilesystemConfig into another object of the same type
-func (in *FilesystemConfig) DeepCopyInto(out *FilesystemConfig) {
+func (in *types.FilesystemConfig) DeepCopyInto(out *types.FilesystemConfig) {
 	*out = *in
 	if in.WritablePaths != nil {
 		in, out := &in.WritablePaths, &out.WritablePaths
@@ -116,21 +118,21 @@ func (in *FilesystemConfig) DeepCopyInto(out *FilesystemConfig) {
 }
 
 // DeepCopyInto copies all properties of SecurityContext into another object of the same type
-func (in *SecurityContext) DeepCopyInto(out *SecurityContext) {
+func (in *types.SecurityContext) DeepCopyInto(out *types.SecurityContext) {
 	*out = *in
 	if in.SeccompProfile != nil {
 		in, out := &in.SeccompProfile, &out.SeccompProfile
-		*out = new(SeccompProfile)
+		*out = new(types.SeccompProfile)
 		**out = **in
 	}
 }
 
 // DeepCopyInto copies all properties of SandboxStatus into another object of the same type
-func (in *SandboxStatus) DeepCopyInto(out *SandboxStatus) {
+func (in *types.SandboxStatus) DeepCopyInto(out *types.SandboxStatus) {
 	*out = *in
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]SandboxCondition, len(*in))
+		*out = make([]types.SandboxCondition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -141,33 +143,33 @@ func (in *SandboxStatus) DeepCopyInto(out *SandboxStatus) {
 	}
 	if in.Resources != nil {
 		in, out := &in.Resources, &out.Resources
-		*out = new(ResourceStatus)
+		*out = new(types.ResourceStatus)
 		**out = **in
 	}
 	if in.WarmPodRef != nil {
 		in, out := &in.WarmPodRef, &out.WarmPodRef
-		*out = new(WarmPodReference)
+		*out = new(types.WarmPodReference)
 		**out = **in
 	}
 }
 
 // DeepCopy creates a deep copy of SandboxStatus
-func (in *SandboxStatus) DeepCopy() *SandboxStatus {
+func (in *types.SandboxStatus) DeepCopy() *types.SandboxStatus {
 	if in == nil {
 		return nil
 	}
-	out := new(SandboxStatus)
+	out := new(types.SandboxStatus)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of SandboxCondition into another object of the same type
-func (in *SandboxCondition) DeepCopyInto(out *SandboxCondition) {
+func (in *types.SandboxCondition) DeepCopyInto(out *types.SandboxCondition) {
 	*out = *in
 }
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *SandboxList) DeepCopyObject() runtime.Object {
+func (in *types.SandboxList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -175,23 +177,23 @@ func (in *SandboxList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of SandboxList
-func (in *SandboxList) DeepCopy() *SandboxList {
+func (in *types.SandboxList) DeepCopy() *types.SandboxList {
 	if in == nil {
 		return nil
 	}
-	out := new(SandboxList)
+	out := new(types.SandboxList)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *SandboxList) DeepCopyInto(out *SandboxList) {
+func (in *types.SandboxList) DeepCopyInto(out *types.SandboxList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
-		*out = make([]Sandbox, len(*in))
+		*out = make([]types.Sandbox, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -201,7 +203,7 @@ func (in *SandboxList) DeepCopyInto(out *SandboxList) {
 // WarmPool DeepCopy implementations
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *WarmPool) DeepCopyObject() runtime.Object {
+func (in *types.WarmPool) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -209,17 +211,17 @@ func (in *WarmPool) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of WarmPool
-func (in *WarmPool) DeepCopy() *WarmPool {
+func (in *types.WarmPool) DeepCopy() *types.WarmPool {
 	if in == nil {
 		return nil
 	}
-	out := new(WarmPool)
+	out := new(types.WarmPool)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *WarmPool) DeepCopyInto(out *WarmPool) {
+func (in *types.WarmPool) DeepCopyInto(out *types.WarmPool) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
@@ -228,16 +230,16 @@ func (in *WarmPool) DeepCopyInto(out *WarmPool) {
 }
 
 // DeepCopyInto copies all properties of WarmPoolSpec into another object of the same type
-func (in *WarmPoolSpec) DeepCopyInto(out *WarmPoolSpec) {
+func (in *types.WarmPoolSpec) DeepCopyInto(out *types.WarmPoolSpec) {
 	*out = *in
 	if in.Resources != nil {
 		in, out := &in.Resources, &out.Resources
-		*out = new(ResourceRequirements)
+		*out = new(types.ResourceRequirements)
 		**out = **in
 	}
 	if in.ProfileRef != nil {
 		in, out := &in.ProfileRef, &out.ProfileRef
-		*out = new(ProfileReference)
+		*out = new(types.ProfileReference)
 		**out = **in
 	}
 	if in.PreloadPackages != nil {
@@ -247,25 +249,25 @@ func (in *WarmPoolSpec) DeepCopyInto(out *WarmPoolSpec) {
 	}
 	if in.PreloadScripts != nil {
 		in, out := &in.PreloadScripts, &out.PreloadScripts
-		*out = make([]PreloadScript, len(*in))
+		*out = make([]types.PreloadScript, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
 	if in.AutoScaling != nil {
 		in, out := &in.AutoScaling, &out.AutoScaling
-		*out = new(AutoScalingConfig)
+		*out = new(types.AutoScalingConfig)
 		**out = **in
 	}
 }
 
 // DeepCopyInto copies all properties of PreloadScript into another object of the same type
-func (in *PreloadScript) DeepCopyInto(out *PreloadScript) {
+func (in *types.PreloadScript) DeepCopyInto(out *types.PreloadScript) {
 	*out = *in
 }
 
 // DeepCopyInto copies all properties of WarmPoolStatus into another object of the same type
-func (in *WarmPoolStatus) DeepCopyInto(out *WarmPoolStatus) {
+func (in *types.WarmPoolStatus) DeepCopyInto(out *types.WarmPoolStatus) {
 	*out = *in
 	if in.LastScaleTime != nil {
 		in, out := &in.LastScaleTime, &out.LastScaleTime
@@ -273,7 +275,7 @@ func (in *WarmPoolStatus) DeepCopyInto(out *WarmPoolStatus) {
 	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]WarmPoolCondition, len(*in))
+		*out = make([]types.WarmPoolCondition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -281,12 +283,12 @@ func (in *WarmPoolStatus) DeepCopyInto(out *WarmPoolStatus) {
 }
 
 // DeepCopyInto copies all properties of WarmPoolCondition into another object of the same type
-func (in *WarmPoolCondition) DeepCopyInto(out *WarmPoolCondition) {
+func (in *types.WarmPoolCondition) DeepCopyInto(out *types.WarmPoolCondition) {
 	*out = *in
 }
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *WarmPoolList) DeepCopyObject() runtime.Object {
+func (in *types.WarmPoolList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -294,23 +296,23 @@ func (in *WarmPoolList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of WarmPoolList
-func (in *WarmPoolList) DeepCopy() *WarmPoolList {
+func (in *types.WarmPoolList) DeepCopy() *types.WarmPoolList {
 	if in == nil {
 		return nil
 	}
-	out := new(WarmPoolList)
+	out := new(types.WarmPoolList)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *WarmPoolList) DeepCopyInto(out *WarmPoolList) {
+func (in *types.WarmPoolList) DeepCopyInto(out *types.WarmPoolList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
-		*out = make([]WarmPool, len(*in))
+		*out = make([]types.WarmPool, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -320,7 +322,7 @@ func (in *WarmPoolList) DeepCopyInto(out *WarmPoolList) {
 // WarmPod DeepCopy implementations
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *WarmPod) DeepCopyObject() runtime.Object {
+func (in *types.WarmPod) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -328,17 +330,17 @@ func (in *WarmPod) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of WarmPod
-func (in *WarmPod) DeepCopy() *WarmPod {
+func (in *types.WarmPod) DeepCopy() *types.WarmPod {
 	if in == nil {
 		return nil
 	}
-	out := new(WarmPod)
+	out := new(types.WarmPod)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *WarmPod) DeepCopyInto(out *WarmPod) {
+func (in *types.WarmPod) DeepCopyInto(out *types.WarmPod) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
@@ -347,7 +349,7 @@ func (in *WarmPod) DeepCopyInto(out *WarmPod) {
 }
 
 // DeepCopyInto copies all properties of WarmPodSpec into another object of the same type
-func (in *WarmPodSpec) DeepCopyInto(out *WarmPodSpec) {
+func (in *types.WarmPodSpec) DeepCopyInto(out *types.WarmPodSpec) {
 	*out = *in
 	in.PoolRef.DeepCopyInto(&out.PoolRef)
 	if in.CreationTimestamp != nil {
@@ -361,12 +363,12 @@ func (in *WarmPodSpec) DeepCopyInto(out *WarmPodSpec) {
 }
 
 // DeepCopyInto copies all properties of PoolReference into another object of the same type
-func (in *PoolReference) DeepCopyInto(out *PoolReference) {
+func (in *types.PoolReference) DeepCopyInto(out *types.PoolReference) {
 	*out = *in
 }
 
 // DeepCopyInto copies all properties of WarmPodStatus into another object of the same type
-func (in *WarmPodStatus) DeepCopyInto(out *WarmPodStatus) {
+func (in *types.WarmPodStatus) DeepCopyInto(out *types.WarmPodStatus) {
 	*out = *in
 	if in.AssignedAt != nil {
 		in, out := &in.AssignedAt, &out.AssignedAt
@@ -375,7 +377,7 @@ func (in *WarmPodStatus) DeepCopyInto(out *WarmPodStatus) {
 }
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *WarmPodList) DeepCopyObject() runtime.Object {
+func (in *types.WarmPodList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -383,23 +385,23 @@ func (in *WarmPodList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of WarmPodList
-func (in *WarmPodList) DeepCopy() *WarmPodList {
+func (in *types.WarmPodList) DeepCopy() *types.WarmPodList {
 	if in == nil {
 		return nil
 	}
-	out := new(WarmPodList)
+	out := new(types.WarmPodList)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *WarmPodList) DeepCopyInto(out *WarmPodList) {
+func (in *types.WarmPodList) DeepCopyInto(out *types.WarmPodList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
-		*out = make([]WarmPod, len(*in))
+		*out = make([]types.WarmPod, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -409,7 +411,7 @@ func (in *WarmPodList) DeepCopyInto(out *WarmPodList) {
 // RuntimeEnvironment DeepCopy implementations
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *RuntimeEnvironment) DeepCopyObject() runtime.Object {
+func (in *types.RuntimeEnvironment) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -417,17 +419,17 @@ func (in *RuntimeEnvironment) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of RuntimeEnvironment
-func (in *RuntimeEnvironment) DeepCopy() *RuntimeEnvironment {
+func (in *types.RuntimeEnvironment) DeepCopy() *types.RuntimeEnvironment {
 	if in == nil {
 		return nil
 	}
-	out := new(RuntimeEnvironment)
+	out := new(types.RuntimeEnvironment)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *RuntimeEnvironment) DeepCopyInto(out *RuntimeEnvironment) {
+func (in *types.RuntimeEnvironment) DeepCopyInto(out *types.RuntimeEnvironment) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
@@ -436,7 +438,7 @@ func (in *RuntimeEnvironment) DeepCopyInto(out *RuntimeEnvironment) {
 }
 
 // DeepCopyInto copies all properties of RuntimeEnvironmentSpec into another object of the same type
-func (in *RuntimeEnvironmentSpec) DeepCopyInto(out *RuntimeEnvironmentSpec) {
+func (in *types.RuntimeEnvironmentSpec) DeepCopyInto(out *types.RuntimeEnvironmentSpec) {
 	*out = *in
 	if in.Tags != nil {
 		in, out := &in.Tags, &out.Tags
@@ -455,13 +457,13 @@ func (in *RuntimeEnvironmentSpec) DeepCopyInto(out *RuntimeEnvironmentSpec) {
 	}
 	if in.ResourceRequirements != nil {
 		in, out := &in.ResourceRequirements, &out.ResourceRequirements
-		*out = new(RuntimeResourceRequirements)
+		*out = new(types.RuntimeResourceRequirements)
 		**out = **in
 	}
 }
 
 // DeepCopyInto copies all properties of RuntimeEnvironmentStatus into another object of the same type
-func (in *RuntimeEnvironmentStatus) DeepCopyInto(out *RuntimeEnvironmentStatus) {
+func (in *types.RuntimeEnvironmentStatus) DeepCopyInto(out *types.RuntimeEnvironmentStatus) {
 	*out = *in
 	if in.LastValidated != nil {
 		in, out := &in.LastValidated, &out.LastValidated
@@ -470,7 +472,7 @@ func (in *RuntimeEnvironmentStatus) DeepCopyInto(out *RuntimeEnvironmentStatus) 
 }
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *RuntimeEnvironmentList) DeepCopyObject() runtime.Object {
+func (in *types.RuntimeEnvironmentList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -478,23 +480,23 @@ func (in *RuntimeEnvironmentList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of RuntimeEnvironmentList
-func (in *RuntimeEnvironmentList) DeepCopy() *RuntimeEnvironmentList {
+func (in *types.RuntimeEnvironmentList) DeepCopy() *types.RuntimeEnvironmentList {
 	if in == nil {
 		return nil
 	}
-	out := new(RuntimeEnvironmentList)
+	out := new(types.RuntimeEnvironmentList)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *RuntimeEnvironmentList) DeepCopyInto(out *RuntimeEnvironmentList) {
+func (in *types.RuntimeEnvironmentList) DeepCopyInto(out *types.RuntimeEnvironmentList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
-		*out = make([]RuntimeEnvironment, len(*in))
+		*out = make([]types.RuntimeEnvironment, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -504,7 +506,7 @@ func (in *RuntimeEnvironmentList) DeepCopyInto(out *RuntimeEnvironmentList) {
 // SandboxProfile DeepCopy implementations
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *SandboxProfile) DeepCopyObject() runtime.Object {
+func (in *types.SandboxProfile) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -512,17 +514,17 @@ func (in *SandboxProfile) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of SandboxProfile
-func (in *SandboxProfile) DeepCopy() *SandboxProfile {
+func (in *types.SandboxProfile) DeepCopy() *types.SandboxProfile {
 	if in == nil {
 		return nil
 	}
-	out := new(SandboxProfile)
+	out := new(types.SandboxProfile)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *SandboxProfile) DeepCopyInto(out *SandboxProfile) {
+func (in *types.SandboxProfile) DeepCopyInto(out *types.SandboxProfile) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
@@ -530,11 +532,11 @@ func (in *SandboxProfile) DeepCopyInto(out *SandboxProfile) {
 }
 
 // DeepCopyInto copies all properties of SandboxProfileSpec into another object of the same type
-func (in *SandboxProfileSpec) DeepCopyInto(out *SandboxProfileSpec) {
+func (in *types.SandboxProfileSpec) DeepCopyInto(out *types.SandboxProfileSpec) {
 	*out = *in
 	if in.NetworkPolicies != nil {
 		in, out := &in.NetworkPolicies, &out.NetworkPolicies
-		*out = make([]NetworkPolicy, len(*in))
+		*out = make([]types.NetworkPolicy, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -546,22 +548,22 @@ func (in *SandboxProfileSpec) DeepCopyInto(out *SandboxProfileSpec) {
 	}
 	if in.ResourceDefaults != nil {
 		in, out := &in.ResourceDefaults, &out.ResourceDefaults
-		*out = new(ResourceDefaults)
+		*out = new(types.ResourceDefaults)
 		**out = **in
 	}
 	if in.FilesystemConfig != nil {
 		in, out := &in.FilesystemConfig, &out.FilesystemConfig
-		*out = new(ProfileFilesystemConfig)
+		*out = new(types.ProfileFilesystemConfig)
 		(*in).DeepCopyInto(*out)
 	}
 }
 
 // DeepCopyInto copies all properties of NetworkPolicy into another object of the same type
-func (in *NetworkPolicy) DeepCopyInto(out *NetworkPolicy) {
+func (in *types.NetworkPolicy) DeepCopyInto(out *types.NetworkPolicy) {
 	*out = *in
 	if in.Rules != nil {
 		in, out := &in.Rules, &out.Rules
-		*out = make([]NetworkRule, len(*in))
+		*out = make([]types.NetworkRule, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -569,11 +571,11 @@ func (in *NetworkPolicy) DeepCopyInto(out *NetworkPolicy) {
 }
 
 // DeepCopyInto copies all properties of NetworkRule into another object of the same type
-func (in *NetworkRule) DeepCopyInto(out *NetworkRule) {
+func (in *types.NetworkRule) DeepCopyInto(out *types.NetworkRule) {
 	*out = *in
 	if in.Ports != nil {
 		in, out := &in.Ports, &out.Ports
-		*out = make([]PortRule, len(*in))
+		*out = make([]types.PortRule, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -581,7 +583,7 @@ func (in *NetworkRule) DeepCopyInto(out *NetworkRule) {
 }
 
 // DeepCopyInto copies all properties of ProfileFilesystemConfig into another object of the same type
-func (in *ProfileFilesystemConfig) DeepCopyInto(out *ProfileFilesystemConfig) {
+func (in *types.ProfileFilesystemConfig) DeepCopyInto(out *types.ProfileFilesystemConfig) {
 	*out = *in
 	if in.ReadOnlyPaths != nil {
 		in, out := &in.ReadOnlyPaths, &out.ReadOnlyPaths
@@ -596,7 +598,7 @@ func (in *ProfileFilesystemConfig) DeepCopyInto(out *ProfileFilesystemConfig) {
 }
 
 // DeepCopyObject implements the runtime.Object interface.
-func (in *SandboxProfileList) DeepCopyObject() runtime.Object {
+func (in *types.SandboxProfileList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}
@@ -604,23 +606,23 @@ func (in *SandboxProfileList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopy creates a deep copy of SandboxProfileList
-func (in *SandboxProfileList) DeepCopy() *SandboxProfileList {
+func (in *types.SandboxProfileList) DeepCopy() *types.SandboxProfileList {
 	if in == nil {
 		return nil
 	}
-	out := new(SandboxProfileList)
+	out := new(types.SandboxProfileList)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type
-func (in *SandboxProfileList) DeepCopyInto(out *SandboxProfileList) {
+func (in *types.SandboxProfileList) DeepCopyInto(out *types.SandboxProfileList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
-		*out = make([]SandboxProfile, len(*in))
+		*out = make([]types.SandboxProfile, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
