@@ -10,12 +10,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
 // MockKubernetesClient implements the KubernetesClient interface for testing
 type MockKubernetesClient struct {
 	mock.Mock
 	clientset kubernetes.Interface
+	restConfig *rest.Config
 }
 
 // Ensure MockKubernetesClient implements interfaces.KubernetesClient
@@ -26,6 +28,13 @@ func (m *MockKubernetesClient) Clientset() kubernetes.Interface {
 		m.clientset = fake.NewSimpleClientset()
 	}
 	return m.clientset
+}
+
+func (m *MockKubernetesClient) RESTConfig() *rest.Config {
+	if m.restConfig == nil {
+		m.restConfig = &rest.Config{}
+	}
+	return m.restConfig
 }
 
 func (m *MockKubernetesClient) Start() error {
