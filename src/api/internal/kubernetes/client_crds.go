@@ -119,8 +119,8 @@ type warmPools struct {
 	ns     string
 }
 
-// WarmPools returns a WarmPoolInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPools(namespace string) WarmPoolInterface {
+// WarmPools returns an interfaces.WarmPoolInterface for the given namespace
+func (c *LLMSafespaceV1Client) WarmPools(namespace string) interfaces.WarmPoolInterface {
 	return &warmPools{
 		client: c.restClient,
 		ns:     namespace,

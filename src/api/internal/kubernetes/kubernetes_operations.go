@@ -171,7 +171,7 @@ func (c *Client) executeCommand(ctx context.Context, namespace, podName string, 
 		} else if execCtx.Err() == context.DeadlineExceeded {
 			return 124, fmt.Errorf("command timed out after %v", options.Timeout)
 		} else {
-			return 1, fmt.Errorf("failed to execute command: %w", err)
+			return 1, fmt.Errorf("failed to execute command: %v", err)
 		}
 	}
 
