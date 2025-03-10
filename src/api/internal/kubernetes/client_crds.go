@@ -54,12 +54,12 @@ type SandboxesGetter interface {
 
 // SandboxInterface defines the interface for Sandbox operations
 type SandboxInterface interface {
-	Create(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
-	Update(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
-	UpdateStatus(*llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error)
+	Create(*types.Sandbox) (*types.Sandbox, error)
+	Update(*types.Sandbox) (*types.Sandbox, error)
+	UpdateStatus(*types.Sandbox) (*types.Sandbox, error)
 	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error)
+	Get(name string, options metav1.GetOptions) (*types.Sandbox, error)
+	List(opts metav1.ListOptions) (*types.SandboxList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
@@ -100,12 +100,12 @@ type WarmPoolsGetter interface {
 
 // WarmPoolInterface defines the interface for WarmPool operations
 type WarmPoolInterface interface {
-	Create(*llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error)
-	Update(*llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error)
-	UpdateStatus(*llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error)
+	Create(*types.WarmPool) (*types.WarmPool, error)
+	Update(*types.WarmPool) (*types.WarmPool, error)
+	UpdateStatus(*types.WarmPool) (*types.WarmPool, error)
 	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPool, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.WarmPoolList, error)
+	Get(name string, options metav1.GetOptions) (*types.WarmPool, error)
+	List(opts metav1.ListOptions) (*types.WarmPoolList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
@@ -215,12 +215,12 @@ type WarmPodsGetter interface {
 
 // WarmPodInterface defines the interface for WarmPod operations
 type WarmPodInterface interface {
-	Create(*llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error)
-	Update(*llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error)
-	UpdateStatus(*llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error)
+	Create(*types.WarmPod) (*types.WarmPod, error)
+	Update(*types.WarmPod) (*types.WarmPod, error)
+	UpdateStatus(*types.WarmPod) (*types.WarmPod, error)
 	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPod, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.WarmPodList, error)
+	Get(name string, options metav1.GetOptions) (*types.WarmPod, error)
+	List(opts metav1.ListOptions) (*types.WarmPodList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
@@ -330,12 +330,12 @@ type RuntimeEnvironmentsGetter interface {
 
 // RuntimeEnvironmentInterface defines the interface for RuntimeEnvironment operations
 type RuntimeEnvironmentInterface interface {
-	Create(*llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error)
-	Update(*llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error)
-	UpdateStatus(*llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error)
+	Create(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
+	Update(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
+	UpdateStatus(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
 	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.RuntimeEnvironment, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.RuntimeEnvironmentList, error)
+	Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error)
+	List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
@@ -445,11 +445,11 @@ type SandboxProfilesGetter interface {
 
 // SandboxProfileInterface defines the interface for SandboxProfile operations
 type SandboxProfileInterface interface {
-	Create(*llmsafespacev1.SandboxProfile) (*llmsafespacev1.SandboxProfile, error)
-	Update(*llmsafespacev1.SandboxProfile) (*llmsafespacev1.SandboxProfile, error)
+	Create(*types.SandboxProfile) (*types.SandboxProfile, error)
+	Update(*types.SandboxProfile) (*types.SandboxProfile, error)
 	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*llmsafespacev1.SandboxProfile, error)
-	List(opts metav1.ListOptions) (*llmsafespacev1.SandboxProfileList, error)
+	Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error)
+	List(opts metav1.ListOptions) (*types.SandboxProfileList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
