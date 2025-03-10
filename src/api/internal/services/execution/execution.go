@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,7 +15,7 @@ import (
 // Service handles code and command execution
 type Service struct {
 	logger    *logger.Logger
-	k8sClient k8sinterfaces.KubernetesClient
+	k8sClient kubernetes.KubernetesClient
 }
 
 // Ensure Service implements interfaces.ExecutionService
@@ -33,7 +34,7 @@ func (s *Service) Stop() error {
 }
 
 // New creates a new execution service
-func New(logger *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient kubernetes.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -43,7 +44,7 @@ func New(logger *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Serv
 // ExecuteCode executes code in a sandbox
 func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*interfaces.Result, error) {
 	s.logger.Debug("Executing code in sandbox", "sandbox_id", sandboxID, "timeout", timeout)
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxID,
 			Namespace: "default", // Use default namespace if not specified
@@ -55,7 +56,7 @@ func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeo
 // ExecuteCommand executes a command in a sandbox
 func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*interfaces.Result, error) {
 	s.logger.Debug("Executing command in sandbox", "sandbox_id", sandboxID, "timeout", timeout)
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxID,
 			Namespace: "default", // Use default namespace if not specified
@@ -68,9 +69,9 @@ func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string,
 func (s *Service) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, execType, content string, timeout int) (*interfaces.Result, error) {
 	startTime := time.Now()
 	s.logger.Debug("Executing in sandbox", 
-		"namespace", sandbox.Namespace, 
-		"name", sandbox.Name, 
-		"type", execType, 
+		"namespace", sandbox.Namespace,
+		"name", sandbox.Name,
+		"type", execType,
 		"timeout", timeout)
 
 	// Set default timeout if not specified
@@ -170,7 +171,7 @@ func (s *Service) ExecuteStream(
 }
 
 // InstallPackages installs packages in a sandbox
-func (s *Service) InstallPackages(ctx context.Context, sandbox *llmsafespacev1.Sandbox, packages []string, manager string) (*interfaces.Result, error) {
+func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*interfaces.Result, error) {
 	if len(packages) == 0 {
 		return nil, fmt.Errorf("no packages specified for installation")
 	}
