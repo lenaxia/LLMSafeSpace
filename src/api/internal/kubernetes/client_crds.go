@@ -14,6 +14,10 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+import (
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+)
+
 // Initialize CRD scheme
 func init() {
 	schemeBuilder := runtime.NewSchemeBuilder(
@@ -325,7 +329,7 @@ func (w *warmPods) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 
 // RuntimeEnvironmentsGetter defines the interface for getting RuntimeEnvironments
 type RuntimeEnvironmentsGetter interface {
-	RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface
+	RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface
 }
 
 // RuntimeEnvironmentInterface defines the interface for RuntimeEnvironment operations
@@ -346,7 +350,7 @@ type runtimeEnvironments struct {
 }
 
 // RuntimeEnvironments returns a RuntimeEnvironmentInterface for the given namespace
-func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface {
+func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
 	return &runtimeEnvironments{
 		client: c.restClient,
 		ns:     namespace,
