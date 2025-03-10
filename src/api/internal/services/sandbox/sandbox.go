@@ -7,7 +7,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/kubernetes/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
@@ -15,9 +14,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // Service handles sandbox operations

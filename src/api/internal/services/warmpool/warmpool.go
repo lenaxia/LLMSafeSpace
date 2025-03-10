@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
 )
 
 // Service handles warm pool operations
