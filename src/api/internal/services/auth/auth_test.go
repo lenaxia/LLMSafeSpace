@@ -73,6 +73,19 @@ func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, 
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
+	args := m.Called(ctx, sandboxID, userID, runtime)
+	return args.Error(0)
+}
+
+func (m *MockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
 type MockCacheService struct {
 	mock.Mock
 }
