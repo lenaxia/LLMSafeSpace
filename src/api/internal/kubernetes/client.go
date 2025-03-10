@@ -169,5 +169,6 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	client := &LLMSafespaceV1Client{
 		restClient: c.restConfig.RESTClient(),
 	}
+	var _ interfaces.LLMSafespaceV1Interface = client
 	return client
 }
