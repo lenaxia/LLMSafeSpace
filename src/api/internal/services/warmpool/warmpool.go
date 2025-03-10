@@ -18,7 +18,7 @@ import (
 // Service handles warm pool operations
 type Service struct {
 	logger     *logger.Logger
-	k8sClient  kubernetes.KubernetesClient
+	k8sClient  interfaces.KubernetesClient
 	dbService  *database.Service
 	metricsSvc *metrics.Service
 }
@@ -41,7 +41,7 @@ func (s *Service) Stop() error {
 // New creates a new warm pool service
 func New(
 	logger *logger.Logger,
-	k8sClient kubernetes.KubernetesClient,
+	k8sClient interfaces.KubernetesClient,
 	dbService *database.Service,
 	metricsSvc *metrics.Service,
 ) (*Service, error) {
@@ -80,7 +80,7 @@ func (s *Service) CheckAvailability(ctx context.Context, runtime, securityLevel 
 }
 
 // CreateWarmPool creates a new warm pool
-func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest) (*types.WarmPool, error) {
+func (s *Service) CreateWarmPool(ctx context.Context, req types.CreateWarmPoolRequest) (*types.WarmPool, error) {
 	// Set default namespace if not provided
 	if req.Namespace == "" {
 		req.Namespace = "default"
@@ -179,7 +179,7 @@ func (s *Service) ListWarmPools(ctx context.Context, userID string, limit, offse
 }
 
 // UpdateWarmPool updates a warm pool
-func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest) (*types.WarmPool, error) {
+func (s *Service) UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRequest) (*types.WarmPool, error) {
 	// Set default namespace if not provided
 	if req.Namespace == "" {
 		req.Namespace = "default"
@@ -480,30 +480,4 @@ func (s *Service) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]inter
 	return status, nil
 }
 
-// CreateWarmPoolRequest defines the request for creating a warm pool
-type CreateWarmPoolRequest struct {
-	Name            string                                `json:"name"`
-	Runtime         string                                `json:"runtime"`
-	MinSize         int                                   `json:"minSize"`
-	MaxSize         int                                   `json:"maxSize,omitempty"`
-	SecurityLevel   string                                `json:"securityLevel,omitempty"`
-	TTL             int                                   `json:"ttl,omitempty"`
-	Resources       *types.ResourceRequirements  `json:"resources,omitempty"`
-	ProfileRef      *types.ProfileReference      `json:"profileRef,omitempty"`
-	PreloadPackages []string                              `json:"preloadPackages,omitempty"`
-	PreloadScripts  []types.PreloadScript        `json:"preloadScripts,omitempty"`
-	AutoScaling     *types.AutoScalingConfig     `json:"autoScaling,omitempty"`
-	UserID          string                                `json:"-"`
-	Namespace       string                                `json:"-"`
-}
 
-// UpdateWarmPoolRequest defines the request for updating a warm pool
-type UpdateWarmPoolRequest struct {
-	Name        string                            `json:"name"`
-	MinSize     int                               `json:"minSize,omitempty"`
-	MaxSize     int                               `json:"maxSize,omitempty"`
-	TTL         int                               `json:"ttl,omitempty"`
-	AutoScaling *types.AutoScalingConfig `json:"autoScaling,omitempty"`
-	UserID      string                            `json:"-"`
-	Namespace   string                            `json:"-"`
-}

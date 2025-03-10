@@ -15,7 +15,7 @@ import (
 // Service handles code and command execution
 type Service struct {
 	logger    *logger.Logger
-	k8sClient kubernetes.KubernetesClient
+	k8sClient interfaces.KubernetesClient
 }
 
 // Ensure Service implements interfaces.ExecutionService
@@ -40,7 +40,7 @@ func (s *Service) Stop() error {
 }
 
 // New creates a new execution service
-func New(logger *logger.Logger, k8sClient kubernetes.KubernetesClient) (*Service, error) {
+func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service, error) {
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,

@@ -41,9 +41,9 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path string) ([]types.FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]types.FileInfo, error) {
 	startTime := time.Now() 
-	sb := sandbox.(*types.Sandbox)
+	sb := sandbox
 
 	s.logger.Debug("Listing files in sandbox",
 		"namespace", sb.Namespace,
@@ -95,9 +95,9 @@ func (s *Service) ListFiles(ctx context.Context, sandbox interface{}, path strin
 }
 
 // DownloadFile downloads a file from a sandbox
-func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path string) ([]byte, error) {
+func (s *Service) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
 	startTime := time.Now()
-	sb := sandbox.(*types.Sandbox)
+	sb := sandbox
 	
 	s.logger.Debug("Downloading file from sandbox", 
 		"namespace", sb.Namespace, 
@@ -136,9 +136,9 @@ func (s *Service) DownloadFile(ctx context.Context, sandbox interface{}, path st
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandbox interface{}, path string, content []byte) (*types.FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*types.FileInfo, error) {
 	startTime := time.Now()
-	sb := sandbox.(*types.Sandbox)
+	sb := sandbox
 	
 	s.logger.Debug("Uploading file to sandbox", 
 		"namespace", sb.Namespace, 
