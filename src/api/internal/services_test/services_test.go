@@ -167,20 +167,20 @@ type MockSandboxService struct {
 	mock.Mock
 }
 
-func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*types.Sandbox, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
-func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
@@ -196,12 +196,12 @@ func (m *MockSandboxService) TerminateSandbox(ctx context.Context, sandboxID str
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error) {
+func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.SandboxStatus), args.Error(1)
+	return args.Get(0).(*types.SandboxStatus), args.Error(1)
 }
 
 func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*execution.Result, error) {
@@ -303,12 +303,12 @@ func (m *MockWarmPoolService) RemoveFromWarmPool(ctx context.Context, sandboxID 
 }
 
 
-func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPoolStatus, error) {
+func (m *MockWarmPoolService) GetWarmPoolStatus(ctx context.Context, name, namespace string) (*types.WarmPoolStatus, error) {
 	args := m.Called(ctx, name, namespace)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.WarmPoolStatus), args.Error(1)
+	return args.Get(0).(*types.WarmPoolStatus), args.Error(1)
 }
 
 func (m *MockWarmPoolService) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
@@ -371,7 +371,7 @@ func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1
 	return args.Get(0).([]file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -387,7 +387,7 @@ func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev
 	return args.Get(0).(*file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	args := m.Called(ctx, sandbox, path)
 	return args.Error(0)
 }

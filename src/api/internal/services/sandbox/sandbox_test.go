@@ -138,12 +138,12 @@ func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*llm
 	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
-func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error) {
+func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList, error) {
 	args := m.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.SandboxList), args.Error(1)
+	return args.Get(0).(*types.SandboxList), args.Error(1)
 }
 
 func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (interface{}, error) {
@@ -192,7 +192,7 @@ type MockFileService struct {
 	file.Service
 }
 
-func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]file.FileInfo, error) {
+func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]file.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -200,7 +200,7 @@ func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1
 	return args.Get(0).([]file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -208,7 +208,7 @@ func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespac
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*file.FileInfo, error) {
+func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*file.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -216,7 +216,7 @@ func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev
 	return args.Get(0).(*file.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	args := m.Called(ctx, sandbox, path)
 	return args.Error(0)
 }
@@ -226,7 +226,7 @@ type MockExecutionService struct {
 	execution.Service
 }
 
-func (m *MockExecutionService) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, execType, content string, timeout int) (*execution.Result, error) {
+func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*execution.Result, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -234,7 +234,7 @@ func (m *MockExecutionService) Execute(ctx context.Context, sandbox *llmsafespac
 	return args.Get(0).(*execution.Result), args.Error(1)
 }
 
-func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *llmsafespacev1.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*execution.Result, error) {
+func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*execution.Result, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout, outputCallback)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -242,7 +242,7 @@ func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *llmsa
 	return args.Get(0).(*execution.Result), args.Error(1)
 }
 
-func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *llmsafespacev1.Sandbox, packages []string, manager string) (*execution.Result, error) {
+func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*execution.Result, error) {
 	args := m.Called(ctx, sandbox, packages, manager)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -344,10 +344,10 @@ func TestCreateSandbox(t *testing.T) {
 
 	// Test case: Successful creation with warm pool
 	mockWarmPoolService.On("CheckAvailability", ctx, "python:3.10", "standard").Return(true, nil).Once()
-	mockSandboxInterface.On("Create", mock.MatchedBy(func(sandbox *llmsafespacev1.Sandbox) bool {
+	mockSandboxInterface.On("Create", mock.MatchedBy(func(sandbox *types.Sandbox) bool {
 		return sandbox.Spec.Runtime == "python:3.10" && 
 		       sandbox.Annotations["llmsafespace.dev/use-warm-pod"] == "true"
-	})).Return(&llmsafespacev1.Sandbox{
+	})).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
@@ -361,10 +361,10 @@ func TestCreateSandbox(t *testing.T) {
 
 	// Test case: Successful creation without warm pool
 	req.UseWarmPool = false
-	mockSandboxInterface.On("Create", mock.MatchedBy(func(sandbox *llmsafespacev1.Sandbox) bool {
+	mockSandboxInterface.On("Create", mock.MatchedBy(func(sandbox *types.Sandbox) bool {
 		return sandbox.Spec.Runtime == "python:3.10" && 
 		       sandbox.Annotations["llmsafespace.dev/use-warm-pod"] == ""
-	})).Return(&llmsafespacev1.Sandbox{
+	})).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-67890",
 		},
@@ -377,7 +377,7 @@ func TestCreateSandbox(t *testing.T) {
 	assert.Equal(t, "sb-67890", result.Name)
 
 	// Test case: Database error
-	mockSandboxInterface.On("Create", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Create", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-error",
 		},
@@ -407,11 +407,11 @@ func TestGetSandbox(t *testing.T) {
 		"user_id": "user123",
 		"runtime": "python:3.10",
 	}, nil).Once()
-	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
 		},
 	}, nil).Once()
@@ -459,21 +459,21 @@ func TestListSandboxes(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase:    "Running",
 			Endpoint: "sb-12345.default.svc.cluster.local",
 		},
 	}, nil).Once()
 
-	mockSandboxInterface.On("Get", "sb-67890", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-67890", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-67890",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase:    "Running",
 			Endpoint: "sb-67890.default.svc.cluster.local",
 		},
@@ -542,11 +542,11 @@ func TestGetSandboxStatus(t *testing.T) {
 	sandboxID := "sb-12345"
 
 	// Test case: Successful get status
-	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase:    "Running",
 			Endpoint: "sb-12345.default.svc.cluster.local",
 		},
@@ -579,14 +579,14 @@ func TestExecute(t *testing.T) {
 	}
 
 	// Test case: Successful execution
-	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()
@@ -605,11 +605,11 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, "Hello, World!\n", result.Stdout)
 
 	// Test case: Sandbox not running
-	mockSandboxInterface.On("Get", "sb-notrunning", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-notrunning", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-notrunning",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Creating",
 		},
 	}, nil).Once()
@@ -620,14 +620,14 @@ func TestExecute(t *testing.T) {
 	assert.Contains(t, err.Error(), "sandbox is not running")
 
 	// Test case: Execution error
-	mockSandboxInterface.On("Get", "sb-execerror", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-execerror", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-execerror",
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()
@@ -653,11 +653,11 @@ func TestFileOperations(t *testing.T) {
 	content := []byte("Hello, World!")
 
 	// Setup sandbox mock
-	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Times(4)
@@ -716,11 +716,11 @@ func TestInstallPackages(t *testing.T) {
 	}
 
 	// Test case: Successful installation
-	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-12345", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-12345",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()
@@ -737,11 +737,11 @@ func TestInstallPackages(t *testing.T) {
 	assert.Contains(t, result.Stdout, "Successfully installed")
 
 	// Test case: Sandbox not running
-	mockSandboxInterface.On("Get", "sb-notrunning", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-notrunning", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-notrunning",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Creating",
 		},
 	}, nil).Once()
@@ -752,11 +752,11 @@ func TestInstallPackages(t *testing.T) {
 	assert.Contains(t, err.Error(), "sandbox is not running")
 
 	// Test case: Installation error
-	mockSandboxInterface.On("Get", "sb-installerror", mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", "sb-installerror", mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sb-installerror",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()
@@ -781,11 +781,11 @@ func TestWebSocketSession(t *testing.T) {
 	sandboxID := "sb-12345"
 
 	// Setup sandbox mock
-	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&llmsafespacev1.Sandbox{
+	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			Phase: "Running",
 		},
 	}, nil).Once()

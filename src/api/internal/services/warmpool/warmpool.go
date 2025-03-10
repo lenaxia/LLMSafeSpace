@@ -77,7 +77,7 @@ func (s *Service) CheckAvailability(ctx context.Context, runtime, securityLevel 
 }
 
 // CreateWarmPool creates a new warm pool
-func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest) (*llmsafespacev1.WarmPool, error) {
+func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest) (*types.WarmPool, error) {
 	// Set default namespace if not provided
 	if req.Namespace == "" {
 		req.Namespace = "default"
@@ -120,7 +120,7 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 	}
 
 	// Create the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(&types.WarmPool{})
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create warm pool: %w", err)
 	}
@@ -137,7 +137,7 @@ func (s *Service) CreateWarmPool(ctx context.Context, req CreateWarmPoolRequest)
 }
 
 // GetWarmPool gets a warm pool by name
-func (s *Service) GetWarmPool(ctx context.Context, name, namespace string) (*llmsafespacev1.WarmPool, error) {
+func (s *Service) GetWarmPool(ctx context.Context, name, namespace string) (*types.WarmPool, error) {
 	// Set default namespace if not provided
 	if namespace == "" {
 		namespace = "default"
@@ -176,7 +176,7 @@ func (s *Service) ListWarmPools(ctx context.Context, userID string, limit, offse
 }
 
 // UpdateWarmPool updates a warm pool
-func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest) (*llmsafespacev1.WarmPool, error) {
+func (s *Service) UpdateWarmPool(ctx context.Context, req UpdateWarmPoolRequest) (*types.WarmPool, error) {
 	// Set default namespace if not provided
 	if req.Namespace == "" {
 		req.Namespace = "default"
@@ -374,7 +374,7 @@ func (s *Service) RemoveFromWarmPool(ctx context.Context, sandboxID string) erro
 // AddToWarmPool adds a sandbox to the warm pool
 func (s *Service) AddToWarmPool(ctx context.Context, sandboxID, runtime string) error {
 	// Create a new warm pod
-	warmPod := &llmsafespacev1.WarmPod{
+	warmPod := &types.WarmPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
 			Labels: map[string]string{
@@ -382,8 +382,8 @@ func (s *Service) AddToWarmPool(ctx context.Context, sandboxID, runtime string) 
 				"status":  "available",
 			},
 		},
-		Spec: llmsafespacev1.WarmPodSpec{
-			PoolRef: llmsafespacev1.PoolReference{
+		Spec: types.WarmPodSpec{
+			PoolRef: types.PoolReference{
 				Name: "default-" + strings.Replace(runtime, ":", "-", -1),
 			},
 		},

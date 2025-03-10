@@ -186,7 +186,7 @@ func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.Crea
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
@@ -194,7 +194,7 @@ func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
+	return args.Get(0).(*types.Sandbox), args.Error(1)
 }
 
 func (m *MockSandboxService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
@@ -376,15 +376,15 @@ type MockFileService struct {
 	mock.Mock
 }
 
-func (m *MockFileService) ListFiles(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]interfaces.FileInfo, error) {
+func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]interfaces.FileInfo), args.Error(1)
+	return args.Get(0).([]types.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) ([]byte, error) {
+func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -392,15 +392,15 @@ func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *llmsafespac
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockFileService) UploadFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string, content []byte) (*interfaces.FileInfo, error) {
+func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*interfaces.FileInfo), args.Error(1)
+	return args.Get(0).(*types.FileInfo), args.Error(1)
 }
 
-func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *llmsafespacev1.Sandbox, path string) error {
+func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	args := m.Called(ctx, sandbox, path)
 	return args.Error(0)
 }

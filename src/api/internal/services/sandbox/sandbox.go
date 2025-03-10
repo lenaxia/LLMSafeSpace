@@ -35,14 +35,14 @@ var _ interfaces.SandboxService = (*Service)(nil)
 
 // CreateSandboxRequest defines the request for creating a sandbox
 type CreateSandboxRequest struct {
-	Runtime       string                        `json:"runtime"`
-	SecurityLevel string                        `json:"securityLevel,omitempty"`
-	Timeout       int                           `json:"timeout,omitempty"`
-	Resources     *llmsafespacev1.ResourceRequirements `json:"resources,omitempty"`
-	NetworkAccess *llmsafespacev1.NetworkAccess        `json:"networkAccess,omitempty"`
-	UseWarmPool   bool                          `json:"useWarmPool,omitempty"`
-	UserID        string                        `json:"-"`
-	Namespace     string                        `json:"-"`
+	Runtime       string                  `json:"runtime"`
+	SecurityLevel string                  `json:"securityLevel,omitempty"`
+	Timeout       int                     `json:"timeout,omitempty"`
+	Resources     *types.ResourceRequirements `json:"resources,omitempty"`
+	NetworkAccess *types.NetworkAccess        `json:"networkAccess,omitempty"`
+	UseWarmPool   bool                    `json:"useWarmPool,omitempty"`
+	UserID        string                  `json:"-"`
+	Namespace     string                  `json:"-"`
 }
 
 // ExecuteRequest defines the request for executing code or a command
@@ -84,7 +84,7 @@ func New(
 }
 
 // CreateSandbox creates a new sandbox
-func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*types.Sandbox, error) {
 	// Set default namespace if not provided
 	if req.Namespace == "" {
 		req.Namespace = "default"
@@ -101,7 +101,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 	}
 
 	// Create sandbox object
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sb-",
 			Namespace:    req.Namespace,
@@ -111,7 +111,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 			},
 			Annotations: map[string]string{},
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime:       req.Runtime,
 			SecurityLevel: req.SecurityLevel,
 			Timeout:       req.Timeout,
@@ -163,7 +163,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 }
 
 // GetSandbox gets a sandbox by ID
-func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
+func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
 	// Get sandbox metadata from database
 	metadata, err := s.dbService.GetSandboxMetadata(ctx, sandboxID)
 	if err != nil {
@@ -229,7 +229,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 }
 
 // GetSandboxStatus gets the status of a sandbox
-func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error) {
+func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
 	// Get sandbox from Kubernetes
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
@@ -455,7 +455,7 @@ func (s *Service) HandleSession(session *Session) {
 }
 
 // handleExecuteMessage handles an execute message
-func (s *Service) handleExecuteMessage(session *Session, sandbox *llmsafespacev1.Sandbox, msg Message) {
+func (s *Service) handleExecuteMessage(session *Session, sandbox *types.Sandbox, msg Message) {
 	// Get execution parameters
 	executionID, _ := msg.GetString("executionId")
 	mode, _ := msg.GetString("mode")

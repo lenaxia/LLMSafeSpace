@@ -66,7 +66,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string,
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, execType, content string, timeout int) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*interfaces.Result, error) {
 	startTime := time.Now()
 	s.logger.Debug("Executing in sandbox", 
 		"namespace", sandbox.Namespace,
@@ -117,7 +117,7 @@ func (s *Service) Execute(ctx context.Context, sandbox *llmsafespacev1.Sandbox, 
 // ExecuteStream executes code or a command in a sandbox and streams the output
 func (s *Service) ExecuteStream(
 	ctx context.Context,
-	sandbox *llmsafespacev1.Sandbox,
+	sandbox *types.Sandbox,
 	execType, content string,
 	timeout int,
 	outputCallback func(stream, content string),

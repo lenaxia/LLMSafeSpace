@@ -121,12 +121,12 @@ func TestExecute(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			PodName:      "test-pod",
 			PodNamespace: "default",
 		},
@@ -160,12 +160,12 @@ func TestExecuteStream(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			PodName:      "test-pod",
 			PodNamespace: "default",
 		},
@@ -197,15 +197,15 @@ func TestInstallPackages(t *testing.T) {
 	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
-	sandbox := &llmsafespacev1.Sandbox{
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
 		},
-		Spec: llmsafespacev1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
 		},
-		Status: llmsafespacev1.SandboxStatus{
+		Status: types.SandboxStatus{
 			PodName:      "test-pod",
 			PodNamespace: "default",
 		},
