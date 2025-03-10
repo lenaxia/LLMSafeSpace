@@ -13,7 +13,8 @@ import (
 	"k8s.io/client-go/rest"
 
 	// Import custom resource definitions
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // Initialize CRD scheme
