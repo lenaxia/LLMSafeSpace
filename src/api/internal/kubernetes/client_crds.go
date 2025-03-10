@@ -23,16 +23,16 @@ func init() {
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
 				schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"},
-				&llmsafespacev1.Sandbox{},
-				&llmsafespacev1.SandboxList{},
-				&llmsafespacev1.WarmPool{},
-				&llmsafespacev1.WarmPoolList{},
-				&llmsafespacev1.WarmPod{},
-				&llmsafespacev1.WarmPodList{},
-				&llmsafespacev1.RuntimeEnvironment{},
-				&llmsafespacev1.RuntimeEnvironmentList{},
-				&llmsafespacev1.SandboxProfile{},
-				&llmsafespacev1.SandboxProfileList{},
+				&types.Sandbox{},
+				&types.SandboxList{},
+				&types.WarmPool{},
+				&types.WarmPoolList{},
+				&types.WarmPod{},
+				&types.WarmPodList{},
+				&types.RuntimeEnvironment{},
+				&types.RuntimeEnvironmentList{},
+				&types.SandboxProfile{},
+				&types.SandboxProfileList{},
 			)
 			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
 			return nil
@@ -132,8 +132,8 @@ func (c *LLMSafespaceV1Client) WarmPools(namespace string) WarmPoolInterface {
 }
 
 // Create creates a new WarmPool
-func (w *warmPools) Create(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
-	result := &llmsafespacev1.WarmPool{}
+func (w *warmPools) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	result := &types.WarmPool{}
 	err := w.client.Post().
 		Namespace(w.ns).
 		Resource("warmpools").
@@ -144,8 +144,8 @@ func (w *warmPools) Create(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.W
 }
 
 // Update updates an existing WarmPool
-func (w *warmPools) Update(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
-	result := &llmsafespacev1.WarmPool{}
+func (w *warmPools) Update(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	result := &types.WarmPool{}
 	err := w.client.Put().
 		Namespace(w.ns).
 		Resource("warmpools").
@@ -157,8 +157,8 @@ func (w *warmPools) Update(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.W
 }
 
 // UpdateStatus updates the status of an existing WarmPool
-func (w *warmPools) UpdateStatus(warmPool *llmsafespacev1.WarmPool) (*llmsafespacev1.WarmPool, error) {
-	result := &llmsafespacev1.WarmPool{}
+func (w *warmPools) UpdateStatus(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	result := &types.WarmPool{}
 	err := w.client.Put().
 		Namespace(w.ns).
 		Resource("warmpools").
@@ -182,8 +182,8 @@ func (w *warmPools) Delete(name string, options metav1.DeleteOptions) error {
 }
 
 // Get retrieves a WarmPool
-func (w *warmPools) Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPool, error) {
-	result := &llmsafespacev1.WarmPool{}
+func (w *warmPools) Get(name string, options metav1.GetOptions) (*types.WarmPool, error) {
+	result := &types.WarmPool{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("warmpools").
@@ -195,8 +195,8 @@ func (w *warmPools) Get(name string, options metav1.GetOptions) (*llmsafespacev1
 }
 
 // List lists all WarmPools in the namespace
-func (w *warmPools) List(opts metav1.ListOptions) (*llmsafespacev1.WarmPoolList, error) {
-	result := &llmsafespacev1.WarmPoolList{}
+func (w *warmPools) List(opts metav1.ListOptions) (*types.WarmPoolList, error) {
+	result := &types.WarmPoolList{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("warmpools").
@@ -247,8 +247,8 @@ func (c *LLMSafespaceV1Client) WarmPods(namespace string) WarmPodInterface {
 }
 
 // Create creates a new WarmPod
-func (w *warmPods) Create(warmPod *llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error) {
-	result := &llmsafespacev1.WarmPod{}
+func (w *warmPods) Create(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	result := &types.WarmPod{}
 	err := w.client.Post().
 		Namespace(w.ns).
 		Resource("warmpods").
@@ -259,8 +259,8 @@ func (w *warmPods) Create(warmPod *llmsafespacev1.WarmPod) (*llmsafespacev1.Warm
 }
 
 // Update updates an existing WarmPod
-func (w *warmPods) Update(warmPod *llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error) {
-	result := &llmsafespacev1.WarmPod{}
+func (w *warmPods) Update(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	result := &types.WarmPod{}
 	err := w.client.Put().
 		Namespace(w.ns).
 		Resource("warmpods").
@@ -272,8 +272,8 @@ func (w *warmPods) Update(warmPod *llmsafespacev1.WarmPod) (*llmsafespacev1.Warm
 }
 
 // UpdateStatus updates the status of an existing WarmPod
-func (w *warmPods) UpdateStatus(warmPod *llmsafespacev1.WarmPod) (*llmsafespacev1.WarmPod, error) {
-	result := &llmsafespacev1.WarmPod{}
+func (w *warmPods) UpdateStatus(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	result := &types.WarmPod{}
 	err := w.client.Put().
 		Namespace(w.ns).
 		Resource("warmpods").
@@ -297,8 +297,8 @@ func (w *warmPods) Delete(name string, options metav1.DeleteOptions) error {
 }
 
 // Get retrieves a WarmPod
-func (w *warmPods) Get(name string, options metav1.GetOptions) (*llmsafespacev1.WarmPod, error) {
-	result := &llmsafespacev1.WarmPod{}
+func (w *warmPods) Get(name string, options metav1.GetOptions) (*types.WarmPod, error) {
+	result := &types.WarmPod{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("warmpods").
@@ -310,8 +310,8 @@ func (w *warmPods) Get(name string, options metav1.GetOptions) (*llmsafespacev1.
 }
 
 // List lists all WarmPods in the namespace
-func (w *warmPods) List(opts metav1.ListOptions) (*llmsafespacev1.WarmPodList, error) {
-	result := &llmsafespacev1.WarmPodList{}
+func (w *warmPods) List(opts metav1.ListOptions) (*types.WarmPodList, error) {
+	result := &types.WarmPodList{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("warmpods").
@@ -362,8 +362,8 @@ func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) RuntimeEnvi
 }
 
 // Create creates a new RuntimeEnvironment
-func (r *runtimeEnvironments) Create(runtimeEnv *llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error) {
-	result := &llmsafespacev1.RuntimeEnvironment{}
+func (r *runtimeEnvironments) Create(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	result := &types.RuntimeEnvironment{}
 	err := r.client.Post().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
@@ -374,8 +374,8 @@ func (r *runtimeEnvironments) Create(runtimeEnv *llmsafespacev1.RuntimeEnvironme
 }
 
 // Update updates an existing RuntimeEnvironment
-func (r *runtimeEnvironments) Update(runtimeEnv *llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error) {
-	result := &llmsafespacev1.RuntimeEnvironment{}
+func (r *runtimeEnvironments) Update(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	result := &types.RuntimeEnvironment{}
 	err := r.client.Put().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
@@ -387,8 +387,8 @@ func (r *runtimeEnvironments) Update(runtimeEnv *llmsafespacev1.RuntimeEnvironme
 }
 
 // UpdateStatus updates the status of an existing RuntimeEnvironment
-func (r *runtimeEnvironments) UpdateStatus(runtimeEnv *llmsafespacev1.RuntimeEnvironment) (*llmsafespacev1.RuntimeEnvironment, error) {
-	result := &llmsafespacev1.RuntimeEnvironment{}
+func (r *runtimeEnvironments) UpdateStatus(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	result := &types.RuntimeEnvironment{}
 	err := r.client.Put().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
@@ -412,8 +412,8 @@ func (r *runtimeEnvironments) Delete(name string, options metav1.DeleteOptions) 
 }
 
 // Get retrieves a RuntimeEnvironment
-func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*llmsafespacev1.RuntimeEnvironment, error) {
-	result := &llmsafespacev1.RuntimeEnvironment{}
+func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error) {
+	result := &types.RuntimeEnvironment{}
 	err := r.client.Get().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
@@ -425,8 +425,8 @@ func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*llms
 }
 
 // List lists all RuntimeEnvironments in the namespace
-func (r *runtimeEnvironments) List(opts metav1.ListOptions) (*llmsafespacev1.RuntimeEnvironmentList, error) {
-	result := &llmsafespacev1.RuntimeEnvironmentList{}
+func (r *runtimeEnvironments) List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error) {
+	result := &types.RuntimeEnvironmentList{}
 	err := r.client.Get().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
@@ -476,8 +476,8 @@ func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) SandboxProfileI
 }
 
 // Create creates a new SandboxProfile
-func (s *sandboxProfiles) Create(profile *llmsafespacev1.SandboxProfile) (*llmsafespacev1.SandboxProfile, error) {
-	result := &llmsafespacev1.SandboxProfile{}
+func (s *sandboxProfiles) Create(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
+	result := &types.SandboxProfile{}
 	err := s.client.Post().
 		Namespace(s.ns).
 		Resource("sandboxprofiles").
@@ -488,8 +488,8 @@ func (s *sandboxProfiles) Create(profile *llmsafespacev1.SandboxProfile) (*llmsa
 }
 
 // Update updates an existing SandboxProfile
-func (s *sandboxProfiles) Update(profile *llmsafespacev1.SandboxProfile) (*llmsafespacev1.SandboxProfile, error) {
-	result := &llmsafespacev1.SandboxProfile{}
+func (s *sandboxProfiles) Update(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
+	result := &types.SandboxProfile{}
 	err := s.client.Put().
 		Namespace(s.ns).
 		Resource("sandboxprofiles").
@@ -512,8 +512,8 @@ func (s *sandboxProfiles) Delete(name string, options metav1.DeleteOptions) erro
 }
 
 // Get retrieves a SandboxProfile
-func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*llmsafespacev1.SandboxProfile, error) {
-	result := &llmsafespacev1.SandboxProfile{}
+func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error) {
+	result := &types.SandboxProfile{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxprofiles").
@@ -525,8 +525,8 @@ func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*llmsafes
 }
 
 // List lists all SandboxProfiles in the namespace
-func (s *sandboxProfiles) List(opts metav1.ListOptions) (*llmsafespacev1.SandboxProfileList, error) {
-	result := &llmsafespacev1.SandboxProfileList{}
+func (s *sandboxProfiles) List(opts metav1.ListOptions) (*types.SandboxProfileList, error) {
+	result := &types.SandboxProfileList{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxprofiles").
@@ -547,8 +547,8 @@ func (s *sandboxProfiles) Watch(opts metav1.ListOptions) (watch.Interface, error
 }
 
 // Create creates a new Sandbox
-func (s *sandboxes) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
-	result := &llmsafespacev1.Sandbox{}
+func (s *sandboxes) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	result := &types.Sandbox{}
 	err := s.client.Post().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -559,8 +559,8 @@ func (s *sandboxes) Create(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.San
 }
 
 // Update updates an existing Sandbox
-func (s *sandboxes) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
-	result := &llmsafespacev1.Sandbox{}
+func (s *sandboxes) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	result := &types.Sandbox{}
 	err := s.client.Put().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -572,8 +572,8 @@ func (s *sandboxes) Update(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.San
 }
 
 // UpdateStatus updates the status of an existing Sandbox
-func (s *sandboxes) UpdateStatus(sandbox *llmsafespacev1.Sandbox) (*llmsafespacev1.Sandbox, error) {
-	result := &llmsafespacev1.Sandbox{}
+func (s *sandboxes) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	result := &types.Sandbox{}
 	err := s.client.Put().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -597,8 +597,8 @@ func (s *sandboxes) Delete(name string, options metav1.DeleteOptions) error {
 }
 
 // Get retrieves a Sandbox
-func (s *sandboxes) Get(name string, options metav1.GetOptions) (*llmsafespacev1.Sandbox, error) {
-	result := &llmsafespacev1.Sandbox{}
+func (s *sandboxes) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
+	result := &types.Sandbox{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -610,8 +610,8 @@ func (s *sandboxes) Get(name string, options metav1.GetOptions) (*llmsafespacev1
 }
 
 // List lists all Sandboxes in the namespace
-func (s *sandboxes) List(opts metav1.ListOptions) (*llmsafespacev1.SandboxList, error) {
-	result := &llmsafespacev1.SandboxList{}
+func (s *sandboxes) List(opts metav1.ListOptions) (*types.SandboxList, error) {
+	result := &types.SandboxList{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxes").
