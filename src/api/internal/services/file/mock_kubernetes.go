@@ -8,8 +8,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/stretchr/testify/mock"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // MockKubernetesClient implements the KubernetesClient interface for testing
@@ -27,24 +25,6 @@ func (m *MockKubernetesClient) Start() error {
 
 func (m *MockKubernetesClient) Stop() {
 	m.Called()
-}
-
-func (m *MockKubernetesClient) Clientset() kubernetes.Interface {
-	args := m.Called()
-	return args.Get(0).(kubernetes.Interface)
-}
-
-func (m *MockKubernetesClient) RESTConfig() *rest.Config {
-	args := m.Called()
-	return args.Get(0).(*rest.Config)
-}
-
-func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
 
 func (m *MockKubernetesClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest) (*types.ExecutionResult, error) {

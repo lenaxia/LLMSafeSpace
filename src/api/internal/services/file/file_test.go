@@ -5,100 +5,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
 )
-
-// Mock implementations
-type MockK8sClient struct {
-	mock.Mock
-	kubernetes.Client
-}
-
-func (m *MockK8sClient) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockK8sClient) Stop() {
-	m.Called()
-}
-
-func (m *MockK8sClient) Clientset() k8s.Interface {
-	args := m.Called()
-	return args.Get(0).(k8s.Interface)
-}
-
-func (m *MockK8sClient) RESTConfig() *rest.Config {
-	args := m.Called()
-	return args.Get(0).(*rest.Config)
-}
-
-func (m *MockK8sClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
-}
-
-func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest) (*types.ExecutionResult, error) {
-	args := m.Called(ctx, namespace, name, execReq)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.ExecutionResult), args.Error(1)
-}
-
-func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest, outputCallback func(stream, content string)) (*types.ExecutionResult, error) {
-	args := m.Called(ctx, namespace, name, execReq, outputCallback)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.ExecutionResult), args.Error(1)
-}
-
-func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileList, error) {
-	args := m.Called(ctx, namespace, name, fileReq)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.FileList), args.Error(1)
-}
-
-func (m *MockK8sClient) DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) ([]byte, error) {
-	args := m.Called(ctx, namespace, name, fileReq)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]byte), args.Error(1)
-}
-
-func (m *MockK8sClient) UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileResult, error) {
-	args := m.Called(ctx, namespace, name, fileReq)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.FileResult), args.Error(1)
-}
-
-func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) error {
-	args := m.Called(ctx, namespace, name, fileReq)
-	return args.Error(0)
-}
 
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create mock service instance
-	mockK8sClient := new(MockK8sClient)
+	mockK8sClient := new(MockKubernetesClient)
 	var k8sClient *kubernetes.Client = mockK8sClient
 
 	// Test successful creation
@@ -116,11 +36,10 @@ func TestListFiles(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	var k8sClient *kubernetes.Client = mockK8sClient
+	mockK8sClient := new(MockKubernetesClient)
 
 	// Create the service
-	service, _ := New(log, k8sClient)
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
@@ -164,11 +83,10 @@ func TestDownloadFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	var k8sClient *kubernetes.Client = mockK8sClient
+	mockK8sClient := new(MockKubernetesClient)
 
 	// Create the service
-	service, _ := New(log, k8sClient)
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
@@ -201,11 +119,10 @@ func TestUploadFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	var k8sClient *kubernetes.Client = mockK8sClient
+	mockK8sClient := new(MockKubernetesClient)
 
 	// Create the service
-	service, _ := New(log, k8sClient)
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
@@ -244,11 +161,10 @@ func TestDeleteFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockK8sClient)
-	var k8sClient *kubernetes.Client = mockK8sClient
+	mockK8sClient := new(MockKubernetesClient)
 
 	// Create the service
-	service, _ := New(log, k8sClient)
+	service, _ := New(log, mockK8sClient)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
