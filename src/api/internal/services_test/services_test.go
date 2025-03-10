@@ -22,7 +22,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // Mock implementations
