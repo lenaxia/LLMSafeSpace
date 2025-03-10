@@ -17,7 +17,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // Client manages Kubernetes API interactions
