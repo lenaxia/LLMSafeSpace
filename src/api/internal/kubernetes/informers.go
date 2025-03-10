@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	llmsafespacev1 "github.com/lenaxia/llmsafespace/api/internal/kubernetes/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // InformerFactory creates informers for custom resources
@@ -38,7 +38,7 @@ func (f *InformerFactory) SandboxInformer() cache.SharedIndexInformer {
 				return f.client.Sandboxes(f.namespace).Watch(options)
 			},
 		},
-		&llmsafespacev1.Sandbox{},
+		&types.Sandbox{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -55,7 +55,7 @@ func (f *InformerFactory) WarmPoolInformer() cache.SharedIndexInformer {
 				return f.client.WarmPools(f.namespace).Watch(options)
 			},
 		},
-		&llmsafespacev1.WarmPool{},
+		&types.WarmPool{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -72,7 +72,7 @@ func (f *InformerFactory) WarmPodInformer() cache.SharedIndexInformer {
 				return f.client.WarmPods(f.namespace).Watch(options)
 			},
 		},
-		&llmsafespacev1.WarmPod{},
+		&types.WarmPod{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -89,7 +89,7 @@ func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer
 				return f.client.RuntimeEnvironments(f.namespace).Watch(options)
 			},
 		},
-		&llmsafespacev1.RuntimeEnvironment{},
+		&types.RuntimeEnvironment{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -106,7 +106,7 @@ func (f *InformerFactory) SandboxProfileInformer() cache.SharedIndexInformer {
 				return f.client.SandboxProfiles(f.namespace).Watch(options)
 			},
 		},
-		&llmsafespacev1.SandboxProfile{},
+		&types.SandboxProfile{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)

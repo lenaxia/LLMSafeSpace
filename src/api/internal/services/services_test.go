@@ -181,7 +181,7 @@ type MockSandboxService struct {
 	mock.Mock
 }
 
-func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*types.Sandbox, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -189,7 +189,7 @@ func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.Crea
 	return args.Get(0).(*llmsafespacev1.Sandbox), args.Error(1)
 }
 
-func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*llmsafespacev1.Sandbox, error) {
+func (m *MockSandboxService) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -210,12 +210,12 @@ func (m *MockSandboxService) TerminateSandbox(ctx context.Context, sandboxID str
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*llmsafespacev1.SandboxStatus, error) {
+func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*llmsafespacev1.SandboxStatus), args.Error(1)
+	return args.Get(0).(*types.SandboxStatus), args.Error(1)
 }
 
 func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*execution.Result, error) {

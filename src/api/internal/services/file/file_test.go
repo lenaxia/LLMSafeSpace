@@ -39,7 +39,7 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
-func (m *MockK8sClient) LlmsafespaceV1() k8sinterfaces.LLMSafespaceV1Interface {
+func (m *MockK8sClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil

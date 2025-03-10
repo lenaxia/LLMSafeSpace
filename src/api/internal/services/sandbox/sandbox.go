@@ -143,7 +143,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
 	}
 
 	// Create the sandbox in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(sandbox)
+	result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(&types.Sandbox{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
