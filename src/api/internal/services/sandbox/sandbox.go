@@ -40,12 +40,7 @@ var _ interfaces.SandboxService = (*Service)(nil)
 type CreateSandboxRequest = types.CreateSandboxRequest
 
 // ExecuteRequest defines the request for executing code or a command
-type ExecuteRequest struct {
-        Type      string `json:"type"`      // "code" or "command"
-        Content   string `json:"content"`   // Code or command to execute
-        Timeout   int    `json:"timeout"`   // Execution timeout in seconds
-        SandboxID string `json:"-"`         // Set by the handler
-}
+type ExecuteRequest = types.ExecuteRequest
 
 // InstallPackagesRequest alias for types.InstallPackagesRequest
 type InstallPackagesRequest = types.InstallPackagesRequest
@@ -230,7 +225,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*interfaces.Result, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
         if err != nil {
