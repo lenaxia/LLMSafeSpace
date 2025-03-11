@@ -52,10 +52,10 @@ func (s *Session) Send(msg Message) error {
 }
 
 // SetCancellationFunc sets a cancellation function for an execution
-func (s *Session) SetCancellationFunc(executionID string, cancel context.CancelFunc) {
+func (s *Session) SetCancellationFunc(id string, cancel context.CancelFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cancellations[executionID] = cancel
+	s.cancellations[id] = cancel
 }
 
 // SetCancellationFuncByID sets a cancellation function for an execution using the new ID field
@@ -64,26 +64,44 @@ func (s *Session) SetCancellationFuncByID(id string, cancel context.CancelFunc) 
 	s.SetCancellationFunc(id, cancel)
 }
 
-// RemoveCancellationFunc removes a cancellation function
-func (s *Session) RemoveCancellationFunc(executionID string) {
+// SetCancellationFuncByID sets a cancellation function for an execution using the new ID field
+// This is the preferred method over SetCancellationFunc
+func (s *Session) SetCancellationFuncByID(id string, cancel context.CancelFunc) {
+	s.SetCancellationFunc(id, cancel)
+}
+
+// RemoveCancellationFunc removes a cancellation function for an execution
+func (s *Session) RemoveCancellationFunc(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.cancellations, executionID)
+	delete(s.cancellations, id)
+}
+
+// RemoveCancellationFuncByID removes a cancellation function for an execution using the new ID field
+// This is the preferred method over RemoveCancellationFunc
+func (s *Session) RemoveCancellationFuncByID(id string) {
+	s.RemoveCancellationFunc(id)
 }
 
 // CancelExecution cancels an execution
-func (s *Session) CancelExecution(executionID string) bool {
+func (s *Session) CancelExecution(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	
-	cancel, exists := s.cancellations[executionID]
+	cancel, exists := s.cancellations[id]
 	if !exists {
 		return false
 	}
 	
 	cancel()
-	delete(s.cancellations, executionID)
+	delete(s.cancellations, id)
 	return true
+}
+
+// CancelExecutionByID cancels an execution using the new ID field
+// This is the preferred method over CancelExecution
+func (s *Session) CancelExecutionByID(id string) bool {
+	return s.CancelExecution(id)
 }
 
 // CancelExecutionByID cancels an execution using the new ID field
