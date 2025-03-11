@@ -109,7 +109,7 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 
 	// Return execution result
 	return &interfaces.Result{
-		ExecutionID:  execResult.ID,
+		ExecutionID:  execResult.ExecutionID,
 		Status:       execResult.Status,
 		StartedAt:    execResult.StartedAt,
 		CompletedAt:  execResult.CompletedAt,
