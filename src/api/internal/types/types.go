@@ -611,6 +611,19 @@ type SandboxProfileList struct {
 	Items           []SandboxProfile `json:"items"`
 }
 
+// Message represents a WebSocket message
+type Message struct {
+	Type        string      `json:"type"`
+	ExecutionID string      `json:"executionId,omitempty"`
+	Stream      string      `json:"stream,omitempty"`
+	Content     string      `json:"content,omitempty"`
+	Code        string      `json:"code,omitempty"`
+	Message     string      `json:"message,omitempty"`
+	ExitCode    int         `json:"exitCode,omitempty"`
+	Timestamp   int64       `json:"timestamp,omitempty"`
+	Data        interface{} `json:"data,omitempty"`
+}
+
 // Session represents a WebSocket session
 type Session struct {
 	ID        string
