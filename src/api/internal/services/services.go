@@ -29,7 +29,7 @@ type Services struct {
 }
 
 // Ensure Services implements interfaces.Services
-var _ interfaces.Services = (*Services)(nil)
+var _ interfaces.Services = &Services{}
 
 // GetAuth returns the auth service
 func (s *Services) GetAuth() interfaces.AuthService {
