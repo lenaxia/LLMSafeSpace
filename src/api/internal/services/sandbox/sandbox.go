@@ -60,8 +60,56 @@ func New(
 
 // CreateSandbox creates a new sandbox
 func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*types.Sandbox, error) {
-	// ... (implementation omitted for brevity)
-	return nil, nil
+	// Check if warm pool should be used
+	var sandboxID string
+	if req.UseWarmPool {
+		// Get a warm sandbox from the pool
+		warmSandboxID, err := s.warmPoolSvc.GetWarmSandbox(ctx, req.Runtime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get warm sandbox: %w", err)
+		}
+		sandboxID = warmSandboxID
+	} else {
+		// Create a new sandbox
+		sandbox := &types.Sandbox{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "sandbox-",
+				Namespace:    req.Namespace,
+			},
+			Spec: types.SandboxSpec{
+				Runtime:       req.Runtime,
+				SecurityLevel: req.SecurityLevel,
+				Timeout:       req.Timeout,
+				Resources:     req.Resources,
+				NetworkAccess: req.NetworkAccess,
+			},
+		}
+
+		// Create the sandbox via Kubernetes API
+		createdSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(sandbox)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create sandbox: %w", err)
+		}
+		sandboxID = createdSandbox.Name
+
+		// Create sandbox metadata in the database
+		err = s.dbService.CreateSandboxMetadata(ctx, sandboxID, req.UserID, req.Runtime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create sandbox metadata: %w", err)
+		}
+	}
+
+	// Record sandbox creation
+	s.metricsSvc.RecordSandboxCreation(req.Runtime, req.UseWarmPool)
+
+	// Get the created sandbox
+	createdSandbox, err := s.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get created sandbox: %w", err)
+	}
+
+	return createdSandbox, nil
+}
 }
 
 // GetSandbox gets a sandbox by ID
