@@ -2,6 +2,7 @@ package sandbox
 
 import (
         "context"
+        "encoding/json"
         "fmt"
         "time"
 
@@ -47,8 +48,8 @@ type ExecuteRequest struct {
         SandboxID string `json:"-"`         // Set by the handler
 }
 
-// InstallPackagesRequest defines the request for installing packages
-type InstallPackagesRequest types.InstallPackagesRequest
+// InstallPackagesRequest alias for types.InstallPackagesRequest
+// type InstallPackagesRequest types.InstallPackagesRequest
 
 // New creates a new sandbox service
 func New(
@@ -348,7 +349,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 }
 
 // InstallPackages installs packages in a sandbox
-func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesRequest) (*interfaces.Result, error) {
+func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*interfaces.Result, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
         if err != nil {
