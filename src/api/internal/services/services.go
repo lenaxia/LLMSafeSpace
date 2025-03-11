@@ -5,7 +5,6 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
@@ -33,7 +32,7 @@ type Services struct {
 var _ interfaces.Services = (*Services)(nil)
 
 // New creates and initializes all services
-func New(cfg *config.Config, log *logger.Logger, k8sClient k8sinterfaces.KubernetesClient) (*Services, error) {
+func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
 	// Initialize metrics service first as other services may use it
 	metricsService := metrics.New()
 
@@ -55,14 +54,8 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient k8sinterfaces.Kuberne
 		return nil, fmt.Errorf("failed to initialize auth service: %w", err)
 	}
 
-	// Convert to concrete type for services that need it
-	concreteK8sClient, ok := k8sClient.(*kubernetes.Client)
-	if !ok {
-		return nil, fmt.Errorf("invalid Kubernetes client type")
-	}
-
 	// Initialize warm pool service
-	warmPoolService, err := warmpool.New(log, concreteK8sClient, dbService, metricsService)
+	warmPoolService, err := warmpool.New(log, k8sClient, dbService, metricsService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize warm pool service: %w", err)
 	}
@@ -80,7 +73,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient k8sinterfaces.Kuberne
 	}
 
 	// Initialize sandbox service
-	sandboxService, err := sandbox.New(log, concreteK8sClient, dbService, warmPoolService, fileService, executionService, metricsService, cacheService)
+	sandboxService, err := sandbox.New(log, k8sClient, dbService, warmPoolService, fileService, executionService, metricsService, cacheService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
 	}
