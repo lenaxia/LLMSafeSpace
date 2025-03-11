@@ -28,8 +28,48 @@ type Services struct {
 	WarmPool  interfaces.WarmPoolService
 }
 
-// Ensure Services implements the required interfaces
+// Ensure Services implements interfaces.Services
 var _ interfaces.Services = (*Services)(nil)
+
+// GetAuth returns the auth service
+func (s *Services) GetAuth() interfaces.AuthService {
+	return s.Auth
+}
+
+// GetDatabase returns the database service
+func (s *Services) GetDatabase() interfaces.DatabaseService {
+	return s.Database
+}
+
+// GetCache returns the cache service
+func (s *Services) GetCache() interfaces.CacheService {
+	return s.Cache
+}
+
+// GetExecution returns the execution service
+func (s *Services) GetExecution() interfaces.ExecutionService {
+	return s.Execution
+}
+
+// GetFile returns the file service
+func (s *Services) GetFile() interfaces.FileService {
+	return s.File
+}
+
+// GetMetrics returns the metrics service
+func (s *Services) GetMetrics() interfaces.MetricsService {
+	return s.Metrics
+}
+
+// GetSandbox returns the sandbox service
+func (s *Services) GetSandbox() interfaces.SandboxService {
+	return s.Sandbox
+}
+
+// GetWarmPool returns the warm pool service
+func (s *Services) GetWarmPool() interfaces.WarmPoolService {
+	return s.WarmPool
+}
 
 // New creates and initializes all services
 func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
