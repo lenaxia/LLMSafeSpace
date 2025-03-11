@@ -11,11 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
-	"github.com/lenaxia/llmsafespace/api/internal/services/file"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +26,7 @@ type MockSandboxService struct {
 }
 
 // Ensure mock implements the interface
-var _ SandboxService = (*MockSandboxService)(nil)
+var _ interfaces.SandboxService = (*MockSandboxService)(nil)
 
 func (m *MockSandboxService) Start() error {
 	args := m.Called()
@@ -41,7 +38,7 @@ func (m *MockSandboxService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) CreateSandbox(ctx context.Context, req sandbox.CreateSandboxRequest) (*types.Sandbox, error) {
+func (m *MockSandboxService) CreateSandbox(ctx context.Context, req types.CreateSandboxRequest) (*types.Sandbox, error) {
         args := m.Called(ctx, req)
         if args.Get(0) == nil {
                 return nil, args.Error(1)
@@ -78,7 +75,7 @@ func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID str
 	return args.Get(0).(*types.SandboxStatus), args.Error(1)
 }
 
-func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*types.ExecutionResult, error) {
+func (m *MockSandboxService) Execute(ctx context.Context, req types.ExecuteRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -86,7 +83,7 @@ func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteReq
 	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
+func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
 	args := m.Called(ctx, sandboxID, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -102,7 +99,7 @@ func (m *MockSandboxService) DownloadFile(ctx context.Context, sandboxID, path s
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*file.FileInfo, error) {
+func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
 	args := m.Called(ctx, sandboxID, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -115,7 +112,7 @@ func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path str
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*types.ExecutionResult, error) {
+func (m *MockSandboxService) InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -123,7 +120,7 @@ func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.In
 	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*sandbox.Session, error) {
+func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error) {
 	args := m.Called(userID, sandboxID, conn)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -135,7 +132,7 @@ func (m *MockSandboxService) CloseSession(sessionID string) {
 	m.Called(sessionID)
 }
 
-func (m *MockSandboxService) HandleSession(session *sandbox.Session) {
+func (m *MockSandboxService) HandleSession(session *types.Session) {
 	m.Called(session)
 }
 
@@ -153,7 +150,7 @@ type MockAuthService struct {
 }
 
 // Ensure mock implements the interface
-var _ AuthService = (*MockAuthService)(nil)
+var _ interfaces.AuthService = (*MockAuthService)(nil)
 
 func (m *MockAuthService) Start() error {
 	args := m.Called()
@@ -231,7 +228,7 @@ func TestCreateSandbox(t *testing.T) {
 
 	// Test case: Successful creation
 	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
-	mockSandboxService.On("CreateSandbox", mock.Anything, mock.MatchedBy(func(req sandbox.CreateSandboxRequest) bool {
+	mockSandboxService.On("CreateSandbox", mock.Anything, mock.MatchedBy(func(req types.CreateSandboxRequest) bool {
 		return req.Runtime == "python:3.10" && req.UserID == "user123"
 	})).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{

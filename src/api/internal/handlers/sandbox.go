@@ -6,21 +6,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // SandboxHandler handles sandbox-related API endpoints
 type SandboxHandler struct {
-	logger        *logger.Logger
-	sandboxSvc    SandboxService
-	authSvc       AuthService
-	upgrader      websocket.Upgrader
+	logger     *logger.Logger
+	sandboxSvc interfaces.SandboxService
+	authSvc    interfaces.AuthService
+	upgrader   websocket.Upgrader
 }
 
 // NewSandboxHandler creates a new SandboxHandler
-func NewSandboxHandler(log *logger.Logger, sandboxSvc SandboxService, authSvc AuthService) *SandboxHandler {
+func NewSandboxHandler(log *logger.Logger, sandboxSvc interfaces.SandboxService, authSvc interfaces.AuthService) *SandboxHandler {
 	return &SandboxHandler{
 		logger:     log,
 		sandboxSvc: sandboxSvc,
@@ -82,7 +82,7 @@ func (h *SandboxHandler) CreateSandbox(c *gin.Context) {
 	userID := h.authSvc.GetUserID(c)
 	
 	// Parse request body
-	var req sandbox.CreateSandboxRequest
+	var req types.CreateSandboxRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid request body",
@@ -212,7 +212,7 @@ func (h *SandboxHandler) ExecuteCode(c *gin.Context) {
 	}
 	
 	// Parse request body
-	var req sandbox.ExecuteRequest
+	var req types.ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid request body",
@@ -403,7 +403,7 @@ func (h *SandboxHandler) InstallPackages(c *gin.Context) {
 	}
 	
 	// Parse request body
-	var req sandbox.InstallPackagesRequest
+	var req types.InstallPackagesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid request body",
