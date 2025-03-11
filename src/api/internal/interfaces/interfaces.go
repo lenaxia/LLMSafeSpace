@@ -54,22 +54,11 @@ type CacheService interface {
 	Stop() error
 }
 
-// Result represents the result of code or command execution
-type Result struct {
-	ExecutionID  string    `json:"executionId"`
-	Status       string    `json:"status"`
-	StartedAt    time.Time `json:"startedAt"`
-	CompletedAt  time.Time `json:"completedAt"`
-	ExitCode     int       `json:"exitCode"`
-	Stdout       string    `json:"stdout"`
-	Stderr       string    `json:"stderr"`
-}
-
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*Result, error)
-	ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(stream, content string)) (*Result, error)
-	InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*Result, error)
+	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.Result, error)
+	ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(stream, content string)) (*types.Result, error)
+	InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.Result, error)
 	Start() error
 	Stop() error
 }
@@ -105,12 +94,12 @@ type SandboxService interface {
 	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
 	TerminateSandbox(ctx context.Context, sandboxID string) error
 	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
-	Execute(ctx context.Context, req types.ExecuteRequest) (*Result, error)
+	Execute(ctx context.Context, req types.ExecuteRequest) (*types.Result, error)
 	ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error)
 	DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error)
 	UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error)
 	DeleteFile(ctx context.Context, sandboxID, path string) error
-	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*Result, error)
+	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.Result, error)
 	CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error)
 	CloseSession(sessionID string)
 	HandleSession(session *types.Session)
