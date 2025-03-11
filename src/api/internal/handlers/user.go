@@ -13,7 +13,7 @@ type UserHandler struct {
 }
 
 // NewUserHandler creates a new UserHandler
-func NewUserHandler(log *logger.Logger, authSvc *auth.Service) *UserHandler {
+func NewUserHandler(log *logger.Logger, authSvc interfaces.AuthService) *UserHandler {
 	return &UserHandler{
 		logger:  log,
 		authSvc: authSvc,
