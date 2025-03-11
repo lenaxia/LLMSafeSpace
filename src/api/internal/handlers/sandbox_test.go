@@ -78,12 +78,12 @@ func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID str
 	return args.Get(0).(*types.SandboxStatus), args.Error(1)
 }
 
-func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*types.Result, error) {
+func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
 func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]file.FileInfo, error) {
@@ -115,12 +115,12 @@ func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path str
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*types.Result, error) {
+func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
 func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*sandbox.Session, error) {
@@ -550,7 +550,7 @@ func TestExecute(t *testing.T) {
 	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "execute").Return(true).Once()
 	mockSandboxService.On("Execute", mock.Anything, mock.MatchedBy(func(req sandbox.ExecuteRequest) bool {
 		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.SandboxID == "sb-12345"
-	})).Return(&types.Result{
+	})).Return(&types.ExecutionResult{
 		ExitCode: 0,
 		Stdout:   "Hello, World!\n",
 		Stderr:   "",
