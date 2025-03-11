@@ -6,9 +6,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
-	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 )
 
 // Handlers contains all API handlers
