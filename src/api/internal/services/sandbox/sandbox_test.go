@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // Mock implementations
@@ -43,12 +45,12 @@ func (m *MockK8sClient) Stop() {
 	m.Called()
 }
 
-func (m *MockK8sClient) Clientset() k8s.Interface {
+func (m *MockK8sClient) Clientset() kubernetes.Interface {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(k8s.Interface)
+	return args.Get(0).(kubernetes.Interface)
 }
 
 func (m *MockK8sClient) RESTConfig() *rest.Config {
@@ -59,46 +61,46 @@ func (m *MockK8sClient) RESTConfig() *rest.Config {
 	return args.Get(0).(*rest.Config)
 }
 
-func (m *MockK8sClient) LlmsafespaceV1() k8sinterfaces.LLMSafespaceV1Interface {
+func (m *MockK8sClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	args := m.Called()
-	return args.Get(0).(k8sinterfaces.LLMSafespaceV1Interface)
+	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
 
-func (m *MockLLMSafespaceV1Client) Sandboxes(namespace string) k8sinterfaces.SandboxInterface {
+func (m *MockLLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
 	args := m.Called(namespace)
-	return args.Get(0).(k8sinterfaces.SandboxInterface)
+	return args.Get(0).(interfaces.SandboxInterface)
 }
 
-func (m *MockLLMSafespaceV1Client) WarmPools(namespace string) k8sinterfaces.WarmPoolInterface {
-	args := m.Called(namespace)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(k8sinterfaces.WarmPoolInterface)
-}
-
-func (m *MockLLMSafespaceV1Client) WarmPods(namespace string) k8sinterfaces.WarmPodInterface {
+func (m *MockLLMSafespaceV1Client) WarmPools(namespace string) interfaces.WarmPoolInterface {
 	args := m.Called(namespace)
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(k8sinterfaces.WarmPodInterface)
+	return args.Get(0).(interfaces.WarmPoolInterface)
 }
 
-func (m *MockLLMSafespaceV1Client) RuntimeEnvironments(namespace string) k8sinterfaces.RuntimeEnvironmentInterface {
+func (m *MockLLMSafespaceV1Client) WarmPods(namespace string) interfaces.WarmPodInterface {
 	args := m.Called(namespace)
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(k8sinterfaces.RuntimeEnvironmentInterface)
+	return args.Get(0).(interfaces.WarmPodInterface)
 }
 
-func (m *MockLLMSafespaceV1Client) SandboxProfiles(namespace string) k8sinterfaces.SandboxProfileInterface {
+func (m *MockLLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
 	args := m.Called(namespace)
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(k8sinterfaces.SandboxProfileInterface)
+	return args.Get(0).(interfaces.RuntimeEnvironmentInterface)
+}
+
+func (m *MockLLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
+	args := m.Called(namespace)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(interfaces.SandboxProfileInterface)
 }
 
 func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
@@ -773,7 +775,7 @@ func TestInstallPackages(t *testing.T) {
 }
 
 func TestWebSocketSession(t *testing.T) {
-	service, _, _, mockSandboxInterface, _, _, _, _, mockMetricsService, mockCacheService := setupSandboxService(t)
+	service, _, _, mockSandboxInterface, mockDbService, _, _, _, mockMetricsService, mockCacheService := setupSandboxService(t)
 
 	// Mock websocket connection
 	mockConn := &websocket.Conn{}
@@ -781,6 +783,12 @@ func TestWebSocketSession(t *testing.T) {
 	sandboxID := "sb-12345"
 
 	// Setup sandbox mock
+	mockDbService.On("GetSandboxMetadata", mock.Anything, sandboxID).Return(map[string]interface{}{
+		"id":      sandboxID,
+		"user_id": userID,
+		"runtime": "python:3.10",
+	}, nil).Once()
+	
 	mockSandboxInterface.On("Get", sandboxID, mock.Anything).Return(&types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sandboxID,
@@ -791,7 +799,6 @@ func TestWebSocketSession(t *testing.T) {
 	}, nil).Once()
 
 	// Test case: Create session
-	mockCacheService.On("SetSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	mockMetricsService.On("IncrementActiveConnections", "websocket").Once()
 
 	session, err := service.CreateSession(userID, sandboxID, mockConn)
@@ -801,11 +808,11 @@ func TestWebSocketSession(t *testing.T) {
 	assert.Equal(t, sandboxID, session.SandboxID)
 
 	// Test case: Close session
-	mockCacheService.On("DeleteSession", mock.Anything, mock.Anything).Return(nil).Once()
 	mockMetricsService.On("DecrementActiveConnections", "websocket").Once()
 
 	service.CloseSession(session.ID)
 
 	mockMetricsService.AssertExpectations(t)
-	mockCacheService.AssertExpectations(t)
+	mockDbService.AssertExpectations(t)
+	mockSandboxInterface.AssertExpectations(t)
 }

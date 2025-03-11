@@ -9,7 +9,6 @@ import (
         "github.com/google/uuid"
         "github.com/gorilla/websocket"
         "github.com/lenaxia/llmsafespace/api/internal/interfaces"
-        k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
         "github.com/lenaxia/llmsafespace/api/internal/logger"
         "github.com/lenaxia/llmsafespace/api/internal/services/cache"
         "github.com/lenaxia/llmsafespace/api/internal/services/database"
@@ -25,7 +24,7 @@ import (
 // Service handles sandbox operations
 type Service struct {
         logger        *logger.Logger
-        k8sClient     k8sinterfaces.KubernetesClient
+        k8sClient     interfaces.KubernetesClient
         dbService     interfaces.DatabaseService
         warmPoolSvc   interfaces.WarmPoolService
         fileSvc       interfaces.FileService
@@ -49,12 +48,12 @@ type ExecuteRequest struct {
 }
 
 // InstallPackagesRequest alias for types.InstallPackagesRequest
-// type InstallPackagesRequest types.InstallPackagesRequest
+type InstallPackagesRequest = types.InstallPackagesRequest
 
 // New creates a new sandbox service
 func New(
         logger *logger.Logger,
-        k8sClient k8sinterfaces.KubernetesClient,
+        k8sClient interfaces.KubernetesClient,
         dbService *database.Service,
         warmPoolSvc *warmpool.Service,
         fileSvc *file.Service,
@@ -134,7 +133,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (
         }
 
         // Create the sandbox in Kubernetes
-        result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(&types.Sandbox{})
+        result, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(sandbox)
         if err != nil {
                 return nil, fmt.Errorf("failed to create sandbox: %w", err)
         }
@@ -231,7 +230,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.Result, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
         if err != nil {
@@ -349,7 +348,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 }
 
 // InstallPackages installs packages in a sandbox
-func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*interfaces.Result, error) {
+func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesRequest) (*interfaces.Result, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
         if err != nil {
