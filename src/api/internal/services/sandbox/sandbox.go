@@ -154,8 +154,9 @@ func (s *Service) handleCancelMessage(session *Session, msg Message) {
 	// ... (implementation omitted for brevity)
 }
 
-// Start initializes the sandbox service
-func (s *Service) Start() error {
-    s.logger.Info("Starting sandbox service")
+// Stop cleans up the sandbox service
+func (s *Service) Stop() error {
+    s.logger.Info("Stopping sandbox service")
     return nil
+}
 }
