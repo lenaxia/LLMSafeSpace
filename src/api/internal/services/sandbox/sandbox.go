@@ -28,24 +28,24 @@ type Service struct {
 	sessionMgr    *SessionManager
 
 // Ensure Service implements interfaces.SandboxService
-var _ interfaces.SandboxService = (*Service)(nil)
+var _ interfaces.SandboxService = &Service{}
 
-// CreateSandboxRequest defines the request for creating a sandbox
-type CreateSandboxRequest = types.CreateSandboxRequest
+// CreateSandboxRequest is a type alias for types.CreateSandboxRequest
+type CreateSandboxRequest types.CreateSandboxRequest
 
-// InstallPackagesRequest defines the request for installing packages
-type InstallPackagesRequest = types.InstallPackagesRequest
+// InstallPackagesRequest is a type alias for types.InstallPackagesRequest  
+type InstallPackagesRequest types.InstallPackagesRequest
 
 // New creates a new sandbox service
 func New(
 	logger *logger.Logger,
 	k8sClient k8sinterfaces.KubernetesClient,
-	dbService *database.Service,
-	warmPoolSvc *warmpool.Service,
-	fileSvc *file.Service,
-	executionSvc *execution.Service,
-	metricsSvc *metrics.Service,
-	cacheService *cache.Service,
+	dbService interfaces.DatabaseService,
+	warmPoolSvc interfaces.WarmPoolService,
+	fileSvc interfaces.FileService,
+	executionSvc interfaces.ExecutionService,
+	metricsSvc interfaces.MetricsService,
+	cacheService interfaces.CacheService,
 ) (*Service, error) {
 	return &Service{
 		logger:       logger,
@@ -57,7 +57,6 @@ func New(
 		metricsSvc:   metricsSvc,
 		sessionMgr:   NewSessionManager(cacheService),
 	}, nil
-}
 
 // CreateSandbox creates a new sandbox
 func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*types.Sandbox, error) {
