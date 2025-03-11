@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
@@ -206,7 +205,7 @@ func (s *Service) UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRe
 	}
 
 	// Update the warm pool in Kubernetes
-	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(&types.WarmPool{})
+	result, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update warm pool: %w", err)
 	}
@@ -479,5 +478,3 @@ func (s *Service) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]inter
 
 	return status, nil
 }
-
-
