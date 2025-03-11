@@ -473,9 +473,6 @@ func (s *Service) HandleSession(sess *types.Session) {
 func (s *Service) handleExecuteMessage(sess *types.Session, sandbox *types.Sandbox, msg types.Message) {
         // Get execution parameters
         executionID := msg.ID
-        if executionID == "" {
-                executionID = msg.ExecutionID // Fallback to deprecated field
-        }
         execType := msg.Type
         content := msg.Content
         timeout := 30 // Default timeout
@@ -544,11 +541,8 @@ func (s *Service) handleCancelMessage(sess *types.Session, msg types.Message) {
         // Get execution ID
         executionID := msg.ID
         if executionID == "" {
-                executionID = msg.ExecutionID // Fallback to deprecated field
-                if executionID == "" {
-                        sess.SendError("invalid_request", "Missing execution ID")
-                        return
-                }
+                sess.SendError("invalid_request", "Missing execution ID")
+                return
         }
 
         // Cancel execution is not implemented in the types.Session

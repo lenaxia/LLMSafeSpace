@@ -64,23 +64,11 @@ func (s *Session) SetCancellationFuncByID(id string, cancel context.CancelFunc) 
 	s.SetCancellationFunc(id, cancel)
 }
 
-// SetCancellationFuncByID sets a cancellation function for an execution using the new ID field
-// This is the preferred method over SetCancellationFunc
-func (s *Session) SetCancellationFuncByID(id string, cancel context.CancelFunc) {
-	s.SetCancellationFunc(id, cancel)
-}
-
 // RemoveCancellationFunc removes a cancellation function for an execution
 func (s *Session) RemoveCancellationFunc(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cancellations, id)
-}
-
-// RemoveCancellationFuncByID removes a cancellation function for an execution using the new ID field
-// This is the preferred method over RemoveCancellationFunc
-func (s *Session) RemoveCancellationFuncByID(id string) {
-	s.RemoveCancellationFunc(id)
 }
 
 // CancelExecution cancels an execution
@@ -96,12 +84,6 @@ func (s *Session) CancelExecution(id string) bool {
 	cancel()
 	delete(s.cancellations, id)
 	return true
-}
-
-// CancelExecutionByID cancels an execution using the new ID field
-// This is the preferred method over CancelExecution
-func (s *Session) CancelExecutionByID(id string) bool {
-	return s.CancelExecution(id)
 }
 
 // CancelExecutionByID cancels an execution using the new ID field
