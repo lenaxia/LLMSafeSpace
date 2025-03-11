@@ -12,11 +12,11 @@ import (
 type Handlers struct {
 	logger   *logger.Logger
 	services interfaces.Services
-	sandbox  *SandboxHandler
-	warmPool *WarmPoolHandler
-	runtime  *RuntimeHandler
-	profile  *ProfileHandler
-	user     *UserHandler
+	sandbox  interfaces.SandboxHandler
+	warmPool interfaces.WarmPoolHandler
+	runtime  interfaces.RuntimeHandler
+	profile  interfaces.ProfileHandler
+	user     interfaces.UserHandler
 }
 
 // New creates a new Handlers instance

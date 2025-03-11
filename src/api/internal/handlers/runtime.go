@@ -10,7 +10,7 @@ import (
 // RuntimeHandler handles runtime environment related requests
 type RuntimeHandler struct {
 	logger  *logger.Logger
-	authSvc *auth.Service
+	authSvc interfaces.AuthService
 }
 
 // NewRuntimeHandler creates a new RuntimeHandler

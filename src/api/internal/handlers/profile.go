@@ -10,7 +10,7 @@ import (
 // ProfileHandler handles sandbox profile related requests
 type ProfileHandler struct {
 	logger  *logger.Logger
-	authSvc *auth.Service
+	authSvc interfaces.AuthService
 }
 
 // NewProfileHandler creates a new ProfileHandler
