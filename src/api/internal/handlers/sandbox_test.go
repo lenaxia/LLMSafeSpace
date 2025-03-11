@@ -29,6 +29,16 @@ type MockSandboxService struct {
 var _ interfaces.SandboxService = (*MockSandboxService)(nil)
 
 func (m *MockSandboxService) Start() error {
+        args := m.Called()
+        return args.Error(0)
+}
+
+func (m *MockSandboxService) Stop() error {
+        args := m.Called()
+        return args.Error(0)
+}
+
+func (m *MockSandboxService) Start() error {
 	args := m.Called()
 	return args.Error(0)
 }
