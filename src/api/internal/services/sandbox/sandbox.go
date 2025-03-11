@@ -26,7 +26,6 @@ type Service struct {
 	executionSvc  interfaces.ExecutionService
 	metricsSvc    interfaces.MetricsService
 	sessionMgr    *SessionManager
-}
 
 // Ensure Service implements interfaces.SandboxService
 var _ interfaces.SandboxService = (*Service)(nil)
