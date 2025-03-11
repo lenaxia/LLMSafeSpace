@@ -262,7 +262,7 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.
 }
 
 // ListFiles lists files in a sandbox
-func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]interfaces.FileInfo, error) {
+func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
         if err != nil {
@@ -306,7 +306,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 }
 
 // UploadFile uploads a file to a sandbox
-func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*interfaces.FileInfo, error) {
+func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(sandboxID, metav1.GetOptions{})
         if err != nil {
@@ -372,7 +372,7 @@ func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesReques
 }
 
 // CreateSession creates a new WebSocket session
-func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*Session, error) {
+func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error) {
         // Get sandbox metadata from database
         metadata, err := s.dbService.GetSandboxMetadata(context.Background(), sandboxID)
         if err != nil {
