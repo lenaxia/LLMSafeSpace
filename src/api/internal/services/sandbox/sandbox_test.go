@@ -191,21 +191,19 @@ func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList
 	return args.Get(0).(*types.SandboxList), args.Error(1)
 }
 
-func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (interface{}, error) {
-	args := m.Called(opts)
-	return args.Get(0), args.Error(1)
-}
-
+// MockDatabaseService embeds the concrete database.Service
 type MockDatabaseService struct {
-	mock.Mock
 	database.Service
+	mock.Mock
 }
 
+// CreateSandboxMetadata is a mock implementation of the CreateSandboxMetadata method
 func (m *MockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
 	args := m.Called(ctx, sandboxID, userID, runtime)
 	return args.Error(0)
 }
 
+// GetSandboxMetadata is a mock implementation of the GetSandboxMetadata method
 func (m *MockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
@@ -214,6 +212,7 @@ func (m *MockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID 
 	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
+// ListSandboxes is a mock implementation of the ListSandboxes method
 func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
 	args := m.Called(ctx, userID, limit, offset)
 	if args.Get(0) == nil {
