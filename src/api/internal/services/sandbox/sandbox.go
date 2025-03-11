@@ -37,14 +37,6 @@ var _ interfaces.SandboxService = (*Service)(nil)
 // CreateSandboxRequest defines the request for creating a sandbox
 type CreateSandboxRequest = types.CreateSandboxRequest
 
-// ExecuteRequest defines the request for executing code or a command
-type ExecuteRequest struct {
-	Type      string `json:"type"`      // "code" or "command"
-	Content   string `json:"content"`   // Code or command to execute
-	Timeout   int    `json:"timeout"`   // Execution timeout in seconds
-	SandboxID string `json:"-"`         // Set by the handler
-}
-
 // InstallPackagesRequest defines the request for installing packages
 type InstallPackagesRequest struct {
 	Packages  []string `json:"packages"` // Packages to install
@@ -78,61 +70,75 @@ func New(
 // CreateSandbox creates a new sandbox
 func (s *Service) CreateSandbox(ctx context.Context, req CreateSandboxRequest) (*types.Sandbox, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // GetSandbox gets a sandbox by ID
 func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // ListSandboxes lists sandboxes for a user
 func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // TerminateSandbox terminates a sandbox
 func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error {
 	// ... (implementation omitted for brevity)
+	return nil
 }
 
 // GetSandboxStatus gets the status of a sandbox
 func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*interfaces.Result, error) {
 	// ... (implementation omitted for brevity)
+	return &interfaces.Result{
+		// ... (populate the result struct)
+	}, nil
 }
 
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // UploadFile uploads a file to a sandbox
 func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // DeleteFile deletes a file from a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error {
 	// ... (implementation omitted for brevity)
+	return nil
 }
 
 // InstallPackages installs packages in a sandbox
 func (s *Service) InstallPackages(ctx context.Context, req InstallPackagesRequest) (*interfaces.Result, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // CreateSession creates a new WebSocket session
 func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error) {
 	// ... (implementation omitted for brevity)
+	return nil, nil
 }
 
 // CloseSession closes a WebSocket session
