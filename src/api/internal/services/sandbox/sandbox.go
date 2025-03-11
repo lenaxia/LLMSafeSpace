@@ -5,6 +5,7 @@ import (
         "fmt"
         "time"
 
+        "github.com/google/uuid"
         "github.com/gorilla/websocket"
         "github.com/lenaxia/llmsafespace/api/internal/interfaces"
         k8sinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
@@ -14,6 +15,7 @@ import (
         "github.com/lenaxia/llmsafespace/api/internal/services/execution"
         "github.com/lenaxia/llmsafespace/api/internal/services/file"
         "github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+        "github.com/lenaxia/llmsafespace/api/internal/services/sandbox/session"
         "github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
         "github.com/lenaxia/llmsafespace/api/internal/types"
         metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +30,7 @@ type Service struct {
         fileSvc       interfaces.FileService
         executionSvc  interfaces.ExecutionService
         metricsSvc    interfaces.MetricsService
-        sessionMgr    *SessionManager
+        sessionMgr    *session.Manager
 }
 
 // Ensure Service implements interfaces.SandboxService
@@ -67,7 +69,7 @@ func New(
                 fileSvc:      fileSvc,
                 executionSvc: executionSvc,
                 metricsSvc:   metricsSvc,
-                sessionMgr:   NewSessionManager(cacheService),
+                sessionMgr:   session.NewManager(cacheService),
         }, nil
 }
 
@@ -389,29 +391,17 @@ func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) 
                 return nil, fmt.Errorf("sandbox is not running: %s", sandboxID)
         }
 
-        // Create session 
-        session := &types.Session{
-                ID:        sessionID,
-                UserID:    userID,
-                SandboxID: sandboxID,
-                Conn:      conn,
-                SendError: func(code, message string) error {
-                        return conn.WriteJSON(types.Message{
-                                Type:      "error",
-                                Code:      code,
-                                Message:   message,
-                                Timestamp: time.Now().UnixMilli(),
-                        })
-                },
-                Send: func(msg types.Message) error {
-                        return conn.WriteJSON(msg)
-                },
-        }
+        // Create session
+        sessionID := uuid.New().String()
+        newSession := session.NewSession(userID, sandboxID, conn)
 
         // Increment active connections metric
         s.metricsSvc.IncrementActiveConnections("websocket")
+        
+        // Add session to manager
+        s.sessionMgr.AddSession(newSession)
 
-        return session, nil
+        return newSession, nil
 }
 
 // CloseSession closes a WebSocket session
@@ -423,7 +413,7 @@ func (s *Service) CloseSession(sessionID string) {
 }
 
 // HandleSession handles a WebSocket session
-func (s *Service) HandleSession(session *types.Session) {
+func (s *Service) HandleSession(sess *session.Session) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(session.SandboxID, metav1.GetOptions{})
         if err != nil {
@@ -433,7 +423,7 @@ func (s *Service) HandleSession(session *types.Session) {
 
         // Handle messages
         for {
-                messageType, p, err := session.Conn.ReadMessage()
+                messageType, p, err := sess.Conn.ReadMessage()
                 if err != nil {
                         break
                 }
@@ -444,30 +434,30 @@ func (s *Service) HandleSession(session *types.Session) {
                 }
 
                 // Parse message
-                msg, err := ParseMessage(p)
+                msg, err := session.ParseMessage(p)
                 if err != nil {
-                        session.SendError("invalid_message", "Failed to parse message")
+                        sess.SendError("invalid_message", "Failed to parse message")
                         continue
                 }
 
                 // Handle message based on type
                 if msg.Type == "execute" {
-                        s.handleExecuteMessage(session, sandbox, msg)
+                        s.handleExecuteMessage(sess, sandbox, msg)
                 } else if msg.Type == "cancel" {
-                        s.handleCancelMessage(session, msg)
+                        s.handleCancelMessage(sess, msg)
                 } else if msg.Type == "ping" {
-                        session.Send(types.Message{
+                        sess.Send(session.Message{
                                 Type:      "pong",
                                 Timestamp: time.Now().UnixMilli(),
                         })
                 } else {
-                        session.SendError("unknown_message_type", "Unknown message type")
+                        sess.SendError("unknown_message_type", "Unknown message type")
                 }
         }
 }
 
 // handleExecuteMessage handles an execute message
-func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sandbox, msg types.Message) {
+func (s *Service) handleExecuteMessage(sess *session.Session, sandbox *types.Sandbox, msg session.Message) {
         // Get execution parameters
         executionID, _ := msg.GetString("executionId")
         mode, _ := msg.GetString("mode")
@@ -475,7 +465,7 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
         timeout, _ := msg.GetInt("timeout")
 
         if executionID == "" || (mode != "code" && mode != "command") || content == "" {
-                session.SendError("invalid_request", "Invalid execution request")
+                sess.SendError("invalid_request", "Invalid execution request")
                 return
         }
 
@@ -491,10 +481,10 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
                 defer cancel()
 
                 // Store cancellation function in session
-                session.SetCancellationFunc(executionID, cancel)
+                sess.SetCancellationFunc(executionID, cancel)
 
                 // Notify client that execution has started
-                session.Send(Message{
+                sess.Send(session.Message{
                         Type:        "execution_start",
                         ExecutionID: executionID,
                         Timestamp:   time.Now().UnixMilli(),
@@ -503,7 +493,7 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
                 // Execute code or command
                 startTime := time.Now()
                 result, err := s.executionSvc.ExecuteStream(ctx, sandbox, mode, content, timeout, func(stream, content string) {
-                        session.Send(Message{
+                        sess.Send(session.Message{
                                 Type:        "output",
                                 ExecutionID: executionID,
                                 Stream:      stream,
@@ -513,11 +503,11 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
                 })
 
                 // Remove cancellation function
-                session.RemoveCancellationFunc(executionID)
+                sess.RemoveCancellationFunc(executionID)
 
                 // Handle execution result
                 if err != nil {
-                        session.Send(Message{
+                        sess.Send(session.Message{
                                 Type:        "error",
                                 Code:        "execution_failed",
                                 Message:     err.Error(),
@@ -528,7 +518,7 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
                 }
 
                 // Notify client that execution has completed
-                session.Send(Message{
+                sess.Send(session.Message{
                         Type:        "execution_complete",
                         ExecutionID: executionID,
                         ExitCode:    result.ExitCode,
@@ -545,17 +535,17 @@ func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sa
 }
 
 // handleCancelMessage handles a cancel message
-func (s *Service) handleCancelMessage(session *types.Session, msg types.Message) {
+func (s *Service) handleCancelMessage(sess *session.Session, msg session.Message) {
         // Get execution ID
         executionID, _ := msg.GetString("executionId")
         if executionID == "" {
-                session.SendError("invalid_request", "Missing executionId")
+                sess.SendError("invalid_request", "Missing executionId")
                 return
         }
 
         // Cancel execution
-        if cancelled := session.CancelExecution(executionID); cancelled {
-                session.Send(Message{
+        if cancelled := sess.CancelExecution(executionID); cancelled {
+                sess.Send(session.Message{
                         Type:        "execution_cancelled",
                         ExecutionID: executionID,
                         Timestamp:   time.Now().UnixMilli(),

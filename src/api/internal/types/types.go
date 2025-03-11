@@ -618,7 +618,7 @@ type Session struct {
 	SandboxID string
 	Conn      *websocket.Conn
 	SendError func(code, message string) error
-	Send      func(msg types.Message) error
+	Send      func(msg Message) error
 }
 
 // CreateSandboxRequest defines the request for creating a sandbox
