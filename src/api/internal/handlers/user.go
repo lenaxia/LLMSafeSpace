@@ -10,7 +10,7 @@ import (
 // UserHandler handles user related requests
 type UserHandler struct {
 	logger  *logger.Logger
-	authSvc *auth.Service
+	authSvc interfaces.AuthService
 }
 
 // NewUserHandler creates a new UserHandler

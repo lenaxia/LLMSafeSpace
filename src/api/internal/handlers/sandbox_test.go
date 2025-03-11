@@ -22,7 +22,7 @@ import (
 
 // MockSandboxService implementation
 type MockSandboxService struct {
-        mock.Mock
+	mock.Mock
 }
 
 // Ensure mock implements the interface

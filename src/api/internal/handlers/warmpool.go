@@ -11,8 +11,8 @@ import (
 // WarmPoolHandler handles warm pool related requests
 type WarmPoolHandler struct {
 	logger      *logger.Logger
-	warmPoolSvc *warmpool.Service
-	authSvc     *auth.Service
+	warmPoolSvc interfaces.WarmPoolService
+	authSvc     interfaces.AuthService
 }
 
 // NewWarmPoolHandler creates a new WarmPoolHandler

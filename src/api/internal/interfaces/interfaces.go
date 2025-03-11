@@ -88,6 +88,28 @@ type MetricsService interface {
 }
 
 // SandboxService defines the interface for sandbox services
+// Handler interfaces
+type SandboxHandler interface {
+	RegisterRoutes(router *gin.RouterGroup)
+	HandleWebSocket(c *gin.Context)
+}
+
+type WarmPoolHandler interface {
+	RegisterRoutes(router *gin.RouterGroup)
+}
+
+type RuntimeHandler interface {
+	RegisterRoutes(router *gin.RouterGroup)
+}
+
+type ProfileHandler interface {
+	RegisterRoutes(router *gin.RouterGroup)
+}
+
+type UserHandler interface {
+	RegisterRoutes(router *gin.RouterGroup)
+}
+
 type SandboxService interface {
 	CreateSandbox(ctx context.Context, req types.CreateSandboxRequest) (*types.Sandbox, error)
 	GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error)
