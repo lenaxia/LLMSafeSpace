@@ -64,6 +64,51 @@ func (m *MockK8sClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
 
+func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest) (*types.ExecutionResult, error) {
+	args := m.Called(ctx, namespace, name, execReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
+}
+
+func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest, outputCallback func(stream, content string)) (*types.ExecutionResult, error) {
+	args := m.Called(ctx, namespace, name, execReq, outputCallback)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
+}
+
+func (m *MockK8sClient) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileList, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.FileList), args.Error(1)
+}
+
+func (m *MockK8sClient) DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) ([]byte, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockK8sClient) UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileResult, error) {
+	args := m.Called(ctx, namespace, name, fileReq)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.FileResult), args.Error(1)
+}
+
+func (m *MockK8sClient) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) error {
+	args := m.Called(ctx, namespace, name, fileReq)
+	return args.Error(0)
+}
+
 func (m *MockLLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
 	args := m.Called(namespace)
 	return args.Get(0).(interfaces.SandboxInterface)
