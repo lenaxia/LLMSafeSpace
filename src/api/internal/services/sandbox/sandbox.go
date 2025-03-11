@@ -46,11 +46,7 @@ type ExecuteRequest struct {
 }
 
 // InstallPackagesRequest defines the request for installing packages
-type InstallPackagesRequest struct {
-        Packages  []string `json:"packages"` // Packages to install
-        Manager   string   `json:"manager"`  // Package manager to use
-        SandboxID string   `json:"-"`        // Set by the handler
-}
+type InstallPackagesRequest types.InstallPackagesRequest
 
 // New creates a new sandbox service
 func New(
@@ -393,8 +389,24 @@ func (s *Service) CreateSession(userID, sandboxID string, conn *websocket.Conn) 
                 return nil, fmt.Errorf("sandbox is not running: %s", sandboxID)
         }
 
-        // Create session
-        session := s.sessionMgr.CreateSession(userID, sandboxID, conn)
+        // Create session 
+        session := &types.Session{
+                ID:        sessionID,
+                UserID:    userID,
+                SandboxID: sandboxID,
+                Conn:      conn,
+                SendError: func(code, message string) error {
+                        return conn.WriteJSON(types.Message{
+                                Type:      "error",
+                                Code:      code,
+                                Message:   message,
+                                Timestamp: time.Now().UnixMilli(),
+                        })
+                },
+                Send: func(msg types.Message) error {
+                        return conn.WriteJSON(msg)
+                },
+        }
 
         // Increment active connections metric
         s.metricsSvc.IncrementActiveConnections("websocket")
@@ -439,24 +451,23 @@ func (s *Service) HandleSession(session *types.Session) {
                 }
 
                 // Handle message based on type
-                switch msg.Type {
-                case "execute":
+                if msg.Type == "execute" {
                         s.handleExecuteMessage(session, sandbox, msg)
-                case "cancel":
+                } else if msg.Type == "cancel" {
                         s.handleCancelMessage(session, msg)
-                case "ping":
-                        session.Send(Message{
+                } else if msg.Type == "ping" {
+                        session.Send(types.Message{
                                 Type:      "pong",
                                 Timestamp: time.Now().UnixMilli(),
                         })
-                default:
+                } else {
                         session.SendError("unknown_message_type", "Unknown message type")
                 }
         }
 }
 
 // handleExecuteMessage handles an execute message
-func (s *Service) handleExecuteMessage(session *Session, sandbox *types.Sandbox, msg Message) {
+func (s *Service) handleExecuteMessage(session *types.Session, sandbox *types.Sandbox, msg types.Message) {
         // Get execution parameters
         executionID, _ := msg.GetString("executionId")
         mode, _ := msg.GetString("mode")
@@ -534,7 +545,7 @@ func (s *Service) handleExecuteMessage(session *Session, sandbox *types.Sandbox,
 }
 
 // handleCancelMessage handles a cancel message
-func (s *Service) handleCancelMessage(session *Session, msg Message) {
+func (s *Service) handleCancelMessage(session *types.Session, msg types.Message) {
         // Get execution ID
         executionID, _ := msg.GetString("executionId")
         if executionID == "" {
