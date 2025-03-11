@@ -13,7 +13,7 @@ type ProfileHandler struct {
 }
 
 // NewProfileHandler creates a new ProfileHandler
-func NewProfileHandler(log *logger.Logger, authSvc *auth.Service) *ProfileHandler {
+func NewProfileHandler(log *logger.Logger, authSvc interfaces.AuthService) *ProfileHandler {
 	return &ProfileHandler{
 		logger:  log,
 		authSvc: authSvc,

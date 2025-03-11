@@ -15,7 +15,7 @@ type WarmPoolHandler struct {
 }
 
 // NewWarmPoolHandler creates a new WarmPoolHandler
-func NewWarmPoolHandler(log *logger.Logger, warmPoolSvc *warmpool.Service, authSvc *auth.Service) *WarmPoolHandler {
+func NewWarmPoolHandler(log *logger.Logger, warmPoolSvc interfaces.WarmPoolService, authSvc interfaces.AuthService) *WarmPoolHandler {
 	return &WarmPoolHandler{
 		logger:      log,
 		warmPoolSvc: warmPoolSvc,

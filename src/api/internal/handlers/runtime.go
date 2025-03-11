@@ -13,7 +13,7 @@ type RuntimeHandler struct {
 }
 
 // NewRuntimeHandler creates a new RuntimeHandler
-func NewRuntimeHandler(log *logger.Logger, authSvc *auth.Service) *RuntimeHandler {
+func NewRuntimeHandler(log *logger.Logger, authSvc interfaces.AuthService) *RuntimeHandler {
 	return &RuntimeHandler{
 		logger:  log,
 		authSvc: authSvc,
