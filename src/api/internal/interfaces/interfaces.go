@@ -56,9 +56,9 @@ type CacheService interface {
 
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
-	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.Result, error)
-	ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(stream, content string)) (*types.Result, error)
-	InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.Result, error)
+	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error)
+	ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(stream, content string)) (*types.ExecutionResult, error)
+	InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error)
 	Start() error
 	Stop() error
 }
@@ -94,12 +94,12 @@ type SandboxService interface {
 	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
 	TerminateSandbox(ctx context.Context, sandboxID string) error
 	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
-	Execute(ctx context.Context, req types.ExecuteRequest) (*types.Result, error)
+	Execute(ctx context.Context, req types.ExecuteRequest) (*types.ExecutionResult, error)
 	ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error)
 	DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error)
 	UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error)
 	DeleteFile(ctx context.Context, sandboxID, path string) error
-	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.Result, error)
+	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error)
 	CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error)
 	CloseSession(sessionID string)
 	HandleSession(session *types.Session)
