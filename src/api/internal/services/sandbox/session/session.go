@@ -58,6 +58,12 @@ func (s *Session) SetCancellationFunc(executionID string, cancel context.CancelF
 	s.cancellations[executionID] = cancel
 }
 
+// SetCancellationFuncByID sets a cancellation function for an execution using the new ID field
+// This is the preferred method over SetCancellationFunc
+func (s *Session) SetCancellationFuncByID(id string, cancel context.CancelFunc) {
+	s.SetCancellationFunc(id, cancel)
+}
+
 // RemoveCancellationFunc removes a cancellation function
 func (s *Session) RemoveCancellationFunc(executionID string) {
 	s.mu.Lock()
@@ -78,6 +84,12 @@ func (s *Session) CancelExecution(executionID string) bool {
 	cancel()
 	delete(s.cancellations, executionID)
 	return true
+}
+
+// CancelExecutionByID cancels an execution using the new ID field
+// This is the preferred method over CancelExecution
+func (s *Session) CancelExecutionByID(id string) bool {
+	return s.CancelExecution(id)
 }
 
 // CancelAllExecutions cancels all executions

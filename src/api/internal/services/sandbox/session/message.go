@@ -7,7 +7,8 @@ import (
 // Message represents a WebSocket message
 type Message struct {
 	Type        string      `json:"type"`
-	ExecutionID string      `json:"executionId,omitempty"`
+	ExecutionID string      `json:"executionId,omitempty"` // Deprecated: Use ID instead
+	ID          string      `json:"id,omitempty"`
 	Stream      string      `json:"stream,omitempty"`
 	Content     string      `json:"content,omitempty"`
 	Code        string      `json:"code,omitempty"`
