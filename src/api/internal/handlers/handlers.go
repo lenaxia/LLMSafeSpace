@@ -4,15 +4,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 )
 
 // Handlers contains all API handlers
 type Handlers struct {
 	logger   *logger.Logger
-	services *services.Services
+	services interfaces.Services
 	sandbox  *SandboxHandler
 	warmPool *WarmPoolHandler
 	runtime  *RuntimeHandler
@@ -21,15 +23,15 @@ type Handlers struct {
 }
 
 // New creates a new Handlers instance
-func New(log *logger.Logger, svc *services.Services) *Handlers {
+func New(log *logger.Logger, svc interfaces.Services) *Handlers {
 	return &Handlers{
 		logger:   log,
 		services: svc,
-		sandbox:  NewSandboxHandler(log, svc.Sandbox, svc.Auth),
-		warmPool: NewWarmPoolHandler(log, svc.WarmPool, svc.Auth),
-		runtime:  NewRuntimeHandler(log, svc.Auth),
-		profile:  NewProfileHandler(log, svc.Auth),
-		user:     NewUserHandler(log, svc.Auth),
+		sandbox:  NewSandboxHandler(log, svc.GetSandbox(), svc.GetAuth()),
+		warmPool: NewWarmPoolHandler(log, svc.GetWarmPool(), svc.GetAuth()),
+		runtime:  NewRuntimeHandler(log, svc.GetAuth()),
+		profile:  NewProfileHandler(log, svc.GetAuth()),
+		user:     NewUserHandler(log, svc.GetAuth()),
 	}
 }
 
@@ -75,13 +77,8 @@ func LoggerMiddleware(log *logger.Logger) gin.HandlerFunc {
 	}
 }
 
-// MetricsService defines the interface for metrics services used by handlers
-type MetricsService interface {
-	RecordRequest(method, path string, status int, duration time.Duration, size int)
-}
-
 // MetricsMiddleware returns a middleware for collecting metrics
-func MetricsMiddleware(metrics MetricsService) gin.HandlerFunc {
+func MetricsMiddleware(metrics interfaces.MetricsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
