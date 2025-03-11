@@ -11,8 +11,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
-	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
@@ -191,15 +189,14 @@ func (m *MockWarmPoolService) CheckAvailability(ctx context.Context, runtime, se
 
 type MockFileService struct {
 	mock.Mock
-	file.Service
 }
 
-func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]file.FileInfo, error) {
+func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]file.FileInfo), args.Error(1)
+	return args.Get(0).([]types.FileInfo), args.Error(1)
 }
 
 func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
@@ -210,12 +207,12 @@ func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandb
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*file.FileInfo, error) {
+func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*file.FileInfo), args.Error(1)
+	return args.Get(0).(*types.FileInfo), args.Error(1)
 }
 
 func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
@@ -225,31 +222,30 @@ func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox
 
 type MockExecutionService struct {
 	mock.Mock
-	execution.Service
 }
 
-func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*execution.Result, error) {
+func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.Result, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.Result), args.Error(1)
 }
 
-func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*execution.Result, error) {
+func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*types.Result, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout, outputCallback)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.Result), args.Error(1)
 }
 
-func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*execution.Result, error) {
+func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.Result, error) {
 	args := m.Called(ctx, sandbox, packages, manager)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.Result), args.Error(1)
 }
 
 type MockMetricsService struct {
@@ -593,7 +589,7 @@ func TestExecute(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockExecutionService.On("Execute", ctx, mock.Anything, "code", "print('Hello, World!')", 30).Return(&execution.Result{
+	mockExecutionService.On("Execute", ctx, mock.Anything, "code", "print('Hello, World!')", 30).Return(&types.Result{
 		ExitCode: 0,
 		Stdout:   "Hello, World!\n",
 		Stderr:   "",
@@ -665,7 +661,7 @@ func TestFileOperations(t *testing.T) {
 	}, nil).Times(4)
 
 	// Test case: List files
-	mockFileService.On("ListFiles", ctx, mock.Anything, "/workspace").Return([]file.FileInfo{
+	mockFileService.On("ListFiles", ctx, mock.Anything, "/workspace").Return([]types.FileInfo{
 		{
 			Path:      "/workspace/file.txt",
 			Size:      13,
@@ -686,7 +682,7 @@ func TestFileOperations(t *testing.T) {
 	assert.Equal(t, content, downloadedContent)
 
 	// Test case: Upload file
-	mockFileService.On("UploadFile", ctx, mock.Anything, path, content).Return(&file.FileInfo{
+	mockFileService.On("UploadFile", ctx, mock.Anything, path, content).Return(&types.FileInfo{
 		Path:      path,
 		Size:      13,
 		IsDir:     false,
@@ -727,7 +723,7 @@ func TestInstallPackages(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockExecutionService.On("InstallPackages", ctx, mock.Anything, []string{"numpy", "pandas"}, "pip").Return(&execution.Result{
+	mockExecutionService.On("InstallPackages", ctx, mock.Anything, []string{"numpy", "pandas"}, "pip").Return(&types.Result{
 		ExitCode: 0,
 		Stdout:   "Successfully installed numpy pandas",
 		Stderr:   "",
