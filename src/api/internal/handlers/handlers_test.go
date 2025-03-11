@@ -10,7 +10,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/stretchr/testify/assert"
@@ -29,8 +28,8 @@ type (
 )
 
 // Ensure mock implements the interface
-var _ MetricsService = (*MockMetricsService)(nil)
-var _ WarmPoolService = (*MockWarmPoolService)(nil)
+var _ interfaces.MetricsService = (*MockMetricsService)(nil)
+var _ interfaces.WarmPoolService = (*MockWarmPoolService)(nil)
 
 func (m *MockWarmPoolService) Start() error {
 	args := m.Called()

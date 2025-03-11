@@ -29,16 +29,6 @@ type MockSandboxService struct {
 var _ interfaces.SandboxService = (*MockSandboxService)(nil)
 
 func (m *MockSandboxService) Start() error {
-        args := m.Called()
-        return args.Error(0)
-}
-
-func (m *MockSandboxService) Stop() error {
-        args := m.Called()
-        return args.Error(0)
-}
-
-func (m *MockSandboxService) Start() error {
 	args := m.Called()
 	return args.Error(0)
 }
@@ -98,7 +88,7 @@ func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path stri
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]file.FileInfo), args.Error(1)
+	return args.Get(0).([]types.FileInfo), args.Error(1)
 }
 
 func (m *MockSandboxService) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
@@ -114,7 +104,7 @@ func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path str
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*file.FileInfo), args.Error(1)
+	return args.Get(0).(*types.FileInfo), args.Error(1)
 }
 
 func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path string) error {
@@ -135,7 +125,7 @@ func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *webso
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*sandbox.Session), args.Error(1)
+	return args.Get(0).(*types.Session), args.Error(1)
 }
 
 func (m *MockSandboxService) CloseSession(sessionID string) {
@@ -555,7 +545,7 @@ func TestExecute(t *testing.T) {
 	// Test case: Successful execution
 	mockAuthService.On("GetUserID", mock.Anything).Return("user123").Once()
 	mockAuthService.On("CheckResourceAccess", "user123", "sandbox", "sb-12345", "execute").Return(true).Once()
-	mockSandboxService.On("Execute", mock.Anything, mock.MatchedBy(func(req sandbox.ExecuteRequest) bool {
+	mockSandboxService.On("Execute", mock.Anything, mock.MatchedBy(func(req types.ExecuteRequest) bool {
 		return req.Type == "code" && req.Content == "print('Hello, World!')" && req.SandboxID == "sb-12345"
 	})).Return(&types.ExecutionResult{
 		ExitCode: 0,
