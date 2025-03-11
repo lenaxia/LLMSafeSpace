@@ -2,8 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
@@ -16,7 +14,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Service handles sandbox operations
@@ -38,11 +35,7 @@ var _ interfaces.SandboxService = (*Service)(nil)
 type CreateSandboxRequest = types.CreateSandboxRequest
 
 // InstallPackagesRequest defines the request for installing packages
-type InstallPackagesRequest struct {
-	Packages  []string `json:"packages"` // Packages to install
-	Manager   string   `json:"manager"`  // Package manager to use
-	SandboxID string   `json:"-"`        // Set by the handler
-}
+type InstallPackagesRequest = types.InstallPackagesRequest
 
 // New creates a new sandbox service
 func New(
