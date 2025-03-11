@@ -222,20 +222,25 @@ func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, 
 	return args.Get(0).([]map[string]interface{}), args.Error(1)
 }
 
+// MockWarmPoolService embeds the concrete warmpool.Service
 type MockWarmPoolService struct {
-	mock.Mock
 	warmpool.Service
+	mock.Mock
 }
 
+// CheckAvailability is a mock implementation of the CheckAvailability method
 func (m *MockWarmPoolService) CheckAvailability(ctx context.Context, runtime, securityLevel string) (bool, error) {
 	args := m.Called(ctx, runtime, securityLevel)
 	return args.Bool(0), args.Error(1)
 }
 
+// MockFileService embeds the concrete file.Service
 type MockFileService struct {
+	file.Service
 	mock.Mock
 }
 
+// ListFiles is a mock implementation of the ListFiles method
 func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox, path string) ([]types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
@@ -244,6 +249,7 @@ func (m *MockFileService) ListFiles(ctx context.Context, sandbox *types.Sandbox,
 	return args.Get(0).([]types.FileInfo), args.Error(1)
 }
 
+// DownloadFile is a mock implementation of the DownloadFile method
 func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandbox, path string) ([]byte, error) {
 	args := m.Called(ctx, sandbox, path)
 	if args.Get(0) == nil {
@@ -252,6 +258,7 @@ func (m *MockFileService) DownloadFile(ctx context.Context, sandbox *types.Sandb
 	return args.Get(0).([]byte), args.Error(1)
 }
 
+// UploadFile is a mock implementation of the UploadFile method
 func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox, path string, content []byte) (*types.FileInfo, error) {
 	args := m.Called(ctx, sandbox, path, content)
 	if args.Get(0) == nil {
@@ -260,15 +267,19 @@ func (m *MockFileService) UploadFile(ctx context.Context, sandbox *types.Sandbox
 	return args.Get(0).(*types.FileInfo), args.Error(1)
 }
 
+// DeleteFile is a mock implementation of the DeleteFile method
 func (m *MockFileService) DeleteFile(ctx context.Context, sandbox *types.Sandbox, path string) error {
 	args := m.Called(ctx, sandbox, path)
 	return args.Error(0)
 }
 
+// MockExecutionService embeds the concrete execution.Service
 type MockExecutionService struct {
+	execution.Service
 	mock.Mock
 }
 
+// Execute is a mock implementation of the Execute method
 func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout)
 	if args.Get(0) == nil {
@@ -277,6 +288,7 @@ func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandb
 	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
+// ExecuteStream is a mock implementation of the ExecuteStream method
 func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout, outputCallback)
 	if args.Get(0) == nil {
@@ -285,6 +297,7 @@ func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types
 	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
+// InstallPackages is a mock implementation of the InstallPackages method
 func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, packages, manager)
 	if args.Get(0) == nil {
@@ -293,41 +306,50 @@ func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *typ
 	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
+// MockMetricsService embeds the concrete metrics.Service
 type MockMetricsService struct {
-	mock.Mock
 	metrics.Service
+	mock.Mock
 }
 
+// RecordSandboxCreation is a mock implementation of the RecordSandboxCreation method
 func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
 	m.Called(runtime, warmPodUsed)
 }
 
+// RecordSandboxTermination is a mock implementation of the RecordSandboxTermination method
 func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
 	m.Called(runtime)
 }
 
+// RecordExecution is a mock implementation of the RecordExecution method
 func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
 	m.Called(execType, runtime, status, duration)
 }
 
+// IncrementActiveConnections is a mock implementation of the IncrementActiveConnections method
 func (m *MockMetricsService) IncrementActiveConnections(connType string) {
 	m.Called(connType)
 }
 
+// DecrementActiveConnections is a mock implementation of the DecrementActiveConnections method
 func (m *MockMetricsService) DecrementActiveConnections(connType string) {
 	m.Called(connType)
 }
 
+// MockCacheService embeds the concrete cache.Service
 type MockCacheService struct {
-	mock.Mock
 	cache.Service
+	mock.Mock
 }
 
+// SetSession is a mock implementation of the SetSession method
 func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
 	args := m.Called(ctx, sessionID, session, expiration)
 	return args.Error(0)
 }
 
+// GetSession is a mock implementation of the GetSession method
 func (m *MockCacheService) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
 	args := m.Called(ctx, sessionID)
 	if args.Get(0) == nil {
@@ -336,6 +358,7 @@ func (m *MockCacheService) GetSession(ctx context.Context, sessionID string) (ma
 	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
+// DeleteSession is a mock implementation of the DeleteSession method
 func (m *MockCacheService) DeleteSession(ctx context.Context, sessionID string) error {
 	args := m.Called(ctx, sessionID)
 	return args.Error(0)
