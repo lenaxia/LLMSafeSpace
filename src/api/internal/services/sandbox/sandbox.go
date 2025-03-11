@@ -232,7 +232,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*interfaces.Result, error) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(req.SandboxID, metav1.GetOptions{})
         if err != nil {
@@ -411,7 +411,7 @@ func (s *Service) CloseSession(sessionID string) {
 }
 
 // HandleSession handles a WebSocket session
-func (s *Service) HandleSession(session *Session) {
+func (s *Service) HandleSession(session *types.Session) {
         // Get sandbox from Kubernetes
         sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("default").Get(session.SandboxID, metav1.GetOptions{})
         if err != nil {
