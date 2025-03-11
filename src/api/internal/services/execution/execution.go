@@ -108,14 +108,14 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 		"exit_code", execResult.ExitCode)
 
 	// Return execution result
-	return &interfaces.Result{
-		ExecutionID:  execResult.ExecutionID,
-		Status:       execResult.Status,
-		StartedAt:    execResult.StartedAt,
-		CompletedAt:  execResult.CompletedAt,
-		ExitCode:     execResult.ExitCode,
-		Stdout:       execResult.Stdout,
-		Stderr:       execResult.Stderr,
+	return &types.ExecutionResult{
+		ID:          execResult.ID,
+		Status:      execResult.Status,
+		StartedAt:   execResult.StartedAt,
+		CompletedAt: execResult.CompletedAt,
+		ExitCode:    execResult.ExitCode,
+		Stdout:      execResult.Stdout,
+		Stderr:      execResult.Stderr,
 	}, nil
 }
 

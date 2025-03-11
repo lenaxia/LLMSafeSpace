@@ -16,14 +16,26 @@ type ExecutionRequest struct {
 }
 
 // Result represents the result of code or command execution
+// Deprecated: Use ExecutionResult instead
 type Result struct {
-	ExecutionID  string    `json:"executionId"`
+	ExecutionID  string    `json:"executionId,omitempty"` // Deprecated: Use ID in ExecutionResult instead
 	Status       string    `json:"status"`
 	StartedAt    time.Time `json:"startedAt"`
 	CompletedAt  time.Time `json:"completedAt"`
 	ExitCode     int       `json:"exitCode"`
 	Stdout       string    `json:"stdout"`
 	Stderr       string    `json:"stderr"`
+}
+
+// ExecutionResult defines the result of code or command execution
+type ExecutionResult struct {
+	ID          string    `json:"id"`
+	Status      string    `json:"status"`
+	StartedAt   time.Time `json:"startedAt"`
+	CompletedAt time.Time `json:"completedAt"`
+	ExitCode    int       `json:"exitCode"`
+	Stdout      string    `json:"stdout"`
+	Stderr      string    `json:"stderr"`
 }
 
 // ExecutionResult defines the result of code or command execution
@@ -625,7 +637,8 @@ type SandboxProfileList struct {
 // Message represents a WebSocket message
 type Message struct {
 	Type        string      `json:"type"`
-	ExecutionID string      `json:"executionId,omitempty"`
+	ExecutionID string      `json:"executionId,omitempty"` // Deprecated: Use ID instead
+	ID          string      `json:"id,omitempty"`
 	Stream      string      `json:"stream,omitempty"`
 	Content     string      `json:"content,omitempty"`
 	Code        string      `json:"code,omitempty"`

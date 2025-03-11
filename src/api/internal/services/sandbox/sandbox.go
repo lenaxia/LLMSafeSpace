@@ -472,7 +472,10 @@ func (s *Service) HandleSession(sess *types.Session) {
 // handleExecuteMessage handles an execute message
 func (s *Service) handleExecuteMessage(sess *types.Session, sandbox *types.Sandbox, msg types.Message) {
         // Get execution parameters
-        executionID := msg.ExecutionID
+        executionID := msg.ID
+        if executionID == "" {
+                executionID = msg.ExecutionID // Fallback to deprecated field
+        }
         execType := msg.Type
         content := msg.Content
         timeout := 30 // Default timeout
@@ -490,41 +493,41 @@ func (s *Service) handleExecuteMessage(sess *types.Session, sandbox *types.Sandb
 
                 // Notify client that execution has started
                 sess.Send(types.Message{
-                        Type:        "execution_start",
-                        ExecutionID: executionID,
-                        Timestamp:   time.Now().UnixMilli(),
+                        Type:      "execution_start",
+                        ID:        executionID,
+                        Timestamp: time.Now().UnixMilli(),
                 })
 
                 // Execute code or command
                 startTime := time.Now()
                 result, err := s.executionSvc.ExecuteStream(ctx, sandbox, execType, content, timeout, func(stream, content string) {
                         sess.Send(types.Message{
-                                Type:        "output",
-                                ExecutionID: executionID,
-                                Stream:      stream,
-                                Content:     content,
-                                Timestamp:   time.Now().UnixMilli(),
+                                Type:      "output",
+                                ID:        executionID,
+                                Stream:    stream,
+                                Content:   content,
+                                Timestamp: time.Now().UnixMilli(),
                         })
                 })
 
                 // Handle execution result
                 if err != nil {
                         sess.Send(types.Message{
-                                Type:        "error",
-                                Code:        "execution_failed",
-                                Message:     err.Error(),
-                                ExecutionID: executionID,
-                                Timestamp:   time.Now().UnixMilli(),
+                                Type:      "error",
+                                Code:      "execution_failed",
+                                Message:   err.Error(),
+                                ID:        executionID,
+                                Timestamp: time.Now().UnixMilli(),
                         })
                         return
                 }
 
                 // Notify client that execution has completed
                 sess.Send(types.Message{
-                        Type:        "execution_complete",
-                        ExecutionID: executionID,
-                        ExitCode:    result.ExitCode,
-                        Timestamp:   time.Now().UnixMilli(),
+                        Type:      "execution_complete",
+                        ID:        executionID,
+                        ExitCode:  result.ExitCode,
+                        Timestamp: time.Now().UnixMilli(),
                 })
 
                 // Record metrics
@@ -539,18 +542,21 @@ func (s *Service) handleExecuteMessage(sess *types.Session, sandbox *types.Sandb
 // handleCancelMessage handles a cancel message
 func (s *Service) handleCancelMessage(sess *types.Session, msg types.Message) {
         // Get execution ID
-        executionID := msg.ExecutionID
+        executionID := msg.ID
         if executionID == "" {
-                sess.SendError("invalid_request", "Missing executionId")
-                return
+                executionID = msg.ExecutionID // Fallback to deprecated field
+                if executionID == "" {
+                        sess.SendError("invalid_request", "Missing execution ID")
+                        return
+                }
         }
 
         // Cancel execution is not implemented in the types.Session
         // This would need to be implemented separately
         sess.Send(types.Message{
-                Type:        "execution_cancelled",
-                ExecutionID: executionID,
-                Timestamp:   time.Now().UnixMilli(),
+                Type:      "execution_cancelled",
+                ID:        executionID,
+                Timestamp: time.Now().UnixMilli(),
         })
 }
 
