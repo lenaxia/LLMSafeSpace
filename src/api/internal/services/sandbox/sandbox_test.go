@@ -224,28 +224,28 @@ type MockExecutionService struct {
 	mock.Mock
 }
 
-func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.Result, error) {
+func (m *MockExecutionService) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*types.Result, error) {
+func (m *MockExecutionService) ExecuteStream(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int, outputCallback func(string, string)) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, execType, content, timeout, outputCallback)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.Result, error) {
+func (m *MockExecutionService) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandbox, packages, manager)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
 type MockMetricsService struct {
@@ -589,7 +589,7 @@ func TestExecute(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockExecutionService.On("Execute", ctx, mock.Anything, "code", "print('Hello, World!')", 30).Return(&types.Result{
+	mockExecutionService.On("Execute", ctx, mock.Anything, "code", "print('Hello, World!')", 30).Return(&types.ExecutionResult{
 		ExitCode: 0,
 		Stdout:   "Hello, World!\n",
 		Stderr:   "",
@@ -723,7 +723,7 @@ func TestInstallPackages(t *testing.T) {
 		},
 	}, nil).Once()
 
-	mockExecutionService.On("InstallPackages", ctx, mock.Anything, []string{"numpy", "pandas"}, "pip").Return(&types.Result{
+	mockExecutionService.On("InstallPackages", ctx, mock.Anything, []string{"numpy", "pandas"}, "pip").Return(&types.ExecutionResult{
 		ExitCode: 0,
 		Stdout:   "Successfully installed numpy pandas",
 		Stderr:   "",
