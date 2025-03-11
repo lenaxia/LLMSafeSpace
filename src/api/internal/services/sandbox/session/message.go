@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // Message represents a WebSocket message
