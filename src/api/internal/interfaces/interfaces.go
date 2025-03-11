@@ -124,16 +124,16 @@ type WarmPoolService interface {
 	Stop() error
 }
 
-// Services holds all application services
-type Services struct {
-	Auth      AuthService
-	Database  DatabaseService
-	Cache     CacheService
-	Execution ExecutionService
-	File      FileService
-	Metrics   MetricsService
-	Sandbox   SandboxService
-	WarmPool  WarmPoolService
+// Services defines the interface for accessing all application services
+type Services interface {
+	GetAuth() AuthService
+	GetDatabase() DatabaseService
+	GetCache() CacheService
+	GetExecution() ExecutionService
+	GetFile() FileService
+	GetMetrics() MetricsService
+	GetSandbox() SandboxService
+	GetWarmPool() WarmPoolService
 }
 
 // KubernetesClient defines the interface for Kubernetes client operations
