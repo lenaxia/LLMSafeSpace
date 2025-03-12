@@ -11,6 +11,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	"k8s.io/apimachinery/pkg/watch"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockKubernetesClient implements the KubernetesClient interface for testing
@@ -95,6 +97,308 @@ func (m *MockKubernetesClient) DeleteFileInSandbox(ctx context.Context, namespac
 func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	args := m.Called()
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
+}
+
+// MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
+type MockLLMSafespaceV1Interface struct {
+	mock.Mock
+}
+
+// Sandboxes returns a mock implementation of the SandboxInterface
+func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.SandboxInterface {
+	args := m.Called(namespace)
+	return args.Get(0).(interfaces.SandboxInterface)
+}
+
+// WarmPools returns a mock implementation of the WarmPoolInterface
+func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.WarmPoolInterface {
+	args := m.Called(namespace)
+	return args.Get(0).(interfaces.WarmPoolInterface)
+}
+
+// WarmPods returns a mock implementation of the WarmPodInterface
+func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.WarmPodInterface {
+	args := m.Called(namespace)
+	return args.Get(0).(interfaces.WarmPodInterface)
+}
+
+// RuntimeEnvironments returns a mock implementation of the RuntimeEnvironmentInterface
+func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
+	args := m.Called(namespace)
+	return args.Get(0).(interfaces.RuntimeEnvironmentInterface)
+}
+
+// SandboxProfiles returns a mock implementation of the SandboxProfileInterface
+func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
+	args := m.Called(namespace)
+	return args.Get(0).(interfaces.SandboxProfileInterface)
+}
+
+// MockSandboxInterface implements the SandboxInterface for testing
+type MockSandboxInterface struct {
+	mock.Mock
+}
+
+func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	args := m.Called(sandbox)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Sandbox), args.Error(1)
+}
+
+func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	args := m.Called(sandbox)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Sandbox), args.Error(1)
+}
+
+func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
+	args := m.Called(sandbox)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Sandbox), args.Error(1)
+}
+
+func (m *MockSandboxInterface) Delete(name string, options metav1.DeleteOptions) error {
+	args := m.Called(name, options)
+	return args.Error(0)
+}
+
+func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
+	args := m.Called(name, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Sandbox), args.Error(1)
+}
+
+func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SandboxList), args.Error(1)
+}
+
+func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// MockWarmPoolInterface implements the WarmPoolInterface for testing
+type MockWarmPoolInterface struct {
+	mock.Mock
+}
+
+func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	args := m.Called(warmPool)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPool), args.Error(1)
+}
+
+func (m *MockWarmPoolInterface) Update(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	args := m.Called(warmPool)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPool), args.Error(1)
+}
+
+func (m *MockWarmPoolInterface) UpdateStatus(warmPool *types.WarmPool) (*types.WarmPool, error) {
+	args := m.Called(warmPool)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPool), args.Error(1)
+}
+
+func (m *MockWarmPoolInterface) Delete(name string, options metav1.DeleteOptions) error {
+	args := m.Called(name, options)
+	return args.Error(0)
+}
+
+func (m *MockWarmPoolInterface) Get(name string, options metav1.GetOptions) (*types.WarmPool, error) {
+	args := m.Called(name, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPool), args.Error(1)
+}
+
+func (m *MockWarmPoolInterface) List(opts metav1.ListOptions) (*types.WarmPoolList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPoolList), args.Error(1)
+}
+
+func (m *MockWarmPoolInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// MockWarmPodInterface implements the WarmPodInterface for testing
+type MockWarmPodInterface struct {
+	mock.Mock
+}
+
+func (m *MockWarmPodInterface) Create(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	args := m.Called(warmPod)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPod), args.Error(1)
+}
+
+func (m *MockWarmPodInterface) Update(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	args := m.Called(warmPod)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPod), args.Error(1)
+}
+
+func (m *MockWarmPodInterface) UpdateStatus(warmPod *types.WarmPod) (*types.WarmPod, error) {
+	args := m.Called(warmPod)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPod), args.Error(1)
+}
+
+func (m *MockWarmPodInterface) Delete(name string, options metav1.DeleteOptions) error {
+	args := m.Called(name, options)
+	return args.Error(0)
+}
+
+func (m *MockWarmPodInterface) Get(name string, options metav1.GetOptions) (*types.WarmPod, error) {
+	args := m.Called(name, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPod), args.Error(1)
+}
+
+func (m *MockWarmPodInterface) List(opts metav1.ListOptions) (*types.WarmPodList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WarmPodList), args.Error(1)
+}
+
+func (m *MockWarmPodInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// MockRuntimeEnvironmentInterface implements the RuntimeEnvironmentInterface for testing
+type MockRuntimeEnvironmentInterface struct {
+	mock.Mock
+}
+
+func (m *MockRuntimeEnvironmentInterface) Create(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	args := m.Called(runtimeEnv)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RuntimeEnvironment), args.Error(1)
+}
+
+func (m *MockRuntimeEnvironmentInterface) Update(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	args := m.Called(runtimeEnv)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RuntimeEnvironment), args.Error(1)
+}
+
+func (m *MockRuntimeEnvironmentInterface) UpdateStatus(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
+	args := m.Called(runtimeEnv)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RuntimeEnvironment), args.Error(1)
+}
+
+func (m *MockRuntimeEnvironmentInterface) Delete(name string, options metav1.DeleteOptions) error {
+	args := m.Called(name, options)
+	return args.Error(0)
+}
+
+func (m *MockRuntimeEnvironmentInterface) Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error) {
+	args := m.Called(name, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RuntimeEnvironment), args.Error(1)
+}
+
+func (m *MockRuntimeEnvironmentInterface) List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RuntimeEnvironmentList), args.Error(1)
+}
+
+func (m *MockRuntimeEnvironmentInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// MockSandboxProfileInterface implements the SandboxProfileInterface for testing
+type MockSandboxProfileInterface struct {
+	mock.Mock
+}
+
+func (m *MockSandboxProfileInterface) Create(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
+	args := m.Called(profile)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SandboxProfile), args.Error(1)
+}
+
+func (m *MockSandboxProfileInterface) Update(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
+	args := m.Called(profile)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SandboxProfile), args.Error(1)
+}
+
+func (m *MockSandboxProfileInterface) Delete(name string, options metav1.DeleteOptions) error {
+	args := m.Called(name, options)
+	return args.Error(0)
+}
+
+func (m *MockSandboxProfileInterface) Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error) {
+	args := m.Called(name, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SandboxProfile), args.Error(1)
+}
+
+func (m *MockSandboxProfileInterface) List(opts metav1.ListOptions) (*types.SandboxProfileList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SandboxProfileList), args.Error(1)
+}
+
+func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
 // MockFileInfo creates a mock FileInfo for testing
