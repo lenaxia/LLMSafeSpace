@@ -12,6 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 )
 
 func TestCreateSandbox(t *testing.T) {
@@ -21,13 +22,13 @@ func TestCreateSandbox(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	k8sClient := new(mockK8sClient)
-	dbService := new(mockDBService)
-	warmPoolSvc := new(mockWarmPoolService)
-	execSvc := new(mockExecutionService)
-	fileSvc := new(mockFileService)
-	metricsRecorder := new(mockMetricsRecorder)
-	sessionMgr := new(mockSessionManager)
+	k8sClient := new(mocks.MockKubernetesClient)
+	dbService := new(mocks.MockDatabaseService)
+	warmPoolSvc := new(mocks.MockWarmPoolService)
+	execSvc := new(mocks.MockExecutionService)
+	fileSvc := new(mocks.MockFileService)
+	metricsRecorder := new(mocks.MockMetricsRecorder)
+	sessionMgr := new(mocks.MockSessionManager)
 
 	svc := &service{
 		logger:      logger,
@@ -70,6 +71,9 @@ func TestCreateSandbox(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Create a context for the test
+			ctx := context.Background()
+			
 			// Setup expectations
 			if !tt.wantErr {
 				sandbox := &types.Sandbox{
@@ -126,13 +130,13 @@ func TestGetSandbox(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	k8sClient := new(mockK8sClient)
-	dbService := new(mockDBService)
-	warmPoolSvc := new(mockWarmPoolService)
-	execSvc := new(mockExecutionService)
-	fileSvc := new(mockFileService)
-	metricsRecorder := new(mockMetricsRecorder)
-	sessionMgr := new(mockSessionManager)
+	k8sClient := new(mocks.MockKubernetesClient)
+	dbService := new(mocks.MockDatabaseService)
+	warmPoolSvc := new(mocks.MockWarmPoolService)
+	execSvc := new(mocks.MockExecutionService)
+	fileSvc := new(mocks.MockFileService)
+	metricsRecorder := new(mocks.MockMetricsRecorder)
+	sessionMgr := new(mocks.MockSessionManager)
 
 	svc := &service{
 		logger:      logger,
@@ -144,6 +148,9 @@ func TestGetSandbox(t *testing.T) {
 		metrics:     metricsRecorder,
 		sessionMgr:  sessionMgr,
 	}
+
+	// Create a context for the test
+	ctx := context.Background()
 
 	// Test cases
 	tests := []struct {
@@ -204,13 +211,13 @@ func TestTerminateSandbox(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	k8sClient := new(mockK8sClient)
-	dbService := new(mockDBService)
-	warmPoolSvc := new(mockWarmPoolService)
-	execSvc := new(mockExecutionService)
-	fileSvc := new(mockFileService)
-	metricsRecorder := new(mockMetricsRecorder)
-	sessionMgr := new(mockSessionManager)
+	k8sClient := new(mocks.MockKubernetesClient)
+	dbService := new(mocks.MockDatabaseService)
+	warmPoolSvc := new(mocks.MockWarmPoolService)
+	execSvc := new(mocks.MockExecutionService)
+	fileSvc := new(mocks.MockFileService)
+	metricsRecorder := new(mocks.MockMetricsRecorder)
+	sessionMgr := new(mocks.MockSessionManager)
 
 	svc := &service{
 		logger:      logger,
@@ -222,6 +229,9 @@ func TestTerminateSandbox(t *testing.T) {
 		metrics:     metricsRecorder,
 		sessionMgr:  sessionMgr,
 	}
+
+	// Create a context for the test
+	ctx := context.Background()
 
 	// Test cases
 	tests := []struct {
