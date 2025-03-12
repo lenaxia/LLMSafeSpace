@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -19,25 +20,40 @@ import (
 type service struct {
 	logger        *logger.Logger
 	k8sClient     interfaces.KubernetesClient
+	dbService     interfaces.DatabaseService
 	warmPoolSvc   interfaces.WarmPoolService
+	executionSvc  interfaces.ExecutionService
+	fileSvc       interfaces.FileService
 	metrics       metrics.MetricsRecorder
 	sessionMgr    interfaces.SessionManager
+	reconciler    *ReconciliationHelper
 }
 
 func NewService(
 	logger *logger.Logger, 
 	k8sClient interfaces.KubernetesClient,
+	dbService interfaces.DatabaseService,
 	warmPoolSvc interfaces.WarmPoolService,
+	executionSvc interfaces.ExecutionService,
+	fileSvc interfaces.FileService,
 	metrics metrics.MetricsRecorder,
 	sessionMgr interfaces.SessionManager,
 ) interfaces.SandboxService {
-	return &service{
+	svc := &service{
 		logger:        logger.With("component", "sandbox-service"),
 		k8sClient:     k8sClient,
+		dbService:     dbService,
 		warmPoolSvc:   warmPoolSvc,
+		executionSvc:  executionSvc,
+		fileSvc:       fileSvc,
 		metrics:       metrics,
 		sessionMgr:    sessionMgr,
 	}
+	
+	// Create reconciliation helper
+	svc.reconciler = NewReconciliationHelper(k8sClient, logger)
+	
+	return svc
 }
 
 func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequest) (*types.Sandbox, error) {
@@ -58,6 +74,9 @@ func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequ
 				"securityLevel", req.SecurityLevel)
 		} else if available {
 			useWarmPod = true
+			s.logger.Info("Warm pod available for sandbox creation", 
+				"runtime", req.Runtime,
+				"securityLevel", req.SecurityLevel)
 		}
 	}
 
@@ -70,16 +89,42 @@ func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequ
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
+	// Store sandbox metadata in database
+	err = s.dbService.CreateSandboxMetadata(ctx, created.Name, req.UserID, req.Runtime)
+	if err != nil {
+		// Attempt to clean up the Kubernetes resource on database error
+		s.logger.Error("Failed to create sandbox metadata, cleaning up sandbox resource", err,
+			"sandbox", created.Name,
+			"namespace", created.Namespace)
+		
+		deleteErr := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{})
+		if deleteErr != nil {
+			s.logger.Error("Failed to clean up sandbox resource after metadata creation failure", deleteErr,
+				"sandbox", created.Name,
+				"namespace", created.Namespace)
+		}
+		
+		return nil, fmt.Errorf("failed to create sandbox metadata: %w", err)
+	}
+
 	// Convert back to API type
 	result := client.ConvertFromCRD(created)
 	
 	s.metrics.RecordSandboxCreation(req.Runtime, useWarmPod)
 	s.metrics.RecordOperationDuration("create", time.Since(startTime))
 	
+	s.logger.Info("Sandbox created successfully", 
+		"sandbox", created.Name,
+		"namespace", created.Namespace,
+		"runtime", req.Runtime,
+		"useWarmPod", useWarmPod,
+		"duration_ms", time.Since(startTime).Milliseconds())
+	
 	return result, nil
 }
 
 func (s *service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
+	// Try to find the sandbox in any namespace
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(ctx, sandboxID, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -91,15 +136,56 @@ func (s *service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 }
 
 func (s *service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
-	// Implementation would use k8sClient to list sandboxes with appropriate filters
-	// and convert the results to the expected format
-	return nil, fmt.Errorf("not implemented")
+	// Get sandboxes from database
+	sandboxes, err := s.dbService.ListSandboxes(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+	
+	// Enrich with Kubernetes data if available
+	for i, sandbox := range sandboxes {
+		sandboxID, ok := sandbox["id"].(string)
+		if !ok || sandboxID == "" {
+			continue
+		}
+		
+		// Try to get sandbox from Kubernetes
+		k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(ctx, sandboxID, metav1.GetOptions{})
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				s.logger.Error("Failed to get sandbox from Kubernetes", err, "sandbox_id", sandboxID)
+			}
+			continue
+		}
+		
+		// Add Kubernetes data
+		sandboxes[i]["status"] = k8sSandbox.Status.Phase
+		sandboxes[i]["endpoint"] = k8sSandbox.Status.Endpoint
+		
+		if k8sSandbox.Status.StartTime != nil {
+			sandboxes[i]["startTime"] = k8sSandbox.Status.StartTime.Time
+		}
+		
+		if k8sSandbox.Status.Resources != nil {
+			sandboxes[i]["cpuUsage"] = k8sSandbox.Status.Resources.CPUUsage
+			sandboxes[i]["memoryUsage"] = k8sSandbox.Status.Resources.MemoryUsage
+		}
+	}
+	
+	return sandboxes, nil
 }
 
 func (s *service) TerminateSandbox(ctx context.Context, sandboxID string) error {
 	startTime := time.Now()
 	
-	err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Delete(ctx, sandboxID, metav1.DeleteOptions{})
+	// Get sandbox first to check if it exists and get its runtime
+	sandbox, err := s.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	
+	// Delete the sandbox
+	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(ctx, sandboxID, metav1.DeleteOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return &types.SandboxNotFoundError{ID: sandboxID}
@@ -107,21 +193,35 @@ func (s *service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
 
-	s.metrics.RecordSandboxTermination(sandboxID)
+	s.metrics.RecordSandboxTermination(sandbox.Runtime)
 	s.metrics.RecordOperationDuration("delete", time.Since(startTime))
+	
+	s.logger.Info("Sandbox terminated successfully", 
+		"sandbox", sandboxID,
+		"namespace", sandbox.Namespace,
+		"runtime", sandbox.Runtime,
+		"duration_ms", time.Since(startTime).Milliseconds())
 	
 	return nil
 }
 
 func (s *service) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(ctx, sandboxID, metav1.GetOptions{})
+	// Get sandbox
+	sandbox, err := s.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Get sandbox status from Kubernetes
+	k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Get(ctx, sandboxID, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, &types.SandboxNotFoundError{ID: sandboxID}
 		}
-		return nil, fmt.Errorf("failed to get sandbox: %w", err)
+		return nil, fmt.Errorf("failed to get sandbox status: %w", err)
 	}
-	return &sandbox.Status, nil
+	
+	return &k8sSandbox.Status, nil
 }
 
 func (s *service) Execute(ctx context.Context, req types.ExecuteRequest) (*types.ExecutionResult, error) {
@@ -129,6 +229,11 @@ func (s *service) Execute(ctx context.Context, req types.ExecuteRequest) (*types
 	sandbox, err := s.GetSandbox(ctx, req.SandboxID)
 	if err != nil {
 		return nil, err
+	}
+	
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
 	}
 	
 	// Create execution request
@@ -139,7 +244,7 @@ func (s *service) Execute(ctx context.Context, req types.ExecuteRequest) (*types
 	}
 	
 	// Execute in sandbox
-	result, err := s.k8sClient.ExecuteInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq)
+	result, err := s.executionSvc.Execute(ctx, sandbox, req.Type, req.Content, req.Timeout)
 	if err != nil {
 		return nil, fmt.Errorf("execution failed: %w", err)
 	}
@@ -154,18 +259,18 @@ func (s *service) ListFiles(ctx context.Context, sandboxID, path string) ([]type
 		return nil, err
 	}
 	
-	// Create file request
-	fileReq := &types.FileRequest{
-		Path: path,
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
 	}
 	
-	// List files in sandbox
-	result, err := s.k8sClient.ListFilesInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	// List files
+	files, err := s.fileSvc.ListFiles(ctx, sandbox, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 	
-	return result.Files, nil
+	return files, nil
 }
 
 func (s *service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
@@ -175,13 +280,13 @@ func (s *service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 		return nil, err
 	}
 	
-	// Create file request
-	fileReq := &types.FileRequest{
-		Path: path,
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
 	}
 	
-	// Download file from sandbox
-	content, err := s.k8sClient.DownloadFileFromSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	// Download file
+	content, err := s.fileSvc.DownloadFile(ctx, sandbox, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
@@ -196,25 +301,18 @@ func (s *service) UploadFile(ctx context.Context, sandboxID, path string, conten
 		return nil, err
 	}
 	
-	// Create file request
-	fileReq := &types.FileRequest{
-		Path:    path,
-		Content: content,
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
 	}
 	
-	// Upload file to sandbox
-	result, err := s.k8sClient.UploadFileToSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	// Upload file
+	fileInfo, err := s.fileSvc.UploadFile(ctx, sandbox, path, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload file: %w", err)
 	}
 	
-	return &types.FileInfo{
-		Path:      result.Path,
-		Size:      result.Size,
-		CreatedAt: result.CreatedAt,
-		UpdatedAt: result.UpdatedAt,
-		IsDir:     result.IsDir,
-	}, nil
+	return fileInfo, nil
 }
 
 func (s *service) DeleteFile(ctx context.Context, sandboxID, path string) error {
@@ -224,13 +322,13 @@ func (s *service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 		return err
 	}
 	
-	// Create file request
-	fileReq := &types.FileRequest{
-		Path: path,
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
 	}
 	
-	// Delete file in sandbox
-	err = s.k8sClient.DeleteFileInSandbox(ctx, sandbox.Namespace, sandbox.Name, fileReq)
+	// Delete file
+	err = s.fileSvc.DeleteFile(ctx, sandbox, path)
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
@@ -245,38 +343,30 @@ func (s *service) InstallPackages(ctx context.Context, req types.InstallPackages
 		return nil, err
 	}
 	
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	}
+	
 	// Determine package manager if not specified
 	manager := req.Manager
 	if manager == "" {
 		// Auto-detect based on runtime
-		if sandbox.Runtime == "python:3.10" || sandbox.Runtime == "python:3.9" {
+		if strings.HasPrefix(sandbox.Runtime, "python") {
 			manager = "pip"
-		} else if sandbox.Runtime == "nodejs:16" || sandbox.Runtime == "nodejs:18" {
+		} else if strings.HasPrefix(sandbox.Runtime, "nodejs") {
 			manager = "npm"
+		} else if strings.HasPrefix(sandbox.Runtime, "ruby") {
+			manager = "gem"
+		} else if strings.HasPrefix(sandbox.Runtime, "go") {
+			manager = "go"
 		} else {
 			return nil, fmt.Errorf("unable to determine package manager for runtime %s", sandbox.Runtime)
 		}
 	}
 	
-	// Build installation command
-	var command string
-	switch manager {
-	case "pip":
-		command = "pip install " + strings.Join(req.Packages, " ")
-	case "npm":
-		command = "npm install " + strings.Join(req.Packages, " ")
-	default:
-		return nil, fmt.Errorf("unsupported package manager: %s", manager)
-	}
-	
-	// Execute installation command
-	execReq := &types.ExecutionRequest{
-		Type:    "command",
-		Content: command,
-		Timeout: 300, // Default timeout for package installation
-	}
-	
-	result, err := s.k8sClient.ExecuteInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq)
+	// Install packages
+	result, err := s.executionSvc.InstallPackages(ctx, sandbox, req.Packages, manager)
 	if err != nil {
 		return nil, fmt.Errorf("package installation failed: %w", err)
 	}
@@ -285,6 +375,18 @@ func (s *service) InstallPackages(ctx context.Context, req types.InstallPackages
 }
 
 func (s *service) CreateSession(userID, sandboxID string, conn interfaces.WSConnection) (*types.Session, error) {
+	// Check if sandbox exists
+	sandbox, err := s.GetSandbox(context.Background(), sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Check if sandbox is running
+	if sandbox.Status != "Running" {
+		return nil, fmt.Errorf("cannot connect to sandbox: sandbox is not running (current status: %s)", sandbox.Status)
+	}
+	
+	// Create session
 	return s.sessionMgr.CreateSession(userID, sandboxID, conn)
 }
 
@@ -293,15 +395,22 @@ func (s *service) CloseSession(sessionID string) {
 }
 
 func (s *service) HandleSession(session *types.Session) {
-	// Implementation would handle WebSocket session messages
-	// This would typically be a long-running function that processes
-	// incoming messages and routes them to the appropriate handlers
+	// This is handled by the session manager's readPump
 }
 
 func (s *service) Start() error {
+	s.logger.Info("Starting sandbox service")
+	
+	// Start reconciliation loop
+	go s.reconciler.StartReconciliationLoop(context.Background())
+	
+	// Start session manager
 	return s.sessionMgr.Start()
 }
 
 func (s *service) Stop() error {
+	s.logger.Info("Stopping sandbox service")
+	
+	// Stop session manager
 	return s.sessionMgr.Stop()
 }

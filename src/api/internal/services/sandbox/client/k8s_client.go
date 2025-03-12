@@ -1,45 +1,75 @@
 package client
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/lenaxia/llmsafespace/api/internal/types"
-	sandboxv1 "github.com/lenaxia/llmsafespace/apis/llmsafespace/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func ConvertToCRD(req types.CreateSandboxRequest, useWarmPod bool) *sandboxv1.Sandbox {
-	return &sandboxv1.Sandbox{
+// ConvertToCRD converts an API sandbox request to a Kubernetes CRD
+func ConvertToCRD(req types.CreateSandboxRequest, useWarmPod bool) *types.Sandbox {
+	// Create labels
+	labels := map[string]string{
+		"app":           "llmsafespace",
+		"user-id":       req.UserID,
+		"runtime":       sanitizeRuntimeLabel(req.Runtime),
+	}
+
+	// Create annotations
+	annotations := map[string]string{
+		"llmsafespace.dev/use-warm-pod":  fmt.Sprintf("%t", useWarmPod),
+		"llmsafespace.dev/security-level": req.SecurityLevel,
+	}
+
+	// Create sandbox object
+	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sb-",
-			Labels: map[string]string{
-				"app":        "llmsafespace",
-				"user-id":    req.UserID,
-				"runtime":    sanitizeRuntimeLabel(req.Runtime),
-				"warm-pool":  "requested",
-			},
-			Annotations: map[string]string{
-				"llmsafespace.dev/use-warm-pod":  fmt.Sprintf("%t", useWarmPod),
-				"llmsafespace.dev/security-level": req.SecurityLevel,
-			},
+			Namespace:    req.Namespace,
+			Labels:       labels,
+			Annotations:  annotations,
 		},
-		Spec: sandboxv1.SandboxSpec{
+		Spec: types.SandboxSpec{
 			Runtime:       req.Runtime,
 			SecurityLevel: req.SecurityLevel,
 			Timeout:       req.Timeout,
-			Resources:     convertResourceRequirements(req.Resources),
-			NetworkAccess: convertNetworkAccess(req.NetworkAccess),
+			Resources:     req.Resources,
+			NetworkAccess: req.NetworkAccess,
 		},
 	}
-}
 
-func ConvertFromCRD(crd *sandboxv1.Sandbox) *types.Sandbox {
-	return &types.Sandbox{
-		ID:        crd.Name,
-		Runtime:   crd.Spec.Runtime,
-		Status:    string(crd.Status.Phase),
-		CreatedAt: crd.CreationTimestamp.Time,
-		Endpoint:  crd.Status.Endpoint,
-		// ... additional fields
+	// Set default timeout if not specified
+	if sandbox.Spec.Timeout == 0 {
+		sandbox.Spec.Timeout = 300 // 5 minutes default
 	}
+
+	// Set default security level if not specified
+	if sandbox.Spec.SecurityLevel == "" {
+		sandbox.Spec.SecurityLevel = "standard"
+	}
+
+	return sandbox
 }
 
-// Helper functions for converting between API types and CRD types
+// ConvertFromCRD converts a Kubernetes CRD to an API sandbox
+func ConvertFromCRD(crd *types.Sandbox) *types.Sandbox {
+	// Create a copy to avoid modifying the original
+	sandbox := crd.DeepCopy()
+	
+	// Ensure namespace is set
+	if sandbox.Namespace == "" {
+		sandbox.Namespace = "default"
+	}
+	
+	return sandbox
+}
+
+// Helper functions
+
+// sanitizeRuntimeLabel converts a runtime string to a valid label value
+func sanitizeRuntimeLabel(runtime string) string {
+	// Replace invalid characters with dashes
+	return strings.Replace(runtime, ":", "-", -1)
+}
