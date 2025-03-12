@@ -84,7 +84,7 @@ func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequ
 	sandboxCRD := client.ConvertToCRD(req, useWarmPod)
 
 	// Create the Sandbox resource
-	created, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(ctx, sandboxCRD, metav1.CreateOptions{})
+	created, err := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Create(sandboxCRD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
@@ -97,7 +97,7 @@ func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequ
 			"sandbox", created.Name,
 			"namespace", created.Namespace)
 		
-		deleteErr := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{})
+		deleteErr := s.k8sClient.LlmsafespaceV1().Sandboxes(req.Namespace).Delete(created.Name, metav1.DeleteOptions{})
 		if deleteErr != nil {
 			s.logger.Error("Failed to clean up sandbox resource after metadata creation failure", deleteErr,
 				"sandbox", created.Name,
@@ -125,7 +125,7 @@ func (s *service) CreateSandbox(ctx context.Context, req types.CreateSandboxRequ
 
 func (s *service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
 	// Try to find the sandbox in any namespace
-	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(ctx, sandboxID, metav1.GetOptions{})
+	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, &types.SandboxNotFoundError{ID: sandboxID}
@@ -150,7 +150,7 @@ func (s *service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		}
 		
 		// Try to get sandbox from Kubernetes
-		k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(ctx, sandboxID, metav1.GetOptions{})
+		k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").Get(sandboxID, metav1.GetOptions{})
 		if err != nil {
 			if !errors.IsNotFound(err) {
 				s.logger.Error("Failed to get sandbox from Kubernetes", err, "sandbox_id", sandboxID)
@@ -185,7 +185,7 @@ func (s *service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	}
 	
 	// Delete the sandbox
-	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(ctx, sandboxID, metav1.DeleteOptions{})
+	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return &types.SandboxNotFoundError{ID: sandboxID}
@@ -193,13 +193,13 @@ func (s *service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
 
-	s.metrics.RecordSandboxTermination(sandbox.Runtime)
+	s.metrics.RecordSandboxTermination(sandbox.Spec.Runtime)
 	s.metrics.RecordOperationDuration("delete", time.Since(startTime))
 	
 	s.logger.Info("Sandbox terminated successfully", 
 		"sandbox", sandboxID,
 		"namespace", sandbox.Namespace,
-		"runtime", sandbox.Runtime,
+		"runtime", sandbox.Spec.Runtime,
 		"duration_ms", time.Since(startTime).Milliseconds())
 	
 	return nil
@@ -387,7 +387,7 @@ func (s *service) CreateSession(userID, sandboxID string, conn interfaces.WSConn
 	}
 	
 	// Create session
-	return s.sessionMgr.CreateSession(userID, sandboxID, conn)
+	return s.sessionMgr.CreateSession(userID, sandboxID, conn.(types.WSConnection))
 }
 
 func (s *service) CloseSession(sessionID string) {

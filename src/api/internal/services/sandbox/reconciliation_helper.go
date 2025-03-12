@@ -50,7 +50,7 @@ func (h *ReconciliationHelper) StartReconciliationLoop(ctx context.Context) {
 }
 
 func (h *ReconciliationHelper) reconcileSandboxes(ctx context.Context) {
-	sandboxes, err := h.k8sClient.LlmsafespaceV1().Sandboxes("").List(ctx, metav1.ListOptions{})
+	sandboxes, err := h.k8sClient.LlmsafespaceV1().Sandboxes("").List(metav1.ListOptions{})
 	if err != nil {
 		h.logger.Error("Failed to list sandboxes for reconciliation", err)
 		return
@@ -152,7 +152,7 @@ func (h *ReconciliationHelper) handleSandboxReconciliation(ctx context.Context, 
 			}
 		} else {
 			// Update sandbox status based on pod status
-			newPhase := mapPodPhaseToSandboxPhase(pod.Status.Phase)
+			newPhase := mapPodPhaseToSandboxPhase(string(pod.Status.Phase))
 			if newPhase != sandbox.Status.Phase {
 				h.logger.Info("Updating sandbox phase", 
 					"sandbox", sandbox.Name, 
@@ -189,7 +189,7 @@ func (h *ReconciliationHelper) handleSandboxReconciliation(ctx context.Context, 
 
 	// Update sandbox if needed
 	if needsUpdate {
-		_, err := h.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(ctx, sandbox, metav1.UpdateOptions{})
+		_, err := h.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).UpdateStatus(sandbox)
 		if err != nil {
 			h.logger.Error("Failed to update sandbox status", err, 
 				"sandbox", sandbox.Name, 
