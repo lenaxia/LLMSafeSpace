@@ -6,6 +6,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// WSConnection defines the interface for a WebSocket connection
+type WSConnection interface {
+	ReadMessage() (messageType int, p []byte, err error)
+	WriteMessage(messageType int, data []byte) error
+	WriteJSON(v interface{}) error
+	Close() error
+	SetWriteDeadline(t time.Time) error
+}
+
 // ExecutionRequest defines a request to execute code or a command
 type ExecutionRequest struct {
 	Type    string `json:"type"`    // "code" or "command"
@@ -629,7 +638,7 @@ type Session struct {
 	ID        string
 	UserID    string
 	SandboxID string
-	Conn      interfaces.WSConnection
+	Conn      WSConnection
 	SendError func(code, message string) error
 	Send      func(msg Message) error
 }

@@ -13,18 +13,9 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
-// WSConnection defines the interface for a WebSocket connection
-type WSConnection interface {
-	ReadMessage() (messageType int, p []byte, err error)
-	WriteMessage(messageType int, data []byte) error
-	WriteJSON(v interface{}) error
-	Close() error
-	SetWriteDeadline(t time.Time) error
-}
-
 // SessionManager defines the interface for managing WebSocket sessions
 type SessionManager interface {
-	CreateSession(userID, sandboxID string, conn WSConnection) (*types.Session, error)
+	CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error)
 	GetSession(sessionID string) (*types.Session, error)
 	CloseSession(sessionID string)
 	SetCancellationFunc(sessionID, executionID string, cancel context.CancelFunc)
@@ -145,7 +136,7 @@ type SandboxService interface {
 	UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error)
 	DeleteFile(ctx context.Context, sandboxID, path string) error
 	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error)
-	CreateSession(userID, sandboxID string, conn WSConnection) (*types.Session, error)
+	CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error)
 	CloseSession(sessionID string)
 	HandleSession(session *types.Session)
 	Start() error
