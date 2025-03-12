@@ -133,7 +133,7 @@ func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interfa
 
 // MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
 type MockLLMSafespaceV1Interface struct {
-	Mock mock.Mock
+	mock mock.Mock
 }
 
 // Sandboxes returns a mock implementation of the SandboxInterface
@@ -149,7 +149,7 @@ func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.San
 func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.WarmPoolInterface {
 	args := m.mock.Called(namespace)
 	if args.Get(0) == nil {
-		return &MockWarmPoolInterface{mock: m.mock}
+		return &MockWarmPoolInterface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.WarmPoolInterface)
 }
@@ -183,11 +183,11 @@ func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfac
 
 // MockSandboxInterface implements the SandboxInterface for testing
 type MockSandboxInterface struct {
-	mock mock.Mock
+	Mock mock.Mock
 }
 
 func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.mock.Called(sandbox)
+	args := m.Mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -242,7 +242,7 @@ type MockWarmPoolInterface struct {
 }
 
 func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	args := m.mock.Called(warmPool)
+	args := m.Mock.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
