@@ -374,7 +374,7 @@ func (s *service) InstallPackages(ctx context.Context, req types.InstallPackages
 	return result, nil
 }
 
-func (s *service) CreateSession(userID, sandboxID string, conn interfaces.WSConnection) (*types.Session, error) {
+func (s *service) CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error) {
 	// Check if sandbox exists
 	sandbox, err := s.GetSandbox(context.Background(), sandboxID)
 	if err != nil {
