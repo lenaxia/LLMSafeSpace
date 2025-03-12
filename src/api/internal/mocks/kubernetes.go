@@ -232,7 +232,7 @@ func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList
 }
 
 func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.mock.Called(opts)
+	args := m.Mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
