@@ -3,7 +3,6 @@ package types
 import (
 	"time"
 	
-	"github.com/gorilla/websocket"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -630,7 +629,7 @@ type Session struct {
 	ID        string
 	UserID    string
 	SandboxID string
-	Conn      *websocket.Conn
+	Conn      interfaces.WSConnection
 	SendError func(code, message string) error
 	Send      func(msg Message) error
 }
@@ -688,4 +687,13 @@ type UpdateWarmPoolRequest struct {
 	AutoScaling *AutoScalingConfig `json:"autoScaling,omitempty"`
 	UserID      string            `json:"-"`
 	Namespace   string            `json:"-"`
+}
+
+// SandboxNotFoundError is returned when a sandbox is not found
+type SandboxNotFoundError struct {
+	ID string
+}
+
+func (e *SandboxNotFoundError) Error() string {
+	return fmt.Sprintf("sandbox %s not found", e.ID)
 }

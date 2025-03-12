@@ -1,23 +1,27 @@
 package metrics
 
 import (
+	"fmt"
 	"time"
 	
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// MetricsRecorder defines the interface for recording metrics
 type MetricsRecorder interface {
 	RecordSandboxCreation(runtime string, warmPodUsed bool)
 	RecordSandboxTermination(runtime string)
 	RecordOperationDuration(operation string, duration time.Duration)
 }
 
+// prometheusRecorder implements the MetricsRecorder interface using Prometheus
 type prometheusRecorder struct {
 	sandboxCreations  *prometheus.CounterVec
 	sandboxDurations  *prometheus.HistogramVec
 	warmPoolHits      prometheus.Counter
 }
 
+// NewPrometheusRecorder creates a new Prometheus metrics recorder
 func NewPrometheusRecorder() MetricsRecorder {
 	return &prometheusRecorder{
 		sandboxCreations: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -38,6 +42,7 @@ func NewPrometheusRecorder() MetricsRecorder {
 	}
 }
 
+// RecordSandboxCreation records a sandbox creation event
 func (r *prometheusRecorder) RecordSandboxCreation(runtime string, warmPodUsed bool) {
 	labels := prometheus.Labels{
 		"runtime":   runtime,
@@ -50,6 +55,12 @@ func (r *prometheusRecorder) RecordSandboxCreation(runtime string, warmPodUsed b
 	}
 }
 
+// RecordSandboxTermination records a sandbox termination event
+func (r *prometheusRecorder) RecordSandboxTermination(runtime string) {
+	// This could be expanded to track terminations by runtime or other attributes
+}
+
+// RecordOperationDuration records the duration of a sandbox operation
 func (r *prometheusRecorder) RecordOperationDuration(operation string, duration time.Duration) {
 	r.sandboxDurations.WithLabelValues(operation).Observe(duration.Seconds())
 }
