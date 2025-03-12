@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -49,7 +50,7 @@ func NewManager(logger *logger.Logger, executionSvc interfaces.ExecutionService,
 }
 
 // CreateSession creates a new WebSocket session
-func (m *Manager) CreateSession(userID, sandboxID string, conn interfaces.WSConnection) (*types.Session, error) {
+func (m *Manager) CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error) {
 	sessionID := uuid.New().String()
 	
 	// Create session
@@ -592,8 +593,8 @@ func (m *Manager) handleInstallPackagesMessage(state *sessionState, message map[
 			Type:        "installation_complete",
 			ID:          executionID,
 			ExitCode:    result.ExitCode,
-			Stdout:      result.Stdout,
-			Stderr:      result.Stderr,
+			Content:     result.Stdout,
+			Message:     result.Stderr,
 			Timestamp:   time.Now().UnixMilli(),
 		})
 	}()
