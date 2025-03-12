@@ -125,8 +125,8 @@ func (m *MockKubernetesClient) DeleteFileInSandbox(ctx context.Context, namespac
 func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	args := m.Called()
 	if args.Get(0) == nil {
-		// Return self as a fallback if no expectation is set
-		return &MockLLMSafespaceV1Interface{mock: mock.Mock{}}
+		// Return new mock instance
+		return &MockLLMSafespaceV1Interface{}
 	}
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
@@ -138,7 +138,7 @@ type MockLLMSafespaceV1Interface struct {
 
 // Sandboxes returns a mock implementation of the SandboxInterface
 func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.SandboxInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockSandboxInterface{Mock: mock.Mock{}}
 	}
@@ -147,7 +147,7 @@ func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.San
 
 // WarmPools returns a mock implementation of the WarmPoolInterface
 func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.WarmPoolInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockWarmPoolInterface{Mock: mock.Mock{}}
 	}
@@ -156,7 +156,7 @@ func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.War
 
 // WarmPods returns a mock implementation of the WarmPodInterface
 func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.WarmPodInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockWarmPodInterface{Mock: mock.Mock{}}
 	}
@@ -165,7 +165,7 @@ func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.Warm
 
 // RuntimeEnvironments returns a mock implementation of the RuntimeEnvironmentInterface
 func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockRuntimeEnvironmentInterface{Mock: mock.Mock{}}
 	}
@@ -174,7 +174,7 @@ func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) inte
 
 // SandboxProfiles returns a mock implementation of the SandboxProfileInterface
 func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockSandboxProfileInterface{Mock: mock.Mock{}}
 	}
