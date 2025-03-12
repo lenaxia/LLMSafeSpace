@@ -127,7 +127,8 @@ func TestReconcileSandboxes(t *testing.T) {
 			llmMock.On("Sandboxes", "").Return(sandboxInterface).Once()
 			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil).Once()
 
-			k8sClient.On("Clientset").Return(k8sClient.Clientset()).Once()
+			// Set up mock chain for pod lookup
+			k8sClient.On("Clientset").Return(k8sClient).Once()
 			k8sClient.On("CoreV1").Return(k8sClient).Once()
 			k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
 			k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, nil).Once()
@@ -244,7 +245,7 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			
 			// Setup pod lookup if needed
 			if tt.sandbox.Status.PodName != "" {
-				k8sClient.On("Clientset").Return(k8sClient.Clientset()).Once()
+				k8sClient.On("Clientset").Return(k8sClient).Once()
 				k8sClient.On("CoreV1").Return(k8sClient).Once()
 				k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
 				
