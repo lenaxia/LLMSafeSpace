@@ -415,6 +415,24 @@ Adding mechanisms to provide execution feedback to the LLM would help improve co
 - Performance benchmarking for generated code
 - Error categorization for better prompting
 
+## Code Generation
+
+When modifying API types (in `src/api/internal/types`), you must regenerate the DeepCopy implementations:
+
+```bash
+# Install code generator tools
+go install k8s.io/code-generator/cmd/deepcopy-gen@v0.26.0
+
+# Run generation (from project root)
+make deepcopy
+
+# Verify and commit generated changes
+git add src/api/internal/types/zz_generated.deepcopy.go
+git commit -m "Update generated code"
+```
+
+This generates/updates the `zz_generated.deepcopy.go` files. Always check these generated files into version control.
+
 ## Getting Started
 
 ### Prerequisites
