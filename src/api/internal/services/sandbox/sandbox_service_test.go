@@ -88,8 +88,8 @@ func TestCreateSandbox(t *testing.T) {
 				sandboxInterface := new(mocks.MockSandboxInterface)
 				
 				k8sClient.On("LlmsafespaceV1").Return(llmMock)
-				llmMock.mock.On("Sandboxes", tt.req.Namespace).Return(sandboxInterface)
-				sandboxInterface.mock.On("Create", mock.Anything).Return(sandbox, nil)
+				llmMock.Mock.On("Sandboxes", tt.req.Namespace).Return(sandboxInterface)
+				sandboxInterface.Mock.On("Create", mock.Anything).Return(sandbox, nil)
 
 				dbService.On("CreateSandboxMetadata", 
 					ctx, 
@@ -189,8 +189,8 @@ func TestGetSandbox(t *testing.T) {
 				sandboxInterface := new(mocks.MockSandboxInterface)
 				
 				k8sClient.On("LlmsafespaceV1").Return(llmMock)
-				llmMock.mock.On("Sandboxes", "").Return(sandboxInterface)
-				sandboxInterface.mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				llmMock.Mock.On("Sandboxes", "").Return(sandboxInterface)
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
 			}
 
 			// Execute
@@ -281,11 +281,11 @@ func TestTerminateSandbox(t *testing.T) {
 				sandboxInterface := new(mocks.MockSandboxInterface)
 				
 				k8sClient.On("LlmsafespaceV1").Return(llmMock)
-				llmMock.mock.On("Sandboxes", "").Return(sandboxInterface)
-				sandboxInterface.mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				llmMock.Mock.On("Sandboxes", "").Return(sandboxInterface)
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
 				
-				llmMock.mock.On("Sandboxes", tt.namespace).Return(sandboxInterface)
-				sandboxInterface.mock.On("Delete", tt.sandboxID, mock.Anything).Return(nil)
+				llmMock.Mock.On("Sandboxes", tt.namespace).Return(sandboxInterface)
+				sandboxInterface.Mock.On("Delete", tt.sandboxID, mock.Anything).Return(nil)
 
 				metricsRecorder.On("RecordSandboxTermination", "python:3.10").Return()
 				metricsRecorder.On("RecordOperationDuration", "delete", mock.Anything).Return()

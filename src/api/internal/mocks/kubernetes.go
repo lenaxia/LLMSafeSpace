@@ -126,21 +126,21 @@ func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interfa
 	args := m.Called()
 	if args.Get(0) == nil {
 		// Return self as a fallback if no expectation is set
-		return &MockLLMSafespaceV1Interface{mock: m.Mock}
+		return &MockLLMSafespaceV1Interface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
 
 // MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
 type MockLLMSafespaceV1Interface struct {
-	mock mock.Mock
+	Mock mock.Mock
 }
 
 // Sandboxes returns a mock implementation of the SandboxInterface
 func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.SandboxInterface {
-	args := m.mock.Called(namespace)
+	args := m.Mock.Called(namespace)
 	if args.Get(0) == nil {
-		return &MockSandboxInterface{mock: m.mock}
+		return &MockSandboxInterface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.SandboxInterface)
 }
@@ -158,7 +158,7 @@ func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.War
 func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.WarmPodInterface {
 	args := m.mock.Called(namespace)
 	if args.Get(0) == nil {
-		return &MockWarmPodInterface{mock: m.mock}
+		return &MockWarmPodInterface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.WarmPodInterface)
 }
@@ -167,7 +167,7 @@ func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.Warm
 func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
 	args := m.mock.Called(namespace)
 	if args.Get(0) == nil {
-		return &MockRuntimeEnvironmentInterface{mock: m.mock}
+		return &MockRuntimeEnvironmentInterface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.RuntimeEnvironmentInterface)
 }
@@ -176,7 +176,7 @@ func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) inte
 func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
 	args := m.mock.Called(namespace)
 	if args.Get(0) == nil {
-		return &MockSandboxProfileInterface{mock: m.mock}
+		return &MockSandboxProfileInterface{Mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.SandboxProfileInterface)
 }
@@ -238,7 +238,7 @@ func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, 
 
 // MockWarmPoolInterface implements the WarmPoolInterface for testing
 type MockWarmPoolInterface struct {
-	mock mock.Mock
+	Mock mock.Mock
 }
 
 func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
@@ -250,7 +250,7 @@ func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPoo
 }
 
 func (m *MockWarmPoolInterface) Update(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	args := m.Called(warmPool)
+	args := m.Mock.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -258,7 +258,7 @@ func (m *MockWarmPoolInterface) Update(warmPool *types.WarmPool) (*types.WarmPoo
 }
 
 func (m *MockWarmPoolInterface) UpdateStatus(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	args := m.Called(warmPool)
+	args := m.Mock.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -266,12 +266,12 @@ func (m *MockWarmPoolInterface) UpdateStatus(warmPool *types.WarmPool) (*types.W
 }
 
 func (m *MockWarmPoolInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockWarmPoolInterface) Get(name string, options metav1.GetOptions) (*types.WarmPool, error) {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -279,7 +279,7 @@ func (m *MockWarmPoolInterface) Get(name string, options metav1.GetOptions) (*ty
 }
 
 func (m *MockWarmPoolInterface) List(opts metav1.ListOptions) (*types.WarmPoolList, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -287,17 +287,17 @@ func (m *MockWarmPoolInterface) List(opts metav1.ListOptions) (*types.WarmPoolLi
 }
 
 func (m *MockWarmPoolInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
 // MockWarmPodInterface implements the WarmPodInterface for testing
 type MockWarmPodInterface struct {
-	mock.Mock
+	Mock mock.Mock
 }
 
 func (m *MockWarmPodInterface) Create(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	args := m.Called(warmPod)
+	args := m.Mock.Called(warmPod)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -305,7 +305,7 @@ func (m *MockWarmPodInterface) Create(warmPod *types.WarmPod) (*types.WarmPod, e
 }
 
 func (m *MockWarmPodInterface) Update(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	args := m.Called(warmPod)
+	args := m.Mock.Called(warmPod)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -313,7 +313,7 @@ func (m *MockWarmPodInterface) Update(warmPod *types.WarmPod) (*types.WarmPod, e
 }
 
 func (m *MockWarmPodInterface) UpdateStatus(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	args := m.Called(warmPod)
+	args := m.Mock.Called(warmPod)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -321,12 +321,12 @@ func (m *MockWarmPodInterface) UpdateStatus(warmPod *types.WarmPod) (*types.Warm
 }
 
 func (m *MockWarmPodInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockWarmPodInterface) Get(name string, options metav1.GetOptions) (*types.WarmPod, error) {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -334,7 +334,7 @@ func (m *MockWarmPodInterface) Get(name string, options metav1.GetOptions) (*typ
 }
 
 func (m *MockWarmPodInterface) List(opts metav1.ListOptions) (*types.WarmPodList, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -342,17 +342,17 @@ func (m *MockWarmPodInterface) List(opts metav1.ListOptions) (*types.WarmPodList
 }
 
 func (m *MockWarmPodInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
 // MockRuntimeEnvironmentInterface implements the RuntimeEnvironmentInterface for testing
 type MockRuntimeEnvironmentInterface struct {
-	mock.Mock
+	Mock mock.Mock
 }
 
 func (m *MockRuntimeEnvironmentInterface) Create(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	args := m.Called(runtimeEnv)
+	args := m.Mock.Called(runtimeEnv)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -360,7 +360,7 @@ func (m *MockRuntimeEnvironmentInterface) Create(runtimeEnv *types.RuntimeEnviro
 }
 
 func (m *MockRuntimeEnvironmentInterface) Update(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	args := m.Called(runtimeEnv)
+	args := m.Mock.Called(runtimeEnv)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -368,7 +368,7 @@ func (m *MockRuntimeEnvironmentInterface) Update(runtimeEnv *types.RuntimeEnviro
 }
 
 func (m *MockRuntimeEnvironmentInterface) UpdateStatus(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	args := m.Called(runtimeEnv)
+	args := m.Mock.Called(runtimeEnv)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -376,12 +376,12 @@ func (m *MockRuntimeEnvironmentInterface) UpdateStatus(runtimeEnv *types.Runtime
 }
 
 func (m *MockRuntimeEnvironmentInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockRuntimeEnvironmentInterface) Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error) {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -389,7 +389,7 @@ func (m *MockRuntimeEnvironmentInterface) Get(name string, options metav1.GetOpt
 }
 
 func (m *MockRuntimeEnvironmentInterface) List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -397,17 +397,17 @@ func (m *MockRuntimeEnvironmentInterface) List(opts metav1.ListOptions) (*types.
 }
 
 func (m *MockRuntimeEnvironmentInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
 // MockSandboxProfileInterface implements the SandboxProfileInterface for testing
 type MockSandboxProfileInterface struct {
-	mock.Mock
+	Mock mock.Mock
 }
 
 func (m *MockSandboxProfileInterface) Create(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
-	args := m.Called(profile)
+	args := m.Mock.Called(profile)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -415,7 +415,7 @@ func (m *MockSandboxProfileInterface) Create(profile *types.SandboxProfile) (*ty
 }
 
 func (m *MockSandboxProfileInterface) Update(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
-	args := m.Called(profile)
+	args := m.Mock.Called(profile)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -423,12 +423,12 @@ func (m *MockSandboxProfileInterface) Update(profile *types.SandboxProfile) (*ty
 }
 
 func (m *MockSandboxProfileInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockSandboxProfileInterface) Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error) {
-	args := m.Called(name, options)
+	args := m.Mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -436,7 +436,7 @@ func (m *MockSandboxProfileInterface) Get(name string, options metav1.GetOptions
 }
 
 func (m *MockSandboxProfileInterface) List(opts metav1.ListOptions) (*types.SandboxProfileList, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -444,7 +444,7 @@ func (m *MockSandboxProfileInterface) List(opts metav1.ListOptions) (*types.Sand
 }
 
 func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
+	args := m.Mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
