@@ -84,9 +84,12 @@ func TestCreateSandbox(t *testing.T) {
 					},
 				}
 
-				k8sClient.On("LlmsafespaceV1").Return(k8sClient)
-				k8sClient.On("Sandboxes", tt.req.Namespace).Return(k8sClient)
-				k8sClient.On("Create", mock.Anything).Return(sandbox, nil)
+				llmMock := new(mocks.MockLLMSafespaceV1Interface)
+				sandboxInterface := new(mocks.MockSandboxInterface)
+				
+				k8sClient.On("LlmsafespaceV1").Return(llmMock)
+				llmMock.mock.On("Sandboxes", tt.req.Namespace).Return(sandboxInterface)
+				sandboxInterface.mock.On("Create", mock.Anything).Return(sandbox, nil)
 
 				dbService.On("CreateSandboxMetadata", 
 					ctx, 
@@ -182,9 +185,12 @@ func TestGetSandbox(t *testing.T) {
 					},
 				}
 
-				k8sClient.On("LlmsafespaceV1").Return(k8sClient)
-				k8sClient.On("Sandboxes", "").Return(k8sClient)
-				k8sClient.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				llmMock := new(mocks.MockLLMSafespaceV1Interface)
+				sandboxInterface := new(mocks.MockSandboxInterface)
+				
+				k8sClient.On("LlmsafespaceV1").Return(llmMock)
+				llmMock.mock.On("Sandboxes", "").Return(sandboxInterface)
+				sandboxInterface.mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
 			}
 
 			// Execute
@@ -271,11 +277,15 @@ func TestTerminateSandbox(t *testing.T) {
 					},
 				}
 
-				k8sClient.On("LlmsafespaceV1").Return(k8sClient)
-				k8sClient.On("Sandboxes", "").Return(k8sClient)
-				k8sClient.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
-				k8sClient.On("Sandboxes", tt.namespace).Return(k8sClient)
-				k8sClient.On("Delete", tt.sandboxID, mock.Anything).Return(nil)
+				llmMock := new(mocks.MockLLMSafespaceV1Interface)
+				sandboxInterface := new(mocks.MockSandboxInterface)
+				
+				k8sClient.On("LlmsafespaceV1").Return(llmMock)
+				llmMock.mock.On("Sandboxes", "").Return(sandboxInterface)
+				sandboxInterface.mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				
+				llmMock.mock.On("Sandboxes", tt.namespace).Return(sandboxInterface)
+				sandboxInterface.mock.On("Delete", tt.sandboxID, mock.Anything).Return(nil)
 
 				metricsRecorder.On("RecordSandboxTermination", "python:3.10").Return()
 				metricsRecorder.On("RecordOperationDuration", "delete", mock.Anything).Return()
