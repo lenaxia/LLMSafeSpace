@@ -57,6 +57,9 @@ func TestReconcileSandboxes(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pod",
 					Namespace: "default",
+					CreationTimestamp: metav1.Time{
+						Time: time.Now().Add(-5 * time.Minute), // Set pod creation time
+					},
 				},
 				Status: corev1.PodStatus{
 					Phase: corev1.PodRunning,
@@ -94,6 +97,9 @@ func TestReconcileSandboxes(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pod",
 					Namespace: "default",
+					CreationTimestamp: metav1.Time{
+						Time: time.Now().Add(-5 * time.Minute), // Set pod creation time
+					},
 				},
 				Status: corev1.PodStatus{
 					Phase: corev1.PodFailed,
@@ -105,13 +111,18 @@ func TestReconcileSandboxes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Clear previous mocks
+			k8sClient.ExpectedCalls = nil
+			llmMock.ExpectedCalls = nil
+			sandboxInterface.ExpectedCalls = nil
+			
 			// Setup expectations
 			sandboxList := &types.SandboxList{
 				Items: []types.Sandbox{*tt.sandbox},
 			}
 
 			k8sClient.On("LlmsafespaceV1").Return(llmMock)
-			llmMock.On("Sandboxes", "").Return(sandboxInterface)
+			llmMock.On("Sandboxes", "default").Return(sandboxInterface) // Use correct namespace
 			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil)
 
 			k8sClient.On("Clientset").Return(k8sClient)
@@ -133,7 +144,9 @@ func TestReconcileSandboxes(t *testing.T) {
 				
 				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
 				sandboxInterface.On("UpdateStatus", mock.MatchedBy(func(s *types.Sandbox) bool {
-					return s.Status.Phase == tt.wantPhase && s.Name == tt.sandbox.Name
+					return s.Status.Phase == tt.wantPhase && 
+					       s.Name == tt.sandbox.Name &&
+					       s.Namespace == tt.sandbox.Namespace
 				})).Return(updatedSandbox, nil)
 			}
 
@@ -168,6 +181,7 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 	tests := []struct {
 		name    string
 		sandbox *types.Sandbox
+		pod     *corev1.Pod
 		wantUpdate bool
 	}{
 		{
@@ -205,10 +219,34 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			},
 			wantUpdate: true,
 		},
+		{
+			name: "missing pod",
+			sandbox: &types.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-sandbox",
+					Namespace: "default",
+					CreationTimestamp: metav1.Time{
+						Time: time.Now().Add(-5 * time.Minute),
+					},
+				},
+				Status: types.SandboxStatus{
+					Phase: "Running",
+					PodName: "missing-pod",
+					PodNamespace: "default",
+				},
+			},
+			pod: nil,
+			wantUpdate: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Clear previous mocks
+			k8sClient.ExpectedCalls = nil
+			llmMock.ExpectedCalls = nil
+			sandboxInterface.ExpectedCalls = nil
+			
 			// Setup expectations
 			if tt.wantUpdate {
 				k8sClient.On("LlmsafespaceV1").Return(llmMock)
@@ -218,6 +256,26 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 				sandboxInterface.On("UpdateStatus", mock.MatchedBy(func(s *types.Sandbox) bool {
 					return s.Name == tt.sandbox.Name && s.Namespace == tt.sandbox.Namespace
 				})).Return(tt.sandbox, nil)
+			}
+			
+			// Setup pod lookup if needed
+			if tt.sandbox.Status.PodName != "" {
+				k8sClient.On("Clientset").Return(k8sClient)
+				k8sClient.On("CoreV1").Return(k8sClient)
+				k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient)
+				
+				var err error
+				if tt.pod == nil {
+					// Simulate pod not found
+					err = &metav1.StatusError{
+						ErrStatus: metav1.Status{
+							Status: metav1.StatusFailure,
+							Reason: metav1.StatusReasonNotFound,
+							Code:   404,
+						},
+					}
+				}
+				k8sClient.On("Get", context.Background(), tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, err)
 			}
 
 			// Execute
