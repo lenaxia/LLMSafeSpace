@@ -7,6 +7,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/handlers/profile"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers/runtime"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers/sandbox"
+	"github.com/lenaxia/llmsafespace/api/internal/handlers/swagger"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers/user"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers/warmpool"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
@@ -53,13 +54,11 @@ func (h *Handlers) RegisterRoutes(router *gin.Engine) {
 	h.profile.RegisterRoutes(v1)
 	h.user.RegisterRoutes(v1)
 	
+	// Register Swagger UI routes
+	swagger.RegisterRoutes(router)
+	
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
-	})
-	
-	// Metrics endpoint
-	router.GET("/metrics", func(c *gin.Context) {
-		c.String(200, "# Metrics will be implemented here")
 	})
 }

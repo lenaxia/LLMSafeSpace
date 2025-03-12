@@ -7,18 +7,85 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
 )
 
+// RateLimitConfig defines rate limit configuration
+type RateLimitConfig struct {
+	// Enabled indicates whether rate limiting is enabled
+	Enabled bool
+	
+	// DefaultLimit is the default number of requests allowed per window
+	DefaultLimit int
+	
+	// DefaultWindow is the default time window for rate limiting
+	DefaultWindow time.Duration
+	
+	// Limits defines custom limits for specific endpoints
+	Limits map[string]RateLimit
+	
+	// ExemptRoles are roles that are exempt from rate limiting
+	ExemptRoles []string
+}
+
+// RateLimit defines a rate limit
+type RateLimit struct {
+	// Requests is the number of requests allowed per window
+	Requests int
+	
+	// Window is the time window for rate limiting
+	Window time.Duration
+}
+
+// DefaultRateLimitConfig returns the default rate limit configuration
+func DefaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		Enabled:      true,
+		DefaultLimit: 1000,
+		DefaultWindow: time.Hour,
+		Limits: map[string]RateLimit{
+			"create_sandbox": {100, time.Hour},
+			"execute_code":   {500, time.Hour},
+			"upload_file":    {300, time.Hour},
+			"install_packages": {200, time.Hour},
+		},
+		ExemptRoles: []string{"admin", "system"},
+	}
+}
+
 // RateLimitMiddleware returns a middleware that limits request rates
-func RateLimitMiddleware(cacheService interfaces.CacheService) gin.HandlerFunc {
+func RateLimitMiddleware(cacheService interfaces.CacheService, log *logger.Logger, config ...RateLimitConfig) gin.HandlerFunc {
+	// Use default config if none provided
+	cfg := DefaultRateLimitConfig()
+	if len(config) > 0 {
+		cfg = config[0]
+	}
+	
 	return func(c *gin.Context) {
+		// Skip if rate limiting is disabled
+		if !cfg.Enabled {
+			c.Next()
+			return
+		}
+		
 		// Get API key from context
 		apiKey, exists := c.Get("apiKey")
 		if !exists {
 			// No API key, skip rate limiting
 			c.Next()
 			return
+		}
+		
+		// Check if user has an exempt role
+		if userRole, exists := c.Get("userRole"); exists {
+			for _, exemptRole := range cfg.ExemptRoles {
+				if userRole == exemptRole {
+					c.Next()
+					return
+				}
+			}
 		}
 		
 		// Determine limit type based on endpoint
@@ -30,22 +97,16 @@ func RateLimitMiddleware(cacheService interfaces.CacheService) gin.HandlerFunc {
 			limitType = "create_sandbox"
 		} else if method == "POST" && strings.Contains(path, "/execute") {
 			limitType = "execute_code"
+		} else if (method == "PUT" || method == "POST") && strings.Contains(path, "/files") {
+			limitType = "upload_file"
+		} else if method == "POST" && strings.Contains(path, "/packages") {
+			limitType = "install_packages"
 		}
 		
 		// Get limit for this type
-		var limit int
-		var window time.Duration
-		
-		switch limitType {
-		case "create_sandbox":
-			limit = 100
-			window = time.Hour
-		case "execute_code":
-			limit = 500
-			window = time.Hour
-		default:
-			limit = 1000
-			window = time.Hour
+		limit, window := cfg.DefaultLimit, cfg.DefaultWindow
+		if customLimit, ok := cfg.Limits[limitType]; ok {
+			limit, window = customLimit.Requests, customLimit.Window
 		}
 		
 		// Check rate limit
@@ -72,10 +133,9 @@ func RateLimitMiddleware(cacheService interfaces.CacheService) gin.HandlerFunc {
 			err = cacheService.Set(ctx, key, strconv.Itoa(count), 0) // Don't reset TTL
 			
 			// Get TTL for reset time
-			ttlStr, err := cacheService.Get(ctx, key+":ttl")
-			if err == nil && ttlStr != "" {
-				ttlInt, _ := strconv.ParseInt(ttlStr, 10, 64)
-				ttl = time.Duration(ttlInt) * time.Second
+			ttlDuration, err := getTTL(cacheService, ctx, key)
+			if err == nil {
+				ttl = ttlDuration
 			}
 		}
 		
@@ -88,15 +148,46 @@ func RateLimitMiddleware(cacheService interfaces.CacheService) gin.HandlerFunc {
 		
 		// Check if limit exceeded
 		if count > limit {
-			c.AbortWithStatusJSON(429, gin.H{
-				"error": gin.H{
-					"code":    "rate_limited",
-					"message": fmt.Sprintf("Rate limit exceeded. Try again in %v", ttl),
-				},
-			})
+			apiErr := errors.NewRateLimitError(
+				fmt.Sprintf("Rate limit exceeded for %s. Try again later.", limitType),
+				limit,
+				resetTime,
+				nil,
+			)
+			
+			// Log rate limit exceeded
+			log.Warn("Rate limit exceeded",
+				"api_key", maskString(apiKey.(string)),
+				"limit_type", limitType,
+				"limit", limit,
+				"count", count,
+				"reset", resetTime,
+				"path", path,
+				"method", method,
+				"request_id", c.GetString("request_id"),
+			)
+			
+			HandleAPIError(c, apiErr)
 			return
 		}
 		
 		c.Next()
 	}
+}
+
+// getTTL gets the TTL for a key
+func getTTL(cacheService interfaces.CacheService, ctx interface{}, key string) (time.Duration, error) {
+	// This is a simplified implementation
+	// In a real implementation, you would use the cache service's TTL method
+	ttlStr, err := cacheService.Get(ctx, key+":ttl")
+	if err != nil {
+		return time.Hour, err
+	}
+	
+	ttlInt, err := strconv.ParseInt(ttlStr, 10, 64)
+	if err != nil {
+		return time.Hour, err
+	}
+	
+	return time.Duration(ttlInt) * time.Second, nil
 }
