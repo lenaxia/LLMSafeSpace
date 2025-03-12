@@ -11,6 +11,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 )
 
 func TestReconcileSandboxes(t *testing.T) {
@@ -20,7 +21,7 @@ func TestReconcileSandboxes(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	k8sClient := new(mockK8sClient)
+	k8sClient := new(mocks.MockKubernetesClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
@@ -112,7 +113,7 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	k8sClient := new(mockK8sClient)
+	k8sClient := new(mocks.MockKubernetesClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
