@@ -3,33 +3,52 @@ package validation
 import (
 	"fmt"
 	
+	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 // ValidateCreateSandboxRequest validates a sandbox creation request
 func ValidateCreateSandboxRequest(req types.CreateSandboxRequest) error {
-	if req.Runtime == "" {
-		return fmt.Errorf("runtime is required")
+	validationErrors := make(map[string]string)
+	
+	// Validate runtime
+	if err := ValidateRequired("runtime", req.Runtime); err != nil {
+		validationErrors["runtime"] = err.Error()
 	}
 	
+	// Validate timeout
 	if req.Timeout < 0 {
-		return fmt.Errorf("timeout must be non-negative")
+		validationErrors["timeout"] = "timeout must be non-negative"
 	}
 	
-	if req.SecurityLevel != "" && !isValidSecurityLevel(req.SecurityLevel) {
-		return fmt.Errorf("invalid security level: %s", req.SecurityLevel)
+	// Validate security level
+	if req.SecurityLevel != "" {
+		if err := ValidateSecurityLevel(req.SecurityLevel); err != nil {
+			validationErrors["securityLevel"] = err.Error()
+		}
 	}
 	
+	// Validate resources
 	if req.Resources != nil {
 		if err := validateResourceRequirements(req.Resources); err != nil {
-			return err
+			validationErrors["resources"] = err.Error()
 		}
 	}
 	
+	// Validate network access
 	if req.NetworkAccess != nil {
 		if err := validateNetworkAccess(req.NetworkAccess); err != nil {
-			return err
+			validationErrors["networkAccess"] = err.Error()
 		}
+	}
+	
+	// Return validation error if any errors were found
+	if len(validationErrors) > 0 {
+		details := make(map[string]interface{})
+		for k, v := range validationErrors {
+			details[k] = v
+		}
+		return errors.NewValidationError("Invalid sandbox creation request", details, nil)
 	}
 	
 	return nil
@@ -37,20 +56,35 @@ func ValidateCreateSandboxRequest(req types.CreateSandboxRequest) error {
 
 // ValidateExecuteRequest validates an execution request
 func ValidateExecuteRequest(req types.ExecuteRequest) error {
-	if req.SandboxID == "" {
-		return fmt.Errorf("sandbox ID is required")
+	validationErrors := make(map[string]string)
+	
+	// Validate sandbox ID
+	if err := ValidateRequired("sandboxId", req.SandboxID); err != nil {
+		validationErrors["sandboxId"] = err.Error()
 	}
 	
+	// Validate type
 	if req.Type != "code" && req.Type != "command" {
-		return fmt.Errorf("type must be 'code' or 'command'")
+		validationErrors["type"] = "type must be 'code' or 'command'"
 	}
 	
-	if req.Content == "" {
-		return fmt.Errorf("content is required")
+	// Validate content
+	if err := ValidateRequired("content", req.Content); err != nil {
+		validationErrors["content"] = err.Error()
 	}
 	
+	// Validate timeout
 	if req.Timeout < 0 {
-		return fmt.Errorf("timeout must be non-negative")
+		validationErrors["timeout"] = "timeout must be non-negative"
+	}
+	
+	// Return validation error if any errors were found
+	if len(validationErrors) > 0 {
+		details := make(map[string]interface{})
+		for k, v := range validationErrors {
+			details[k] = v
+		}
+		return errors.NewValidationError("Invalid execution request", details, nil)
 	}
 	
 	return nil
@@ -58,12 +92,25 @@ func ValidateExecuteRequest(req types.ExecuteRequest) error {
 
 // ValidateInstallPackagesRequest validates a package installation request
 func ValidateInstallPackagesRequest(req types.InstallPackagesRequest) error {
-	if req.SandboxID == "" {
-		return fmt.Errorf("sandbox ID is required")
+	validationErrors := make(map[string]string)
+	
+	// Validate sandbox ID
+	if err := ValidateRequired("sandboxId", req.SandboxID); err != nil {
+		validationErrors["sandboxId"] = err.Error()
 	}
 	
+	// Validate packages
 	if len(req.Packages) == 0 {
-		return fmt.Errorf("at least one package is required")
+		validationErrors["packages"] = "at least one package is required"
+	}
+	
+	// Return validation error if any errors were found
+	if len(validationErrors) > 0 {
+		details := make(map[string]interface{})
+		for k, v := range validationErrors {
+			details[k] = v
+		}
+		return errors.NewValidationError("Invalid package installation request", details, nil)
 	}
 	
 	return nil
@@ -71,18 +118,31 @@ func ValidateInstallPackagesRequest(req types.InstallPackagesRequest) error {
 
 // Helper functions
 
-func isValidSecurityLevel(level string) bool {
-	switch level {
-	case "standard", "high", "custom":
-		return true
-	default:
-		return false
-	}
-}
-
 func validateResourceRequirements(resources *types.ResourceRequirements) error {
-	// Add validation for CPU, memory, etc.
-	// For now, just return nil
+	// Validate CPU format (e.g., "100m" or "0.1")
+	if resources.CPU != "" {
+		cpuPattern := `^([0-9]+m|[0-9]+\.[0-9]+)$`
+		if err := ValidatePattern("cpu", resources.CPU, cpuPattern); err != nil {
+			return err
+		}
+	}
+	
+	// Validate memory format (e.g., "100Mi" or "1Gi")
+	if resources.Memory != "" {
+		memoryPattern := `^[0-9]+(Ki|Mi|Gi)$`
+		if err := ValidatePattern("memory", resources.Memory, memoryPattern); err != nil {
+			return err
+		}
+	}
+	
+	// Validate ephemeral storage format
+	if resources.EphemeralStorage != "" {
+		storagePattern := `^[0-9]+(Ki|Mi|Gi)$`
+		if err := ValidatePattern("ephemeralStorage", resources.EphemeralStorage, storagePattern); err != nil {
+			return err
+		}
+	}
+	
 	return nil
 }
 
