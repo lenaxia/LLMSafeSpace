@@ -213,7 +213,7 @@ func (s *service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 	}
 	
 	// Get sandbox status from Kubernetes
-	k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Get(ctx, sandboxID, metav1.GetOptions{})
+	k8sSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Get(sandboxID, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, &types.SandboxNotFoundError{ID: sandboxID}
@@ -232,15 +232,8 @@ func (s *service) Execute(ctx context.Context, req types.ExecuteRequest) (*types
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
-	}
-	
-	// Create execution request
-	execReq := &types.ExecutionRequest{
-		Type:    req.Type,
-		Content: req.Content,
-		Timeout: req.Timeout,
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Execute in sandbox
@@ -260,8 +253,8 @@ func (s *service) ListFiles(ctx context.Context, sandboxID, path string) ([]type
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// List files
@@ -281,8 +274,8 @@ func (s *service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Download file
@@ -302,8 +295,8 @@ func (s *service) UploadFile(ctx context.Context, sandboxID, path string, conten
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Upload file
@@ -344,8 +337,8 @@ func (s *service) InstallPackages(ctx context.Context, req types.InstallPackages
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Determine package manager if not specified
