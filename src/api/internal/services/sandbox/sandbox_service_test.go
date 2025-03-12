@@ -75,7 +75,7 @@ type mockSessionManager struct {
 func TestCreateSandbox(t *testing.T) {
 	// Setup
 	ctx := context.Background()
-	loggerInstance := &mockLogger{}
+	logger := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 	dbService := new(mockDBService)
 	warmPoolSvc := new(mockWarmPoolService)
@@ -85,7 +85,7 @@ func TestCreateSandbox(t *testing.T) {
 	sessionMgr := new(mockSessionManager)
 
 	svc := &service{
-		logger:      &logger.Logger{},
+		logger:      logger,
 		k8sClient:   k8sClient,
 		dbService:   dbService,
 		warmPoolSvc: warmPoolSvc,
@@ -177,7 +177,7 @@ func TestCreateSandbox(t *testing.T) {
 func TestGetSandbox(t *testing.T) {
 	// Setup
 	ctx := context.Background()
-	loggerInstance := &mockLogger{}
+	logger := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 	dbService := new(mockDBService)
 	warmPoolSvc := new(mockWarmPoolService)
@@ -187,7 +187,7 @@ func TestGetSandbox(t *testing.T) {
 	sessionMgr := new(mockSessionManager)
 
 	svc := &service{
-		logger:      &logger.Logger{},
+		logger:      logger,
 		k8sClient:   k8sClient,
 		dbService:   dbService,
 		warmPoolSvc: warmPoolSvc,
@@ -252,7 +252,7 @@ func TestGetSandbox(t *testing.T) {
 func TestTerminateSandbox(t *testing.T) {
 	// Setup
 	ctx := context.Background()
-	loggerInstance := &mockLogger{}
+	logger := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 	dbService := new(mockDBService)
 	warmPoolSvc := new(mockWarmPoolService)
@@ -262,7 +262,7 @@ func TestTerminateSandbox(t *testing.T) {
 	sessionMgr := new(mockSessionManager)
 
 	svc := &service{
-		logger:      &logger.Logger{},
+		logger:      logger,
 		k8sClient:   k8sClient,
 		dbService:   dbService,
 		warmPoolSvc: warmPoolSvc,
