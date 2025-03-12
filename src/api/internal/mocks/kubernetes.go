@@ -26,10 +26,38 @@ type MockKubernetesClient struct {
 var _ interfaces.KubernetesClient = (*MockKubernetesClient)(nil)
 
 func (m *MockKubernetesClient) Clientset() kubernetes.Interface {
+	args := m.Called()
+	if args.Get(0) != nil {
+		return args.Get(0).(kubernetes.Interface)
+	}
 	if m.clientset == nil {
 		m.clientset = fake.NewSimpleClientset()
 	}
 	return m.clientset
+}
+
+// CoreV1 returns a mock implementation of the CoreV1Interface
+func (m *MockKubernetesClient) CoreV1() interface{} {
+	args := m.Called()
+	if args.Get(0) != nil {
+		return args.Get(0)
+	}
+	return m
+}
+
+// Pods returns a mock implementation of the PodInterface
+func (m *MockKubernetesClient) Pods(namespace string) interface{} {
+	args := m.Called(namespace)
+	if args.Get(0) != nil {
+		return args.Get(0)
+	}
+	return m
+}
+
+// Get returns a mock implementation of the Get method for pods
+func (m *MockKubernetesClient) Get(ctx context.Context, name string, options interface{}) (interface{}, error) {
+	args := m.Called(ctx, name, options)
+	return args.Get(0), args.Error(1)
 }
 
 func (m *MockKubernetesClient) RESTConfig() *rest.Config {
@@ -96,51 +124,70 @@ func (m *MockKubernetesClient) DeleteFileInSandbox(ctx context.Context, namespac
 // LlmsafespaceV1 returns a mock implementation of the LLMSafespaceV1Interface
 func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	args := m.Called()
+	if args.Get(0) == nil {
+		// Return self as a fallback if no expectation is set
+		return &MockLLMSafespaceV1Interface{mock: m.Mock}
+	}
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
 
 // MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
 type MockLLMSafespaceV1Interface struct {
-	mock.Mock
+	mock mock.Mock
 }
 
 // Sandboxes returns a mock implementation of the SandboxInterface
 func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.SandboxInterface {
-	args := m.Called(namespace)
+	args := m.mock.Called(namespace)
+	if args.Get(0) == nil {
+		return &MockSandboxInterface{mock: m.mock}
+	}
 	return args.Get(0).(interfaces.SandboxInterface)
 }
 
 // WarmPools returns a mock implementation of the WarmPoolInterface
 func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.WarmPoolInterface {
-	args := m.Called(namespace)
+	args := m.mock.Called(namespace)
+	if args.Get(0) == nil {
+		return &MockWarmPoolInterface{mock: m.mock}
+	}
 	return args.Get(0).(interfaces.WarmPoolInterface)
 }
 
 // WarmPods returns a mock implementation of the WarmPodInterface
 func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.WarmPodInterface {
-	args := m.Called(namespace)
+	args := m.mock.Called(namespace)
+	if args.Get(0) == nil {
+		return &MockWarmPodInterface{mock: m.mock}
+	}
 	return args.Get(0).(interfaces.WarmPodInterface)
 }
 
 // RuntimeEnvironments returns a mock implementation of the RuntimeEnvironmentInterface
 func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
-	args := m.Called(namespace)
+	args := m.mock.Called(namespace)
+	if args.Get(0) == nil {
+		return &MockRuntimeEnvironmentInterface{mock: m.mock}
+	}
 	return args.Get(0).(interfaces.RuntimeEnvironmentInterface)
 }
 
 // SandboxProfiles returns a mock implementation of the SandboxProfileInterface
 func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
-	args := m.Called(namespace)
+	args := m.mock.Called(namespace)
+	if args.Get(0) == nil {
+		return &MockSandboxProfileInterface{mock: m.mock}
+	}
 	return args.Get(0).(interfaces.SandboxProfileInterface)
 }
 
 // MockSandboxInterface implements the SandboxInterface for testing
 type MockSandboxInterface struct {
-	mock.Mock
+	mock mock.Mock
 }
 
 func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.Called(sandbox)
+	args := m.mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -148,7 +195,7 @@ func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, e
 }
 
 func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.Called(sandbox)
+	args := m.mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -156,7 +203,7 @@ func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, e
 }
 
 func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.Called(sandbox)
+	args := m.mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -164,12 +211,12 @@ func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sand
 }
 
 func (m *MockSandboxInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.Called(name, options)
+	args := m.mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
-	args := m.Called(name, options)
+	args := m.mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -177,7 +224,7 @@ func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*typ
 }
 
 func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList, error) {
-	args := m.Called(opts)
+	args := m.mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -185,17 +232,17 @@ func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList
 }
 
 func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
+	args := m.mock.Called(opts)
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
 // MockWarmPoolInterface implements the WarmPoolInterface for testing
 type MockWarmPoolInterface struct {
-	mock.Mock
+	mock mock.Mock
 }
 
 func (m *MockWarmPoolInterface) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	args := m.Called(warmPool)
+	args := m.mock.Called(warmPool)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
