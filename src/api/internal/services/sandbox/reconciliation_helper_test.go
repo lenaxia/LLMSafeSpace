@@ -13,20 +13,13 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
-// mockLogger implements a simple mock logger for testing
-type mockLogger struct{}
-
-func (m *mockLogger) Debug(msg string, keysAndValues ...interface{}) {}
-func (m *mockLogger) Info(msg string, keysAndValues ...interface{})  {}
-func (m *mockLogger) Warn(msg string, keysAndValues ...interface{})  {}
-func (m *mockLogger) Error(msg string, err error, keysAndValues ...interface{}) {}
-func (m *mockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) {}
-func (m *mockLogger) With(keysAndValues ...interface{}) *logger.Logger { return &logger.Logger{} }
-func (m *mockLogger) Sync() error { return nil }
-
 func TestReconcileSandboxes(t *testing.T) {
-	// Setup
-	logger := &mockLogger{}
+	// Setup - create a real logger that prints to stdout
+	logger, err := logger.New(false, "debug", "console")
+	if err != nil {
+		t.Fatalf("Failed to create logger: %v", err)
+	}
+
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
@@ -113,8 +106,12 @@ func TestReconcileSandboxes(t *testing.T) {
 }
 
 func TestHandleSandboxReconciliation(t *testing.T) {
-	// Setup
-	logger := &mockLogger{}
+	// Setup - create a real logger that prints to stdout
+	logger, err := logger.New(false, "debug", "console")
+	if err != nil {
+		t.Fatalf("Failed to create logger: %v", err)
+	}
+
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
