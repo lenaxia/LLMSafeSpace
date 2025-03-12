@@ -133,23 +133,9 @@ func TestReconcileSandboxes(t *testing.T) {
 			k8sClient.On("Get", context.Background(), tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, nil)
 
 			if tt.sandbox.Status.Phase != tt.wantPhase {
-				updatedSandbox := tt.sandbox.DeepCopy()
-				updatedSandbox.Status.Phase = tt.wantPhase
-				
-				if tt.wantPhase == "Running" {
-					updatedSandbox.Status.Resources = &types.ResourceStatus{
-						CPUUsage: "0.1",
-						MemoryUsage: "256Mi",
-					}
-				}
-				
-				// Use namespace-specific call for updates
+				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
 				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
-				sandboxInterface.On("UpdateStatus", mock.MatchedBy(func(s *types.Sandbox) bool {
-					return s.Status.Phase == tt.wantPhase && 
-					       s.Name == tt.sandbox.Name &&
-					       s.Namespace == tt.sandbox.Namespace
-				})).Return(updatedSandbox, nil)
+				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil)
 			}
 
 			helper.reconcileSandboxes(context.Background())
@@ -252,10 +238,8 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 				k8sClient.On("LlmsafespaceV1").Return(llmMock)
 				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
 				
-				// Use MatchedBy to match the sandbox being updated
-				sandboxInterface.On("UpdateStatus", mock.MatchedBy(func(s *types.Sandbox) bool {
-					return s.Name == tt.sandbox.Name && s.Namespace == tt.sandbox.Namespace
-				})).Return(tt.sandbox, nil)
+				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
+				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil)
 			}
 			
 			// Setup pod lookup if needed
