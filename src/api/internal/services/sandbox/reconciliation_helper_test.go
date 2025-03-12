@@ -26,12 +26,12 @@ func (m *mockLogger) Sync() error { return nil }
 
 func TestReconcileSandboxes(t *testing.T) {
 	// Setup
-	loggerInstance := &mockLogger{}
+	logger := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
-		logger:    &logger.Logger{},
+		logger:    logger,
 	}
 
 	// Test cases
@@ -114,12 +114,12 @@ func TestReconcileSandboxes(t *testing.T) {
 
 func TestHandleSandboxReconciliation(t *testing.T) {
 	// Setup
-	loggerInstance := &mockLogger{}
+	logger := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
-		logger:    &logger.Logger{},
+		logger:    logger,
 	}
 
 	// Test cases
