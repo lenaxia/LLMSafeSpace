@@ -316,8 +316,8 @@ func (s *service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return fmt.Errorf("sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Delete file
@@ -345,16 +345,16 @@ func (s *service) InstallPackages(ctx context.Context, req types.InstallPackages
 	manager := req.Manager
 	if manager == "" {
 		// Auto-detect based on runtime
-		if strings.HasPrefix(sandbox.Runtime, "python") {
+		if strings.HasPrefix(sandbox.Spec.Runtime, "python") {
 			manager = "pip"
-		} else if strings.HasPrefix(sandbox.Runtime, "nodejs") {
+		} else if strings.HasPrefix(sandbox.Spec.Runtime, "nodejs") {
 			manager = "npm"
-		} else if strings.HasPrefix(sandbox.Runtime, "ruby") {
+		} else if strings.HasPrefix(sandbox.Spec.Runtime, "ruby") {
 			manager = "gem"
-		} else if strings.HasPrefix(sandbox.Runtime, "go") {
+		} else if strings.HasPrefix(sandbox.Spec.Runtime, "go") {
 			manager = "go"
 		} else {
-			return nil, fmt.Errorf("unable to determine package manager for runtime %s", sandbox.Runtime)
+			return nil, fmt.Errorf("unable to determine package manager for runtime %s", sandbox.Spec.Runtime)
 		}
 	}
 	
@@ -375,8 +375,8 @@ func (s *service) CreateSession(userID, sandboxID string, conn types.WSConnectio
 	}
 	
 	// Check if sandbox is running
-	if sandbox.Status != "Running" {
-		return nil, fmt.Errorf("cannot connect to sandbox: sandbox is not running (current status: %s)", sandbox.Status)
+	if sandbox.Status.Phase != "Running" {
+		return nil, fmt.Errorf("cannot connect to sandbox: sandbox is not running (current status: %s)", sandbox.Status.Phase)
 	}
 	
 	// Create session
