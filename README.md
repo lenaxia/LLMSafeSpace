@@ -44,6 +44,17 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 ```
 src/
+├── apis/                  # Shared CRD definitions
+│   └── llmsafespace/      # Group name
+│       └── v1/            # Version
+│           ├── types.go   # Core CRD types (Sandbox, WarmPool, etc)
+│           ├── register.go
+│           └── zz_generated.deepcopy.go
+├── config/
+│   └── crds/              # Raw CRD YAML manifests
+│       ├── sandbox.yaml
+│       ├── warmpool.yaml
+│       └── kustomization.yaml
 ├── api/                      # API service for SDK interactions
 │   ├── Dockerfile
 │   ├── main.go
