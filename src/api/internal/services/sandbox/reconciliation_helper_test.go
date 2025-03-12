@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +13,12 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
+
+func init() {
+	logger.NewNopLogger = func() *logger.Logger {
+		return &logger.Logger{}
+	}
+}
 
 func TestReconcileSandboxes(t *testing.T) {
 	// Setup
