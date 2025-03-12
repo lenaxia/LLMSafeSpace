@@ -133,7 +133,7 @@ func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interfa
 
 // MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
 type MockLLMSafespaceV1Interface struct {
-	mock mock.Mock
+	mock.Mock
 }
 
 // Sandboxes returns a mock implementation of the SandboxInterface
@@ -183,7 +183,7 @@ func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfac
 
 // MockSandboxInterface implements the SandboxInterface for testing
 type MockSandboxInterface struct {
-	Mock mock.Mock
+	mock.Mock
 }
 
 func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
