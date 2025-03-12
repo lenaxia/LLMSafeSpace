@@ -126,7 +126,7 @@ func (m *MockKubernetesClient) LlmsafespaceV1() interfaces.LLMSafespaceV1Interfa
 	args := m.Called()
 	if args.Get(0) == nil {
 		// Return self as a fallback if no expectation is set
-		return &MockLLMSafespaceV1Interface{Mock: mock.Mock{}}
+		return &MockLLMSafespaceV1Interface{mock: mock.Mock{}}
 	}
 	return args.Get(0).(interfaces.LLMSafespaceV1Interface)
 }
@@ -138,7 +138,7 @@ type MockLLMSafespaceV1Interface struct {
 
 // Sandboxes returns a mock implementation of the SandboxInterface
 func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.SandboxInterface {
-	args := m.Mock.Called(namespace)
+	args := m.mock.Called(namespace)
 	if args.Get(0) == nil {
 		return &MockSandboxInterface{Mock: mock.Mock{}}
 	}
@@ -195,7 +195,7 @@ func (m *MockSandboxInterface) Create(sandbox *types.Sandbox) (*types.Sandbox, e
 }
 
 func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.mock.Called(sandbox)
+	args := m.Mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -203,7 +203,7 @@ func (m *MockSandboxInterface) Update(sandbox *types.Sandbox) (*types.Sandbox, e
 }
 
 func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	args := m.mock.Called(sandbox)
+	args := m.Mock.Called(sandbox)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -211,12 +211,12 @@ func (m *MockSandboxInterface) UpdateStatus(sandbox *types.Sandbox) (*types.Sand
 }
 
 func (m *MockSandboxInterface) Delete(name string, options metav1.DeleteOptions) error {
-	args := m.mock.Called(name, options)
+	args := m.Mock.Called(name, options)
 	return args.Error(0)
 }
 
 func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
-	args := m.mock.Called(name, options)
+	args := m.Mock.Called(name, options)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -224,7 +224,7 @@ func (m *MockSandboxInterface) Get(name string, options metav1.GetOptions) (*typ
 }
 
 func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList, error) {
-	args := m.mock.Called(opts)
+	args := m.Mock.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
