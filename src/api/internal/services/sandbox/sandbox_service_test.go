@@ -154,16 +154,19 @@ func TestGetSandbox(t *testing.T) {
 	tests := []struct {
 		name      string
 		sandboxID string
+		namespace string
 		wantErr   bool
 	}{
 		{
 			name:      "existing sandbox",
 			sandboxID: "test-sandbox",
+			namespace: "default",
 			wantErr:   false,
 		},
 		{
 			name:      "non-existent sandbox",
 			sandboxID: "missing-sandbox",
+			namespace: "default",
 			wantErr:   true,
 		},
 	}
@@ -175,6 +178,7 @@ func TestGetSandbox(t *testing.T) {
 				sandbox := &types.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: tt.sandboxID,
+						Namespace: tt.namespace,
 					},
 				}
 
@@ -195,6 +199,7 @@ func TestGetSandbox(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NotNil(t, got)
 			assert.Equal(t, tt.sandboxID, got.Name)
+			assert.Equal(t, tt.namespace, got.Namespace)
 
 			// Verify expectations
 			k8sClient.AssertExpectations(t)
@@ -235,16 +240,19 @@ func TestTerminateSandbox(t *testing.T) {
 	tests := []struct {
 		name      string
 		sandboxID string
+		namespace string
 		wantErr   bool
 	}{
 		{
 			name:      "successful termination",
 			sandboxID: "test-sandbox",
+			namespace: "default",
 			wantErr:   false,
 		},
 		{
 			name:      "non-existent sandbox",
 			sandboxID: "missing-sandbox",
+			namespace: "default",
 			wantErr:   true,
 		},
 	}
@@ -256,7 +264,7 @@ func TestTerminateSandbox(t *testing.T) {
 				sandbox := &types.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      tt.sandboxID,
-						Namespace: "default",
+						Namespace: tt.namespace,
 					},
 					Spec: types.SandboxSpec{
 						Runtime: "python:3.10",
@@ -266,6 +274,7 @@ func TestTerminateSandbox(t *testing.T) {
 				k8sClient.On("LlmsafespaceV1").Return(k8sClient)
 				k8sClient.On("Sandboxes", "").Return(k8sClient)
 				k8sClient.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				k8sClient.On("Sandboxes", tt.namespace).Return(k8sClient)
 				k8sClient.On("Delete", tt.sandboxID, mock.Anything).Return(nil)
 
 				metricsRecorder.On("RecordSandboxTermination", "python:3.10").Return()

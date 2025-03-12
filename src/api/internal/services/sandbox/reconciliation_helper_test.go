@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
-	"k8s.io/apimachinery/pkg/api/errors" // Added import
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -123,7 +123,7 @@ func TestReconcileSandboxes(t *testing.T) {
 			}
 
 			k8sClient.On("LlmsafespaceV1").Return(llmMock)
-			llmMock.On("Sandboxes", "default").Return(sandboxInterface) // Use correct namespace
+			llmMock.On("Sandboxes", "").Return(sandboxInterface) // Use empty string for listing all namespaces
 			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil)
 
 			k8sClient.On("Clientset").Return(k8sClient)

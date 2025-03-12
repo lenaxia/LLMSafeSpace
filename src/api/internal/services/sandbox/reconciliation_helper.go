@@ -71,6 +71,12 @@ func (h *ReconciliationHelper) handleSandboxReconciliation(ctx context.Context, 
 
 	// Create a copy of the sandbox to avoid modifying the original
 	sandbox := sb.DeepCopy()
+	
+	// Ensure namespace is set
+	if sandbox.Namespace == "" {
+		sandbox.Namespace = "default"
+	}
+	
 	needsUpdate := false
 
 	// Check for expired sandboxes
