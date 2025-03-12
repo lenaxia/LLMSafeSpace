@@ -12,7 +12,14 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox/metrics"
 )
+
+func init() {
+	logger.NewNopLogger = func() *logger.Logger {
+		return &logger.Logger{}
+	}
+}
 
 // Mock implementations
 type mockK8sClient struct {
@@ -42,7 +49,18 @@ type mockFileService struct {
 
 type mockMetricsRecorder struct {
 	mock.Mock
-	metrics.MetricsRecorder
+}
+
+func (m *mockMetricsRecorder) RecordSandboxCreation(runtime string, warmPodUsed bool) {
+	m.Called(runtime, warmPodUsed)
+}
+
+func (m *mockMetricsRecorder) RecordSandboxTermination(runtime string) {
+	m.Called(runtime)
+}
+
+func (m *mockMetricsRecorder) RecordOperationDuration(operation string, duration time.Duration) {
+	m.Called(operation, duration)
 }
 
 type mockSessionManager struct {
