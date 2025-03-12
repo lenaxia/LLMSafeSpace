@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	"k8s.io/apimachinery/pkg/api/errors" // Added import
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -266,8 +267,8 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 				
 				var err error
 				if tt.pod == nil {
-					// Simulate pod not found
-					err = &metav1.StatusError{
+					// Simulate pod not found using errors.StatusError
+					err = &errors.StatusError{
 						ErrStatus: metav1.Status{
 							Status: metav1.StatusFailure,
 							Reason: metav1.StatusReasonNotFound,
