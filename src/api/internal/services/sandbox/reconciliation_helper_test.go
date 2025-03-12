@@ -22,6 +22,8 @@ func TestReconcileSandboxes(t *testing.T) {
 	}
 
 	k8sClient := new(mocks.MockKubernetesClient)
+	llmMock := new(mocks.MockLLMSafespaceV1Interface)
+	sandboxInterface := new(mocks.MockSandboxInterface)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
@@ -82,9 +84,9 @@ func TestReconcileSandboxes(t *testing.T) {
 				Items: []types.Sandbox{*tt.sandbox},
 			}
 
-			k8sClient.On("LlmsafespaceV1").Return(k8sClient)
-			k8sClient.On("Sandboxes", "").Return(k8sClient)
-			k8sClient.On("List", mock.Anything).Return(sandboxList, nil)
+			k8sClient.On("LlmsafespaceV1").Return(llmMock)
+			llmMock.On("Sandboxes", "").Return(sandboxInterface)
+			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil)
 
 			k8sClient.On("Clientset").Return(k8sClient)
 			k8sClient.On("CoreV1").Return(k8sClient)
@@ -94,7 +96,10 @@ func TestReconcileSandboxes(t *testing.T) {
 			if tt.sandbox.Status.Phase != tt.wantPhase {
 				updatedSandbox := tt.sandbox.DeepCopy()
 				updatedSandbox.Status.Phase = tt.wantPhase
-				k8sClient.On("UpdateStatus", updatedSandbox).Return(updatedSandbox, nil)
+				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
+				sandboxInterface.On("UpdateStatus", mock.MatchedBy(func(s *types.Sandbox) bool {
+					return s.Status.Phase == tt.wantPhase
+				})).Return(updatedSandbox, nil)
 			}
 
 			// Execute
@@ -102,6 +107,8 @@ func TestReconcileSandboxes(t *testing.T) {
 
 			// Verify expectations
 			k8sClient.AssertExpectations(t)
+			llmMock.AssertExpectations(t)
+			sandboxInterface.AssertExpectations(t)
 		})
 	}
 }
@@ -114,6 +121,8 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 	}
 
 	k8sClient := new(mocks.MockKubernetesClient)
+	llmMock := new(mocks.MockLLMSafespaceV1Interface)
+	sandboxInterface := new(mocks.MockSandboxInterface)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
@@ -165,9 +174,9 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup expectations
 			if tt.wantUpdate {
-				k8sClient.On("LlmsafespaceV1").Return(k8sClient)
-				k8sClient.On("Sandboxes", tt.sandbox.Namespace).Return(k8sClient)
-				k8sClient.On("UpdateStatus", mock.Anything).Return(tt.sandbox, nil)
+				k8sClient.On("LlmsafespaceV1").Return(llmMock)
+				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
+				sandboxInterface.On("UpdateStatus", mock.Anything).Return(tt.sandbox, nil)
 			}
 
 			// Execute
@@ -175,6 +184,10 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 
 			// Verify expectations
 			k8sClient.AssertExpectations(t)
+			if tt.wantUpdate {
+				llmMock.AssertExpectations(t)
+				sandboxInterface.AssertExpectations(t)
+			}
 		})
 	}
 }
