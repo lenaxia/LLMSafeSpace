@@ -123,19 +123,19 @@ func TestReconcileSandboxes(t *testing.T) {
 			}
 
 			// Use empty string for listing all namespaces
-			k8sClient.On("LlmsafespaceV1").Return(llmMock)
-			llmMock.On("Sandboxes", "").Return(sandboxInterface)
-			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil)
+			k8sClient.On("LlmsafespaceV1").Return(llmMock).Once()
+			llmMock.On("Sandboxes", "").Return(sandboxInterface).Once()
+			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil).Once()
 
-			k8sClient.On("Clientset").Return(k8sClient.Clientset())
-			k8sClient.On("CoreV1").Return(k8sClient)
-			k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient)
-			k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, nil)
+			k8sClient.On("Clientset").Return(k8sClient.Clientset()).Once()
+			k8sClient.On("CoreV1").Return(k8sClient).Once()
+			k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
+			k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, nil).Once()
 
 			if tt.sandbox.Status.Phase != tt.wantPhase {
 				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
-				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
-				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil)
+				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface).Once()
+				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
 			}
 
 			helper.reconcileSandboxes(context.Background())
@@ -235,18 +235,18 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			
 			// Setup expectations
 			if tt.wantUpdate {
-				k8sClient.On("LlmsafespaceV1").Return(llmMock)
-				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface)
+				k8sClient.On("LlmsafespaceV1").Return(llmMock).Once()
+				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface).Once()
 				
 				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
-				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil)
+				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
 			}
 			
 			// Setup pod lookup if needed
 			if tt.sandbox.Status.PodName != "" {
-				k8sClient.On("Clientset").Return(k8sClient.Clientset())
-				k8sClient.On("CoreV1").Return(k8sClient)
-				k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient)
+				k8sClient.On("Clientset").Return(k8sClient.Clientset()).Once()
+				k8sClient.On("CoreV1").Return(k8sClient).Once()
+				k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
 				
 				var err error
 				if tt.pod == nil {
@@ -259,7 +259,7 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 						},
 					}
 				}
-				k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, err)
+				k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, err).Once()
 			}
 
 			// Execute
