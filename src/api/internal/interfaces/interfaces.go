@@ -5,14 +5,33 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
+
+// WSConnection defines the interface for a WebSocket connection
+type WSConnection interface {
+	ReadMessage() (messageType int, p []byte, err error)
+	WriteMessage(messageType int, data []byte) error
+	WriteJSON(v interface{}) error
+	Close() error
+	SetWriteDeadline(t time.Time) error
+}
+
+// SessionManager defines the interface for managing WebSocket sessions
+type SessionManager interface {
+	CreateSession(userID, sandboxID string, conn WSConnection) (*types.Session, error)
+	GetSession(sessionID string) (*types.Session, error)
+	CloseSession(sessionID string)
+	SetCancellationFunc(sessionID, executionID string, cancel context.CancelFunc)
+	CancelExecution(sessionID, executionID string) bool
+	Start() error
+	Stop() error
+}
 
 // AuthService defines the interface for authentication services
 type AuthService interface {
@@ -87,29 +106,33 @@ type MetricsService interface {
 	Stop() error
 }
 
-// SandboxService defines the interface for sandbox services
-// Handler interfaces
+// SandboxHandler defines the interface for the sandbox handler
 type SandboxHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 	HandleWebSocket(c *gin.Context)
 }
 
+// WarmPoolHandler defines the interface for the warm pool handler
 type WarmPoolHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 }
 
+// RuntimeHandler defines the interface for the runtime handler
 type RuntimeHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 }
 
+// ProfileHandler defines the interface for the profile handler
 type ProfileHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 }
 
+// UserHandler defines the interface for the user handler
 type UserHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 }
 
+// SandboxService defines the interface for sandbox services
 type SandboxService interface {
 	CreateSandbox(ctx context.Context, req types.CreateSandboxRequest) (*types.Sandbox, error)
 	GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error)
@@ -122,7 +145,7 @@ type SandboxService interface {
 	UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error)
 	DeleteFile(ctx context.Context, sandboxID, path string) error
 	InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error)
-	CreateSession(userID, sandboxID string, conn *websocket.Conn) (*types.Session, error)
+	CreateSession(userID, sandboxID string, conn WSConnection) (*types.Session, error)
 	CloseSession(sessionID string)
 	HandleSession(session *types.Session)
 	Start() error
