@@ -7,6 +7,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,7 +18,7 @@ func TestNew(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create mock service instance
-	mockK8sClient := new(MockKubernetesClient)
+	mockK8sClient := new(mocks.MockKubernetesClient)
 
 	// Test successful creation
 	service, err := New(log, mockK8sClient)
@@ -34,7 +35,7 @@ func TestListFiles(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockKubernetesClient)
+	mockK8sClient := new(mocks.MockKubernetesClient)
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -81,7 +82,7 @@ func TestDownloadFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockKubernetesClient)
+	mockK8sClient := new(mocks.MockKubernetesClient)
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -117,7 +118,7 @@ func TestUploadFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockKubernetesClient)
+	mockK8sClient := new(mocks.MockKubernetesClient)
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
@@ -159,7 +160,7 @@ func TestDeleteFile(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
 
 	// Create a mock K8s client
-	mockK8sClient := new(MockKubernetesClient)
+	mockK8sClient := new(mocks.MockKubernetesClient)
 
 	// Create the service
 	service, _ := New(log, mockK8sClient)
