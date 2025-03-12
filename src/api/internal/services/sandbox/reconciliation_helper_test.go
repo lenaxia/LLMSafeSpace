@@ -9,25 +9,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
-func init() {
-	logger.NewNopLogger = func() *logger.Logger {
-		return &logger.Logger{}
-	}
-}
+// mockLogger implements a simple mock logger for testing
+type mockLogger struct{}
+
+func (m *mockLogger) Debug(msg string, keysAndValues ...interface{}) {}
+func (m *mockLogger) Info(msg string, keysAndValues ...interface{})  {}
+func (m *mockLogger) Warn(msg string, keysAndValues ...interface{})  {}
+func (m *mockLogger) Error(msg string, err error, keysAndValues ...interface{}) {}
+func (m *mockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) {}
+func (m *mockLogger) With(keysAndValues ...interface{}) *logger.Logger { return &logger.Logger{} }
+func (m *mockLogger) Sync() error { return nil }
 
 func TestReconcileSandboxes(t *testing.T) {
 	// Setup
-	logger := logger.NewNopLogger()
+	loggerInstance := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
-		logger:    logger,
+		logger:    &logger.Logger{},
 	}
 
 	// Test cases
@@ -110,12 +114,12 @@ func TestReconcileSandboxes(t *testing.T) {
 
 func TestHandleSandboxReconciliation(t *testing.T) {
 	// Setup
-	logger := logger.NewNopLogger()
+	loggerInstance := &mockLogger{}
 	k8sClient := new(mockK8sClient)
 
 	helper := &ReconciliationHelper{
 		k8sClient: k8sClient,
-		logger:    logger,
+		logger:    &logger.Logger{},
 	}
 
 	// Test cases
