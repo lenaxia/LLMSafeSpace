@@ -109,7 +109,16 @@ func (m *MockSandboxInterface) SetupListMock() *mock.Call {
 
 func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return NewMockWatch(), nil
+	}
 	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// SetupWatchMock sets up a default mock response for Watch
+func (m *MockSandboxInterface) SetupWatchMock() *mock.Call {
+	mockWatch := NewMockWatch()
+	return m.On("Watch", mock.Anything).Return(mockWatch, nil)
 }
 
 // NewMockSandbox creates a mock Sandbox with the given name
