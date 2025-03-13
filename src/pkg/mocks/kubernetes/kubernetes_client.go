@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"

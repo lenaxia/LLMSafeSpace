@@ -5,6 +5,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 
@@ -14,7 +16,7 @@ type Logger struct {
 }
 
 // Ensure Logger implements LoggerInterface
-var _ LoggerInterface = (*Logger)(nil)
+var _ interfaces.LoggerInterface = (*Logger)(nil)
 
 // New creates a new logger
 func New(development bool, level string, encoding string) (*Logger, error) {
@@ -93,7 +95,7 @@ func (l *Logger) Fatal(msg string, err error, keysAndValues ...interface{}) {
 }
 
 // With returns a logger with additional fields
-func (l *Logger) With(keysAndValues ...interface{}) LoggerInterface {
+func (l *Logger) With(keysAndValues ...interface{}) interfaces.LoggerInterface {
 	return &Logger{
 		logger: l.logger.With(fieldsFromKeysAndValues(keysAndValues)...),
 	}
