@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	mocklogger "github.com/lenaxia/llmsafespace/pkg/mocks/logger"
+	mocklogger "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 )
 
