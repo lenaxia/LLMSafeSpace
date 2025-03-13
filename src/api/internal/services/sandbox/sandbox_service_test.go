@@ -190,9 +190,9 @@ func TestGetSandbox(t *testing.T) {
 						Namespace: tt.namespace,
 					},
 				}
-				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.AnythingOfType("metav1.GetOptions")).Return(sandbox, nil)
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
 			} else if tt.name == "non-existent sandbox" {
-				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.AnythingOfType("metav1.GetOptions")).Return(nil, &types.SandboxNotFoundError{ID: tt.sandboxID})
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.Anything).Return(nil, &types.SandboxNotFoundError{ID: tt.sandboxID})
 			}
 
 			// Execute
