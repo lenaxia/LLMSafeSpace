@@ -224,7 +224,7 @@ func (c *Client) ExecuteStreamInSandbox(
 		}
 		
 		// Execute the write command
-		_, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
+		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write code to file: %w", err)
 		}
@@ -510,7 +510,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
 		
-		exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+		exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 			Stdout: stdout,
 			Stderr: stderr,
 			Timeout: 10 * time.Second,
@@ -550,9 +550,9 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			return nil, fmt.Errorf("invalid stat output: %s", statOutput)
 		}
 		
-		size, _ := parseInt64(statParts[0])
-		modTimeUnix, _ := parseInt64(statParts[1])
-		changeTimeUnix, _ := parseInt64(statParts[2])
+		size, _ := ParseInt64(statParts[0])
+		modTimeUnix, _ := ParseInt64(statParts[1])
+		changeTimeUnix, _ := ParseInt64(statParts[2])
 		
 		modTime := time.Unix(modTimeUnix, 0)
 		changeTime := time.Unix(changeTimeUnix, 0)
@@ -595,7 +595,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdin:   bytes.NewReader(req.Content),
 		Stdout:  stdout,
 		Stderr:  stderr,

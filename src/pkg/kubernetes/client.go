@@ -94,7 +94,12 @@ func NewForTesting(
 	logger *logger.Logger,
 ) *Client {
 	if logger == nil {
-		logger, _ = logger.New(true, "debug", "console")
+		var err error
+		logger, err = logger.New(true, "debug", "console")
+		if err != nil {
+			// Use a simple default logger if creation fails
+			logger = &logger.Logger{}
+		}
 	}
 	
 	return &Client{
