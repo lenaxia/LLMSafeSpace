@@ -39,8 +39,9 @@ func TestMockSandboxOperations(t *testing.T) {
 	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	client.On("LlmsafespaceV1").Return(v1Client)
 	
-	// Setup Sandboxes mock
+	// Setup Sandboxes mock with List method
 	sandboxClient := kmocks.NewMockSandboxInterface()
+	sandboxClient.SetupListMock()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
@@ -225,11 +226,11 @@ func TestMockInterfaces(t *testing.T) {
 	profileClient := kmocks.NewMockSandboxProfileInterface()
 	
 	// Setup mock methods
-	v1Client.SetupSandboxesMock("test-namespace")
-	v1Client.SetupWarmPoolsMock("test-namespace")
-	v1Client.SetupWarmPodsMock("test-namespace")
-	v1Client.SetupRuntimeEnvironmentsMock("test-namespace")
-	v1Client.SetupSandboxProfilesMock("test-namespace")
+	v1Client.SetupSandboxesMock("test-namespace").SetupListMock()
+	v1Client.SetupWarmPoolsMock("test-namespace").SetupListMock()
+	v1Client.SetupWarmPodsMock("test-namespace").SetupListMock()
+	v1Client.SetupRuntimeEnvironmentsMock("test-namespace").SetupListMock()
+	v1Client.SetupSandboxProfilesMock("test-namespace").SetupListMock()
 	
 	sandboxClient.SetupCreateMock()
 	sandboxClient.SetupUpdateMock()

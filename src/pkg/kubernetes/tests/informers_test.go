@@ -12,8 +12,32 @@ import (
 
 // TestInformerFactory tests the informer factory creation and methods
 func TestInformerFactory(t *testing.T) {
-	// Create informer factory
-	factory := kubernetes.NewInformerFactory(kubernetes.NewLLMSafespaceV1Client(nil), 30*time.Second, "test-namespace")
+	// Create mock client
+	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
+	
+	// Setup mock interfaces with List method expectations
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	sandboxClient.SetupListMock()
+	mockClient.On("Sandboxes", "test-namespace").Return(sandboxClient)
+	
+	warmPoolClient := kmocks.NewMockWarmPoolInterface()
+	warmPoolClient.SetupListMock()
+	mockClient.On("WarmPools", "test-namespace").Return(warmPoolClient)
+	
+	warmPodClient := kmocks.NewMockWarmPodInterface()
+	warmPodClient.SetupListMock()
+	mockClient.On("WarmPods", "test-namespace").Return(warmPodClient)
+	
+	runtimeEnvClient := kmocks.NewMockRuntimeEnvironmentInterface()
+	runtimeEnvClient.SetupListMock()
+	mockClient.On("RuntimeEnvironments", "test-namespace").Return(runtimeEnvClient)
+	
+	profileClient := kmocks.NewMockSandboxProfileInterface()
+	profileClient.SetupListMock()
+	mockClient.On("SandboxProfiles", "test-namespace").Return(profileClient)
+	
+	// Create informer factory with mocked client
+	factory := kubernetes.NewInformerFactory(mockClient, 30*time.Second, "test-namespace")
 	assert.NotNil(t, factory)
 	
 	// Test individual informers
@@ -38,12 +62,12 @@ func TestStartInformers(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
-	// Setup mock list and watch methods
-	mockClient.SetupSandboxesMock("test-namespace")
-	mockClient.SetupWarmPoolsMock("test-namespace")
-	mockClient.SetupWarmPodsMock("test-namespace")
-	mockClient.SetupRuntimeEnvironmentsMock("test-namespace")
-	mockClient.SetupSandboxProfilesMock("test-namespace")
+	// Setup mock list and watch methods with proper List expectations
+	mockClient.SetupSandboxesMock("test-namespace").SetupListMock()
+	mockClient.SetupWarmPoolsMock("test-namespace").SetupListMock()
+	mockClient.SetupWarmPodsMock("test-namespace").SetupListMock()
+	mockClient.SetupRuntimeEnvironmentsMock("test-namespace").SetupListMock()
+	mockClient.SetupSandboxProfilesMock("test-namespace").SetupListMock()
 	
 	// Create informer factory
 	factory := kubernetes.NewInformerFactory(
@@ -74,7 +98,7 @@ func TestInformerListWatch(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
-	// Setup mock sandbox interface
+	// Setup mock sandbox interface with List method expectation
 	sandboxInterface := kmocks.NewMockSandboxInterface()
 	mockClient.On("Sandboxes", "test-namespace").Return(sandboxInterface)
 	
