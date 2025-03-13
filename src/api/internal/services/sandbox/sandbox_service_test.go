@@ -177,20 +177,22 @@ func TestGetSandbox(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup expectations
-			if !tt.wantErr {
+			llmMock := new(mocks.MockLLMSafespaceV1Interface)
+			sandboxInterface := new(mocks.MockSandboxInterface)
+			
+			k8sClient.On("LlmsafespaceV1").Return(llmMock)
+			llmMock.Mock.On("Sandboxes", "").Return(sandboxInterface)
+			
+			if tt.name == "existing sandbox" {
 				sandbox := &types.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: tt.sandboxID,
 						Namespace: tt.namespace,
 					},
 				}
-
-				llmMock := new(mocks.MockLLMSafespaceV1Interface)
-				sandboxInterface := new(mocks.MockSandboxInterface)
-				
-				k8sClient.On("LlmsafespaceV1").Return(llmMock)
-				llmMock.Mock.On("Sandboxes", "").Return(sandboxInterface)
-				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.Anything).Return(sandbox, nil)
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.AnythingOfType("metav1.GetOptions")).Return(sandbox, nil)
+			} else if tt.name == "non-existent sandbox" {
+				sandboxInterface.Mock.On("Get", tt.sandboxID, mock.AnythingOfType("metav1.GetOptions")).Return(nil, &types.SandboxNotFoundError{ID: tt.sandboxID})
 			}
 
 			// Execute
