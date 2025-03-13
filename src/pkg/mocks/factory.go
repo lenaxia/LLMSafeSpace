@@ -7,7 +7,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
-	"github.com/lenaxia/llmsafespace/pkg/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	tmocks "github.com/lenaxia/llmsafespace/mocks/types"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
