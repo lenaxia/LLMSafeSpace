@@ -9,17 +9,18 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // InformerFactory creates informers for custom resources
 type InformerFactory struct {
-	client        *LLMSafespaceV1Client
+	client        interfaces.LLMSafespaceV1Interface
 	defaultResync time.Duration
 	namespace     string
 }
 
 // NewInformerFactory creates a new informer factory
-func NewInformerFactory(client *LLMSafespaceV1Client, defaultResync time.Duration, namespace string) *InformerFactory {
+func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
 	return &InformerFactory{
 		client:        client,
 		defaultResync: defaultResync,
