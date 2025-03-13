@@ -226,11 +226,30 @@ func TestMockInterfaces(t *testing.T) {
 	profileClient := kmocks.NewMockSandboxProfileInterface()
 	
 	// Setup mock methods
-	v1Client.SetupSandboxesMock("test-namespace").SetupListMock().SetupWatchMock()
-	v1Client.SetupWarmPoolsMock("test-namespace").SetupListMock().SetupWatchMock()
-	v1Client.SetupWarmPodsMock("test-namespace").SetupListMock().SetupWatchMock()
-	v1Client.SetupRuntimeEnvironmentsMock("test-namespace").SetupListMock().SetupWatchMock()
-	v1Client.SetupSandboxProfilesMock("test-namespace").SetupListMock().SetupWatchMock()
+	// Set up Sandboxes mock
+	sandboxMock := v1Client.SetupSandboxesMock("test-namespace")
+	sandboxMock.SetupListMock()
+	sandboxMock.SetupWatchMock()
+	
+	// Set up WarmPools mock
+	warmPoolMock := v1Client.SetupWarmPoolsMock("test-namespace")
+	warmPoolMock.SetupListMock()
+	warmPoolMock.SetupWatchMock()
+	
+	// Set up WarmPods mock
+	warmPodMock := v1Client.SetupWarmPodsMock("test-namespace")
+	warmPodMock.SetupListMock()
+	warmPodMock.SetupWatchMock()
+	
+	// Set up RuntimeEnvironments mock
+	runtimeEnvMock := v1Client.SetupRuntimeEnvironmentsMock("test-namespace")
+	runtimeEnvMock.SetupListMock()
+	runtimeEnvMock.SetupWatchMock()
+	
+	// Set up SandboxProfiles mock
+	profileMock := v1Client.SetupSandboxProfilesMock("test-namespace")
+	profileMock.SetupListMock()
+	profileMock.SetupWatchMock()
 	
 	sandboxClient.SetupCreateMock()
 	sandboxClient.SetupUpdateMock()
