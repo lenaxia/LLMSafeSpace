@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	
+	k8sconfig "github.com/lenaxia/llmsafespace/pkg/config"
 )
 
 // Config represents the application configuration
@@ -16,18 +18,8 @@ type Config struct {
 		ShutdownTimeout time.Duration `mapstructure:"shutdownTimeout"`
 	} `mapstructure:"server"`
 
-	Kubernetes struct {
-		ConfigPath string `mapstructure:"configPath"`
-		InCluster  bool   `mapstructure:"inCluster"`
-		Namespace  string `mapstructure:"namespace"`
-		PodName    string `mapstructure:"podName"`
-		LeaderElection struct {
-			Enabled       bool          `mapstructure:"enabled"`
-			LeaseDuration time.Duration `mapstructure:"leaseDuration"`
-			RenewDeadline time.Duration `mapstructure:"renewDeadline"`
-			RetryPeriod   time.Duration `mapstructure:"retryPeriod"`
-		} `mapstructure:"leaderElection"`
-	} `mapstructure:"kubernetes"`
+	// Use the shared Kubernetes config
+	Kubernetes k8sconfig.KubernetesConfig `mapstructure:"kubernetes"`
 
 	Database struct {
 		Host            string        `mapstructure:"host"`

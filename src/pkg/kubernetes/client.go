@@ -26,22 +26,19 @@ type Client struct {
 	restConfig      *rest.Config
 	informerFactory informers.SharedInformerFactory
 	logger          *logger.Logger
-	config          *config.Config
+	config          *config.KubernetesConfig
 	stopCh          chan struct{}
 }
 
 // Ensure Client implements interfaces.KubernetesClient
 var _ interfaces.KubernetesClient = (*Client)(nil)
 
-// Ensure Client implements interfaces.KubernetesClient
-var _ interfaces.KubernetesClient = (*Client)(nil)
-
 // New creates a new Kubernetes client
-func New(cfg *config.Config, logger *logger.Logger) (*Client, error) {
+func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
 	var restConfig *rest.Config
 	var err error
 
-	if cfg.Kubernetes.InCluster {
+	if cfg.InCluster {
 		// Use in-cluster config
 		restConfig, err = rest.InClusterConfig()
 		if err != nil {
@@ -50,11 +47,11 @@ func New(cfg *config.Config, logger *logger.Logger) (*Client, error) {
 		logger.Info("Using in-cluster Kubernetes configuration")
 	} else {
 		// Use kubeconfig file
-		restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubernetes.ConfigPath)
+		restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.ConfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
 		}
-		logger.Info("Using external Kubernetes configuration", "path", cfg.Kubernetes.ConfigPath)
+		logger.Info("Using external Kubernetes configuration", "path", cfg.ConfigPath)
 	}
 
 	// Configure connection pooling
@@ -95,7 +92,7 @@ func (c *Client) Start() error {
 	c.logger.Info("Started informer factory")
 
 	// Configure leader election if enabled
-	if c.config.Kubernetes.LeaderElection.Enabled {
+	if c.config.LeaderElection.Enabled {
 		go c.runLeaderElection()
 	}
 
@@ -114,11 +111,11 @@ func (c *Client) runLeaderElection() {
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
 			Name:      "llmsafespace-api-leader",
-			Namespace: c.config.Kubernetes.Namespace,
+			Namespace: c.config.Namespace,
 		},
 		Client: c.clientset.CoordinationV1(),
 		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: c.config.Kubernetes.PodName,
+			Identity: c.config.PodName,
 		},
 	}
 
@@ -126,9 +123,9 @@ func (c *Client) runLeaderElection() {
 	leaderelection.RunOrDie(context.Background(), leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
-		LeaseDuration:   15 * time.Second,
-		RenewDeadline:   10 * time.Second,
-		RetryPeriod:     2 * time.Second,
+		LeaseDuration:   c.config.LeaderElection.LeaseDuration,
+		RenewDeadline:   c.config.LeaderElection.RenewDeadline,
+		RetryPeriod:     c.config.LeaderElection.RetryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				c.logger.Info("Started leading")
