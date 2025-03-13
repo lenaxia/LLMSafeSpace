@@ -47,7 +47,7 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient) (*Service
 }
 
 // ExecuteCode executes code in a sandbox
-func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*interfaces.Result, error) {
+func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*types.ExecutionResult, error) {
 	s.logger.Debug("Executing code in sandbox", "sandbox_id", sandboxID, "timeout", timeout)
 	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -59,7 +59,7 @@ func (s *Service) ExecuteCode(ctx context.Context, sandboxID, code string, timeo
 }
 
 // ExecuteCommand executes a command in a sandbox
-func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*interfaces.Result, error) {
+func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*types.ExecutionResult, error) {
 	s.logger.Debug("Executing command in sandbox", "sandbox_id", sandboxID, "timeout", timeout)
 	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -71,7 +71,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, sandboxID, command string,
 }
 
 // Execute executes code or a command in a sandbox
-func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*interfaces.Result, error) {
+func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error) {
 	startTime := time.Now()
 	s.logger.Debug("Executing in sandbox", 
 		"namespace", sandbox.Namespace,
@@ -126,7 +126,7 @@ func (s *Service) ExecuteStream(
 	execType, content string,
 	timeout int,
 	outputCallback func(stream, content string),
-) (*interfaces.Result, error) {
+) (*types.ExecutionResult, error) {
 	startTime := time.Now()
 	s.logger.Debug("Executing stream in sandbox", 
 		"namespace", sandbox.Namespace, 
@@ -164,8 +164,8 @@ func (s *Service) ExecuteStream(
 		"exit_code", execResult.ExitCode)
 
 	// Return execution result
-	return &interfaces.Result{
-		ExecutionID:  execResult.ID,
+	return &types.ExecutionResult{
+		ID:           execResult.ID,
 		Status:       execResult.Status,
 		StartedAt:    execResult.StartedAt,
 		CompletedAt:  execResult.CompletedAt,
@@ -176,7 +176,7 @@ func (s *Service) ExecuteStream(
 }
 
 // InstallPackages installs packages in a sandbox
-func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*interfaces.Result, error) {
+func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error) {
 	if len(packages) == 0 {
 		return nil, fmt.Errorf("no packages specified for installation")
 	}
