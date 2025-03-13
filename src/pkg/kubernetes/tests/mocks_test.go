@@ -145,7 +145,7 @@ func TestMockWatch(t *testing.T) {
 	sandboxClient.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
 	
 	// Start watching
-	watch, err := sandboxClient.Watch(metav1.ListOptions{})
+	watcher, err := sandboxClient.Watch(metav1.ListOptions{})
 	assert.NoError(t, err)
 	
 	// Send an event
@@ -156,12 +156,12 @@ func TestMockWatch(t *testing.T) {
 	}()
 	
 	// Receive the event
-	event := <-watch.ResultChan()
+	event := <-watcher.ResultChan()
 	assert.Equal(t, watch.Added, event.Type)
 	assert.Equal(t, "test-sandbox", event.Object.(*types.Sandbox).Name)
 	
 	// Stop watching
-	watch.Stop()
+	watcher.Stop()
 	
 	// Verify expectations
 	mockWatch.AssertExpectations(t)
