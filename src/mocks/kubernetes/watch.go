@@ -14,9 +14,12 @@ type MockWatch struct {
 
 // NewMockWatch creates a new mock watch
 func NewMockWatch() *MockWatch {
-	return &MockWatch{
-		resultChan: make(chan watch.Event, 10),
-	}
+    m := &MockWatch{
+        resultChan: make(chan watch.Event, 10),
+    }
+    m.On("ResultChan").Return(m.resultChan)
+    m.On("Stop").Return()
+    return m
 }
 
 // Stop implements watch.Interface

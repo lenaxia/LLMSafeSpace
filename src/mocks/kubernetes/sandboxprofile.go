@@ -103,8 +103,8 @@ func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Inte
 
 // SetupWatchMock sets up a default mock response for Watch
 func (m *MockSandboxProfileInterface) SetupWatchMock() *mock.Call {
-	mockWatch := NewMockWatch()
-	return m.On("Watch", mock.Anything).Return(mockWatch, nil)
+    mockWatch := NewMockWatch()
+    return m.On("Watch", mock.AnythingOfType("metav1.ListOptions")).Return(mockWatch, nil)
 }
 
 // NewMockSandboxProfile creates a mock SandboxProfile with the given name
