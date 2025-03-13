@@ -10,7 +10,7 @@ import (
 
 func TestMockLogger(t *testing.T) {
 	// Create a mock logger
-	logger := logger.NewMockLogger()
+	mockLogger := mocks.NewMockLogger()
 	
 	// Setup expectations
 	logger.On("Debug", "Debug message", []interface{}{"key", "value"}).Return()

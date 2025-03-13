@@ -25,7 +25,7 @@ type Client struct {
 	dynamicClient   dynamic.Interface
 	restConfig      *rest.Config
 	informerFactory informers.SharedInformerFactory
-	logger          *logger.Logger
+	logger          logger.LoggerInterface
 	config          *config.KubernetesConfig
 	stopCh          chan struct{}
 }
@@ -95,10 +95,11 @@ func NewForTesting(
 ) *Client {
 	if logger == nil {
 		var err error
-		logger, err = logger.New(true, "debug", "console")
+		logger, err = logger.NewLogger(true, "debug", "console")
 		if err != nil {
 			// Use a simple default logger if creation fails
-			logger = &logger.Logger{}
+			defaultLogger, _ := logger.NewLogger(true, "debug", "console")
+			logger = defaultLogger
 		}
 	}
 	
