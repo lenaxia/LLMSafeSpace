@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	typesmock "github.com/lenaxia/llmsafespace/pkg/types/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,14 +34,15 @@ func TestLLMSafespaceV1Client(t *testing.T) {
 // TestSandboxInterface tests the Sandbox interface implementation
 func TestSandboxInterface(t *testing.T) {
 	// Create mock sandbox interface
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	
 	// Setup mock responses
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandboxList := &types.SandboxList{
 		Items: []types.Sandbox{*sandbox},
 	}
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
@@ -110,14 +111,15 @@ func TestSandboxInterface(t *testing.T) {
 // TestWarmPoolInterface tests the WarmPool interface implementation
 func TestWarmPoolInterface(t *testing.T) {
 	// Create mock warmpool interface
-	warmPoolClient := mocks.NewMockWarmPoolInterface()
+	warmPoolClient := kmocks.NewMockWarmPoolInterface()
 	
 	// Setup mock responses
-	warmPool := typesmock.NewMockWarmPool("test-warmpool", "test-namespace")
+	factory := mocks.NewMockFactory()
+	warmPool := factory.NewWarmPool("test-warmpool", "test-namespace", "python:3.10")
 	warmPoolList := &types.WarmPoolList{
 		Items: []types.WarmPool{*warmPool},
 	}
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
@@ -172,14 +174,15 @@ func TestWarmPoolInterface(t *testing.T) {
 // TestWarmPodInterface tests the WarmPod interface implementation
 func TestWarmPodInterface(t *testing.T) {
 	// Create mock warmpod interface
-	warmPodClient := mocks.NewMockWarmPodInterface()
+	warmPodClient := kmocks.NewMockWarmPodInterface()
 	
 	// Setup mock responses
-	warmPod := typesmock.NewMockWarmPod("test-warmpod", "test-namespace")
+	factory := mocks.NewMockFactory()
+	warmPod := factory.NewWarmPod("test-warmpod", "test-namespace", "test-pool")
 	warmPodList := &types.WarmPodList{
 		Items: []types.WarmPod{*warmPod},
 	}
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
@@ -234,14 +237,15 @@ func TestWarmPodInterface(t *testing.T) {
 // TestRuntimeEnvironmentInterface tests the RuntimeEnvironment interface implementation
 func TestRuntimeEnvironmentInterface(t *testing.T) {
 	// Create mock runtime environment interface
-	runtimeEnvClient := mocks.NewMockRuntimeEnvironmentInterface()
+	runtimeEnvClient := kmocks.NewMockRuntimeEnvironmentInterface()
 	
 	// Setup mock responses
-	runtimeEnv := typesmock.NewMockRuntimeEnvironment("test-runtime", "test-namespace")
+	factory := mocks.NewMockFactory()
+	runtimeEnv := factory.NewRuntimeEnvironment("test-runtime", "python", "3.10")
 	runtimeEnvList := &types.RuntimeEnvironmentList{
 		Items: []types.RuntimeEnvironment{*runtimeEnv},
 	}
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
@@ -296,10 +300,11 @@ func TestRuntimeEnvironmentInterface(t *testing.T) {
 // TestSandboxProfileInterface tests the SandboxProfile interface implementation
 func TestSandboxProfileInterface(t *testing.T) {
 	// Create mock sandbox profile interface
-	profileClient := mocks.NewMockSandboxProfileInterface()
+	profileClient := kmocks.NewMockSandboxProfileInterface()
 	
 	// Setup mock responses
-	profile := typesmock.NewMockSandboxProfile("test-profile", "test-namespace")
+	factory := mocks.NewMockFactory()
+	profile := factory.NewSandboxProfile("test-profile", "python")
 	profileList := &types.SandboxProfileList{
 		Items: []types.SandboxProfile{*profile},
 	}

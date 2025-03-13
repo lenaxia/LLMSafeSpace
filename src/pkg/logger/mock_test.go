@@ -4,13 +4,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/logger/mock"
+	"github.com/lenaxia/llmsafespace/pkg/mocks/logger"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMockLogger(t *testing.T) {
 	// Create a mock logger
-	logger := mock.NewTestLogger()
+	logger := logger.NewMockLogger()
 	
 	// Setup expectations
 	logger.On("Debug", "Debug message", []interface{}{"key", "value"}).Return()
@@ -40,10 +40,10 @@ func TestMockLogger(t *testing.T) {
 
 func TestMockLoggerChaining(t *testing.T) {
 	// Create a mock logger
-	logger := mock.NewTestLogger()
+	logger := logger.NewMockLogger()
 	
 	// Setup expectations for chained calls
-	contextLogger := mock.NewTestLogger()
+	contextLogger := logger.NewMockLogger()
 	logger.On("With", []interface{}{"context", "value"}).Return(contextLogger)
 	contextLogger.On("Info", "Contextual message", []interface{}{"key", "value"}).Return()
 	

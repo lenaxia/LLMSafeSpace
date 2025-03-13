@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	typesmock "github.com/lenaxia/llmsafespace/pkg/types/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
@@ -24,18 +24,19 @@ import (
 // TestExecuteInSandbox tests the ExecuteInSandbox method
 func TestExecuteInSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	
@@ -81,14 +82,14 @@ func TestExecuteInSandbox(t *testing.T) {
 // TestExecuteInSandboxErrors tests error cases for ExecuteInSandbox
 func TestExecuteInSandboxErrors(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Test case 1: Sandbox not found
@@ -118,18 +119,19 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 // TestExecuteStreamInSandbox tests the ExecuteStreamInSandbox method
 func TestExecuteStreamInSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	
@@ -228,18 +230,19 @@ func TestStreamWriter(t *testing.T) {
 // TestListFilesInSandbox tests the ListFilesInSandbox method
 func TestListFilesInSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	
@@ -287,18 +290,19 @@ func TestListFilesInSandbox(t *testing.T) {
 // TestDownloadFileFromSandbox tests the DownloadFileFromSandbox method
 func TestDownloadFileFromSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	
@@ -340,18 +344,19 @@ func TestDownloadFileFromSandbox(t *testing.T) {
 // TestUploadFileToSandbox tests the UploadFileToSandbox method
 func TestUploadFileToSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	

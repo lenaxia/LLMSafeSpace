@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/logger"
+	"github.com/lenaxia/llmsafespace/pkg/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	typesmock "github.com/lenaxia/llmsafespace/pkg/types/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,16 +18,16 @@ import (
 )
 
 // SetupTestClient creates a mock client with common mocks set up
-func SetupTestClient(t *testing.T) (*mocks.MockKubernetesClient, *mocks.MockLLMSafespaceV1Interface, *mocks.MockSandboxInterface) {
+func SetupTestClient(t *testing.T) (*kmocks.MockKubernetesClient, *kmocks.MockLLMSafespaceV1Interface, *kmocks.MockSandboxInterface) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	client.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	return client, v1Client, sandboxClient
@@ -35,7 +35,8 @@ func SetupTestClient(t *testing.T) (*mocks.MockKubernetesClient, *mocks.MockLLMS
 
 // SetupTestSandbox creates a mock sandbox with a pod name
 func SetupTestSandbox(name, namespace, podName string) *types.Sandbox {
-	sandbox := typesmock.NewMockSandbox(name, namespace)
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox(name, namespace, "python:3.10")
 	sandbox.Status.PodName = podName
 	return sandbox
 }
@@ -110,7 +111,7 @@ func AssertFileList(t *testing.T, result *types.FileList, expectedCount int) {
 }
 
 // MockCommandExecution mocks the ExecuteCommand method
-func MockCommandExecution(client *mocks.MockKubernetesClient, namespace, podName string, stdout, stderr string, exitCode int, err error) *mock.Call {
+func MockCommandExecution(client *kmocks.MockKubernetesClient, namespace, podName string, stdout, stderr string, exitCode int, err error) *mock.Call {
 	return client.On("ExecuteCommand", mock.Anything, namespace, podName, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		options := args.Get(4).(*kubernetes.ExecOptions)
 		if options.Stdout != nil && stdout != "" {
