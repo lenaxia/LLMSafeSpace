@@ -4,7 +4,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
+	"github.com/lenaxia/llmsafespace/controller/internal/resources"
 )
 
 // ConvertToMetaV1Condition converts a SandboxCondition to metav1.Condition

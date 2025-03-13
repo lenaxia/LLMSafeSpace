@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // InformerFactory creates informers for custom resources

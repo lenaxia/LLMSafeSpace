@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
+	"github.com/lenaxia/llmsafespace/controller/internal/resources"
 )
 
 // SetCondition updates or creates a condition in the provided slice

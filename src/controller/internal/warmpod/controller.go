@@ -14,9 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/common"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
+	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespace/controller/internal/resources"
 )
 
 // WarmPodReconciler reconciles a WarmPod object

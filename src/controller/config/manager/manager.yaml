@@ -6,24 +6,24 @@ metadata:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sandbox-controller
+  name: controller
   namespace: llmsafespace-system
   labels:
-    app: sandbox-controller
+    app: controller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: sandbox-controller
+      app: controller
   template:
     metadata:
       labels:
-        app: sandbox-controller
+        app: controller
     spec:
-      serviceAccountName: sandbox-controller
+      serviceAccountName: controller
       containers:
       - name: manager
-        image: llmsafespace/sandbox-controller:latest
+        image: llmsafespace/controller:latest
         args:
         - --metrics-addr=:8080
         - --health-probe-bind-address=:8081
@@ -54,11 +54,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: sandbox-controller
+  name: controller
   namespace: llmsafespace-system
 spec:
   selector:
-    app: sandbox-controller
+    app: controller
   ports:
   - port: 443
     targetPort: 9443
@@ -70,13 +70,13 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sandbox-controller
+  name: controller
   namespace: llmsafespace-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sandbox-controller
+  name: controller
 rules:
 - apiGroups: [""]
   resources: ["pods"]
@@ -94,12 +94,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sandbox-controller
+  name: controller
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sandbox-controller
+  name: controller
 subjects:
 - kind: ServiceAccount
-  name: sandbox-controller
+  name: controller
   namespace: llmsafespace-system
