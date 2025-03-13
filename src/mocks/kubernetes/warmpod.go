@@ -112,6 +112,12 @@ func (m *MockWarmPodInterface) Watch(opts metav1.ListOptions) (watch.Interface, 
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
+// SetupWatchMock sets up a default mock response for Watch
+func (m *MockWarmPodInterface) SetupWatchMock() *mock.Call {
+    mockWatch := NewMockWatch()
+    return m.On("Watch", mock.AnythingOfType("metav1.ListOptions")).Return(mockWatch, nil)
+}
+
 // NewMockWarmPod creates a mock WarmPod with the given name
 func NewMockWarmPod(name, namespace string) *types.WarmPod {
 	return &types.WarmPod{
