@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 func TestReconcileSandboxes(t *testing.T) {
@@ -33,30 +33,30 @@ func TestReconcileSandboxes(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		name     string
-		sandbox  *types.Sandbox
-		pod      *corev1.Pod
+		name      string
+		sandbox   *types.Sandbox
+		pod       *corev1.Pod
 		wantPhase string
 	}{
 		{
 			name: "running sandbox",
 			sandbox: &types.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sandbox",
+					Name:      "test-sandbox",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-5 * time.Minute),
 					},
 				},
 				Status: types.SandboxStatus{
-					Phase: "Creating",
-					PodName: "test-pod",
+					Phase:        "Creating",
+					PodName:      "test-pod",
 					PodNamespace: "default",
 				},
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pod",
+					Name:      "test-pod",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-5 * time.Minute),
@@ -82,21 +82,21 @@ func TestReconcileSandboxes(t *testing.T) {
 			name: "failed sandbox",
 			sandbox: &types.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sandbox",
+					Name:      "test-sandbox",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-5 * time.Minute),
 					},
 				},
 				Status: types.SandboxStatus{
-					Phase: "Creating",
-					PodName: "test-pod",
+					Phase:        "Creating",
+					PodName:      "test-pod",
 					PodNamespace: "default",
 				},
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pod",
+					Name:      "test-pod",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-5 * time.Minute),
@@ -116,25 +116,25 @@ func TestReconcileSandboxes(t *testing.T) {
 			k8sClient.ExpectedCalls = nil
 			llmMock.ExpectedCalls = nil
 			sandboxInterface.ExpectedCalls = nil
-			
+
 			// Setup expectations
 			sandboxList := &types.SandboxList{
 				Items: []types.Sandbox{*tt.sandbox},
 			}
 
-			// Use empty string for listing all namespaces
+			// Set up fake clientset with test pod
+			fakeClient := k8sClient.Clientset().(*fake.Clientset)
+			_, err := fakeClient.CoreV1().Pods(tt.sandbox.Status.PodNamespace).Create(context.Background(), tt.pod, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("Failed to create pod in fake client: %v", err)
+			}
+
+			// Set up Kubernetes API expectations
 			k8sClient.On("LlmsafespaceV1").Return(llmMock).Once()
 			llmMock.On("Sandboxes", "").Return(sandboxInterface).Once()
 			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil).Once()
 
-			// Set up mock chain for pod lookup
-			k8sClient.On("Clientset").Return(k8sClient).Once()
-			k8sClient.On("CoreV1").Return(k8sClient).Once()
-			k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
-			k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, nil).Once()
-
 			if tt.sandbox.Status.Phase != tt.wantPhase {
-				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
 				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface).Once()
 				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
 			}
@@ -166,16 +166,16 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		name    string
-		sandbox *types.Sandbox
-		pod     *corev1.Pod
+		name       string
+		sandbox    *types.Sandbox
+		pod        *corev1.Pod
 		wantUpdate bool
 	}{
 		{
 			name: "expired sandbox",
 			sandbox: &types.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sandbox",
+					Name:      "test-sandbox",
 					Namespace: "default",
 				},
 				Spec: types.SandboxSpec{
@@ -194,7 +194,7 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			name: "stuck sandbox",
 			sandbox: &types.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sandbox",
+					Name:      "test-sandbox",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-time.Hour),
@@ -210,19 +210,19 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			name: "missing pod",
 			sandbox: &types.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sandbox",
+					Name:      "test-sandbox",
 					Namespace: "default",
 					CreationTimestamp: metav1.Time{
 						Time: time.Now().Add(-5 * time.Minute),
 					},
 				},
 				Status: types.SandboxStatus{
-					Phase: "Running",
-					PodName: "missing-pod",
+					Phase:        "Running",
+					PodName:      "missing-pod",
 					PodNamespace: "default",
 				},
 			},
-			pod: nil,
+			pod:        nil,
 			wantUpdate: true,
 		},
 	}
@@ -233,34 +233,21 @@ func TestHandleSandboxReconciliation(t *testing.T) {
 			k8sClient.ExpectedCalls = nil
 			llmMock.ExpectedCalls = nil
 			sandboxInterface.ExpectedCalls = nil
-			
+
 			// Setup expectations
 			if tt.wantUpdate {
 				k8sClient.On("LlmsafespaceV1").Return(llmMock).Once()
 				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface).Once()
-				
-				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
 				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
 			}
-			
-			// Setup pod lookup if needed
-			if tt.sandbox.Status.PodName != "" {
-				k8sClient.On("Clientset").Return(k8sClient).Once()
-				k8sClient.On("CoreV1").Return(k8sClient).Once()
-				k8sClient.On("Pods", tt.sandbox.Status.PodNamespace).Return(k8sClient).Once()
-				
-				var err error
-				if tt.pod == nil {
-					// Simulate pod not found using errors.StatusError
-					err = &errors.StatusError{
-						ErrStatus: metav1.Status{
-							Status: metav1.StatusFailure,
-							Reason: metav1.StatusReasonNotFound,
-							Code:   404,
-						},
-					}
+
+			// Setup pod in fake client if needed
+			if tt.pod != nil {
+				fakeClient := k8sClient.Clientset().(*fake.Clientset)
+				_, err := fakeClient.CoreV1().Pods(tt.sandbox.Status.PodNamespace).Create(context.Background(), tt.pod, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("Failed to create pod in fake client: %v", err)
 				}
-				k8sClient.On("Get", mock.Anything, tt.sandbox.Status.PodName, mock.Anything).Return(tt.pod, err).Once()
 			}
 
 			// Execute
