@@ -92,7 +92,14 @@ func TestReconcileSandboxes(t *testing.T) {
 				Items: []types.Sandbox{*tt.sandbox},
 			}
 
-			// Set up mock clientset
+			// Setup Kubernetes API expectations
+			k8sClient.On("LlmsafespaceV1").Return(llmMock).Twice() // List and UpdateStatus calls
+			llmMock.On("Sandboxes", "").Return(sandboxInterface).Once()
+			llmMock.On("Sandboxes", "default").Return(sandboxInterface).Once()
+			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil).Once()
+			sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
+
+			// Setup pod lookup chain
 			fakeClient := fake.NewSimpleClientset()
 			k8sClient.On("Clientset").Return(fakeClient).Once()
 			
@@ -100,17 +107,6 @@ func TestReconcileSandboxes(t *testing.T) {
 			_, err := fakeClient.CoreV1().Pods(tt.sandbox.Status.PodNamespace).Create(context.Background(), tt.pod, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("Failed to create pod in fake client: %v", err)
-			}
-
-			// Set up Kubernetes API expectations
-			k8sClient.On("LlmsafespaceV1").Return(llmMock).Once()
-			llmMock.On("Sandboxes", "").Return(sandboxInterface).Once()
-			sandboxInterface.On("List", mock.Anything).Return(sandboxList, nil).Once()
-
-			if tt.sandbox.Status.Phase != tt.wantPhase {
-				// Use mock.AnythingOfType instead of mock.MatchedBy for more flexible matching
-				llmMock.On("Sandboxes", tt.sandbox.Namespace).Return(sandboxInterface).Once()
-				sandboxInterface.On("UpdateStatus", mock.AnythingOfType("*types.Sandbox")).Return(tt.sandbox, nil).Once()
 			}
 
 			helper.reconcileSandboxes(context.Background())
