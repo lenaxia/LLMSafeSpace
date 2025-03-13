@@ -47,7 +47,7 @@ func TestStartInformers(t *testing.T) {
 	
 	// Create informer factory
 	factory := kubernetes.NewInformerFactory(
-		kubernetes.NewLLMSafespaceV1Client(nil).WithMockClient(mockClient), 
+		kubernetes.NewLLMSafespaceV1Client(nil).WithMockClient(mockClient).(*kubernetes.LLMSafespaceV1Client), 
 		30*time.Second, 
 		"test-namespace",
 	)
