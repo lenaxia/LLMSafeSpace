@@ -106,14 +106,21 @@ func (m *MockKubernetesClient) ExecuteInSandbox(ctx context.Context, namespace, 
 
 // SetupExecuteInSandboxMock sets up a default mock response for ExecuteInSandbox
 func (m *MockKubernetesClient) SetupExecuteInSandboxMock(exitCode int) *mock.Call {
+	status := "failed"
+	stderr := "Test stderr output"
+	if exitCode == 0 {
+		status = "completed"
+		stderr = ""
+	}
+	
 	result := &types.ExecutionResult{
 		ID:          "test-exec-id",
-		Status:      exitCode == 0 ? "completed" : "failed",
+		Status:      status,
 		StartedAt:   time.Now().Add(-5 * time.Second),
 		CompletedAt: time.Now(),
 		ExitCode:    exitCode,
 		Stdout:      "Test stdout output",
-		Stderr:      exitCode == 0 ? "" : "Test stderr output",
+		Stderr:      stderr,
 	}
 	return m.On("ExecuteInSandbox", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(result, nil)
 }
@@ -128,14 +135,21 @@ func (m *MockKubernetesClient) ExecuteStreamInSandbox(ctx context.Context, names
 
 // SetupExecuteStreamInSandboxMock sets up a default mock response for ExecuteStreamInSandbox
 func (m *MockKubernetesClient) SetupExecuteStreamInSandboxMock(exitCode int) *mock.Call {
+	status := "failed"
+	stderr := "Test stderr output"
+	if exitCode == 0 {
+		status = "completed"
+		stderr = ""
+	}
+	
 	result := &types.ExecutionResult{
 		ID:          "test-exec-id",
-		Status:      exitCode == 0 ? "completed" : "failed",
+		Status:      status,
 		StartedAt:   time.Now().Add(-5 * time.Second),
 		CompletedAt: time.Now(),
 		ExitCode:    exitCode,
 		Stdout:      "Test stdout output",
-		Stderr:      exitCode == 0 ? "" : "Test stderr output",
+		Stderr:      stderr,
 	}
 	return m.On("ExecuteStreamInSandbox", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(result, nil)
 }
@@ -197,9 +211,16 @@ func (m *MockKubernetesClient) UploadFileToSandbox(ctx context.Context, namespac
 
 // SetupUploadFileToSandboxMock sets up a default mock response for UploadFileToSandbox
 func (m *MockKubernetesClient) SetupUploadFileToSandboxMock(isDir bool) *mock.Call {
+	path := "/workspace/test.py"
+	size := int64(1024)
+	if isDir {
+		path = "/workspace/data"
+		size = int64(4096)
+	}
+	
 	result := &types.FileResult{
-		Path:      isDir ? "/workspace/data" : "/workspace/test.py",
-		Size:      isDir ? 4096 : 1024,
+		Path:      path,
+		Size:      size,
 		IsDir:     isDir,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
