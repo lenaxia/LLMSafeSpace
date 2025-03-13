@@ -3,7 +3,7 @@ package common
 // Controller-related constants
 const (
 	// Controller name
-	ControllerName = "sandbox-controller"
+	ControllerName = "controller"
 	
 	// Finalizer names
 	SandboxFinalizer = "sandbox.llmsafespace.dev/finalizer"

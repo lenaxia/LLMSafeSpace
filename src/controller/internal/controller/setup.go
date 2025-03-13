@@ -5,9 +5,9 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/sandbox"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/warmpool"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/warmpod"
+	"github.com/lenaxia/llmsafespace/controller/internal/sandbox"
+	"github.com/lenaxia/llmsafespace/controller/internal/warmpool"
+	"github.com/lenaxia/llmsafespace/controller/internal/warmpod"
 )
 
 // InitializeControllers initializes all controllers with the manager

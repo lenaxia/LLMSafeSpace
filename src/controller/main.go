@@ -12,9 +12,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/controller"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/src/sandbox-controller/internal/resources"
+	"github.com/lenaxia/llmsafespace/controller/internal/controller"
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespace/controller/internal/resources"
 )
 
 var (
