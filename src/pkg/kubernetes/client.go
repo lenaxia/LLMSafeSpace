@@ -204,13 +204,3 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	return client
 }
 
-// Sandboxes returns an interfaces.SandboxInterface for the given namespace
-func (c *LLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
-	if c.client != nil {
-		return c.client.Sandboxes(namespace)
-	}
-	return &sandboxes{
-		client: c.restClient,
-		ns:     namespace,
-	}
-}
