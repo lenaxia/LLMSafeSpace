@@ -13,12 +13,12 @@ func TestMockLogger(t *testing.T) {
 	mockLogger := mocks.NewMockLogger()
 	
 	// Setup expectations
-	logger.On("Debug", "Debug message", []interface{}{"key", "value"}).Return()
-	logger.On("Info", "Info message", []interface{}{"key", "value"}).Return()
-	logger.On("Warn", "Warning message", []interface{}{"key", "value"}).Return()
-	logger.On("Error", "Error message", errors.New("test error"), []interface{}{"key", "value"}).Return()
-	logger.On("With", []interface{}{"context", "value"}).Return(logger)
-	logger.On("Sync").Return(nil)
+	mockLogger.On("Debug", "Debug message", []interface{}{"key", "value"}).Return()
+	mockLogger.On("Info", "Info message", []interface{}{"key", "value"}).Return()
+	mockLogger.On("Warn", "Warning message", []interface{}{"key", "value"}).Return()
+	mockLogger.On("Error", "Error message", errors.New("test error"), []interface{}{"key", "value"}).Return()
+	mockLogger.On("With", []interface{}{"context", "value"}).Return(mockLogger)
+	mockLogger.On("Sync").Return(nil)
 	
 	// Use the logger
 	logger.Debug("Debug message", "key", "value")
