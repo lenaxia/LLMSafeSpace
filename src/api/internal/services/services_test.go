@@ -218,20 +218,20 @@ func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID str
 	return args.Get(0).(*types.SandboxStatus), args.Error(1)
 }
 
-func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*execution.Result, error) {
+func (m *MockSandboxService) Execute(ctx context.Context, req sandbox.ExecuteRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]interfaces.FileInfo, error) {
+func (m *MockSandboxService) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
 	args := m.Called(ctx, sandboxID, path)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]interfaces.FileInfo), args.Error(1)
+	return args.Get(0).([]types.FileInfo), args.Error(1)
 }
 
 func (m *MockSandboxService) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
@@ -242,12 +242,12 @@ func (m *MockSandboxService) DownloadFile(ctx context.Context, sandboxID, path s
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*interfaces.FileInfo, error) {
+func (m *MockSandboxService) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
 	args := m.Called(ctx, sandboxID, path, content)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*interfaces.FileInfo), args.Error(1)
+	return args.Get(0).(*types.FileInfo), args.Error(1)
 }
 
 func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path string) error {
@@ -255,12 +255,12 @@ func (m *MockSandboxService) DeleteFile(ctx context.Context, sandboxID, path str
 	return args.Error(0)
 }
 
-func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*execution.Result, error) {
+func (m *MockSandboxService) InstallPackages(ctx context.Context, req sandbox.InstallPackagesRequest) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
 func (m *MockSandboxService) CreateSession(userID, sandboxID string, conn *websocket.Conn) (*sandbox.Session, error) {
@@ -356,20 +356,20 @@ func (m *MockExecutionService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockExecutionService) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*execution.Result, error) {
+func (m *MockExecutionService) ExecuteCode(ctx context.Context, sandboxID, code string, timeout int) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandboxID, code, timeout)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
-func (m *MockExecutionService) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*execution.Result, error) {
+func (m *MockExecutionService) ExecuteCommand(ctx context.Context, sandboxID, command string, timeout int) (*types.ExecutionResult, error) {
 	args := m.Called(ctx, sandboxID, command, timeout)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*execution.Result), args.Error(1)
+	return args.Get(0).(*types.ExecutionResult), args.Error(1)
 }
 
 type MockFileService struct {
