@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

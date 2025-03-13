@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
