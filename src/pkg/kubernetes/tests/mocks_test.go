@@ -157,7 +157,7 @@ func TestMockWatch(t *testing.T) {
 	
 	// Receive the event
 	event := <-watch.ResultChan()
-	assert.Equal(t, watch.EventTypeAdded, event.Type)
+	assert.Equal(t, watch.Added, event.Type)
 	assert.Equal(t, "test-sandbox", event.Object.(*types.Sandbox).Name)
 	
 	// Stop watching
