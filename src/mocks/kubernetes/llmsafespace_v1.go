@@ -6,10 +6,13 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
-// MockLLMSafespaceV1Interface implements the LLMSafespaceV1Interface for testing
+// MockLLMSafespaceV1Interface implements interfaces.LLMSafespaceV1Interface for testing
 type MockLLMSafespaceV1Interface struct {
 	mock.Mock
 }
+
+// Ensure MockLLMSafespaceV1Interface implements the interface
+var _ interfaces.LLMSafespaceV1Interface = (*MockLLMSafespaceV1Interface)(nil)
 
 // NewMockLLMSafespaceV1Interface creates a new mock LLMSafespaceV1Interface
 func NewMockLLMSafespaceV1Interface() *MockLLMSafespaceV1Interface {
