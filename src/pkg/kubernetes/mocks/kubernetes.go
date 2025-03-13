@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/mock"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
