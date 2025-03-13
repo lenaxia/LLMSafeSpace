@@ -71,10 +71,10 @@ func TestStartInformers(t *testing.T) {
 // TestInformerListWatch tests the list and watch functionality of informers
 func TestInformerListWatch(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockLLMSafespaceV1Client()
+	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
 	// Setup mock sandbox interface
-	sandboxInterface := mocks.NewMockSandboxInterface()
+	sandboxInterface := kmocks.NewMockSandboxInterface()
 	mockClient.On("Sandboxes", "test-namespace").Return(sandboxInterface)
 	
 	// Setup list and watch methods
