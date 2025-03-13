@@ -22,8 +22,8 @@ func NewMockFactory() *MockFactory {
 }
 
 // NewKubernetesClient creates a new mock Kubernetes client
-func (f *MockFactory) NewKubernetesClient() *kubernetes.MockKubernetesClient {
-	client := kubernetes.NewMockKubernetesClient()
+func (f *MockFactory) NewKubernetesClient() *kmocks.MockKubernetesClient {
+	client := kmocks.NewMockKubernetesClient()
 	// Set up common defaults
 	client.On("Clientset").Return(fake.NewSimpleClientset())
 	client.On("RESTConfig").Return(&rest.Config{})
@@ -34,8 +34,8 @@ func (f *MockFactory) NewKubernetesClient() *kubernetes.MockKubernetesClient {
 }
 
 // NewLogger creates a new mock logger
-func (f *MockFactory) NewLogger() *logger.MockLogger {
-	return logger.NewMockLogger()
+func (f *MockFactory) NewLogger() *lmocks.MockLogger {
+	return lmocks.NewMockLogger()
 }
 
 // NewSandbox creates a mock Sandbox with the given name
@@ -191,8 +191,8 @@ func (f *MockFactory) NewFileList(path string, files []types.FileInfo) *types.Fi
 	}
 }
 
-// NewFileInfo creates a mock FileInfo
-func (f *MockFactory) NewFileInfo(path string, isDir bool, size int64) types.FileInfo {
+// MockFileInfo creates a mock FileInfo
+func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 	now := time.Now()
 	return types.FileInfo{
 		Path:      path,

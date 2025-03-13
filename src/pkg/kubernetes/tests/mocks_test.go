@@ -109,6 +109,7 @@ func TestMockFileOperations(t *testing.T) {
 		Path: "/workspace",
 	}
 	
+	factory := mocks.NewMockFactory()
 	fileList := &types.FileList{
 		Files: []types.FileInfo{
 			mocks.MockFileInfo("/workspace/test.py", 1024, false),
