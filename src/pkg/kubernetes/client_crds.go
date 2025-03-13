@@ -49,6 +49,13 @@ type LLMSafespaceV1Client struct {
 	restClient rest.Interface
 }
 
+// NewLLMSafespaceV1Client creates a new LLMSafespaceV1Client for testing
+func NewLLMSafespaceV1Client(restClient rest.Interface) *LLMSafespaceV1Client {
+	return &LLMSafespaceV1Client{
+		restClient: restClient,
+	}
+}
+
 var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
 // SandboxesGetter defines the interface for getting Sandboxes
