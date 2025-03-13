@@ -9,7 +9,6 @@ import (
 
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	tmocks "github.com/lenaxia/llmsafespace/mocks/types"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
