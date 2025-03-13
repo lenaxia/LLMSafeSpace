@@ -4,13 +4,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/mocks/logger"
+	mocklogger "github.com/lenaxia/llmsafespace/pkg/mocks/logger"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMockLogger(t *testing.T) {
 	// Create a mock logger
-	mockLogger := mocks.NewMockLogger()
+	mockLogger := mocklogger.NewMockLogger()
 	
 	// Setup expectations
 	mockLogger.On("Debug", "Debug message", []interface{}{"key", "value"}).Return()
@@ -21,36 +21,36 @@ func TestMockLogger(t *testing.T) {
 	mockLogger.On("Sync").Return(nil)
 	
 	// Use the logger
-	logger.Debug("Debug message", "key", "value")
-	logger.Info("Info message", "key", "value")
-	logger.Warn("Warning message", "key", "value")
-	logger.Error("Error message", errors.New("test error"), "key", "value")
+	mockLogger.Debug("Debug message", "key", "value")
+	mockLogger.Info("Info message", "key", "value")
+	mockLogger.Warn("Warning message", "key", "value")
+	mockLogger.Error("Error message", errors.New("test error"), "key", "value")
 	
 	// Test With method
-	contextLogger := logger.With("context", "value")
-	assert.Equal(t, logger, contextLogger)
+	contextLogger := mockLogger.With("context", "value")
+	assert.Equal(t, mockLogger, contextLogger)
 	
 	// Test Sync method
-	err := logger.Sync()
+	err := mockLogger.Sync()
 	assert.NoError(t, err)
 	
 	// Verify expectations
-	logger.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
 }
 
 func TestMockLoggerChaining(t *testing.T) {
 	// Create a mock logger
-	logger := logger.NewMockLogger()
+	mockLogger := mocklogger.NewMockLogger()
 	
 	// Setup expectations for chained calls
-	contextLogger := logger.NewMockLogger()
-	logger.On("With", []interface{}{"context", "value"}).Return(contextLogger)
+	contextLogger := mocklogger.NewMockLogger()
+	mockLogger.On("With", []interface{}{"context", "value"}).Return(contextLogger)
 	contextLogger.On("Info", "Contextual message", []interface{}{"key", "value"}).Return()
 	
 	// Use the logger with chaining
-	logger.With("context", "value").Info("Contextual message", "key", "value")
+	mockLogger.With("context", "value").Info("Contextual message", "key", "value")
 	
 	// Verify expectations
-	logger.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
 	contextLogger.AssertExpectations(t)
 }

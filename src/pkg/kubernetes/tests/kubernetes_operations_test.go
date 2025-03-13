@@ -101,7 +101,7 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get sandbox")
 	
 	// Test case 2: Sandbox pod not found
-	emptyPodSandbox := typesmock.NewMockSandbox("empty-pod", "test-namespace")
+	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace")
 	emptyPodSandbox.Status.PodName = ""
 	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
 	
