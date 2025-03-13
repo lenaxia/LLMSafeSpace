@@ -16,7 +16,7 @@ func TestInformerFactory(t *testing.T) {
 	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
 	// Create informer factory
-	factory := kubernetes.NewInformerFactory(mockClient, 30*time.Second, "test-namespace")
+	factory := kubernetes.NewInformerFactory(kubernetes.NewLLMSafespaceV1Client(nil), 30*time.Second, "test-namespace")
 	assert.NotNil(t, factory)
 	
 	// Test individual informers

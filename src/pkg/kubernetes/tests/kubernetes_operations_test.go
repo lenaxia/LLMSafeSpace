@@ -422,18 +422,18 @@ func TestUploadFileToSandbox(t *testing.T) {
 // TestDeleteFileInSandbox tests the DeleteFileInSandbox method
 func TestDeleteFileInSandbox(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockKubernetesClient()
+	mockClient := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	

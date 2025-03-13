@@ -308,7 +308,7 @@ func TestSandboxProfileInterface(t *testing.T) {
 	profileList := &types.SandboxProfileList{
 		Items: []types.SandboxProfile{*profile},
 	}
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
