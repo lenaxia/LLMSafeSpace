@@ -95,6 +95,9 @@ func (m *MockSandboxProfileInterface) SetupListMock() *mock.Call {
 
 func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return NewMockWatch(), nil
+	}
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
