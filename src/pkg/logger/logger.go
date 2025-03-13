@@ -7,10 +7,24 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// LoggerInterface defines the interface for logging operations
+type LoggerInterface interface {
+	Debug(msg string, keysAndValues ...interface{})
+	Info(msg string, keysAndValues ...interface{})
+	Warn(msg string, keysAndValues ...interface{})
+	Error(msg string, err error, keysAndValues ...interface{})
+	Fatal(msg string, err error, keysAndValues ...interface{})
+	With(keysAndValues ...interface{}) LoggerInterface
+	Sync() error
+}
+
 // Logger provides structured logging
 type Logger struct {
 	logger *zap.Logger
 }
+
+// Ensure Logger implements LoggerInterface
+var _ LoggerInterface = (*Logger)(nil)
 
 // New creates a new logger
 func New(development bool, level string, encoding string) (*Logger, error) {
@@ -89,7 +103,7 @@ func (l *Logger) Fatal(msg string, err error, keysAndValues ...interface{}) {
 }
 
 // With returns a logger with additional fields
-func (l *Logger) With(keysAndValues ...interface{}) *Logger {
+func (l *Logger) With(keysAndValues ...interface{}) LoggerInterface {
 	return &Logger{
 		logger: l.logger.With(fieldsFromKeysAndValues(keysAndValues)...),
 	}
