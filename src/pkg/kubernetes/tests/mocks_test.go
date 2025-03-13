@@ -152,7 +152,7 @@ func TestMockWatch(t *testing.T) {
 	factory := mocks.NewMockFactory()
 	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	go func() {
-		mockWatch.SendEvent(watch.Added, sandbox)
+		mockWatch.SendEvent(watch.EventType("ADDED"), sandbox)
 	}()
 	
 	// Receive the event
