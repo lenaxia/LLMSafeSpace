@@ -47,6 +47,7 @@ func init() {
 // LLMSafespaceV1Client implements the LLMSafespaceV1Interface
 type LLMSafespaceV1Client struct {
 	restClient rest.Interface
+	client     interfaces.LLMSafespaceV1Interface
 }
 
 // NewLLMSafespaceV1Client creates a new LLMSafespaceV1Client for testing
@@ -58,7 +59,7 @@ func NewLLMSafespaceV1Client(restClient rest.Interface) *LLMSafespaceV1Client {
 
 // WithMockClient enables injecting a mock client for testing
 func (c *LLMSafespaceV1Client) WithMockClient(mock interfaces.LLMSafespaceV1Interface) *LLMSafespaceV1Client {
-	c.restClient = mock
+	c.client = mock
 	return c
 }
 
