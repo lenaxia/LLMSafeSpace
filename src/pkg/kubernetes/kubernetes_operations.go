@@ -80,7 +80,7 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout: stdout,
 		Stderr: stderr,
 		Timeout: time.Duration(req.Timeout) * time.Second,
@@ -118,8 +118,8 @@ type ExecOptions struct {
 	Timeout time.Duration
 }
 
-// executeCommand executes a command in a pod
-func (c *Client) executeCommand(ctx context.Context, namespace, podName string, command []string, options *ExecOptions) (int, error) {
+// ExecuteCommand executes a command in a pod (exported for testing)
+func (c *Client) ExecuteCommand(ctx context.Context, namespace, podName string, command []string, options *ExecOptions) (int, error) {
 	if options == nil {
 		options = &ExecOptions{}
 	}
@@ -248,8 +248,8 @@ func (c *Client) ExecuteStreamInSandbox(
 	startTime := time.Now()
 	
 	// Create streaming buffers
-	stdoutStreamer := &streamWriter{stream: "stdout", callback: outputCallback}
-	stderrStreamer := &streamWriter{stream: "stderr", callback: outputCallback}
+	stdoutStreamer := &StreamWriter{Stream: "stdout", Callback: outputCallback}
+	stderrStreamer := &StreamWriter{Stream: "stderr", Callback: outputCallback}
 	
 	// Collect full output for the result
 	stdoutCollector := &bytes.Buffer{}
@@ -259,7 +259,7 @@ func (c *Client) ExecuteStreamInSandbox(
 	stdout := io.MultiWriter(stdoutStreamer, stdoutCollector)
 	stderr := io.MultiWriter(stderrStreamer, stderrCollector)
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout: stdout,
 		Stderr: stderr,
 		Timeout: time.Duration(req.Timeout) * time.Second,
@@ -289,26 +289,26 @@ func (c *Client) ExecuteStreamInSandbox(
 	}, nil
 }
 
-// streamWriter implements io.Writer to stream output to a callback
-type streamWriter struct {
-	stream   string
-	callback func(stream, content string)
-	buffer   bytes.Buffer
+// StreamWriter implements io.Writer to stream output to a callback
+type StreamWriter struct {
+	Stream   string
+	Callback func(stream, content string)
+	Buffer   bytes.Buffer
 }
 
 // Write implements io.Writer
-func (w *streamWriter) Write(p []byte) (n int, err error) {
-	n, err = w.buffer.Write(p)
+func (w *StreamWriter) Write(p []byte) (n int, err error) {
+	n, err = w.Buffer.Write(p)
 	if err != nil {
 		return n, err
 	}
 	
 	// Process the buffer line by line
 	for {
-		line, err := w.buffer.ReadString('\n')
+		line, err := w.Buffer.ReadString('\n')
 		if err == io.EOF {
 			// Put the incomplete line back in the buffer
-			w.buffer.WriteString(line)
+			w.Buffer.WriteString(line)
 			break
 		}
 		if err != nil {
@@ -316,7 +316,7 @@ func (w *streamWriter) Write(p []byte) (n int, err error) {
 		}
 		
 		// Send the line to the callback
-		w.callback(w.stream, line)
+		w.Callback(w.Stream, line)
 	}
 	
 	return n, nil
@@ -351,7 +351,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout: stdout,
 		Stderr: stderr,
 		Timeout: 10 * time.Second,
@@ -384,12 +384,12 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 			continue
 		}
 		
-		size, _ := parseInt64(parts[1])
+		size, _ := ParseInt64(parts[1])
 		isDir := parts[2] == "d"
 		
 		// Parse timestamps
-		createdAtUnix, _ := parseFloat64(parts[3])
-		updatedAtUnix, _ := parseFloat64(parts[4])
+		createdAtUnix, _ := ParseFloat64(parts[3])
+		updatedAtUnix, _ := ParseFloat64(parts[4])
 		
 		createdAt := time.Unix(int64(createdAtUnix), 0)
 		updatedAt := time.Unix(int64(updatedAtUnix), 0)
@@ -406,15 +406,15 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 	return &types.FileList{Files: files}, nil
 }
 
-// parseInt64 parses a string to int64
-func parseInt64(s string) (int64, error) {
+// ParseInt64 parses a string to int64 (exported for testing)
+func ParseInt64(s string) (int64, error) {
 	var i int64
 	_, err := fmt.Sscanf(s, "%d", &i)
 	return i, err
 }
 
-// parseFloat64 parses a string to float64
-func parseFloat64(s string) (float64, error) {
+// ParseFloat64 parses a string to float64 (exported for testing)
+func ParseFloat64(s string) (float64, error) {
 	var f float64
 	_, err := fmt.Sscanf(s, "%f", &f)
 	return f, err
@@ -442,7 +442,7 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	checkStdout := &bytes.Buffer{}
 	checkStderr := &bytes.Buffer{}
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
 		Stdout: checkStdout,
 		Stderr: checkStderr,
 		Timeout: 5 * time.Second,
@@ -471,7 +471,7 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	
-	exitCode, err = c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout: stdout,
 		Stderr: stderr,
 		Timeout: 30 * time.Second,
@@ -531,7 +531,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		statStdout := &bytes.Buffer{}
 		statStderr := &bytes.Buffer{}
 		
-		exitCode, err = c.executeCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
+		exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
 			Stdout: statStdout,
 			Stderr: statStderr,
 			Timeout: 5 * time.Second,
@@ -575,7 +575,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			parentDir,
 		}
 		
-		_, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, mkdirCmd, &ExecOptions{
+		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, mkdirCmd, &ExecOptions{
 			Timeout: 5 * time.Second,
 		})
 		
@@ -617,7 +617,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 	statStdout := &bytes.Buffer{}
 	statStderr := &bytes.Buffer{}
 	
-	exitCode, err = c.executeCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
+	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
 		Stdout: statStdout,
 		Stderr: statStderr,
 		Timeout: 5 * time.Second,
@@ -636,9 +636,9 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		return nil, fmt.Errorf("invalid stat output: %s", statOutput)
 	}
 	
-	size, _ := parseInt64(statParts[0])
-	modTimeUnix, _ := parseInt64(statParts[1])
-	changeTimeUnix, _ := parseInt64(statParts[2])
+	size, _ := ParseInt64(statParts[0])
+	modTimeUnix, _ := ParseInt64(statParts[1])
+	changeTimeUnix, _ := ParseInt64(statParts[2])
 	
 	modTime := time.Unix(modTimeUnix, 0)
 	changeTime := time.Unix(changeTimeUnix, 0)
@@ -674,7 +674,7 @@ func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string
 	checkStdout := &bytes.Buffer{}
 	checkStderr := &bytes.Buffer{}
 	
-	exitCode, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
+	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
 		Stdout: checkStdout,
 		Stderr: checkStderr,
 		Timeout: 5 * time.Second,
@@ -701,7 +701,7 @@ func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	
-	exitCode, err = c.executeCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
+	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout: stdout,
 		Stderr: stderr,
 		Timeout: 10 * time.Second,

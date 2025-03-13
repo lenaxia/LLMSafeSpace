@@ -85,6 +85,29 @@ func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
 	}, nil
 }
 
+// NewForTesting creates a new Kubernetes client for testing
+func NewForTesting(
+	clientset kubernetes.Interface,
+	dynamicClient dynamic.Interface,
+	restConfig *rest.Config,
+	informerFactory informers.SharedInformerFactory,
+	logger *logger.Logger,
+) *Client {
+	if logger == nil {
+		logger, _ = logger.New(true, "debug", "console")
+	}
+	
+	return &Client{
+		clientset:       clientset,
+		dynamicClient:   dynamicClient,
+		restConfig:      restConfig,
+		informerFactory: informerFactory,
+		logger:          logger,
+		config:          &config.KubernetesConfig{},
+		stopCh:          make(chan struct{}),
+	}
+}
+
 // Start starts the informer factories and leader election
 func (c *Client) Start() error {
 	// Start informer factory
