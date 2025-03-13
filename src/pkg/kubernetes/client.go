@@ -110,7 +110,7 @@ func NewForTesting(
 		dynamicClient:   dynamicClient,
 		restConfig:      restConfig,
 		informerFactory: informerFactory,
-		logger:          logger,
+		logger:          log,
 		config:          &config.KubernetesConfig{},
 		stopCh:          make(chan struct{}),
 	}
