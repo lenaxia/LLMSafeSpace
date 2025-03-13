@@ -18,7 +18,7 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 - Integrates with Kubernetes API for sandbox orchestration
 - Coordinates warm pool usage for faster sandbox creation
 
-#### `sandbox-controller`
+#### `controller`
 - Unified Kubernetes operator that manages all custom resources
 - Creates and manages sandbox pods with integrated warm pool support
 - Implements security policies and resource limits
@@ -62,7 +62,7 @@ src/
 │       ├── auth/             # Authentication and authorization
 │       ├── handlers/         # API endpoint handlers
 │       └── k8s/              # Kubernetes integration
-├── sandbox-controller/       # Unified Kubernetes operator
+├── controller/       # Unified Kubernetes operator
 │   ├── Dockerfile
 │   ├── main.go
 │   └── internal/
@@ -363,7 +363,7 @@ Current sandboxes are ephemeral by default, which is appropriate for most LLM ag
 
 ### 2. Warm Pool Optimizations
 
-The unified sandbox-controller significantly improves warm pool management, but there are several additional optimizations planned:
+The unified controller significantly improves warm pool management, but there are several additional optimizations planned:
 
 **Planned Enhancements:**
 - Predictive scaling based on usage patterns and time-of-day trends

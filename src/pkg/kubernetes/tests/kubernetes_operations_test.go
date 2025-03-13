@@ -1,10 +1,8 @@
 package tests
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"testing"
 	"time"
 
@@ -14,11 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/rest/fake"
 )
 
 // TestExecuteInSandbox tests the ExecuteInSandbox method
@@ -101,7 +95,7 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get sandbox")
 	
 	// Test case 2: Sandbox pod not found
-	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace")
+	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace", "python:3.10")
 	emptyPodSandbox.Status.PodName = ""
 	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
 	
@@ -433,6 +427,7 @@ func TestDeleteFileInSandbox(t *testing.T) {
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
+	factory := mocks.NewMockFactory()
 	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandbox.Status.PodName = "test-pod"
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
