@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -13,7 +13,7 @@ import (
 // TestInformerFactory tests the informer factory creation and methods
 func TestInformerFactory(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockLLMSafespaceV1Client()
+	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
 	// Create informer factory
 	factory := kubernetes.NewInformerFactory(mockClient, 30*time.Second, "test-namespace")
@@ -39,7 +39,7 @@ func TestInformerFactory(t *testing.T) {
 // TestStartInformers tests starting all informers
 func TestStartInformers(t *testing.T) {
 	// Create mock client
-	mockClient := mocks.NewMockLLMSafespaceV1Client()
+	mockClient := kmocks.NewMockLLMSafespaceV1Interface()
 	
 	// Setup mock list and watch methods
 	mockClient.SetupSandboxesMock("test-namespace")
@@ -81,7 +81,7 @@ func TestInformerListWatch(t *testing.T) {
 	sandboxInterface.SetupListMock()
 	
 	// Create a mock watch
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	

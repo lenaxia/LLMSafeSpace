@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/pkg/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	typesmock "github.com/lenaxia/llmsafespace/pkg/types/mock"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -15,7 +15,7 @@ import (
 // TestMockKubernetesClient tests the MockKubernetesClient implementation
 func TestMockKubernetesClient(t *testing.T) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Test basic methods
 	client.On("Start").Return(nil)
@@ -33,18 +33,19 @@ func TestMockKubernetesClient(t *testing.T) {
 // TestMockSandboxOperations tests the mock sandbox operations
 func TestMockSandboxOperations(t *testing.T) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Setup LlmsafespaceV1 mock
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	client.On("LlmsafespaceV1").Return(v1Client)
 	
 	// Setup Sandboxes mock
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
 	// Setup Get mock
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
 	
 	// Test getting a sandbox
@@ -64,7 +65,7 @@ func TestMockSandboxOperations(t *testing.T) {
 // TestMockExecuteInSandbox tests the mock ExecuteInSandbox method
 func TestMockExecuteInSandbox(t *testing.T) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Setup ExecuteInSandbox mock
 	execReq := &types.ExecutionRequest{
@@ -101,7 +102,7 @@ func TestMockExecuteInSandbox(t *testing.T) {
 // TestMockFileOperations tests the mock file operations
 func TestMockFileOperations(t *testing.T) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Setup ListFilesInSandbox mock
 	fileReq := &types.FileRequest{
@@ -135,12 +136,12 @@ func TestMockFileOperations(t *testing.T) {
 // TestMockWatch tests the mock watch implementation
 func TestMockWatch(t *testing.T) {
 	// Create a mock watch
-	mockWatch := mocks.NewMockWatch()
+	mockWatch := kmocks.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
 	// Setup sandbox client
-	sandboxClient := mocks.NewMockSandboxInterface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
 	sandboxClient.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
 	
 	// Start watching
@@ -148,7 +149,8 @@ func TestMockWatch(t *testing.T) {
 	assert.NoError(t, err)
 	
 	// Send an event
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	go func() {
 		mockWatch.SendEvent(watch.Added, sandbox)
 	}()
@@ -169,7 +171,7 @@ func TestMockWatch(t *testing.T) {
 // TestSetupHelperMethods tests the setup helper methods
 func TestSetupHelperMethods(t *testing.T) {
 	// Create a mock client
-	client := mocks.NewMockKubernetesClient()
+	client := kmocks.NewMockKubernetesClient()
 	
 	// Test setup helper methods
 	client.SetupExecuteInSandboxMock(0)
@@ -215,12 +217,12 @@ func TestSetupHelperMethods(t *testing.T) {
 // TestMockInterfaces tests the mock interfaces
 func TestMockInterfaces(t *testing.T) {
 	// Create mock interfaces
-	v1Client := mocks.NewMockLLMSafespaceV1Interface()
-	sandboxClient := mocks.NewMockSandboxInterface()
-	warmPoolClient := mocks.NewMockWarmPoolInterface()
-	warmPodClient := mocks.NewMockWarmPodInterface()
-	runtimeEnvClient := mocks.NewMockRuntimeEnvironmentInterface()
-	profileClient := mocks.NewMockSandboxProfileInterface()
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	warmPoolClient := kmocks.NewMockWarmPoolInterface()
+	warmPodClient := kmocks.NewMockWarmPodInterface()
+	runtimeEnvClient := kmocks.NewMockRuntimeEnvironmentInterface()
+	profileClient := kmocks.NewMockSandboxProfileInterface()
 	
 	// Setup mock methods
 	v1Client.SetupSandboxesMock("test-namespace")
@@ -271,7 +273,8 @@ func TestMockInterfaces(t *testing.T) {
 	assert.NotNil(t, v1Client.SandboxProfiles("test-namespace"))
 	
 	// Test sandbox methods
-	sandbox := typesmock.NewMockSandbox("test-sandbox", "test-namespace")
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	result, err := sandboxClient.Create(sandbox)
 	assert.NoError(t, err)
 	assert.Equal(t, "test-sandbox", result.Name)
