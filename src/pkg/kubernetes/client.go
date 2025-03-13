@@ -118,9 +118,11 @@ func NewForTesting(
 
 // Start starts the informer factories and leader election
 func (c *Client) Start() error {
-	// Start informer factory
-	c.informerFactory.Start(c.stopCh)
-	c.logger.Info("Started informer factory")
+	// Start informer factory if it exists
+	if c.informerFactory != nil {
+		c.informerFactory.Start(c.stopCh)
+		c.logger.Info("Started informer factory")
+	}
 
 	// Configure leader election if enabled
 	if c.config.LeaderElection.Enabled {
