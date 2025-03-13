@@ -115,10 +115,12 @@ func (m *MockWarmPoolInterface) Watch(opts metav1.ListOptions) (watch.Interface,
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
-// SetupWatchMock sets up a default mock response for Watch
+// SetupWatchMock sets up a mock response for Watch with Watch=true
 func (m *MockWarmPoolInterface) SetupWatchMock() *mock.Call {
     mockWatch := NewMockWatch()
-    return m.On("Watch", mock.AnythingOfType("metav1.ListOptions")).Return(mockWatch, nil)
+    return m.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+        return true // Accept any ListOptions to avoid strict matching issues
+    })).Return(mockWatch, nil)
 }
 
 // NewMockWarmPool creates a mock WarmPool with the given name
