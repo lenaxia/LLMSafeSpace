@@ -56,6 +56,12 @@ func NewLLMSafespaceV1Client(restClient rest.Interface) *LLMSafespaceV1Client {
 	}
 }
 
+// WithMockClient enables injecting a mock client for testing
+func (c *LLMSafespaceV1Client) WithMockClient(mock interfaces.LLMSafespaceV1Interface) *LLMSafespaceV1Client {
+	c.restClient = mock
+	return c
+}
+
 var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
 // SandboxesGetter defines the interface for getting Sandboxes

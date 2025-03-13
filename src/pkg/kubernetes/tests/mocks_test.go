@@ -151,12 +151,12 @@ func TestMockWatch(t *testing.T) {
 	factory := mocks.NewMockFactory()
 	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	go func() {
-		mockWatch.SendEvent(watch.Added, sandbox)
+		mockWatch.SendEvent(watch.EventTypeAdded, sandbox)
 	}()
 	
 	// Receive the event
 	event := <-watch.ResultChan()
-	assert.Equal(t, watch.Added, event.Type)
+	assert.Equal(t, watch.EventTypeAdded, event.Type)
 	assert.Equal(t, "test-sandbox", event.Object.(*types.Sandbox).Name)
 	
 	// Stop watching
