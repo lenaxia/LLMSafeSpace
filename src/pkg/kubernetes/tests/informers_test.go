@@ -46,7 +46,11 @@ func TestStartInformers(t *testing.T) {
 	mockClient.SetupSandboxProfilesMock("test-namespace")
 	
 	// Create informer factory
-	factory := kubernetes.NewInformerFactory(mockClient, 30*time.Second, "test-namespace")
+	factory := kubernetes.NewInformerFactory(
+		kubernetes.NewLLMSafespaceV1Client(nil).WithMockClient(mockClient), 
+		30*time.Second, 
+		"test-namespace",
+	)
 	
 	// Create a stop channel
 	stopCh := make(chan struct{})
