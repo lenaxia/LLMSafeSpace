@@ -91,14 +91,14 @@ func NewForTesting(
 	dynamicClient dynamic.Interface,
 	restConfig *rest.Config,
 	informerFactory informers.SharedInformerFactory,
-	logger *logger.Logger,
+	logger logger.LoggerInterface,
 ) *Client {
 	if logger == nil {
 		var err error
-		logger, err = logger.NewLogger(true, "debug", "console")
+		logger, err = logger.New(true, "debug", "console")
 		if err != nil {
 			// Use a simple default logger if creation fails
-			defaultLogger, _ := logger.NewLogger(true, "debug", "console")
+			defaultLogger, _ := logger.New(true, "debug", "console")
 			logger = defaultLogger
 		}
 	}
