@@ -55,7 +55,7 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 		}
 		
 		// Execute the write command
-		_, err := c.executeCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
+		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write code to file: %w", err)
 		}
