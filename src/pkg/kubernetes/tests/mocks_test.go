@@ -9,7 +9,6 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
 )
 
 // TestMockKubernetesClient tests the MockKubernetesClient implementation
@@ -109,7 +108,6 @@ func TestMockFileOperations(t *testing.T) {
 		Path: "/workspace",
 	}
 	
-	factory := mocks.NewMockFactory()
 	fileList := &types.FileList{
 		Files: []types.FileInfo{
 			mocks.MockFileInfo("/workspace/test.py", 1024, false),
