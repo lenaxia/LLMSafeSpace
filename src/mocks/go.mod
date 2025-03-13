@@ -3,12 +3,15 @@ module github.com/lenaxia/llmsafespace/mocks
 go 1.19
 
 require (
+	github.com/lenaxia/llmsafespace/pkg v0.0.0
 	github.com/stretchr/testify v1.8.3
 	go.uber.org/zap v1.25.0
 	k8s.io/api v0.28.1
 	k8s.io/apimachinery v0.28.1
 	k8s.io/client-go v0.28.1
 )
+
+replace github.com/lenaxia/llmsafespace/pkg => ../pkg
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

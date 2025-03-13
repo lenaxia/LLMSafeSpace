@@ -12,6 +12,8 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/jackc/pgx/v5 v5.4.3
+	github.com/lenaxia/llmsafespace/mocks v0.0.0
+	github.com/lenaxia/llmsafespace/pkg v0.0.0
 	github.com/prometheus/client_golang v1.16.0
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.3
@@ -23,6 +25,11 @@ require (
 	k8s.io/apimachinery v0.28.1
 	k8s.io/client-go v0.28.1
 	k8s.io/code-generator v0.26.0
+)
+
+replace (
+	github.com/lenaxia/llmsafespace/mocks => ../mocks
+	github.com/lenaxia/llmsafespace/pkg => ../pkg
 )
 
 require (
