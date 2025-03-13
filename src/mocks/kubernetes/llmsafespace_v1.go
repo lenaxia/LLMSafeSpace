@@ -29,8 +29,10 @@ func (m *MockLLMSafespaceV1Interface) Sandboxes(namespace string) interfaces.San
 }
 
 // SetupSandboxesMock sets up a default mock response for Sandboxes
-func (m *MockLLMSafespaceV1Interface) SetupSandboxesMock(namespace string) *mock.Call {
-	return m.On("Sandboxes", namespace).Return(NewMockSandboxInterface())
+func (m *MockLLMSafespaceV1Interface) SetupSandboxesMock(namespace string) *MockSandboxInterface {
+	mockInterface := NewMockSandboxInterface()
+	m.On("Sandboxes", namespace).Return(mockInterface)
+	return mockInterface
 }
 
 // WarmPools returns a mock implementation of the WarmPoolInterface
@@ -43,8 +45,10 @@ func (m *MockLLMSafespaceV1Interface) WarmPools(namespace string) interfaces.War
 }
 
 // SetupWarmPoolsMock sets up a default mock response for WarmPools
-func (m *MockLLMSafespaceV1Interface) SetupWarmPoolsMock(namespace string) *mock.Call {
-	return m.On("WarmPools", namespace).Return(NewMockWarmPoolInterface())
+func (m *MockLLMSafespaceV1Interface) SetupWarmPoolsMock(namespace string) *MockWarmPoolInterface {
+	mockInterface := NewMockWarmPoolInterface()
+	m.On("WarmPools", namespace).Return(mockInterface)
+	return mockInterface
 }
 
 // WarmPods returns a mock implementation of the WarmPodInterface
@@ -57,8 +61,10 @@ func (m *MockLLMSafespaceV1Interface) WarmPods(namespace string) interfaces.Warm
 }
 
 // SetupWarmPodsMock sets up a default mock response for WarmPods
-func (m *MockLLMSafespaceV1Interface) SetupWarmPodsMock(namespace string) *mock.Call {
-	return m.On("WarmPods", namespace).Return(NewMockWarmPodInterface())
+func (m *MockLLMSafespaceV1Interface) SetupWarmPodsMock(namespace string) *MockWarmPodInterface {
+	mockInterface := NewMockWarmPodInterface()
+	m.On("WarmPods", namespace).Return(mockInterface)
+	return mockInterface
 }
 
 // RuntimeEnvironments returns a mock implementation of the RuntimeEnvironmentInterface
@@ -71,8 +77,10 @@ func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(namespace string) inte
 }
 
 // SetupRuntimeEnvironmentsMock sets up a default mock response for RuntimeEnvironments
-func (m *MockLLMSafespaceV1Interface) SetupRuntimeEnvironmentsMock(namespace string) *mock.Call {
-	return m.On("RuntimeEnvironments", namespace).Return(NewMockRuntimeEnvironmentInterface())
+func (m *MockLLMSafespaceV1Interface) SetupRuntimeEnvironmentsMock(namespace string) *MockRuntimeEnvironmentInterface {
+	mockInterface := NewMockRuntimeEnvironmentInterface()
+	m.On("RuntimeEnvironments", namespace).Return(mockInterface)
+	return mockInterface
 }
 
 // SandboxProfiles returns a mock implementation of the SandboxProfileInterface
@@ -85,6 +93,8 @@ func (m *MockLLMSafespaceV1Interface) SandboxProfiles(namespace string) interfac
 }
 
 // SetupSandboxProfilesMock sets up a default mock response for SandboxProfiles
-func (m *MockLLMSafespaceV1Interface) SetupSandboxProfilesMock(namespace string) *mock.Call {
-	return m.On("SandboxProfiles", namespace).Return(NewMockSandboxProfileInterface())
+func (m *MockLLMSafespaceV1Interface) SetupSandboxProfilesMock(namespace string) *MockSandboxProfileInterface {
+	mockInterface := NewMockSandboxProfileInterface()
+	m.On("SandboxProfiles", namespace).Return(mockInterface)
+	return mockInterface
 }
