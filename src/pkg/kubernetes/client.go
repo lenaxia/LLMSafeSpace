@@ -14,9 +14,9 @@ import (
 	"k8s.io/client-go/informers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/config"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/logger"
 )
 
 // Client manages Kubernetes API interactions

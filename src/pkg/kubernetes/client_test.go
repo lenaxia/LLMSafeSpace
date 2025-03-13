@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/config"
+	"github.com/lenaxia/llmsafespace/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/client-go/rest"
 )
