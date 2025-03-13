@@ -48,7 +48,11 @@ func SetupLeaderElection(cfg *LeaderElectionConfig, kubeClient kubernetes.Interf
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %v", err)
 	}
-	id := hostname + "_" + uuid.NewString()
+	uuidObj, err := uuid.NewUUID()
+	if err != nil {
+		return fmt.Errorf("failed to generate UUID: %v", err)
+	}
+	id := hostname + "_" + uuidObj.String()
 
 	// Create a new resource lock
 	lock := &resourcelock.LeaseLock{
