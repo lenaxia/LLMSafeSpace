@@ -31,7 +31,7 @@ func (m *MockWatch) ResultChan() <-chan watch.Event {
 }
 
 // SendEvent sends an event to the result channel
-func (m *MockWatch) SendEvent(eventType watch.EventType, object interface{}) {
+func (m *MockWatch) SendEvent(eventType watch.EventType, object runtime.Object) {
 	m.resultChan <- watch.Event{
 		Type:   eventType,
 		Object: object,
