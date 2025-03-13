@@ -225,7 +225,10 @@ func TestMockInterfaces(t *testing.T) {
 	runtimeEnvClient := kmocks.NewMockRuntimeEnvironmentInterface()
 	profileClient := kmocks.NewMockSandboxProfileInterface()
 	
-	// Setup mock methods
+	// Setup mock methods with proper Watch expectations
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
 	// Set up Sandboxes mock
 	sandboxMock := v1Client.SetupSandboxesMock("test-namespace")
 	sandboxMock.SetupListMock()
