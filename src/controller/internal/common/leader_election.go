@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
@@ -49,7 +48,7 @@ func SetupLeaderElection(cfg *LeaderElectionConfig, kubeClient kubernetes.Interf
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %v", err)
 	}
-	id := hostname + "_" + string(uuid.NewUUID())
+	id := hostname + "_" + uuid.NewString()
 
 	// Create a new resource lock
 	lock := &resourcelock.LeaseLock{
@@ -58,7 +57,6 @@ func SetupLeaderElection(cfg *LeaderElectionConfig, kubeClient kubernetes.Interf
 			Namespace: cfg.Namespace,
 		},
 		Client: kubeClient.CoordinationV1(),
-		LeaseDuration: &cfg.LeaseDuration,
 	}
 
 	// Start leader election
