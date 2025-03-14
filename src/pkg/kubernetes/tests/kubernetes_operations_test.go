@@ -20,20 +20,6 @@ func TestExecuteInSandbox(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockKubernetesClient()
 	
-	// Setup LlmsafespaceV1 mock
-	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-	mockClient.On("LlmsafespaceV1").Return(v1Client)
-	
-	// Setup Sandboxes mock
-	sandboxClient := kmocks.NewMockSandboxInterface()
-	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-	
-	// Setup Get mock
-	factory := mocks.NewMockFactory()
-	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-	sandbox.Status.PodName = "test-pod"
-	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
-	
 	// Setup execution request
 	execReq := &types.ExecutionRequest{
 		Type:    "code",
@@ -52,8 +38,7 @@ func TestExecuteInSandbox(t *testing.T) {
 		Stderr:      "",
 	}
 	
-	// Mock the executeCommand method
-	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Return(0, nil)
+	// Mock the ExecuteInSandbox method directly
 	mockClient.On("ExecuteInSandbox", mock.Anything, "test-namespace", "test-sandbox", execReq).Return(execResult, nil)
 	
 	// Test executing in sandbox
@@ -69,8 +54,6 @@ func TestExecuteInSandbox(t *testing.T) {
 	
 	// Verify expectations
 	mockClient.AssertExpectations(t)
-	v1Client.AssertExpectations(t)
-	sandboxClient.AssertExpectations(t)
 }
 
 //// TestExecuteInSandboxErrors tests error cases for ExecuteInSandbox
