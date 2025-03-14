@@ -69,10 +69,17 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
 	
+	// Setup execution request
+	execReq := &types.ExecutionRequest{
+		Type:    "code",
+		Content: "print('Hello, World!')",
+		Timeout: 30,
+	}
+	
 	// Test case 1: Sandbox not found
 	sandboxClient.On("Get", "nonexistent", metav1.GetOptions{}).Return(nil, errors.New("sandbox not found"))
 	
-	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "nonexistent", &types.ExecutionRequest{})
+	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "nonexistent", execReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get sandbox")
@@ -82,7 +89,7 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	emptyPodSandbox.Status.PodName = ""
 	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
 	
-	result, err = mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "empty-pod", &types.ExecutionRequest{})
+	result, err = mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "empty-pod", execReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "sandbox pod not found")
