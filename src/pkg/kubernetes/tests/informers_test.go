@@ -126,7 +126,8 @@ func TestInformerListWatch(t *testing.T) {
 	sandboxInterface.SetupListMock()
 	
 	// Create a mock watch
-	mockWatch := kmocks.NewMockWatch()
+	mockFactory := mocks.NewMockFactory()
+	mockWatch := mockFactory.NewMockWatch()
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
