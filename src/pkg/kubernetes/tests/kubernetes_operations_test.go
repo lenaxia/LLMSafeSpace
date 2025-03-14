@@ -2,7 +2,7 @@ package tests
 
 import (
 	"context"
-//	"errors"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,43 +56,43 @@ func TestExecuteInSandbox(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-//// TestExecuteInSandboxErrors tests error cases for ExecuteInSandbox
-//func TestExecuteInSandboxErrors(t *testing.T) {
-//	// Create mock client
-//	mockClient := kmocks.NewMockKubernetesClient()
-//	
-//	// Setup LlmsafespaceV1 mock
-//	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-//	mockClient.On("LlmsafespaceV1").Return(v1Client)
-//	
-//	// Setup Sandboxes mock
-//	sandboxClient := kmocks.NewMockSandboxInterface()
-//	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-//	
-//	// Test case 1: Sandbox not found
-//	sandboxClient.On("Get", "nonexistent", metav1.GetOptions{}).Return(nil, errors.New("sandbox not found"))
-//	
-//	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "nonexistent", &types.ExecutionRequest{})
-//	assert.Error(t, err)
-//	assert.Nil(t, result)
-//	assert.Contains(t, err.Error(), "failed to get sandbox")
-//	
-//	// Test case 2: Sandbox pod not found
-//	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace", "python:3.10")
-//	emptyPodSandbox.Status.PodName = ""
-//	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
-//	
-//	result, err = mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "empty-pod", &types.ExecutionRequest{})
-//	assert.Error(t, err)
-//	assert.Nil(t, result)
-//	assert.Contains(t, err.Error(), "sandbox pod not found")
-//	
-//	// Verify expectations
-//	mockClient.AssertExpectations(t)
-//	v1Client.AssertExpectations(t)
-//	sandboxClient.AssertExpectations(t)
-//}
-//
+// TestExecuteInSandboxErrors tests error cases for ExecuteInSandbox
+func TestExecuteInSandboxErrors(t *testing.T) {
+	// Create mock client
+	mockClient := kmocks.NewMockKubernetesClient()
+	
+	// Setup LlmsafespaceV1 mock
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
+	mockClient.On("LlmsafespaceV1").Return(v1Client)
+	
+	// Setup Sandboxes mock
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
+	
+	// Test case 1: Sandbox not found
+	sandboxClient.On("Get", "nonexistent", metav1.GetOptions{}).Return(nil, errors.New("sandbox not found"))
+	
+	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "nonexistent", &types.ExecutionRequest{})
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to get sandbox")
+	
+	// Test case 2: Sandbox pod not found
+	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace", "python:3.10")
+	emptyPodSandbox.Status.PodName = ""
+	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
+	
+	result, err = mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "empty-pod", &types.ExecutionRequest{})
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "sandbox pod not found")
+	
+	// Verify expectations
+	mockClient.AssertExpectations(t)
+	v1Client.AssertExpectations(t)
+	sandboxClient.AssertExpectations(t)
+}
+
 //// TestExecuteStreamInSandbox tests the ExecuteStreamInSandbox method
 //func TestExecuteStreamInSandbox(t *testing.T) {
 //	// Create mock client
