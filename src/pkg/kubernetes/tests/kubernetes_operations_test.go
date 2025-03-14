@@ -92,73 +92,73 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-//// TestExecuteStreamInSandbox tests the ExecuteStreamInSandbox method
-//func TestExecuteStreamInSandbox(t *testing.T) {
-//	// Create mock client
-//	mockClient := kmocks.NewMockKubernetesClient()
-//	
-//	// Setup LlmsafespaceV1 mock
-//	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-//	mockClient.On("LlmsafespaceV1").Return(v1Client)
-//	
-//	// Setup Sandboxes mock
-//	sandboxClient := kmocks.NewMockSandboxInterface()
-//	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-//	
-//	// Setup Get mock
-//	factory := mocks.NewMockFactory()
-//	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-//	sandbox.Status.PodName = "test-pod"
-//	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
-//	
-//	// Setup execution request
-//	execReq := &types.ExecutionRequest{
-//		Type:    "code",
-//		Content: "print('Hello, World!')",
-//		Timeout: 30,
-//	}
-//	
-//	// Setup execution result
-//	execResult := &types.ExecutionResult{
-//		ID:          "test-exec-id",
-//		Status:      "completed",
-//		StartedAt:   time.Now(),
-//		CompletedAt: time.Now(),
-//		ExitCode:    0,
-//		Stdout:      "Hello, World!",
-//		Stderr:      "",
-//	}
-//	
-//	// Mock the executeCommand method
-//	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Return(0, nil)
-//	
-//	// Create a callback function to capture output
-//	var stdoutCapture, stderrCapture string
-//	outputCallback := func(stream, content string) {
-//		if stream == "stdout" {
-//			stdoutCapture += content
-//		} else if stream == "stderr" {
-//			stderrCapture += content
-//		}
-//	}
-//	
-//	mockClient.On("ExecuteStreamInSandbox", mock.Anything, "test-namespace", "test-sandbox", execReq, mock.AnythingOfType("func(string, string)")).Return(execResult, nil)
-//	
-//	// Test executing in sandbox with streaming
-//	result, err := mockClient.ExecuteStreamInSandbox(context.Background(), "test-namespace", "test-sandbox", execReq, outputCallback)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, "test-exec-id", result.ID)
-//	assert.Equal(t, "completed", result.Status)
-//	assert.Equal(t, 0, result.ExitCode)
-//	
-//	// Verify expectations
-//	mockClient.AssertExpectations(t)
-//	v1Client.AssertExpectations(t)
-//	sandboxClient.AssertExpectations(t)
-//}
-//
+// TestExecuteStreamInSandbox tests the ExecuteStreamInSandbox method
+func TestExecuteStreamInSandbox(t *testing.T) {
+	// Create mock client
+	mockClient := kmocks.NewMockKubernetesClient()
+	
+	// Setup LlmsafespaceV1 mock
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
+	mockClient.On("LlmsafespaceV1").Return(v1Client)
+	
+	// Setup Sandboxes mock
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
+	
+	// Setup Get mock
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
+	sandbox.Status.PodName = "test-pod"
+	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
+	
+	// Setup execution request
+	execReq := &types.ExecutionRequest{
+		Type:    "code",
+		Content: "print('Hello, World!')",
+		Timeout: 30,
+	}
+	
+	// Setup execution result
+	execResult := &types.ExecutionResult{
+		ID:          "test-exec-id",
+		Status:      "completed",
+		StartedAt:   time.Now(),
+		CompletedAt: time.Now(),
+		ExitCode:    0,
+		Stdout:      "Hello, World!",
+		Stderr:      "",
+	}
+	
+	// Mock the executeCommand method
+	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Return(0, nil)
+	
+	// Create a callback function to capture output
+	var stdoutCapture, stderrCapture string
+	outputCallback := func(stream, content string) {
+		if stream == "stdout" {
+			stdoutCapture += content
+		} else if stream == "stderr" {
+			stderrCapture += content
+		}
+	}
+	
+	mockClient.On("ExecuteStreamInSandbox", mock.Anything, "test-namespace", "test-sandbox", execReq, mock.AnythingOfType("func(string, string)")).Return(execResult, nil)
+	
+	// Test executing in sandbox with streaming
+	result, err := mockClient.ExecuteStreamInSandbox(context.Background(), "test-namespace", "test-sandbox", execReq, outputCallback)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, "test-exec-id", result.ID)
+	assert.Equal(t, "completed", result.Status)
+	assert.Equal(t, 0, result.ExitCode)
+	
+	// Verify expectations
+	mockClient.AssertExpectations(t)
+	v1Client.AssertExpectations(t)
+	sandboxClient.AssertExpectations(t)
+}
+
 //// TestStreamWriter tests the streamWriter implementation
 //func TestStreamWriter(t *testing.T) {
 //	// Create a buffer to capture output
