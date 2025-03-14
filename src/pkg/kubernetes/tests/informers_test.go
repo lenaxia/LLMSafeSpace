@@ -122,7 +122,7 @@ func TestInformerListWatch(t *testing.T) {
 	sandboxInterface := kmocks.NewMockSandboxInterface()
 	mockClient.On("Sandboxes", "test-namespace").Return(sandboxInterface)
 	
-	// Setup list and watch methods
+	// Setup list method
 	sandboxInterface.SetupListMock()
 	
 	// Create a mock watch
@@ -130,7 +130,8 @@ func TestInformerListWatch(t *testing.T) {
 	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
 	mockWatch.On("Stop").Return()
 	
-	sandboxInterface.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
+	// Setup watch method with proper matcher
+	sandboxInterface.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool { return true })).Return(mockWatch, nil)
 	
 	// Create informer factory
 	factory := kubernetes.NewInformerFactory(mockClient, 30*time.Second, "test-namespace")
@@ -147,10 +148,21 @@ func TestInformerListWatch(t *testing.T) {
 	// Wait for informer to start
 	time.Sleep(100 * time.Millisecond)
 	
+	// Send an event through the mock watch
+	mockFactory := mocks.NewMockFactory()
+	sandbox := mockFactory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
+	go func() {
+		mockWatch.SendEvent(watch.Added, sandbox)
+	}()
+	
+	// Wait for event to be processed
+	time.Sleep(100 * time.Millisecond)
+	
 	// Stop the informer
 	close(stopCh)
 	
 	// Verify expectations
 	mockClient.AssertExpectations(t)
 	sandboxInterface.AssertExpectations(t)
+	mockWatch.AssertExpectations(t)
 }
