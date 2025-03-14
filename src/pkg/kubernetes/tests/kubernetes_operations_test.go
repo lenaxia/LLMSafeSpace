@@ -1,78 +1,78 @@
 package tests
 
-//import (
-//	"context"
+import (
+	"context"
 //	"errors"
-//	"testing"
-//	"time"
-//
+	"testing"
+	"time"
+
 //	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-//	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-//	"github.com/lenaxia/llmsafespace/mocks"
-//	"github.com/lenaxia/llmsafespace/pkg/types"
-//	"github.com/stretchr/testify/assert"
-//	"github.com/stretchr/testify/mock"
-//	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-//)
-//
-//// TestExecuteInSandbox tests the ExecuteInSandbox method
-//func TestExecuteInSandbox(t *testing.T) {
-//	// Create mock client
-//	mockClient := kmocks.NewMockKubernetesClient()
-//	
-//	// Setup LlmsafespaceV1 mock
-//	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-//	mockClient.On("LlmsafespaceV1").Return(v1Client)
-//	
-//	// Setup Sandboxes mock
-//	sandboxClient := kmocks.NewMockSandboxInterface()
-//	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-//	
-//	// Setup Get mock
-//	factory := mocks.NewMockFactory()
-//	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-//	sandbox.Status.PodName = "test-pod"
-//	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
-//	
-//	// Setup execution request
-//	execReq := &types.ExecutionRequest{
-//		Type:    "code",
-//		Content: "print('Hello, World!')",
-//		Timeout: 30,
-//	}
-//	
-//	// Setup execution result
-//	execResult := &types.ExecutionResult{
-//		ID:          "test-exec-id",
-//		Status:      "completed",
-//		StartedAt:   time.Now(),
-//		CompletedAt: time.Now(),
-//		ExitCode:    0,
-//		Stdout:      "Hello, World!",
-//		Stderr:      "",
-//	}
-//	
-//	// Mock the executeCommand method
-//	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Return(0, nil)
-//	mockClient.On("ExecuteInSandbox", mock.Anything, "test-namespace", "test-sandbox", execReq).Return(execResult, nil)
-//	
-//	// Test executing in sandbox
-//	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "test-sandbox", execReq)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, "test-exec-id", result.ID)
-//	assert.Equal(t, "completed", result.Status)
-//	assert.Equal(t, 0, result.ExitCode)
-//	assert.Equal(t, "Hello, World!", result.Stdout)
-//	assert.Empty(t, result.Stderr)
-//	
-//	// Verify expectations
-//	mockClient.AssertExpectations(t)
-//	v1Client.AssertExpectations(t)
-//	sandboxClient.AssertExpectations(t)
-//}
-//
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// TestExecuteInSandbox tests the ExecuteInSandbox method
+func TestExecuteInSandbox(t *testing.T) {
+	// Create mock client
+	mockClient := kmocks.NewMockKubernetesClient()
+	
+	// Setup LlmsafespaceV1 mock
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
+	mockClient.On("LlmsafespaceV1").Return(v1Client)
+	
+	// Setup Sandboxes mock
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
+	
+	// Setup Get mock
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
+	sandbox.Status.PodName = "test-pod"
+	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
+	
+	// Setup execution request
+	execReq := &types.ExecutionRequest{
+		Type:    "code",
+		Content: "print('Hello, World!')",
+		Timeout: 30,
+	}
+	
+	// Setup execution result
+	execResult := &types.ExecutionResult{
+		ID:          "test-exec-id",
+		Status:      "completed",
+		StartedAt:   time.Now(),
+		CompletedAt: time.Now(),
+		ExitCode:    0,
+		Stdout:      "Hello, World!",
+		Stderr:      "",
+	}
+	
+	// Mock the executeCommand method
+	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Return(0, nil)
+	mockClient.On("ExecuteInSandbox", mock.Anything, "test-namespace", "test-sandbox", execReq).Return(execResult, nil)
+	
+	// Test executing in sandbox
+	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "test-sandbox", execReq)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, "test-exec-id", result.ID)
+	assert.Equal(t, "completed", result.Status)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Equal(t, "Hello, World!", result.Stdout)
+	assert.Empty(t, result.Stderr)
+	
+	// Verify expectations
+	mockClient.AssertExpectations(t)
+	v1Client.AssertExpectations(t)
+	sandboxClient.AssertExpectations(t)
+}
+
 //// TestExecuteInSandboxErrors tests error cases for ExecuteInSandbox
 //func TestExecuteInSandboxErrors(t *testing.T) {
 //	// Create mock client
