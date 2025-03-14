@@ -118,12 +118,6 @@ func (m *MockWarmPodInterface) SetupWatchMock() *mock.Call {
     return m.On("Watch", mock.Anything).Return(mockWatch, nil)
 }
 
-// SetupWatchMock sets up a mock response for Watch with any ListOptions
-func (m *MockWarmPodInterface) SetupWatchMock() *mock.Call {
-    mockWatch := NewMockWatch()
-    return m.On("Watch", mock.Anything).Return(mockWatch, nil)
-}
-
 // NewMockWarmPod creates a mock WarmPod with the given name
 func NewMockWarmPod(name, namespace string) *types.WarmPod {
 	return &types.WarmPod{
