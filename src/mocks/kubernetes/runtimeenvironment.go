@@ -112,12 +112,10 @@ func (m *MockRuntimeEnvironmentInterface) Watch(opts metav1.ListOptions) (watch.
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
-// SetupWatchMock sets up a mock response for Watch with Watch=true
+// SetupWatchMock sets up a mock response for Watch with any ListOptions
 func (m *MockRuntimeEnvironmentInterface) SetupWatchMock() *mock.Call {
     mockWatch := NewMockWatch()
-    return m.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
-        return true // Accept any ListOptions to avoid strict matching issues
-    })).Return(mockWatch, nil)
+    return m.On("Watch", mock.Anything).Return(mockWatch, nil)
 }
 
 // NewMockRuntimeEnvironment creates a mock RuntimeEnvironment with the given name
