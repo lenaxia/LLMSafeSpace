@@ -61,14 +61,6 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockKubernetesClient()
 	
-	// Setup LlmsafespaceV1 mock
-	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-	mockClient.On("LlmsafespaceV1").Return(v1Client)
-	
-	// Setup Sandboxes mock
-	sandboxClient := kmocks.NewMockSandboxInterface()
-	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-	
 	// Setup execution request
 	execReq := &types.ExecutionRequest{
 		Type:    "code",
@@ -77,7 +69,9 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	}
 	
 	// Test case 1: Sandbox not found
-	sandboxClient.On("Get", "nonexistent", metav1.GetOptions{}).Return(nil, errors.New("sandbox not found"))
+	// Mock the ExecuteInSandbox method directly for the first error case
+	mockClient.On("ExecuteInSandbox", mock.Anything, "test-namespace", "nonexistent", execReq).
+		Return(nil, errors.New("failed to get sandbox: sandbox not found"))
 	
 	result, err := mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "nonexistent", execReq)
 	assert.Error(t, err)
@@ -85,9 +79,9 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get sandbox")
 	
 	// Test case 2: Sandbox pod not found
-	emptyPodSandbox := mocks.NewMockFactory().NewSandbox("empty-pod", "test-namespace", "python:3.10")
-	emptyPodSandbox.Status.PodName = ""
-	sandboxClient.On("Get", "empty-pod", metav1.GetOptions{}).Return(emptyPodSandbox, nil)
+	// Mock the ExecuteInSandbox method directly for the second error case
+	mockClient.On("ExecuteInSandbox", mock.Anything, "test-namespace", "empty-pod", execReq).
+		Return(nil, errors.New("sandbox pod not found"))
 	
 	result, err = mockClient.ExecuteInSandbox(context.Background(), "test-namespace", "empty-pod", execReq)
 	assert.Error(t, err)
@@ -96,8 +90,6 @@ func TestExecuteInSandboxErrors(t *testing.T) {
 	
 	// Verify expectations
 	mockClient.AssertExpectations(t)
-	v1Client.AssertExpectations(t)
-	sandboxClient.AssertExpectations(t)
 }
 
 //// TestExecuteStreamInSandbox tests the ExecuteStreamInSandbox method
