@@ -130,6 +130,7 @@ func TestInformerListWatch(t *testing.T) {
 
     // Create a mock watch
     mockWatch := kmocks.NewMockWatch()
+    // Set up expectations before using the mock
     mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
     mockWatch.On("Stop").Return()
 
@@ -163,6 +164,9 @@ func TestInformerListWatch(t *testing.T) {
 
     // Stop the informer
     close(stopCh)
+
+    // Wait for informer to stop
+    time.Sleep(100 * time.Millisecond)
 
     // Verify expectations
     mockClient.AssertExpectations(t)
