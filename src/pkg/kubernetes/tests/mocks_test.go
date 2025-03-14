@@ -9,7 +9,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-//	//"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // TestMockKubernetesClient tests the MockKubernetesClient implementation
@@ -140,39 +140,39 @@ func TestMockFileOperations(t *testing.T) {
 }
 
 // TestMockWatch tests the mock watch implementation
-//func TestMockWatch(t *testing.T) {
-//	// Create a mock watch
-//	mockWatch := kmocks.NewMockWatch()
-//	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
-//	mockWatch.On("Stop").Return()
-//	
-//	// Setup sandbox client
-//	sandboxClient := kmocks.NewMockSandboxInterface()
-//	sandboxClient.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
-//	
-//	// Start watching
-//	watcher, err := sandboxClient.Watch(metav1.ListOptions{})
-//	assert.NoError(t, err)
-//	
-//	// Send an event
-//	factory := mocks.NewMockFactory()
-//	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-//	go func() {
-//		mockWatch.SendEvent(watch.EventType("ADDED"), sandbox)
-//	}()
-//	
-//	// Receive the event
-//	event := <-watcher.ResultChan()
-//	assert.Equal(t, watch.Added, event.Type)
-//	assert.Equal(t, "test-sandbox", event.Object.(*types.Sandbox).Name)
-//	
-//	// Stop watching
-//	watcher.Stop()
-//	
-//	// Verify expectations
-//	mockWatch.AssertExpectations(t)
-//	sandboxClient.AssertExpectations(t)
-//}
+func TestMockWatch(t *testing.T) {
+	// Create a mock watch
+	mockWatch := kmocks.NewMockWatch()
+	mockWatch.On("ResultChan").Return(mockWatch.ResultChan())
+	mockWatch.On("Stop").Return()
+	
+	// Setup sandbox client
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	sandboxClient.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
+	
+	// Start watching
+	watcher, err := sandboxClient.Watch(metav1.ListOptions{})
+	assert.NoError(t, err)
+	
+	// Send an event
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
+	go func() {
+		mockWatch.SendEvent(watch.EventType("ADDED"), sandbox)
+	}()
+	
+	// Receive the event
+	event := <-watcher.ResultChan()
+	assert.Equal(t, watch.Added, event.Type)
+	assert.Equal(t, "test-sandbox", event.Object.(*types.Sandbox).Name)
+	
+	// Stop watching
+	watcher.Stop()
+	
+	// Verify expectations
+	mockWatch.AssertExpectations(t)
+	sandboxClient.AssertExpectations(t)
+}
 
 // TestSetupHelperMethods tests the setup helper methods
 func TestSetupHelperMethods(t *testing.T) {
