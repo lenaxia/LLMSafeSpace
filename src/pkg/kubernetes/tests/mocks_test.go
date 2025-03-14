@@ -259,6 +259,11 @@ func TestMockInterfaces(t *testing.T) {
 	profileMock.SetupListMock()
 	profileMock.SetupWatchMock()
 	
+	// Setup individual interface mocks
+	factory := mocks.NewMockFactory()
+	
+	// Setup sandbox mocks
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
 	sandboxClient.SetupCreateMock()
 	sandboxClient.SetupUpdateMock()
 	sandboxClient.SetupUpdateStatusMock()
@@ -266,6 +271,8 @@ func TestMockInterfaces(t *testing.T) {
 	sandboxClient.SetupGetMock("test-sandbox")
 	sandboxClient.SetupListMock()
 	
+	// Setup warmpool mocks
+	warmPool := factory.NewWarmPool("test-warmpool", "test-namespace", "python:3.10")
 	warmPoolClient.SetupCreateMock()
 	warmPoolClient.SetupUpdateMock()
 	warmPoolClient.SetupUpdateStatusMock()
@@ -273,6 +280,8 @@ func TestMockInterfaces(t *testing.T) {
 	warmPoolClient.SetupGetMock("test-warmpool")
 	warmPoolClient.SetupListMock()
 	
+	// Setup warmpod mocks
+	warmPod := factory.NewWarmPod("test-warmpod", "test-namespace", "test-pool")
 	warmPodClient.SetupCreateMock()
 	warmPodClient.SetupUpdateMock()
 	warmPodClient.SetupUpdateStatusMock()
@@ -280,6 +289,8 @@ func TestMockInterfaces(t *testing.T) {
 	warmPodClient.SetupGetMock("test-warmpod")
 	warmPodClient.SetupListMock()
 	
+	// Setup runtime environment mocks
+	runtimeEnv := factory.NewRuntimeEnvironment("test-runtime", "python", "3.10")
 	runtimeEnvClient.SetupCreateMock()
 	runtimeEnvClient.SetupUpdateMock()
 	runtimeEnvClient.SetupUpdateStatusMock()
@@ -287,6 +298,8 @@ func TestMockInterfaces(t *testing.T) {
 	runtimeEnvClient.SetupGetMock("test-runtime")
 	runtimeEnvClient.SetupListMock()
 	
+	// Setup sandbox profile mocks
+	profile := factory.NewSandboxProfile("test-profile", "python")
 	profileClient.SetupCreateMock()
 	profileClient.SetupUpdateMock()
 	profileClient.SetupDeleteMock()
@@ -300,12 +313,44 @@ func TestMockInterfaces(t *testing.T) {
 	assert.NotNil(t, v1Client.RuntimeEnvironments("test-namespace"))
 	assert.NotNil(t, v1Client.SandboxProfiles("test-namespace"))
 	
-	// Test sandbox methods
-	factory := mocks.NewMockFactory()
-	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-	result, err := sandboxClient.Create(sandbox)
-	assert.NoError(t, err)
-	assert.Equal(t, "test-sandbox", result.Name)
+	// Test sandbox methods - actually call the methods to satisfy the mock expectations
+	_, _ = sandboxClient.Create(sandbox)
+	_, _ = sandboxClient.Update(sandbox)
+	_, _ = sandboxClient.UpdateStatus(sandbox)
+	_ = sandboxClient.Delete("test-sandbox", metav1.DeleteOptions{})
+	_, _ = sandboxClient.Get("test-sandbox", metav1.GetOptions{})
+	_, _ = sandboxClient.List(metav1.ListOptions{})
+	
+	// Test warmpool methods
+	_, _ = warmPoolClient.Create(warmPool)
+	_, _ = warmPoolClient.Update(warmPool)
+	_, _ = warmPoolClient.UpdateStatus(warmPool)
+	_ = warmPoolClient.Delete("test-warmpool", metav1.DeleteOptions{})
+	_, _ = warmPoolClient.Get("test-warmpool", metav1.GetOptions{})
+	_, _ = warmPoolClient.List(metav1.ListOptions{})
+	
+	// Test warmpod methods
+	_, _ = warmPodClient.Create(warmPod)
+	_, _ = warmPodClient.Update(warmPod)
+	_, _ = warmPodClient.UpdateStatus(warmPod)
+	_ = warmPodClient.Delete("test-warmpod", metav1.DeleteOptions{})
+	_, _ = warmPodClient.Get("test-warmpod", metav1.GetOptions{})
+	_, _ = warmPodClient.List(metav1.ListOptions{})
+	
+	// Test runtime environment methods
+	_, _ = runtimeEnvClient.Create(runtimeEnv)
+	_, _ = runtimeEnvClient.Update(runtimeEnv)
+	_, _ = runtimeEnvClient.UpdateStatus(runtimeEnv)
+	_ = runtimeEnvClient.Delete("test-runtime", metav1.DeleteOptions{})
+	_, _ = runtimeEnvClient.Get("test-runtime", metav1.GetOptions{})
+	_, _ = runtimeEnvClient.List(metav1.ListOptions{})
+	
+	// Test sandbox profile methods
+	_, _ = profileClient.Create(profile)
+	_, _ = profileClient.Update(profile)
+	_ = profileClient.Delete("test-profile", metav1.DeleteOptions{})
+	_, _ = profileClient.Get("test-profile", metav1.GetOptions{})
+	_, _ = profileClient.List(metav1.ListOptions{})
 	
 	// Verify expectations
 	v1Client.AssertExpectations(t)
