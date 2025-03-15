@@ -9,6 +9,7 @@ import (
 	"strings"
 	"fmt"
 	"time"
+	"unicode"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -201,20 +202,20 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 // validateQueryParams validates query parameters
 func validateQueryParams(c *gin.Context) error {
 	// Get query parameter validation rules from context
-	rules, exists := c.Get("queryParamRules")
+	_, exists := c.Get("queryParamRules")
 	if !exists {
 		return nil
 	}
 	
 	// Validate query parameters
-	errors := make(map[string]string)
+	validationErrors := make(map[string]string)
 	
 	// Implement query parameter validation logic here
 	// This is a placeholder for the actual implementation
 	
-	if len(errors) > 0 {
+	if len(validationErrors) > 0 {
 		return errors.NewValidationError("Invalid query parameters", map[string]interface{}{
-			"errors": errors,
+			"errors": validationErrors,
 		}, nil)
 	}
 	
@@ -224,20 +225,20 @@ func validateQueryParams(c *gin.Context) error {
 // validatePathParams validates path parameters
 func validatePathParams(c *gin.Context) error {
 	// Get path parameter validation rules from context
-	rules, exists := c.Get("pathParamRules")
+	_, exists := c.Get("pathParamRules")
 	if !exists {
 		return nil
 	}
 	
 	// Validate path parameters
-	errors := make(map[string]string)
+	validationErrors := make(map[string]string)
 	
 	// Implement path parameter validation logic here
 	// This is a placeholder for the actual implementation
 	
-	if len(errors) > 0 {
+	if len(validationErrors) > 0 {
 		return errors.NewValidationError("Invalid path parameters", map[string]interface{}{
-			"errors": errors,
+			"errors": validationErrors,
 		}, nil)
 	}
 	
