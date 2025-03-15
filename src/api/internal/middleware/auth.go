@@ -43,6 +43,14 @@ func DefaultAuthConfig() AuthConfig {
 	}
 }
 
+// AuthResult represents the result of token validation
+type AuthResult struct {
+	UserID      string
+	Role        string
+	APIKey      string
+	Permissions []string
+}
+
 // AuthMiddleware returns a middleware that handles authentication
 func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
@@ -75,7 +83,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		}
 		
 		// Validate token
-		authResult, err := authService.ValidateToken(c.Request.Context(), token)
+		authResult, err := authService.ValidateToken(token)
 		if err != nil {
 			log.Warn("Authentication failed: invalid token",
 				"path", path,
@@ -142,7 +150,7 @@ func AuthorizationMiddleware(authService interfaces.AuthService, log *logger.Log
 				"request_id", c.GetString("request_id"),
 			)
 			
-			apiErr := errors.NewAuthorizationError("Authorization required", nil)
+			apiErr := errors.NewForbiddenError("Authorization required", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
@@ -164,7 +172,7 @@ func AuthorizationMiddleware(authService interfaces.AuthService, log *logger.Log
 				"required_permissions", requiredPermissions,
 			)
 			
-			apiErr := errors.NewAuthorizationError("Insufficient permissions", nil)
+			apiErr := errors.NewForbiddenError("Insufficient permissions", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
@@ -186,7 +194,7 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("userRole")
 		if !exists {
-			apiErr := errors.NewAuthorizationError("Authorization required", nil)
+			apiErr := errors.NewForbiddenError("Authorization required", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
@@ -201,7 +209,7 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 		}
 		
 		if !hasRole {
-			apiErr := errors.NewAuthorizationError("Insufficient permissions", nil)
+			apiErr := errors.NewForbiddenError("Insufficient permissions", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
