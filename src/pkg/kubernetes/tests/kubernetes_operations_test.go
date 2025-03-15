@@ -190,39 +190,35 @@ func TestListFilesInSandbox(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockKubernetesClient()
 	
-	// Setup ListFilesInSandbox mock
-	mockClient.SetupListFilesInSandboxMock()
-	
-	// Setup LlmsafespaceV1 mock
-	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-	mockClient.On("LlmsafespaceV1").Return(v1Client)
-	
-	// Setup Sandboxes mock
-	sandboxClient := kmocks.NewMockSandboxInterface()
-	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-	
-	// Setup Get mock
-	factory := mocks.NewMockFactory()
-	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-	sandbox.Status.PodName = "test-pod"
-	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
-	
 	// Setup file request
 	fileReq := &types.FileRequest{
 		Path: "/workspace",
 	}
 	
-	// Mock the executeCommand method with sample output
-	mockOutput := "/workspace|4096|d|1615000000.0|1615000000.0\n" +
-		"/workspace/test.py|1024|f|1615000000.0|1615000000.0\n" +
-		"/workspace/data|4096|d|1615000000.0|1615000000.0\n"
+	// Create file list to return
+	fileList := &types.FileList{
+		Files: []types.FileInfo{
+			{
+				Path:      "/workspace/test.py",
+				Name:      "test.py",
+				Size:      1024,
+				IsDir:     false,
+				CreatedAt: time.Now().Add(-1 * time.Hour),
+				UpdatedAt: time.Now().Add(-30 * time.Minute),
+			},
+			{
+				Path:      "/workspace/data",
+				Name:      "data",
+				Size:      4096,
+				IsDir:     true,
+				CreatedAt: time.Now().Add(-2 * time.Hour),
+				UpdatedAt: time.Now().Add(-2 * time.Hour),
+			},
+		},
+	}
 	
-	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		options := args.Get(4).(*kubernetes.ExecOptions)
-		if options.Stdout != nil {
-			options.Stdout.Write([]byte(mockOutput))
-		}
-	}).Return(0, nil)
+	// Set up the mock expectation directly
+	mockClient.On("ListFilesInSandbox", mock.Anything, "test-namespace", "test-sandbox", fileReq).Return(fileList, nil)
 	
 	// Test listing files
 	result, err := mockClient.ListFilesInSandbox(context.Background(), "test-namespace", "test-sandbox", fileReq)
@@ -230,7 +226,7 @@ func TestListFilesInSandbox(t *testing.T) {
 	// Verify results
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Len(t, result.Files, 2) // Should exclude the directory itself
+	assert.Len(t, result.Files, 2)
 	
 	// Check first file
 	assert.Equal(t, "/workspace/test.py", result.Files[0].Path)
@@ -244,8 +240,6 @@ func TestListFilesInSandbox(t *testing.T) {
 	
 	// Verify expectations
 	mockClient.AssertExpectations(t)
-	v1Client.AssertExpectations(t)
-	sandboxClient.AssertExpectations(t)
 }
 
 //// TestDownloadFileFromSandbox tests the DownloadFileFromSandbox method
