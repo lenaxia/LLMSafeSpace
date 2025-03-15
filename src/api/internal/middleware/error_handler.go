@@ -147,7 +147,7 @@ func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte,
 	}
 	
 	// Add stack trace for internal errors
-	if (apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeInternal) || cfg.LogStackTrace {
+	if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeInternal || cfg.LogStackTrace {
 		fields = append(fields, "stack_trace", string(debug.Stack()))
 	}
 	
