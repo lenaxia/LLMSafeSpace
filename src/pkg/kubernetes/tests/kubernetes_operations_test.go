@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-//	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	"github.com/lenaxia/llmsafespace/mocks"
+	//"github.com/lenaxia/llmsafespace/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	//metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestExecuteInSandbox tests the ExecuteInSandbox method
@@ -141,50 +141,50 @@ func TestExecuteStreamInSandbox(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-//// TestStreamWriter tests the streamWriter implementation
-//func TestStreamWriter(t *testing.T) {
-//	// Create a buffer to capture output
-//	var capturedOutput string
-//	
-//	// Create a callback function
-//	callback := func(stream, content string) {
-//		capturedOutput += content
-//	}
-//	
-//	// Create a streamWriter
-//	writer := &kubernetes.StreamWriter{
-//		Stream:   "stdout",
-//		Callback: callback,
-//	}
-//	
-//	// Write some data
-//	data := []byte("Hello\nWorld\n")
-//	n, err := writer.Write(data)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, len(data), n)
-//	assert.Equal(t, "Hello\nWorld\n", capturedOutput)
-//	
-//	// Write partial line
-//	data = []byte("Partial")
-//	n, err = writer.Write(data)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, len(data), n)
-//	assert.Equal(t, "Hello\nWorld\nPartial", capturedOutput)
-//	
-//	// Complete the line
-//	data = []byte(" Line\n")
-//	n, err = writer.Write(data)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, len(data), n)
-//	assert.Equal(t, "Hello\nWorld\nPartial Line\n", capturedOutput)
-//}
-//
+// TestStreamWriter tests the streamWriter implementation
+func TestStreamWriter(t *testing.T) {
+	// Create a buffer to capture output
+	var capturedOutput string
+	
+	// Create a callback function
+	callback := func(stream, content string) {
+		capturedOutput += content
+	}
+	
+	// Create a streamWriter
+	writer := &kubernetes.StreamWriter{
+		Stream:   "stdout",
+		Callback: callback,
+	}
+	
+	// Write some data
+	data := []byte("Hello\nWorld\n")
+	n, err := writer.Write(data)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, len(data), n)
+	assert.Equal(t, "Hello\nWorld\n", capturedOutput)
+	
+	// Write partial line
+	data = []byte("Partial")
+	n, err = writer.Write(data)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, len(data), n)
+	assert.Equal(t, "Hello\nWorld\nPartial", capturedOutput)
+	
+	// Complete the line
+	data = []byte(" Line\n")
+	n, err = writer.Write(data)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, len(data), n)
+	assert.Equal(t, "Hello\nWorld\nPartial Line\n", capturedOutput)
+}
+
 //// TestListFilesInSandbox tests the ListFilesInSandbox method
 //func TestListFilesInSandbox(t *testing.T) {
 //	// Create mock client
