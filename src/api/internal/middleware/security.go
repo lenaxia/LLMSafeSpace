@@ -163,9 +163,13 @@ func SecurityMiddleware(log *logger.Logger, config ...SecurityConfig) gin.Handle
 			}
 		}
 		
-		// Set trusted proxies
+		// Set trusted proxies - this needs to be done at the engine level, not here
+		// We'll log a warning instead of trying to set it in middleware
 		if len(cfg.TrustedProxies) > 0 {
-			gin.SetTrustedProxies(cfg.TrustedProxies)
+			log.Info("Trusted proxies configuration detected in middleware",
+				"trusted_proxies", cfg.TrustedProxies,
+				"note", "This should be configured at the engine level, not in middleware",
+			)
 		}
 		
 		// Add additional security headers not covered by secure middleware
