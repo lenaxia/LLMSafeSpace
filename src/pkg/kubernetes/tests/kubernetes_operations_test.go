@@ -8,11 +8,11 @@ import (
 
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	"github.com/lenaxia/llmsafespace/mocks"
+	//"github.com/lenaxia/llmsafespace/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	//metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestExecuteInSandbox tests the ExecuteInSandbox method
@@ -242,60 +242,60 @@ func TestListFilesInSandbox(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-//// TestDownloadFileFromSandbox tests the DownloadFileFromSandbox method
-//func TestDownloadFileFromSandbox(t *testing.T) {
-//	// Create mock client
-//	mockClient := kmocks.NewMockKubernetesClient()
-//	
-//	// Setup LlmsafespaceV1 mock
-//	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
-//	mockClient.On("LlmsafespaceV1").Return(v1Client)
-//	
-//	// Setup Sandboxes mock
-//	sandboxClient := kmocks.NewMockSandboxInterface()
-//	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-//	
-//	// Setup Get mock
-//	factory := mocks.NewMockFactory()
-//	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
-//	sandbox.Status.PodName = "test-pod"
-//	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
-//	
-//	// Setup file request
-//	fileReq := &types.FileRequest{
-//		Path: "/workspace/test.py",
-//	}
-//	
-//	// Mock the executeCommand method for file check
-//	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-//		options := args.Get(4).(*kubernetes.ExecOptions)
-//		if options.Stdout != nil {
-//			options.Stdout.Write([]byte("file\n"))
-//		}
-//	}).Return(0, nil).Once()
-//	
-//	// Mock the executeCommand method for file download
-//	fileContent := "print('Hello, World!')"
-//	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-//		options := args.Get(4).(*kubernetes.ExecOptions)
-//		if options.Stdout != nil {
-//			options.Stdout.Write([]byte(fileContent))
-//		}
-//	}).Return(0, nil).Once()
-//	
-//	// Test downloading file
-//	content, err := mockClient.DownloadFileFromSandbox(context.Background(), "test-namespace", "test-sandbox", fileReq)
-//	
-//	// Verify results
-//	assert.NoError(t, err)
-//	assert.Equal(t, fileContent, string(content))
-//	
-//	// Verify expectations
-//	mockClient.AssertExpectations(t)
-//	v1Client.AssertExpectations(t)
-//	sandboxClient.AssertExpectations(t)
-//}
-//
+// TestDownloadFileFromSandbox tests the DownloadFileFromSandbox method
+func TestDownloadFileFromSandbox(t *testing.T) {
+	// Create mock client
+	mockClient := kmocks.NewMockKubernetesClient()
+	
+	// Setup LlmsafespaceV1 mock
+	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
+	mockClient.On("LlmsafespaceV1").Return(v1Client)
+	
+	// Setup Sandboxes mock
+	sandboxClient := kmocks.NewMockSandboxInterface()
+	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
+	
+	// Setup Get mock
+	factory := mocks.NewMockFactory()
+	sandbox := factory.NewSandbox("test-sandbox", "test-namespace", "python:3.10")
+	sandbox.Status.PodName = "test-pod"
+	sandboxClient.On("Get", "test-sandbox", metav1.GetOptions{}).Return(sandbox, nil)
+	
+	// Setup file request
+	fileReq := &types.FileRequest{
+		Path: "/workspace/test.py",
+	}
+	
+	// Mock the executeCommand method for file check
+	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		options := args.Get(4).(*kubernetes.ExecOptions)
+		if options.Stdout != nil {
+			options.Stdout.Write([]byte("file\n"))
+		}
+	}).Return(0, nil).Once()
+	
+	// Mock the executeCommand method for file download
+	fileContent := "print('Hello, World!')"
+	mockClient.On("ExecuteCommand", mock.Anything, "test-namespace", "test-pod", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		options := args.Get(4).(*kubernetes.ExecOptions)
+		if options.Stdout != nil {
+			options.Stdout.Write([]byte(fileContent))
+		}
+	}).Return(0, nil).Once()
+	
+	// Test downloading file
+	content, err := mockClient.DownloadFileFromSandbox(context.Background(), "test-namespace", "test-sandbox", fileReq)
+	
+	// Verify results
+	assert.NoError(t, err)
+	assert.Equal(t, fileContent, string(content))
+	
+	// Verify expectations
+	mockClient.AssertExpectations(t)
+	v1Client.AssertExpectations(t)
+	sandboxClient.AssertExpectations(t)
+}
+
 //// TestUploadFileToSandbox tests the UploadFileToSandbox method
 //func TestUploadFileToSandbox(t *testing.T) {
 //	// Create mock client
