@@ -204,12 +204,7 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 			userID = id.(string)
 		}
 		
-		// Record metrics using service
-		userID = ""
-		if id, exists := c.Get("userID"); exists {
-			userID = id.(string)
-		}
-		metricsService.RecordExecution(execType, runtime, status, duration)
+		metricsService.RecordExecution(execType, runtime, status, duration, userID)
 	}
 }
 
