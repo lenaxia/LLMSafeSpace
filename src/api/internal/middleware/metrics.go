@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"regexp"
 	"strconv"
 	"time"
 
@@ -137,14 +138,26 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		// Increment active connections before processing
 		wsConnectionsActive.WithLabelValues(connType).Inc()
 		wsConnectionsTotal.WithLabelValues(connType).Inc()
-		metricsService.IncrementActiveConnections(connType)
+		// Get user ID if available
+		userID := ""
+		if id, exists := c.Get("userID"); exists {
+			userID = id.(string)
+		}
+		
+		metricsService.IncrementActiveConnections(connType, userID)
 		
 		// Process request
 		c.Next()
 		
 		// Decrement active connections after processing
 		wsConnectionsActive.WithLabelValues(connType).Dec()
-		metricsService.DecrementActiveConnections(connType)
+		// Get user ID if available
+		userID := ""
+		if id, exists := c.Get("userID"); exists {
+			userID = id.(string)
+		}
+		
+		metricsService.DecrementActiveConnections(connType, userID)
 	}
 }
 
@@ -184,8 +197,14 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		codeExecutionsTotal.WithLabelValues(execType, runtime, status).Inc()
 		codeExecutionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
 		
+		// Get user ID if available
+		userID := ""
+		if id, exists := c.Get("userID"); exists {
+			userID = id.(string)
+		}
+		
 		// Record metrics using service
-		metricsService.RecordExecution(execType, runtime, status, duration)
+		metricsService.RecordExecution(execType, runtime, status, userID, duration)
 	}
 }
 

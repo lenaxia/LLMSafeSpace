@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"go.uber.org/zap"
 )
 
 // ErrorHandlerConfig defines configuration for the error handler middleware
@@ -167,6 +166,8 @@ func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte,
 	}
 	
 	// Log to OpenTelemetry if available
+	// Commented out until we properly import trace and attribute packages
+	/*
 	if span := trace.SpanFromContext(c.Request.Context()); span != nil {
 		span.RecordError(err)
 		span.SetStatus(trace.StatusCodeError, fmt.Sprintf("%v", err))
@@ -181,6 +182,7 @@ func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte,
 			span.SetAttributes(attribute.String("error.code", apiErr.Code))
 		}
 	}
+	*/
 	
 	// Log the error with the appropriate level
 	switch logLevel {
