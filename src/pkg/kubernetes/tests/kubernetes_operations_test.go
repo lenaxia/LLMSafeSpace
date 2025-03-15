@@ -190,6 +190,9 @@ func TestListFilesInSandbox(t *testing.T) {
 	// Create mock client
 	mockClient := kmocks.NewMockKubernetesClient()
 	
+	// Setup ListFilesInSandbox mock
+	mockClient.SetupListFilesInSandboxMock()
+	
 	// Setup LlmsafespaceV1 mock
 	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	mockClient.On("LlmsafespaceV1").Return(v1Client)
