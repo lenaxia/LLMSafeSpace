@@ -76,7 +76,7 @@ var (
 )
 
 // RateLimitMiddleware returns a middleware that limits request rates
-func RateLimitMiddleware(cacheService interfaces.CacheService, log *logger.Logger, config ...RateLimitConfig) gin.HandlerFunc {
+func RateLimitMiddleware(rateLimiterService interfaces.RateLimiterService, log *logger.Logger, config ...RateLimitConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultRateLimitConfig()
 	if len(config) > 0 {
@@ -137,15 +137,15 @@ func RateLimitMiddleware(cacheService interfaces.CacheService, log *logger.Logge
 		// Apply rate limiting based on strategy
 		switch cfg.Strategy {
 		case "token_bucket":
-			if !applyTokenBucketRateLimit(c, apiKey.(string), limitType, limit, window, burstSize, log) {
+			if !applyTokenBucketRateLimit(c, apiKey.(string), limitType, limit, window, burstSize, rateLimiterService, log) {
 				return
 			}
 		case "sliding_window":
-			if !applySlidingWindowRateLimit(c, apiKey.(string), limitType, limit, window, cacheService, log) {
+			if !applySlidingWindowRateLimit(c, apiKey.(string), limitType, limit, window, rateLimiterService, log) {
 				return
 			}
 		default: // "fixed_window"
-			if !applyFixedWindowRateLimit(c, apiKey.(string), limitType, limit, window, cacheService, log) {
+			if !applyFixedWindowRateLimit(c, apiKey.(string), limitType, limit, window, rateLimiterService, log) {
 				return
 			}
 		}
@@ -155,29 +155,12 @@ func RateLimitMiddleware(cacheService interfaces.CacheService, log *logger.Logge
 }
 
 // applyTokenBucketRateLimit applies rate limiting using the token bucket algorithm
-func applyTokenBucketRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, burstSize int, log *logger.Logger) bool {
+func applyTokenBucketRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, burstSize int, rateLimiterService interfaces.RateLimiterService, log *logger.Logger) bool {
 	// Create a unique key for this API key and limit type
 	key := fmt.Sprintf("%s:%s", apiKey, limitType)
 	
-	// Get or create limiter
-	limiterMutex.RLock()
-	limiter, exists := limiters[key]
-	limiterMutex.RUnlock()
-	
-	if !exists {
-		// Calculate rate from limit and window
-		rate := rate.Limit(float64(limit) / window.Seconds())
-		
-		// Create new limiter
-		limiter = rate.NewLimiter(rate, burstSize)
-		
-		limiterMutex.Lock()
-		limiters[key] = limiter
-		limiterMutex.Unlock()
-	}
-	
-	// Try to allow request
-	if !limiter.Allow() {
+	// Check if request is allowed
+	if !rateLimiterService.Allow(key, float64(limit)/window.Seconds(), burstSize) {
 		// Calculate reset time
 		resetTime := time.Now().Add(time.Second) // Approximate reset time
 		
@@ -219,46 +202,38 @@ func applyTokenBucketRateLimit(c *gin.Context, apiKey, limitType string, limit i
 }
 
 // applyFixedWindowRateLimit applies rate limiting using the fixed window algorithm
-func applyFixedWindowRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, cacheService interfaces.CacheService, log *logger.Logger) bool {
+func applyFixedWindowRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, rateLimiterService interfaces.RateLimiterService, log *logger.Logger) bool {
 	// Create a unique key for this API key and limit type
 	key := fmt.Sprintf("ratelimit:%s:%s", apiKey, limitType)
 	ctx := c.Request.Context()
 	
-	// Get current count
-	countStr, err := cacheService.Get(ctx, key)
-	var count int
-	
-	if err == nil && countStr != "" {
-		count, _ = strconv.Atoi(countStr)
+	// Increment count and get new value
+	count, err := rateLimiterService.Increment(ctx, key, 1, window)
+	if err != nil {
+		// If we can't track rate limiting, allow the request but log the error
+		log.Error("Failed to increment rate limit counter", err,
+			"api_key", maskString(apiKey),
+			"limit_type", limitType,
+		)
+		c.Next()
+		return true
 	}
 	
-	// Increment count
-	count++
-	
-	// Set expiry on first request
-	var ttl time.Duration
-	if count == 1 {
-		err = cacheService.Set(ctx, key, strconv.Itoa(count), window)
-		ttl = window
-	} else {
-		err = cacheService.Set(ctx, key, strconv.Itoa(count), 0) // Don't reset TTL
-		
-		// Get TTL for reset time
-		ttlDuration, err := getTTL(cacheService, ctx, key)
-		if err == nil {
-			ttl = ttlDuration
-		}
+	// Get TTL for reset time
+	ttl, err := rateLimiterService.GetTTL(ctx, key)
+	if err != nil {
+		ttl = window // Default to window if TTL can't be determined
 	}
 	
 	// Set rate limit headers
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-count))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-int(count)))
 	
 	resetTime := time.Now().Add(ttl).Unix()
 	c.Header("X-RateLimit-Reset", strconv.FormatInt(resetTime, 10))
 	
 	// Check if limit exceeded
-	if count > limit {
+	if count > int64(limit) {
 		apiErr := errors.NewRateLimitError(
 			fmt.Sprintf("Rate limit exceeded for %s. Try again later.", limitType),
 			limit,
@@ -286,7 +261,7 @@ func applyFixedWindowRateLimit(c *gin.Context, apiKey, limitType string, limit i
 }
 
 // applySlidingWindowRateLimit applies rate limiting using the sliding window algorithm
-func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, cacheService interfaces.CacheService, log *logger.Logger) bool {
+func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit int, window time.Duration, rateLimiterService interfaces.RateLimiterService, log *logger.Logger) bool {
 	// Create a unique key for this API key and limit type
 	baseKey := fmt.Sprintf("ratelimit:sliding:%s:%s", apiKey, limitType)
 	ctx := c.Request.Context()
@@ -294,12 +269,12 @@ func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit
 	// Current timestamp
 	now := time.Now().UnixNano()
 	
-	// Add current timestamp to sorted set
+	// Add current timestamp to window
 	timestampKey := fmt.Sprintf("%s:timestamps", baseKey)
-	err := cacheService.ZAdd(ctx, timestampKey, now, strconv.FormatInt(now, 10))
+	err := rateLimiterService.AddToWindow(ctx, timestampKey, now, strconv.FormatInt(now, 10), window*2)
 	if err != nil {
 		// If we can't track rate limiting, allow the request but log the error
-		log.Error("Failed to add timestamp to rate limit set", err,
+		log.Error("Failed to add timestamp to rate limit window", err,
 			"api_key", maskString(apiKey),
 			"limit_type", limitType,
 		)
@@ -307,15 +282,12 @@ func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit
 		return true
 	}
 	
-	// Set expiry for the sorted set
-	cacheService.Expire(ctx, timestampKey, window*2) // Double the window to ensure we keep history
-	
 	// Remove timestamps outside the window
 	cutoff := now - window.Nanoseconds()
-	cacheService.ZRemRangeByScore(ctx, timestampKey, 0, cutoff)
+	rateLimiterService.RemoveFromWindow(ctx, timestampKey, cutoff)
 	
 	// Count requests in the current window
-	count, err := cacheService.ZCount(ctx, timestampKey, cutoff, "+inf")
+	count, err := rateLimiterService.CountInWindow(ctx, timestampKey, cutoff, now)
 	if err != nil {
 		// If we can't count, allow the request but log the error
 		log.Error("Failed to count rate limit timestamps", err,
@@ -331,7 +303,7 @@ func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit
 	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-count))
 	
 	// Calculate reset time (when the oldest request falls out of the window)
-	oldestTimestamp, err := cacheService.ZRange(ctx, timestampKey, 0, 0)
+	oldestTimestamp, err := rateLimiterService.GetWindowEntries(ctx, timestampKey, 0, 0)
 	resetTime := now + window.Nanoseconds()
 	if err == nil && len(oldestTimestamp) > 0 {
 		oldest, err := strconv.ParseInt(oldestTimestamp[0], 10, 64)
@@ -369,12 +341,10 @@ func applySlidingWindowRateLimit(c *gin.Context, apiKey, limitType string, limit
 	return true
 }
 
-// getTTL gets the TTL for a key
-func getTTL(cacheService interfaces.CacheService, ctx context.Context, key string) (time.Duration, error) {
-	ttl, err := cacheService.TTL(ctx, key)
-	if err != nil {
-		return time.Hour, err
+// maskString masks a string for logging (e.g., API keys)
+func maskString(s string) string {
+	if len(s) <= 8 {
+		return "****"
 	}
-	
-	return ttl, nil
+	return s[:4] + "****" + s[len(s)-4:]
 }

@@ -65,6 +65,26 @@ type CacheService interface {
 	Stop() error
 }
 
+// RateLimiterService defines the interface for rate limiting operations
+type RateLimiterService interface {
+	// Increment increments a counter for the given key and sets expiration if it's a new key
+	Increment(ctx context.Context, key string, value int64, expiration time.Duration) (int64, error)
+	// AddToWindow adds an entry to a time window for sliding window rate limiting
+	AddToWindow(ctx context.Context, key string, timestamp int64, member string, expiration time.Duration) error
+	// RemoveFromWindow removes entries from a time window that are older than the cutoff
+	RemoveFromWindow(ctx context.Context, key string, cutoff int64) error
+	// CountInWindow counts entries in a time window between min and max scores
+	CountInWindow(ctx context.Context, key string, min, max int64) (int, error)
+	// GetWindowEntries gets entries in a time window between start and stop indices
+	GetWindowEntries(ctx context.Context, key string, start, stop int) ([]string, error)
+	// GetTTL gets the remaining TTL for a key
+	GetTTL(ctx context.Context, key string) (time.Duration, error)
+	// Allow checks if a request should be allowed based on token bucket algorithm
+	Allow(key string, rate float64, burst int) bool
+	Start() error
+	Stop() error
+}
+
 // ExecutionService defines the interface for execution services
 type ExecutionService interface {
 	Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error)
