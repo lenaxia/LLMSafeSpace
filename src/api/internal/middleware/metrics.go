@@ -140,7 +140,6 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		wsConnectionsTotal.WithLabelValues(connType).Inc()
 		
 		// Get user ID if available
-		userID := ""
 		if id, exists := c.Get("userID"); exists {
 			userID = id.(string)
 		}
@@ -200,17 +199,17 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		codeExecutionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
 		
 		// Get user ID if available
-		userID := ""
+		userID = ""
 		if id, exists := c.Get("userID"); exists {
 			userID = id.(string)
 		}
 		
 		// Record metrics using service
-		userID := ""
+		userID = ""
 		if id, exists := c.Get("userID"); exists {
 			userID = id.(string)
 		}
-		metricsService.RecordExecution(execType, runtime, status, userID, duration)
+		metricsService.RecordExecution(execType, runtime, status, duration)
 	}
 }
 
