@@ -199,7 +199,7 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		codeExecutionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
 		
 		// Get user ID if available
-		userID = ""
+		var userID string
 		if id, exists := c.Get("userID"); exists {
 			userID = id.(string)
 		}
