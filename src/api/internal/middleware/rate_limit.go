@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,12 +86,14 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log *logger.Logger, c
 		}
 
 		if err != nil {
-			if rlErr, ok := err.(*errors.APIError); ok && rlErr.Type == errors.RateLimitExceeded {
+			if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.RateLimitExceededError {
 				c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 				c.Header("X-RateLimit-Remaining", "0")
 				c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(config.DefaultWindow).Unix(), 10))
+				c.AbortWithStatusJSON(apiErr.StatusCode, apiErr)
+				return
 			}
-			c.AbortWithError(rlErr.StatusCode, rlErr)
+			c.AbortWithError(http.StatusInternalServerError, err)
 			return
 		}
 
@@ -115,11 +118,16 @@ func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string
 			"burst", strconv.Itoa(burst),
 			"path", c.FullPath(),
 		)
-		return errors.NewRateLimitError("Too many requests")
+		resetTime := time.Now().Add(time.Second).Unix() // Approximate reset time
+		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limiter.Burst() - limiter.Limit()))
+	remaining := burst - int(limiter.Tokens())
+	if remaining < 0 {
+		remaining = 0
+	}
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	return nil
 }
 
@@ -132,7 +140,7 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 			"api_key", utilities.MaskString(key),
 			"key", counterKey,
 		)
-		return errors.NewInternalServerError("Rate limit service unavailable")
+		return errors.NewInternalError("Rate limit service unavailable", err)
 	}
 
 	ttl, err := rl.GetTTL(c.Request.Context(), counterKey)
@@ -150,7 +158,8 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
 		)
-		return errors.NewRateLimitError("Too many requests")
+		resetTime := time.Now().Add(ttl).Unix()
+		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
@@ -170,7 +179,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 			"api_key", utilities.MaskString(key),
 			"key", windowKey,
 		)
-		return errors.NewInternalServerError("Rate limit service unavailable")
+		return errors.NewInternalError("Rate limit service unavailable", err)
 	}
 
 	// Remove old timestamps
@@ -190,7 +199,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 			"api_key", utilities.MaskString(key),
 			"key", windowKey,
 		)
-		return errors.NewInternalServerError("Rate limit service unavailable")
+		return errors.NewInternalError("Rate limit service unavailable", err)
 	}
 
 	if count > limit {
@@ -200,7 +209,8 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
 		)
-		return errors.NewRateLimitError("Too many requests")
+		resetTime := time.Now().Add(config.DefaultWindow).Unix()
+		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
 	// Get remaining TTL for the window
