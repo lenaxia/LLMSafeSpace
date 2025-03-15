@@ -89,15 +89,6 @@ func NewValidationError(message string, details map[string]interface{}, err erro
 	}
 }
 
-// NewAuthError creates a new authentication error
-func NewAuthError(message string, err error) *APIError {
-	return &APIError{
-		Type:    ErrorTypeAuth,
-		Code:    "unauthorized",
-		Message: message,
-		Err:     err,
-	}
-}
 
 // NewNotFoundError creates a new not found error
 func NewNotFoundError(resourceType, resourceID string, err error) *APIError {
