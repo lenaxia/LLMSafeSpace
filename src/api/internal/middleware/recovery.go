@@ -11,10 +11,38 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"go.uber.org/zap"
 )
 
+// RecoveryConfig defines configuration for the recovery middleware
+type RecoveryConfig struct {
+	// IncludeStackTrace indicates whether to include stack traces in error responses
+	IncludeStackTrace bool
+	
+	// LogStackTrace indicates whether to log stack traces
+	LogStackTrace bool
+	
+	// CustomRecoveryHandler is a custom function to handle recovery
+	CustomRecoveryHandler func(*gin.Context, interface{})
+}
+
+// DefaultRecoveryConfig returns the default recovery configuration
+func DefaultRecoveryConfig() RecoveryConfig {
+	return RecoveryConfig{
+		IncludeStackTrace: false,
+		LogStackTrace:     true,
+		CustomRecoveryHandler: nil,
+	}
+}
+
 // RecoveryMiddleware returns a middleware that recovers from panics
-func RecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
+func RecoveryMiddleware(log *logger.Logger, config ...RecoveryConfig) gin.HandlerFunc {
+	// Use default config if none provided
+	cfg := DefaultRecoveryConfig()
+	if len(config) > 0 {
+		cfg = config[0]
+	}
+	
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
@@ -33,6 +61,9 @@ func RecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
 				// Get stack trace
 				stack := string(debug.Stack())
 				
+				// Create error message
+				errMsg := fmt.Sprintf("%v", err)
+				
 				// Log the error
 				httpRequest := fmt.Sprintf("%s %s", c.Request.Method, c.Request.URL.Path)
 				if brokenPipe {
@@ -42,12 +73,27 @@ func RecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
 						"request_id", c.GetString("request_id"),
 					)
 				} else {
-					log.Error("Recovery from panic", fmt.Errorf("%v", err),
+					logFields := []interface{}{
 						"request", httpRequest,
 						"client_ip", c.ClientIP(),
 						"request_id", c.GetString("request_id"),
-						"stack", stack,
-					)
+						"error", errMsg,
+					}
+					
+					if cfg.LogStackTrace {
+						logFields = append(logFields, "stack", stack)
+					}
+					
+					log.Error("Recovery from panic", fmt.Errorf("%v", err), logFields...)
+					
+					// Log to OpenTelemetry if available
+					if span := trace.SpanFromContext(c.Request.Context()); span != nil {
+						span.RecordError(fmt.Errorf("%v", err))
+						span.SetStatus(trace.StatusCodeError, "panic recovered")
+						if cfg.LogStackTrace {
+							span.SetAttributes(attribute.String("error.stack", stack))
+						}
+					}
 				}
 
 				// If the connection is dead, we can't write a status to it.
@@ -56,14 +102,28 @@ func RecoveryMiddleware(log *logger.Logger) gin.HandlerFunc {
 					return
 				}
 
+				// Use custom recovery handler if provided
+				if cfg.CustomRecoveryHandler != nil {
+					cfg.CustomRecoveryHandler(c, err)
+					return
+				}
+
 				// Create API error
 				apiErr := errors.NewInternalError("Internal server error", fmt.Errorf("%v", err))
+				
+				// Include stack trace in response if configured
+				if cfg.IncludeStackTrace {
+					apiErr.Details = map[string]interface{}{
+						"stack": strings.Split(stack, "\n"),
+					}
+				}
 				
 				// Send error response
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": gin.H{
 						"code":    apiErr.Code,
 						"message": apiErr.Message,
+						"details": apiErr.Details,
 					},
 				})
 				c.Abort()

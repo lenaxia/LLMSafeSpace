@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -16,8 +17,60 @@ import (
 // Use a single instance of Validate, it caches struct info
 var validate = validator.New()
 
+// ValidationConfig defines configuration for the validation middleware
+type ValidationConfig struct {
+	// CustomValidators is a map of custom validation functions
+	CustomValidators map[string]validator.Func
+	
+	// CustomErrorMessages is a map of custom error messages for validation tags
+	CustomErrorMessages map[string]string
+	
+	// ValidateQueryParams indicates whether to validate query parameters
+	ValidateQueryParams bool
+	
+	// ValidatePathParams indicates whether to validate path parameters
+	ValidatePathParams bool
+}
+
+// DefaultValidationConfig returns the default validation configuration
+func DefaultValidationConfig() ValidationConfig {
+	return ValidationConfig{
+		CustomValidators:    make(map[string]validator.Func),
+		CustomErrorMessages: make(map[string]string),
+		ValidateQueryParams: false,
+		ValidatePathParams:  false,
+	}
+}
+
+func init() {
+	// Register custom validation functions
+	validate.RegisterValidation("nohtml", validateNoHTML)
+	validate.RegisterValidation("alphanum_space", validateAlphanumSpace)
+	validate.RegisterValidation("iso8601", validateISO8601)
+	
+	// Register custom tag name function
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" {
+			return ""
+		}
+		return name
+	})
+}
+
 // ValidationMiddleware returns a middleware that validates request bodies
-func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
+func ValidationMiddleware(log *logger.Logger, config ...ValidationConfig) gin.HandlerFunc {
+	// Use default config if none provided
+	cfg := DefaultValidationConfig()
+	if len(config) > 0 {
+		cfg = config[0]
+	}
+	
+	// Register custom validators
+	for tag, fn := range cfg.CustomValidators {
+		validate.RegisterValidation(tag, fn)
+	}
+	
 	return func(c *gin.Context) {
 		// Skip validation for GET, DELETE, and OPTIONS requests
 		if c.Request.Method == http.MethodGet || 
@@ -69,7 +122,7 @@ func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
 			// Convert validation errors to a map
 			validationErrors := make(map[string]string)
 			for _, err := range err.(validator.ValidationErrors) {
-				validationErrors[err.Field()] = getValidationErrorMessage(err)
+				validationErrors[err.Field()] = getValidationErrorMessage(err, cfg.CustomErrorMessages)
 			}
 			
 			apiErr := errors.NewValidationError("Validation failed", map[string]interface{}{
@@ -81,6 +134,22 @@ func ValidationMiddleware(log *logger.Logger) gin.HandlerFunc {
 		
 		// Store the validated model in the context
 		c.Set("validatedModel", modelValue)
+		
+		// Validate query parameters if configured
+		if cfg.ValidateQueryParams {
+			if err := validateQueryParams(c); err != nil {
+				HandleAPIError(c, err)
+				return
+			}
+		}
+		
+		// Validate path parameters if configured
+		if cfg.ValidatePathParams {
+			if err := validatePathParams(c); err != nil {
+				HandleAPIError(c, err)
+				return
+			}
+		}
 		
 		c.Next()
 	}
@@ -116,7 +185,7 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 		// Convert validation errors to a map
 		validationErrors := make(map[string]string)
 		for _, err := range err.(validator.ValidationErrors) {
-			validationErrors[err.Field()] = getValidationErrorMessage(err)
+			validationErrors[err.Field()] = getValidationErrorMessage(err, nil)
 		}
 		
 		return errors.NewValidationError("Validation failed", map[string]interface{}{
@@ -127,22 +196,138 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 	return nil
 }
 
+// validateQueryParams validates query parameters
+func validateQueryParams(c *gin.Context) error {
+	// Get query parameter validation rules from context
+	rules, exists := c.Get("queryParamRules")
+	if !exists {
+		return nil
+	}
+	
+	// Validate query parameters
+	errors := make(map[string]string)
+	
+	// Implement query parameter validation logic here
+	// This is a placeholder for the actual implementation
+	
+	if len(errors) > 0 {
+		return errors.NewValidationError("Invalid query parameters", map[string]interface{}{
+			"errors": errors,
+		}, nil)
+	}
+	
+	return nil
+}
+
+// validatePathParams validates path parameters
+func validatePathParams(c *gin.Context) error {
+	// Get path parameter validation rules from context
+	rules, exists := c.Get("pathParamRules")
+	if !exists {
+		return nil
+	}
+	
+	// Validate path parameters
+	errors := make(map[string]string)
+	
+	// Implement path parameter validation logic here
+	// This is a placeholder for the actual implementation
+	
+	if len(errors) > 0 {
+		return errors.NewValidationError("Invalid path parameters", map[string]interface{}{
+			"errors": errors,
+		}, nil)
+	}
+	
+	return nil
+}
+
 // getValidationErrorMessage returns a human-readable error message for a validation error
-func getValidationErrorMessage(err validator.FieldError) string {
+func getValidationErrorMessage(err validator.FieldError, customMessages map[string]string) string {
+	// Check for custom error message
+	if customMessages != nil {
+		if msg, ok := customMessages[err.Tag()]; ok {
+			return msg
+		}
+	}
+	
 	switch err.Tag() {
 	case "required":
 		return "This field is required"
 	case "email":
 		return "Invalid email address"
 	case "min":
-		return "Value must be greater than or equal to " + err.Param()
+		if err.Type().Kind() == reflect.String {
+			return fmt.Sprintf("Must be at least %s characters long", err.Param())
+		}
+		return fmt.Sprintf("Must be greater than or equal to %s", err.Param())
 	case "max":
-		return "Value must be less than or equal to " + err.Param()
+		if err.Type().Kind() == reflect.String {
+			return fmt.Sprintf("Must be at most %s characters long", err.Param())
+		}
+		return fmt.Sprintf("Must be less than or equal to %s", err.Param())
 	case "len":
-		return "Length must be " + err.Param()
+		return fmt.Sprintf("Must be exactly %s characters long", err.Param())
 	case "oneof":
-		return "Value must be one of " + err.Param()
+		return fmt.Sprintf("Must be one of: %s", err.Param())
+	case "alphanum":
+		return "Must contain only alphanumeric characters"
+	case "alphanum_space":
+		return "Must contain only alphanumeric characters and spaces"
+	case "nohtml":
+		return "HTML tags are not allowed"
+	case "iso8601":
+		return "Must be a valid ISO8601 date/time"
+	case "uuid":
+		return "Must be a valid UUID"
+	case "url":
+		return "Must be a valid URL"
+	case "json":
+		return "Must be valid JSON"
+	case "file":
+		return "Must be a valid file"
 	default:
 		return "Invalid value"
 	}
+}
+
+// Custom validation functions
+
+// validateNoHTML validates that a string does not contain HTML tags
+func validateNoHTML(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return true
+	}
+	
+	value := field.String()
+	return !strings.Contains(value, "<") || !strings.Contains(value, ">")
+}
+
+// validateAlphanumSpace validates that a string contains only alphanumeric characters and spaces
+func validateAlphanumSpace(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return true
+	}
+	
+	value := field.String()
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateISO8601 validates that a string is a valid ISO8601 date/time
+func validateISO8601(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return true
+	}
+	
+	value := field.String()
+	_, err := time.Parse(time.RFC3339, value)
+	return err == nil
 }
