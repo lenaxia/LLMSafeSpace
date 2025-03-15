@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"go.uber.org/zap"
 )
 
 // RecoveryConfig defines configuration for the recovery middleware
@@ -87,6 +86,8 @@ func RecoveryMiddleware(log *logger.Logger, config ...RecoveryConfig) gin.Handle
 					log.Error("Recovery from panic", fmt.Errorf("%v", err), logFields...)
 					
 					// Log to OpenTelemetry if available
+					// Commented out until we properly import trace and attribute packages
+					/*
 					if span := trace.SpanFromContext(c.Request.Context()); span != nil {
 						span.RecordError(fmt.Errorf("%v", err))
 						span.SetStatus(trace.StatusCodeError, "panic recovered")
@@ -94,6 +95,7 @@ func RecoveryMiddleware(log *logger.Logger, config ...RecoveryConfig) gin.Handle
 							span.SetAttributes(attribute.String("error.stack", stack))
 						}
 					}
+					*/
 				}
 
 				// If the connection is dead, we can't write a status to it.

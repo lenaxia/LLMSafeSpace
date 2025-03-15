@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"go.uber.org/zap"
 )
 
 // bodyLogWriter is a gin.ResponseWriter that captures the response body

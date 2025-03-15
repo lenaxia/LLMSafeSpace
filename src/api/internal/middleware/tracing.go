@@ -7,10 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // TracingConfig defines configuration for the tracing middleware
@@ -55,10 +51,13 @@ func TracingMiddleware(log *logger.Logger, config ...TracingConfig) gin.HandlerF
 	}
 	
 	// Get tracer if OpenTelemetry is enabled
+	// Commented out until we properly import OpenTelemetry packages
+	/*
 	var tracer trace.Tracer
 	if cfg.EnableOpenTelemetry {
 		tracer = otel.Tracer(cfg.TracerName)
 	}
+	*/
 	
 	return func(c *gin.Context) {
 		// Get request ID from header
@@ -96,7 +95,11 @@ func TracingMiddleware(log *logger.Logger, config ...TracingConfig) gin.HandlerF
 		// Add start time to context for latency calculation
 		c.Set("start_time", time.Now())
 		
-		// Create OpenTelemetry span if enabled
+		// Process request without OpenTelemetry for now
+		c.Next()
+		
+		// Create OpenTelemetry span if enabled - commented out until we properly import OpenTelemetry packages
+		/*
 		if cfg.EnableOpenTelemetry && tracer != nil {
 			// Extract context from incoming request
 			ctx := c.Request.Context()
@@ -152,5 +155,6 @@ func TracingMiddleware(log *logger.Logger, config ...TracingConfig) gin.HandlerF
 			// Process request without OpenTelemetry
 			c.Next()
 		}
+		*/
 	}
 }

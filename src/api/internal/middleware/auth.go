@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -103,11 +104,13 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 			}
 		}
 		
-		// Add user ID to span if tracing is enabled
+		// Add user ID to span if tracing is enabled - commented out until we properly import trace packages
+		/*
 		if span := trace.SpanFromContext(c.Request.Context()); span != nil {
 			span.SetAttributes(attribute.String("user.id", authResult.UserID))
 			span.SetAttributes(attribute.String("user.role", authResult.Role))
 		}
+		*/
 		
 		c.Next()
 	}
