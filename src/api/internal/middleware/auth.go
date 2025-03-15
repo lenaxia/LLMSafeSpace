@@ -75,7 +75,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		}
 		
 		// Validate token
-		authResult, err := authService.ValidateToken(c.Request.Context(), token)
+		userID, err := authService.ValidateToken(token)
 		if err != nil {
 			log.Warn("Authentication failed: invalid token",
 				"path", path,
@@ -91,15 +91,12 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		}
 		
 		// Store authentication result in context
-		c.Set("userID", authResult.UserID)
-		c.Set("userRole", authResult.Role)
-		c.Set("apiKey", authResult.APIKey)
-		c.Set("permissions", authResult.Permissions)
+		c.Set("userID", userID)
 		
 		// Add user ID to logger context
 		if requestLogger, exists := c.Get("logger"); exists {
 			if typedLogger, ok := requestLogger.(*logger.Logger); ok {
-				newLogger := typedLogger.With("user_id", authResult.UserID)
+				newLogger := typedLogger.With("user_id", userID)
 				c.Set("logger", newLogger)
 			}
 		}
