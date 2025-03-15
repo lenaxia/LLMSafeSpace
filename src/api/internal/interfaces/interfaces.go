@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	//metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	//"k8s.io/apimachinery/pkg/watch"
+	//"k8s.io/client-go/kubernetes"
+	//"k8s.io/client-go/rest"
 	
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // SessionManager defines the interface for managing WebSocket sessions
@@ -171,10 +172,6 @@ type Services interface {
 	GetSandbox() SandboxService
 	GetWarmPool() WarmPoolService
 }
-
-import (
-	k8sinterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-)
 
 // Use the shared Kubernetes interfaces
 type KubernetesClient = k8sinterfaces.KubernetesClient
