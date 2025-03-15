@@ -170,16 +170,16 @@ func TestStreamWriter(t *testing.T) {
 	data = []byte("Partial")
 	n, err = writer.Write(data)
 	
-	// Verify results
+	// Verify results - partial should NOT be visible yet (still buffered)
 	assert.NoError(t, err)
 	assert.Equal(t, len(data), n)
-	assert.Equal(t, "Hello\nWorld\nPartial", capturedOutput)
+	assert.Equal(t, "Hello\nWorld\n", capturedOutput) // "Partial" remains buffered
 	
 	// Complete the line
 	data = []byte(" Line\n")
 	n, err = writer.Write(data)
 	
-	// Verify results
+	// Verify results - full line should now be visible
 	assert.NoError(t, err)
 	assert.Equal(t, len(data), n)
 	assert.Equal(t, "Hello\nWorld\nPartial Line\n", capturedOutput)
