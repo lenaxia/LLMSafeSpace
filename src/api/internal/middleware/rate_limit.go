@@ -86,11 +86,17 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log *logger.Logger, c
 		}
 
 		if err != nil {
-			if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.RateLimitExceededError {
+			if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeRateLimit {
 				c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 				c.Header("X-RateLimit-Remaining", "0")
 				c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(config.DefaultWindow).Unix(), 10))
-				c.AbortWithStatusJSON(apiErr.StatusCode, apiErr)
+				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+					"error": gin.H{
+						"code":    apiErr.Code,
+						"message": apiErr.Message,
+						"details": apiErr.Details,
+					},
+				})
 				return
 			}
 			c.AbortWithError(http.StatusInternalServerError, err)
