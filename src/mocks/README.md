@@ -1,103 +1,328 @@
-# LLMSafeSpace Mocks
+# LLMSafeSpace Mock Framework - Complete Documentation
 
-This package provides mock implementations for testing the LLMSafeSpace project. The mocks are designed to be used in unit tests and can be easily set up with predefined behaviors or custom responses.
+This document provides comprehensive guidance for using the LLMSafeSpace mock framework for testing Kubernetes-related functionality. All mock implementations adhere to standard Go testing patterns using the testify/mock package.
 
-## Usage
+## Table of Contents
+1. [Core Concepts](#core-concepts)
+2. [Mock Types Overview](#mock-types-overview)
+3. [Initialization Patterns](#initialization-patterns)
+4. [Common Use Cases](#common-use-cases)
+5. [Method Reference](#method-reference)
+6. [Debugging & Validation](#debugging--validation)
+7. [Best Practices](#best-practices)
 
-### Using the Mock Factory
+## Core Concepts <a name="core-concepts"></a>
 
-The `MockFactory` provides a convenient way to create mock objects for various components of the LLMSafeSpace project. Here's an example of how to use it:
+The mock framework provides:
+- Complete implementations of Kubernetes client interfaces
+- Pre-configured responses for common operations
+- Flexible expectation management
+- Integrated validation system
+- Lifecycle management utilities
 
+Key components:
+- `MockFactory`: Central factory for creating mock objects
+- Interface-specific mocks (Sandbox, WarmPool, etc.)
+- Watch system simulator
+- Automatic argument matching
+
+## Mock Types Overview <a name="mock-types-overview"></a>
+
+### 1. Kubernetes Resource Mocks
+```go
+- MockSandboxInterface
+- MockWarmPoolInterface  
+- MockWarmPodInterface
+- MockRuntimeEnvironmentInterface
+- MockSandboxProfileInterface
+```
+
+### 2. Client Mocks
+```go
+- MockKubernetesClient
+- MockLLMSafespaceV1Interface
+```
+
+### 3. Utility Mocks
+```go
+- MockWatch
+- MockWSConnection
+- MockLogger
+```
+
+## Initialization Patterns <a name="initialization-patterns"></a>
+
+### Basic Initialization
 ```go
 import (
     "testing"
-    
-    "github.com/stretchr/testify/assert"
-    "github.com/lenaxia/llmsafespace/mocks"
+    "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
-func TestSomething(t *testing.T) {
-    // Create a mock factory
+func TestExample(t *testing.T) {
+    // Create mock client
+    mockClient := kubernetes.NewMockKubernetesClient()
+    
+    // Initialize interface mocks
+    sandboxMock := kubernetes.NewMockSandboxInterface()
+    warmPoolMock := kubernetes.NewMockWarmPoolInterface()
+    
+    // Set default expectations
+    mockClient.On("LlmsafespaceV1").Return(
+        kubernetes.NewMockLLMSafespaceV1Interface())
+}
+```
+
+### Factory Pattern
+```go
+func TestFactoryExample(t *testing.T) {
     factory := mocks.NewMockFactory()
     
-    // Create mock objects
-    sandbox := factory.NewSandbox("test-sandbox", "default", "python:3.10")
-    warmPool := factory.NewWarmPool("test-pool", "default", "python:3.10")
+    // Create pre-configured resources
+    sandbox := factory.NewSandbox("test-sb", "default", "python:3.10")
+    warmPool := factory.NewWarmPool("test-pool", "default", "nodejs:18")
     
-    // Use the mock objects in your tests
-    assert.Equal(t, "test-sandbox", sandbox.Name)
-    assert.Equal(t, "python:3.10", sandbox.Spec.Runtime)
+    // Create mock client with default expectations
+    client := factory.NewKubernetesClient()
 }
 ```
 
-### Using Individual Mocks
+## Common Use Cases <a name="common-use-cases"></a>
 
-If you need more control over the mock behavior, you can use the individual mock implementations directly. Here's an example of how to use the `MockKubernetesClient`:
-
+### 1. Basic CRUD Operations
 ```go
-import (
-    "testing"
+func TestSandboxCreate(t *testing.T) {
+    mockSandbox := kubernetes.NewMockSandboxInterface()
     
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/mock"
+    // Set expectation
+    mockSandbox.SetupCreateMock()
     
-    kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-)
-
-func TestKubernetesClient(t *testing.T) {
-    // Create a mock Kubernetes client
-    client := kmocks.NewMockKubernetesClient()
+    // Execute test code
+    _, err := sandboxController.Create(testSandbox)
     
-    // Set up expectations
-    client.On("Start").Return(nil)
-    client.On("Stop").Return()
-    
-    // Call the methods under test
-    err := client.Start()
+    // Validate
+    mockSandbox.AssertCalled(t, "Create", mock.Anything)
     assert.NoError(t, err)
-    client.Stop()
-    
-    // Verify expectations
-    client.AssertExpectations(t)
 }
 ```
 
-## Available Mocks
+### 2. Watch Simulations
+```go
+func TestWatchSandboxes(t *testing.T) {
+    mockWatch := kubernetes.NewMockWatch()
+    mockSandbox := kubernetes.NewMockSandboxInterface()
+    
+    // Setup watch expectations
+    mockSandbox.SetupWatchMock().Return(mockWatch, nil)
+    
+    // Send test events
+    mockWatch.SendEvent(watch.Added, factory.NewSandbox("test", "ns", "py"))
+    
+    // Test code would receive this event
+    // Add your event handling assertions here
+}
+```
 
-### Kubernetes Mocks
+### 3. Error Simulation
+```go
+func TestCreateError(t *testing.T) {
+    mockSandbox := kubernetes.NewMockSandboxInterface()
+    
+    // Force error
+    mockSandbox.On("Create", mock.Anything).
+        Return(nil, errors.New("storage error"))
+        
+    _, err := sandboxController.Create(testSandbox)
+    assert.ErrorContains(t, err, "storage error")
+}
+```
 
-- `MockKubernetesClient`: Mock implementation of `KubernetesClient`
-- `MockLLMSafespaceV1Interface`: Mock implementation of `LLMSafespaceV1Interface`
-- `MockSandboxInterface`: Mock implementation of `SandboxInterface`
-- `MockWarmPoolInterface`: Mock implementation of `WarmPoolInterface`
-- `MockWarmPodInterface`: Mock implementation of `WarmPodInterface`
-- `MockRuntimeEnvironmentInterface`: Mock implementation of `RuntimeEnvironmentInterface`
-- `MockSandboxProfileInterface`: Mock implementation of `SandboxProfileInterface`
-- `MockWatch`: Mock implementation of `watch.Interface`
+## Method Reference <a name="method-reference"></a>
 
-### Logger Mocks
+### MockSandboxInterface
+```go
+// Create - Create a sandbox
+// Signature: 
+// Create(sandbox *types.Sandbox) (*types.Sandbox, error)
+//
+// Setup: 
+mock.SetupCreateMock().Return(sandbox, nil)
 
-- `MockLogger`: Mock implementation of the logger interface
+// Update - Update sandbox spec
+// Signature:
+// Update(sandbox *types.Sandbox) (*types.Sandbox, error)
 
-### Types Mocks
+// Delete - Delete a sandbox
+// Signature:
+// Delete(name string, options metav1.DeleteOptions) error
 
-- `MockWSConnection`: Mock implementation of `WSConnection`
-- `MockSession`: Mock implementation of `Session`
+// Get - Retrieve sandbox
+// Signature: 
+// Get(name string, options metav1.GetOptions) (*types.Sandbox, error)
 
-## Debugging Mock Issues
+// List - List sandboxes
+// Signature:
+// List(opts metav1.ListOptions) (*types.SandboxList, error)
 
-When working with mocks, it's important to ensure that the mock objects are set up correctly and that the expectations are properly defined. Here are some tips for debugging mock issues:
+// Watch - Watch for changes
+// Signature:
+// Watch(opts metav1.ListOptions) (watch.Interface, error)
+```
 
-1. **Check the Mock Setup**: Ensure that the mock objects are created and set up correctly. Double-check the method calls and arguments used to set up the mock expectations.
+### MockWatch
+```go
+// SendEvent - Inject watch event
+// Signature:
+// SendEvent(eventType watch.EventType, object runtime.Object)
 
-2. **Verify Expectations**: After running the tests, use the `mock.AssertExpectations(t)` method to verify that all expectations were met. If any expectations were not met, the test will fail, and you can investigate the cause.
+// ResultChan - Receive events
+// Signature:
+// ResultChan() <-chan watch.Event
 
-3. **Use Mock Argument Matchers**: If you're having trouble matching arguments in your mock expectations, consider using the argument matchers provided by the `testify/mock` package. These matchers can help you match arguments based on specific conditions or patterns.
+// Stop - Terminate watch
+// Signature:
+// Stop()
+```
 
-4. **Check the Call Order**: If your test involves multiple method calls on the mock object, ensure that the expectations are set up in the correct order. The `testify/mock` package enforces the order of method calls by default.
+## Debugging & Validation <a name="debugging--validation"></a>
 
-5. **Enable Mock Logging**: The `testify/mock` package provides a logging feature that can help you debug mock issues. You can enable mock logging by setting the `mock.MockingMode` to `mock.LoggingMode` before running your tests.
+### Common Issues & Solutions
 
-6. **Inspect the Mock Object**: If you're still having trouble, you can inspect the mock object directly to see its state and the recorded method calls. The `testify/mock` package provides methods like `Mock.Calls` and `Mock.ExpectedCalls` that can help you inspect the mock object.
+1. **Unmet Expectations**
+```go
+// Always call AssertExpectations!
+mockObj.AssertExpectations(t)
 
-By following these tips and leveraging the features provided by the `testify/mock` package, you should be able to effectively debug and resolve any issues you encounter when working with mocks in the LLMSafeSpace project.
+// Check call history
+calls := mockObj.Calls
+for _, call := range calls {
+    t.Logf("Method: %s\nArgs: %v", call.Method, call.Arguments)
+}
+```
+
+2. **Argument Matching Failures**
+```go
+// Use flexible matchers
+mock.On("Get", mock.AnythingOfType("string"), mock.Anything).
+    Return(testObj, nil)
+    
+// Match specific fields
+mock.On("Update", mock.MatchedBy(func(s *types.Sandbox) bool {
+    return s.Spec.Runtime == "python"
+})).Return(nil, nil)
+```
+
+3. **Concurrency Issues**
+```go
+// Use lockable mocks
+mock.Mock.Test(t) // Enables automatic locking
+
+// Verify call order
+mock.AssertCalled(t, "Create", firstArgs)
+mock.AssertCalled(t, "Update", secondArgs)
+```
+
+### Validation Checklist
+1. All expected methods were called
+2. Arguments match expectations
+3. Call count matches requirements
+4. Return values are properly handled
+5. Concurrency locks are properly managed
+
+## Best Practices <a name="best-practices"></a>
+
+1. **Lifecycle Management**
+```go
+func TestMain(m *testing.M) {
+    // Global mock setup/teardown
+    defer mockClient.Stop()
+    m.Run()
+}
+```
+
+2. **Reusable Setup**
+```go
+func sandboxTestSetup() (*Controller, *kubernetes.MockSandboxInterface) {
+    mockSandbox := kubernetes.NewMockSandboxInterface()
+    mockSandbox.SetupGetMock("test-sandbox")
+    
+    controller := NewController(mockSandbox)
+    return controller, mockSandbox
+}
+```
+
+3. **Argument Matching Hierarchy**
+```go
+mock.On("Method", 
+    mock.Anything,             // Match any value
+    mock.AnythingOfType("int"), // Match type
+    mock.MatchedBy(func(x any) bool { // Custom logic
+        return x.(string) == "expected"
+    }))
+```
+
+4. **Parallel Testing**
+```go
+func TestParallel(t *testing.T) {
+    mockObj := NewMockSandboxInterface()
+    mockObj.Test(t) // Enable parallel safety
+    
+    t.Run("parallel1", func(t *testing.T) {
+        t.Parallel()
+        // Test code
+    })
+}
+```
+
+5. **Stateful Mocking**
+```go
+// Maintain internal state
+type StatefulMock struct {
+    kubernetes.MockSandboxInterface
+    sandboxes map[string]*types.Sandbox
+}
+
+func (m *StatefulMock) Create(s *types.Sandbox) (*types.Sandbox, error) {
+    m.sandboxes[s.Name] = s
+    return s, nil
+}
+```
+
+## Troubleshooting Guide
+
+### Error: "missing call(s)"
+1. Verify method signature matches exactly
+2. Check argument matchers (use mock.Anything for wildcards)
+3. Ensure method was actually called in code path
+4. Verify test didn't exit early before call
+
+### Error: "unexpected call(s)"
+1. Add missing expectations
+2. Use mock.AllowUnexpectedCalls() for optional methods
+3. Add catch-all expectation:
+```go 
+mock.On(mock.Anything).Panic("unexpected call"))
+```
+
+### Performance Issues
+1. Use mock.ExpectedCalls = nil to reset between tests
+2. Avoid complex argument matchers in performance tests
+3. Use mock.Call.WaitFor(time.Second) for concurrency tests
+
+## Mock Lifecycle Diagram
+
+[Test Start]
+  │
+  ├── Mock Initialization
+  │     ├── NewMock...()
+  │     └── Setup...Mock()
+  │
+  ├── Test Execution
+  │     ├── Method Calls → Mock
+  │     └── Return Values → Test Code
+  │
+  └── Validation Phase
+        ├── AssertExpectations()
+        └── AssertCalled/NotCalled()
+
+This documentation provides complete coverage of mock usage patterns. For specific implementation details, refer to the interface definitions in the main package.
