@@ -8,57 +8,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-// MockMetricsService is a mock implementation of the MetricsService interface
-type MockMetricsService struct {
-	mock.Mock
-}
-
-func (m *MockMetricsService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockMetricsService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
-	m.Called(method, path, status, duration, size)
-}
-
-func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
-	m.Called(runtime, warmPodUsed)
-}
-
-func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
-	m.Called(runtime)
-}
-
-func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
-	m.Called(execType, runtime, status, duration)
-}
-
-func (m *MockMetricsService) IncrementActiveConnections(connType string) {
-	m.Called(connType)
-}
-
-func (m *MockMetricsService) DecrementActiveConnections(connType string) {
-	m.Called(connType)
-}
-
-func (m *MockMetricsService) RecordWarmPoolHit() {
-	m.Called()
-}
-
 func TestMetricsMiddleware_RecordRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockMetrics := new(MockMetricsService)
+	mockMetrics := new(mocks.MockMetricsService)
 	mockMetrics.On("RecordRequest", "GET", "/api/v1/test", http.StatusOK, mock.Anything, mock.Anything).Once()
 	
 	router := gin.New()
@@ -80,7 +38,7 @@ func TestMetricsMiddleware_RecordRequest(t *testing.T) {
 func TestMetricsMiddleware_SkipMetricsEndpoints(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockMetrics := new(MockMetricsService)
+	mockMetrics := new(mocks.MockMetricsService)
 	// No calls to RecordRequest expected for /metrics endpoint
 	
 	router := gin.New()
@@ -111,9 +69,9 @@ func TestMetricsMiddleware_SkipMetricsEndpoints(t *testing.T) {
 func TestWebSocketMetricsMiddleware(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockMetrics := new(MockMetricsService)
-	mockMetrics.On("IncrementActiveConnections", "chat").Once()
-	mockMetrics.On("DecrementActiveConnections", "chat").Once()
+	mockMetrics := new(mocks.MockMetricsService)
+	mockMetrics.On("IncrementActiveConnections", "chat", mock.Anything).Once()
+	mockMetrics.On("DecrementActiveConnections", "chat", mock.Anything).Once()
 	
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -138,8 +96,8 @@ func TestWebSocketMetricsMiddleware(t *testing.T) {
 func TestExecutionMetricsMiddleware(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockMetrics := new(MockMetricsService)
-	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything).Once()
+	mockMetrics := new(mocks.MockMetricsService)
+	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything, mock.Anything).Once()
 	
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
