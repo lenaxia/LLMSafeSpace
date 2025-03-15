@@ -3,7 +3,6 @@ package tests
 import (
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"testing"
 	"time"
 
@@ -32,52 +31,28 @@ func (m *MockMetricsService) RecordRequest(method, path string, status int, dura
 	m.Called(method, path, status, duration, size)
 }
 
-func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool, userID string) {
-	m.Called(runtime, warmPodUsed, userID)
+func (m *MockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool) {
+	m.Called(runtime, warmPodUsed)
 }
 
-func (m *MockMetricsService) RecordSandboxTermination(runtime, reason string) {
-	m.Called(runtime, reason)
+func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
+	m.Called(runtime)
 }
 
-func (m *MockMetricsService) RecordExecution(execType, runtime, status, userID string, duration time.Duration) {
-	m.Called(execType, runtime, status, userID, duration)
+func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
+	m.Called(execType, runtime, status, duration)
 }
 
-func (m *MockMetricsService) RecordError(errorType, endpoint, code string) {
-	m.Called(errorType, endpoint, code)
+func (m *MockMetricsService) IncrementActiveConnections(connType string) {
+	m.Called(connType)
 }
 
-func (m *MockMetricsService) RecordPackageInstallation(runtime, manager, status string) {
-	m.Called(runtime, manager, status)
+func (m *MockMetricsService) DecrementActiveConnections(connType string) {
+	m.Called(connType)
 }
 
-func (m *MockMetricsService) RecordFileOperation(operation, status string) {
-	m.Called(operation, status)
-}
-
-func (m *MockMetricsService) RecordResourceUsage(sandboxID string, cpu float64, memoryBytes int64) {
-	m.Called(sandboxID, cpu, memoryBytes)
-}
-
-func (m *MockMetricsService) RecordWarmPoolMetrics(runtime, poolName string, utilization float64) {
-	m.Called(runtime, poolName, utilization)
-}
-
-func (m *MockMetricsService) RecordWarmPoolScaling(runtime, operation, reason string) {
-	m.Called(runtime, operation, reason)
-}
-
-func (m *MockMetricsService) IncrementActiveConnections(connType, userID string) {
-	m.Called(connType, userID)
-}
-
-func (m *MockMetricsService) DecrementActiveConnections(connType, userID string) {
-	m.Called(connType, userID)
-}
-
-func (m *MockMetricsService) UpdateWarmPoolHitRatio(runtime string, ratio float64) {
-	m.Called(runtime, ratio)
+func (m *MockMetricsService) RecordWarmPoolHit() {
+	m.Called()
 }
 
 func TestMetricsMiddleware_RecordRequest(t *testing.T) {
@@ -137,13 +112,12 @@ func TestWebSocketMetricsMiddleware(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockMetrics := new(MockMetricsService)
-	mockMetrics.On("IncrementActiveConnections", "chat", mock.Anything).Once()
-	mockMetrics.On("DecrementActiveConnections", "chat", mock.Anything).Once()
+	mockMetrics.On("IncrementActiveConnections", "chat").Once()
+	mockMetrics.On("DecrementActiveConnections", "chat").Once()
 	
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Params = append(c.Params, gin.Param{Key: "type", Value: "chat"})
-		c.Set("userID", "user123") // Add userID to context
 		c.Next()
 	})
 	router.Use(middleware.WebSocketMetricsMiddleware(mockMetrics))
@@ -165,7 +139,7 @@ func TestExecutionMetricsMiddleware(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockMetrics := new(MockMetricsService)
-	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything, mock.Anything).Once()
+	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything).Once()
 	
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
