@@ -372,23 +372,23 @@ func TestDeleteFileInSandbox(t *testing.T) {
 	// Verify expectations
 	mockClient.AssertExpectations(t)
 }
-//
-//// TestParseHelpers tests the parseInt64 and parseFloat64 helper functions
-//func TestParseHelpers(t *testing.T) {
-//	// Test parseInt64
-//	i, err := kubernetes.ParseInt64("1024")
-//	assert.NoError(t, err)
-//	assert.Equal(t, int64(1024), i)
-//	
-//	// Test parseFloat64
-//	f, err := kubernetes.ParseFloat64("123.456")
-//	assert.NoError(t, err)
-//	assert.Equal(t, 123.456, f)
-//	
-//	// Test invalid inputs
-//	_, err = kubernetes.ParseInt64("invalid")
-//	assert.Error(t, err)
-//	
-//	_, err = kubernetes.ParseFloat64("invalid")
-//	assert.Error(t, err)
-//}
+
+// TestParseHelpers tests the parseInt64 and parseFloat64 helper functions
+func TestParseHelpers(t *testing.T) {
+	// Test parseInt64
+	i, err := kubernetes.ParseInt64("1024")
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1024), i)
+	
+	// Test parseFloat64
+	f, err := kubernetes.ParseFloat64("123.456")
+	assert.NoError(t, err)
+	assert.Equal(t, 123.456, f)
+	
+	// Test invalid inputs
+	_, err = kubernetes.ParseInt64("invalid")
+	assert.Error(t, err)
+	
+	_, err = kubernetes.ParseFloat64("invalid")
+	assert.Error(t, err)
+}
