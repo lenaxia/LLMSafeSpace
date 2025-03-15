@@ -43,60 +43,195 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 ## Project Structure
 
 ```
-src/
-├── apis/                  # Shared CRD definitions
-│   └── llmsafespace/      # Group name
-│       └── v1/            # Version
-│           ├── types.go   # Core CRD types (Sandbox, WarmPool, etc)
-│           ├── register.go
-│           └── zz_generated.deepcopy.go
-├── config/
-│   └── crds/              # Raw CRD YAML manifests
-│       ├── sandbox.yaml
-│       ├── warmpool.yaml
-│       └── kustomization.yaml
-├── api/                      # API service for SDK interactions
-│   ├── Dockerfile
-│   ├── main.go
-│   └── internal/
-│       ├── auth/             # Authentication and authorization
-│       ├── handlers/         # API endpoint handlers
-│       └── k8s/              # Kubernetes integration
-├── controller/       # Unified Kubernetes operator
-│   ├── Dockerfile
-│   ├── main.go
-│   └── internal/
-│       ├── controller/       # Combined resource controller
-│       ├── resources/        # CRD definitions
-│       ├── sandbox/          # Sandbox reconciliation logic
-│       ├── warmpool/         # Warm pool reconciliation logic
-│       ├── warmpod/          # Warm pod reconciliation logic
-│       └── common/           # Shared utilities and components
-├── runtimes/                 # Execution environment images
-│   ├── base/                 # Base image with common tools
-│   ├── python/               # Python runtime
-│   └── nodejs/               # Node.js runtime
-├── sdk/                      # Client SDKs
-│   ├── python/               # Python SDK
-│   ├── js/                   # JavaScript/TypeScript SDK
-│   └── go/                   # Go SDK
-├── charts/                   # Helm charts for deployment
-│   ├── llmsafespace/          # Main chart
-│   └── templates/            # Kubernetes manifests
-├── docker/                   # Docker Compose setup
-│   └── docker-compose.yaml
-├── docs/                     # Documentation
-│   ├── api.md                # API reference
-│   └── deployment.md         # Deployment guide
-├── examples/                 # Example usage
-│   ├── python/
-│   └── javascript/
-├── scripts/                  # Utility scripts
-│   ├── build.sh
-│   └── deploy.sh
-├── Makefile                  # Build and deployment commands
-├── go.mod                    # Go module definition
-└── README.md                 # Project overview
+.
+├── api/                     # API service for SDK interactions
+│   ├── cmd/                 # Command-line entrypoints
+│   │   └── api/             # API server entrypoint
+│   │       └── main.go
+│   ├── config/              # Configuration files
+│   │   └── config.yaml
+│   ├── internal/            # Internal implementation
+│   │   ├── app/             # Application bootstrap
+│   │   │   └── app.go
+│   │   ├── config/          # Configuration handling
+│   │   │   ├── config.go
+│   │   │   └── config_test.go
+│   │   ├── docs/            # API documentation
+│   │   │   └── swagger.go
+│   │   ├── errors/          # Error definitions
+│   │   │   └── errors.go
+│   │   ├── interfaces/      # Service interfaces
+│   │   │   └── interfaces.go
+│   │   ├── logger/          # Logging implementation
+│   │   │   ├── logger.go
+│   │   │   └── logger_test.go
+│   │   ├── middleware/      # HTTP middleware components
+│   │   │   ├── auth.go      # Authentication middleware
+│   │   │   ├── cors.go      # CORS handling
+│   │   │   ├── error_handler.go
+│   │   │   ├── logging.go   # Request logging
+│   │   │   ├── metrics.go   # Prometheus metrics
+│   │   │   ├── rate_limit.go
+│   │   │   ├── recovery.go  # Panic recovery
+│   │   │   ├── request_id.go
+│   │   │   ├── security.go  # Security headers
+│   │   │   ├── tracing.go   # Distributed tracing
+│   │   │   └── validation.go
+│   │   ├── mocks/           # Service mocks for testing
+│   │   │   ├── database.go
+│   │   │   ├── execution.go
+│   │   │   ├── file.go
+│   │   │   ├── metrics.go
+│   │   │   ├── session.go
+│   │   │   └── warmpool.go
+│   │   ├── server/          # HTTP server implementation
+│   │   │   └── router.go    # API route definitions
+│   │   ├── services/        # Core business logic
+│   │   │   ├── auth/        # Authentication service
+│   │   │   │   ├── auth.go
+│   │   │   │   └── auth_test.go
+│   │   │   ├── cache/       # Redis cache service
+│   │   │   │   ├── cache.go
+│   │   │   │   └── cache_test.go
+│   │   │   ├── database/    # Database access
+│   │   │   │   ├── database.go
+│   │   │   │   └── database_test.go
+│   │   │   ├── execution/   # Code execution service
+│   │   │   │   ├── execution.go
+│   │   │   │   └── execution_test.go
+│   │   │   ├── file/        # File operations service
+│   │   │   │   ├── file.go
+│   │   │   │   ├── file_test.go
+│   │   │   │   └── mock_kubernetes.go
+│   │   │   ├── kubernetes/  # K8s client wrapper
+│   │   │   │   └── kubernetes.go
+│   │   │   ├── metrics/     # Metrics collection
+│   │   │   │   └── metrics.go
+│   │   │   ├── sandbox/     # Sandbox management
+│   │   │   │   ├── DESIGN.md
+│   │   │   │   └── tests/
+│   │   │   │       └── sandbox_tests.go
+│   │   │   ├── services.go  # Service initialization
+│   │   │   ├── services_test.go
+│   │   │   └── warmpool/    # Warm pool integration
+│   │   │       └── warmpool_service.go
+│   │   └── validation/      # Request validation
+│   │       ├── sandbox.go
+│   │       ├── validation.go
+│   │       └── warmpool.go
+│   ├── migrations/          # Database migrations
+│   │   ├── 000001_initial_schema.down.sql
+│   │   ├── 000001_initial_schema.up.sql
+│   │   ├── 001_initial_schema_rollback.sql
+│   │   └── 001_initial_schema.sql
+│   └── scripts/             # Operational scripts
+│       ├── health-check.sh
+│       ├── init-db.sh
+│       └── migrate.sh
+├── controller/              # Kubernetes operator
+│   ├── bin/                 # Build artifacts
+│   │   └── manager
+│   ├── config/              # Operator configuration
+│   │   └── manager/
+│   │       └── manager.yaml
+│   ├── examples/            # Example CRD manifests
+│   │   ├── runtimeenvironment.yaml
+│   │   ├── sandboxprofile.yaml
+│   │   ├── sandbox.yaml
+│   │   ├── test-sandbox.yaml
+│   │   ├── test-warmpool.yaml
+│   │   └── warmpool.yaml
+│   ├── internal/            # Controller implementation
+│   │   ├── common/          # Shared utilities
+│   │   │   ├── condition_adapter.go
+│   │   │   ├── constants.go
+│   │   │   ├── leader_election.go
+│   │   │   ├── metrics.go
+│   │   │   ├── network_policy_manager.go
+│   │   │   ├── pod_manager.go
+│   │   │   ├── service_manager.go
+│   │   │   └── utils.go
+│   │   ├── controller/      # Main controller logic
+│   │   │   ├── controller.go
+│   │   │   └── setup.go
+│   │   ├── metrics/         # Controller metrics
+│   │   │   └── metrics.go
+│   │   ├── resources/       # CRD type definitions
+│   │   │   ├── register.go
+│   │   │   ├── runtimeenvironment_deepcopy.go
+│   │   │   ├── runtimeenvironment_types.go
+│   │   │   ├── runtimeenvironment_webhook.go
+│   │   │   ├── sandbox_deepcopy.go
+│   │   │   ├── sandboxprofile_deepcopy.go
+│   │   │   ├── sandboxprofile_types.go
+│   │   │   ├── sandboxprofile_webhook.go
+│   │   │   ├── sandbox_types.go
+│   │   │   ├── sandbox_webhook.go
+│   │   │   ├── warmpod_deepcopy.go
+│   │   │   ├── warmpod_types.go
+│   │   │   ├── warmpod_webhook.go
+│   │   │   ├── warmpool_deepcopy.go
+│   │   │   ├── warmpool_types.go
+│   │   │   └── warmpool_webhook.go
+│   │   ├── sandbox/         # Sandbox reconciler
+│   │   │   └── controller.go
+│   │   ├── warmpod/         # WarmPod reconciler
+│   │   │   └── controller.go
+│   │   └── warmpool/        # WarmPool reconciler
+│   │       └── controller.go
+│   ├── scripts/             # Controller scripts
+│   │   ├── install-crds.sh
+│   │   └── test-controller.sh
+│   └── main.go              # Controller entrypoint
+├── mocks/                   # Mock implementations
+│   ├── kubernetes/          # K8s client mocks
+│   │   ├── kubernetes_client.go
+│   │   ├── llmsafespace_v1.go
+│   │   ├── runtimeenvironment.go
+│   │   ├── sandbox.go
+│   │   ├── sandboxprofile.go
+│   │   ├── warmpod.go
+│   │   ├── warmpool.go
+│   │   └── watch.go
+│   ├── logger/              # Logger mocks
+│   │   └── logger.go
+│   └── types/               # Type mocks
+│       ├── session.go
+│       └── wsconnection.go
+└── pkg/                     # Shared packages
+    ├── config/              # Configuration types
+    │   └── kubernetes_config.go
+    ├── crds/                # CRD YAML definitions
+    │   ├── runtimeenvironment_crd.yaml
+    │   ├── sandbox_crd.yaml
+    │   ├── sandboxprofile_crd.yaml
+    │   ├── warmpod_crd.yaml
+    │   └── warmpool_crd.yaml
+    ├── interfaces/          # Common interfaces
+    │   ├── kubernetes.go
+    │   └── logger.go
+    ├── kubernetes/          # K8s client utilities
+    │   ├── client_crds.go
+    │   ├── client.go
+    │   ├── client_test.go
+    │   ├── informers.go
+    │   ├── kubernetes_operations.go
+    │   └── tests/           # K8s client tests
+    │       ├── client_crds_test.go
+    │       ├── client_test.go
+    │       ├── informers_test.go
+    │       ├── kubernetes_operations_test.go
+    │       ├── main_test.go
+    │       ├── mocks_test.go
+    │       ├── run_tests.sh
+    │       └── test_helpers.go
+    ├── logger/              # Logger implementation
+    │   ├── logger.go
+    │   └── mock_test.go
+    └── types/               # Domain types
+        ├── deepcopy.go
+        ├── doc.go
+        └── types.go
 ```
 
 ## SDK Usage
@@ -196,7 +331,6 @@ spec:
   autoScaling:
     enabled: true
     targetUtilization: 80
-    scaleDownDelay: 300
 status:
   availablePods: 3
   assignedPods: 2
@@ -349,75 +483,51 @@ volumes:
   redis-data:
 ```
 
-## Areas for Improvement
+## Development Workflow
 
-### 1. Persistent Storage Options
+### Prerequisites
+- Go 1.20+
+- Docker and Docker Compose
+- kubectl and a Kubernetes cluster (for full testing)
 
-Current sandboxes are ephemeral by default, which is appropriate for most LLM agent use cases. However, some agents need to maintain state between sessions or store larger datasets.
+### Local Development
 
-**Planned Enhancements:**
-- Optional persistent volume claims for sandboxes
-- Configurable storage retention policies
-- Shared volumes between related sandboxes
-- Integration with object storage for larger datasets
+```bash
+# Clone the repository
+git clone https://github.com/lenaxia/llmsafespace.git
+cd llmsafespace
 
-### 2. Warm Pool Optimizations
+# Install dependencies
+go mod download
 
-The unified controller significantly improves warm pool management, but there are several additional optimizations planned:
+# Run tests
+make test
 
-**Planned Enhancements:**
-- Predictive scaling based on usage patterns and time-of-day trends
-- More sophisticated pod recycling strategies with security verification
-- Custom image preloading for specific use cases with dependency analysis
-- Warm pool metrics and analytics dashboard with efficiency reporting
-- Multi-region warm pool distribution with locality awareness
-- Intelligent pod allocation based on workload characteristics
+# Build the API service
+cd api
+make build
 
-### 3. Inter-Sandbox Communication
+# Run the API service locally
+./llmsafespace
+```
 
-For complex multi-agent systems, enabling secure communication between sandboxes would allow for collaborative problem-solving.
+### Controller Development
 
-**Planned Enhancements:**
-- Secure message passing between sandboxes
-- Shared memory spaces with access controls
-- Event-based communication patterns
-- Agent-to-agent authentication
+```bash
+# Build the controller
+cd controller
+make build
 
-### 3. Specialized ML Runtime
+# Install CRDs in your cluster
+make install-crds
 
-While the current runtimes support ML libraries, dedicated ML environments would improve performance for specialized tasks.
-
-**Planned Enhancements:**
-- Pre-configured environments with popular ML frameworks
-- GPU support for accelerated computation
-- Optimized containers for specific ML workloads
-- Cached model repositories
-
-### 4. Agent-Specific Monitoring
-
-Current monitoring is comprehensive but could be enhanced with LLM agent-specific metrics and visualizations.
-
-**Planned Enhancements:**
-- Agent behavior analytics dashboard
-- Code quality metrics for generated code
-- Pattern recognition for problematic code
-- Integration with LLM observability tools
-- Execution path visualization
-
-### 5. Feedback Mechanisms
-
-Adding mechanisms to provide execution feedback to the LLM would help improve code generation over time.
-
-**Planned Enhancements:**
-- Structured execution feedback format
-- Integration with LLM fine-tuning pipelines
-- Automated code quality assessment
-- Performance benchmarking for generated code
-- Error categorization for better prompting
+# Run the controller locally (against your current kubeconfig)
+./bin/manager
+```
 
 ## Code Generation
 
-When modifying API types (in `src/api/internal/types`), you must regenerate the DeepCopy implementations:
+When modifying API types (in `pkg/types`), you must regenerate the DeepCopy implementations:
 
 ```bash
 # Install code generator tools
@@ -427,30 +537,8 @@ go install k8s.io/code-generator/cmd/deepcopy-gen@v0.26.0
 make deepcopy
 
 # Verify and commit generated changes
-git add src/api/internal/types/zz_generated.deepcopy.go
+git add pkg/types/zz_generated.deepcopy.go
 git commit -m "Update generated code"
-```
-
-This generates/updates the `zz_generated.deepcopy.go` files. Always check these generated files into version control.
-
-## Getting Started
-
-### Prerequisites
-- Kubernetes cluster (v1.20+)
-- Helm (v3.0+)
-- kubectl
-
-### Installation
-
-```bash
-# Add the LLMSafeSpace Helm repository
-helm repo add llmsafespace https://charts.llmsafespace.dev
-
-# Install LLMSafeSpace
-helm install llmsafespace llmsafespace/llmsafespace \
-  --namespace llmsafespace \
-  --create-namespace \
-  --set apiKey.create=true
 ```
 
 ## Contributing
