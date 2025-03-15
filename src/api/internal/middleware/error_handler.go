@@ -82,9 +82,9 @@ func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte,
 	var logLevel string
 	if apiErr, ok := err.(*errors.APIError); ok {
 		switch apiErr.Type {
-		case errors.ValidationError, errors.BadRequestError:
+		case errors.ErrorTypeValidation, errors.ErrorTypeBadRequest:
 			logLevel = "warn"
-		case errors.NotFoundError:
+		case errors.ErrorTypeNotFound:
 			logLevel = "info"
 		default:
 			logLevel = "error"
@@ -147,7 +147,7 @@ func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte,
 	}
 	
 	// Add stack trace for internal errors
-	if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.InternalServerError || cfg.LogStackTrace {
+	if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeInternal || cfg.LogStackTrace {
 		fields = append(fields, "stack_trace", string(debug.Stack()))
 	}
 	
@@ -200,10 +200,10 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 	// Check if it's an API error
 	if apiErr, ok := err.(*errors.APIError); ok {
 		// Get status code from API error
-		statusCode := apiErr.StatusCode
+		statusCode := apiErr.StatusCode()
 		
 		// Add rate limit headers if applicable
-		if apiErr.Type == errors.RateLimitExceededError {
+		if apiErr.Type == errors.ErrorTypeRateLimit {
 			if limit, ok := apiErr.Details["limit"].(int); ok {
 				c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 			}
@@ -213,7 +213,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 		}
 		
 		// Include stack trace if configured
-		if cfg.IncludeStackTrace && apiErr.Type == errors.InternalServerError {
+		if cfg.IncludeStackTrace && apiErr.Type == errors.ErrorTypeInternal {
 			if apiErr.Details == nil {
 				apiErr.Details = make(map[string]interface{})
 			}
@@ -261,7 +261,7 @@ func HandleAPIError(c *gin.Context, err error) {
 // maskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
 func maskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
 	for _, k := range sensitiveFields {
-		if v, exists := data[k]; exists {
+		if _, exists := data[k]; exists {
 			data[k] = "********"
 		}
 	}
