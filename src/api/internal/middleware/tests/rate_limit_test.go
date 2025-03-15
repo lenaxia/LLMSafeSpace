@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -18,7 +19,7 @@ import (
 func TestRateLimitMiddleware_TokenBucket(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
@@ -80,7 +81,7 @@ func TestRateLimitMiddleware_TokenBucket(t *testing.T) {
 func TestRateLimitMiddleware_FixedWindow(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
@@ -145,7 +146,7 @@ func TestRateLimitMiddleware_FixedWindow(t *testing.T) {
 func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
@@ -218,7 +219,7 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 func TestRateLimitMiddleware_ExemptRoles(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockRateLimiter := new(mocks.MockRateLimiterService)
 	
 	config := middleware.RateLimitConfig{

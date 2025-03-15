@@ -8,13 +8,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestSecurityMiddleware_Headers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything).Maybe()
 	
 	router := gin.New()
@@ -45,7 +46,7 @@ func TestSecurityMiddleware_Headers(t *testing.T) {
 
 func TestSecurityMiddleware_CORS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything).Maybe()
 	
 	router := gin.New()
@@ -80,7 +81,7 @@ func TestSecurityMiddleware_CORS(t *testing.T) {
 
 func TestWebSocketSecurityMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
 	router := gin.New()
@@ -113,7 +114,7 @@ func TestWebSocketSecurityMiddleware(t *testing.T) {
 
 func TestCSPReportingMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", "CSP violation report", mock.Anything).Once()
 	
 	router := gin.New()
