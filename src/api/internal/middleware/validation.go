@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"fmt"
+	"time"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -244,8 +246,6 @@ func validatePathParams(c *gin.Context) error {
 
 // getValidationErrorMessage returns a human-readable error message for a validation error
 func getValidationErrorMessage(err validator.FieldError, customMessages map[string]string) string {
-	// Import fmt for string formatting
-	import "fmt"
 	// Check for custom error message
 	if customMessages != nil {
 		if msg, ok := customMessages[err.Tag()]; ok {
@@ -330,8 +330,6 @@ func validateISO8601(fl validator.FieldLevel) bool {
 	}
 	
 	value := field.String()
-	// Import time package
-	import "time"
 	_, err := time.Parse(time.RFC3339, value)
 	return err == nil
 }
