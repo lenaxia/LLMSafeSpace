@@ -2,11 +2,13 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/unrolled/secure"
 )
 
 // SecurityConfig defines configuration for the security middleware
@@ -37,6 +39,18 @@ type SecurityConfig struct {
 	
 	// ReferrerPolicy is the Referrer-Policy header value
 	ReferrerPolicy string
+	
+	// PermissionsPolicy is the Permissions-Policy header value
+	PermissionsPolicy string
+	
+	// RequireHTTPS indicates whether to require HTTPS
+	RequireHTTPS bool
+	
+	// AllowHTTPSDowngrade indicates whether to allow HTTPS downgrade in development
+	AllowHTTPSDowngrade bool
+	
+	// Development indicates whether the application is running in development mode
+	Development bool
 }
 
 // DefaultSecurityConfig returns the default security configuration
@@ -51,6 +65,10 @@ func DefaultSecurityConfig() SecurityConfig {
 		TrustedProxies:   []string{"127.0.0.1", "::1"},
 		ContentSecurityPolicy: "default-src 'self'; connect-src 'self' wss:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; block-all-mixed-content",
 		ReferrerPolicy:   "strict-origin-when-cross-origin",
+		PermissionsPolicy: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+		RequireHTTPS:     true,
+		AllowHTTPSDowngrade: false,
+		Development:      false,
 	}
 }
 
@@ -62,14 +80,53 @@ func SecurityMiddleware(log *logger.Logger, config ...SecurityConfig) gin.Handle
 		cfg = config[0]
 	}
 	
+	// Create secure middleware
+	secureMiddleware := secure.New(secure.Options{
+		AllowedHosts:          []string{}, // No host restriction by default
+		SSLRedirect:           cfg.RequireHTTPS && !cfg.Development,
+		SSLTemporaryRedirect:  false,
+		SSLHost:               "",
+		STSSeconds:            31536000,
+		STSIncludeSubdomains:  true,
+		STSPreload:            true,
+		ForceSTSHeader:        false,
+		FrameDeny:             true,
+		ContentTypeNosniff:    true,
+		BrowserXssFilter:      true,
+		ContentSecurityPolicy: cfg.ContentSecurityPolicy,
+		ReferrerPolicy:        cfg.ReferrerPolicy,
+		PermissionsPolicy:     cfg.PermissionsPolicy,
+		IsDevelopment:         cfg.Development,
+	})
+	
 	return func(c *gin.Context) {
-		// Set security headers
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Header("Content-Security-Policy", cfg.ContentSecurityPolicy)
-		c.Header("Referrer-Policy", cfg.ReferrerPolicy)
-		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		// Skip security checks for OPTIONS requests
+		if c.Request.Method == "OPTIONS" {
+			c.Next()
+			return
+		}
+		
+		// Apply secure middleware
+		err := secureMiddleware.Process(c.Writer, c.Request)
+		if err != nil {
+			// If there was an error, do not continue
+			if cfg.Development && cfg.AllowHTTPSDowngrade {
+				// Allow HTTP in development if configured
+				c.Next()
+				return
+			}
+			
+			log.Warn("Security middleware blocked request",
+				"error", err.Error(),
+				"request_id", c.GetString("request_id"),
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method,
+				"client_ip", c.ClientIP(),
+			)
+			
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
 		
 		// Handle CORS
 		origin := c.Request.Header.Get("Origin")
@@ -106,23 +163,15 @@ func SecurityMiddleware(log *logger.Logger, config ...SecurityConfig) gin.Handle
 			}
 		}
 		
-		// Handle preflight requests
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		
 		// Set trusted proxies
 		if len(cfg.TrustedProxies) > 0 {
-			err := c.Request.ParseForm()
-			if err != nil {
-				log.Error("Failed to parse form", err,
-					"request_id", c.GetString("request_id"),
-					"path", c.Request.URL.Path,
-					"method", c.Request.Method,
-				)
-			}
+			gin.SetTrustedProxies(cfg.TrustedProxies)
 		}
+		
+		// Add additional security headers not covered by secure middleware
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Permitted-Cross-Domain-Policies", "none")
+		c.Header("X-Download-Options", "noopen")
 		
 		c.Next()
 	}
@@ -169,6 +218,55 @@ func WebSocketSecurityMiddleware(log *logger.Logger, allowedOrigins ...string) g
 				HandleAPIError(c, apiErr)
 				return
 			}
+			
+			// Add WebSocket specific security headers
+			c.Header("Sec-WebSocket-Version", "13")
+			
+			// Check for WebSocket protocol
+			protocol := c.GetHeader("Sec-WebSocket-Protocol")
+			if protocol != "" {
+				// Validate protocol (implement your validation logic here)
+				// For now, we'll just echo it back
+				c.Header("Sec-WebSocket-Protocol", protocol)
+			}
+		}
+		
+		c.Next()
+	}
+}
+
+// CSPReportingMiddleware returns a middleware that handles CSP violation reports
+func CSPReportingMiddleware(log *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Only process POST requests to the CSP report endpoint
+		if c.Request.Method == "POST" && c.Request.URL.Path == "/api/v1/csp-report" {
+			var report struct {
+				CSPReport struct {
+					DocumentURI        string `json:"document-uri"`
+					Referrer           string `json:"referrer"`
+					BlockedURI         string `json:"blocked-uri"`
+					ViolatedDirective  string `json:"violated-directive"`
+					OriginalPolicy     string `json:"original-policy"`
+					Disposition        string `json:"disposition"`
+					EffectiveDirective string `json:"effective-directive"`
+				} `json:"csp-report"`
+			}
+			
+			if err := c.ShouldBindJSON(&report); err == nil {
+				log.Warn("CSP violation report",
+					"document_uri", report.CSPReport.DocumentURI,
+					"blocked_uri", report.CSPReport.BlockedURI,
+					"violated_directive", report.CSPReport.ViolatedDirective,
+					"effective_directive", report.CSPReport.EffectiveDirective,
+					"referrer", report.CSPReport.Referrer,
+					"client_ip", c.ClientIP(),
+					"request_id", c.GetString("request_id"),
+				)
+			}
+			
+			c.Status(http.StatusNoContent)
+			c.Abort()
+			return
 		}
 		
 		c.Next()
