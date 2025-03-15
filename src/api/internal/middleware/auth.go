@@ -69,7 +69,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 				"request_id", c.GetString("request_id"),
 			)
 			
-			apiErr := errors.NewUnauthorizedError("Authentication required", nil)
+			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
@@ -85,7 +85,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 				"error", err.Error(),
 			)
 			
-			apiErr := errors.NewUnauthorizedError("Invalid or expired token", nil)
+			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
