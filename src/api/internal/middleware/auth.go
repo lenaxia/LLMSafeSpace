@@ -43,14 +43,6 @@ func DefaultAuthConfig() AuthConfig {
 	}
 }
 
-// AuthResult represents the result of token validation
-type AuthResult struct {
-	UserID      string
-	Role        string
-	APIKey      string
-	Permissions []string
-}
-
 // AuthMiddleware returns a middleware that handles authentication
 func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
@@ -77,13 +69,13 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 				"request_id", c.GetString("request_id"),
 			)
 			
-			apiErr := errors.NewAuthenticationError("Authentication required", nil)
+			apiErr := errors.NewUnauthorizedError("Authentication required", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
 		
 		// Validate token
-		authResult, err := authService.ValidateToken(token)
+		authResult, err := authService.ValidateToken(c.Request.Context(), token)
 		if err != nil {
 			log.Warn("Authentication failed: invalid token",
 				"path", path,
@@ -93,7 +85,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 				"error", err.Error(),
 			)
 			
-			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
+			apiErr := errors.NewUnauthorizedError("Invalid or expired token", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
@@ -156,11 +148,26 @@ func AuthorizationMiddleware(authService interfaces.AuthService, log *logger.Log
 		}
 		
 		// Check if user has required permissions
-		hasPermission := authService.CheckPermissions(
-			c.Request.Context(),
-			userPermissions.([]string),
-			requiredPermissions.([]string),
-		)
+		hasPermission := false
+		userPerms := userPermissions.([]string)
+		requiredPerms := requiredPermissions.([]string)
+		
+		// Simple permission check - user must have all required permissions
+		hasAll := true
+		for _, required := range requiredPerms {
+			found := false
+			for _, userPerm := range userPerms {
+				if required == userPerm {
+					found = true
+					break
+				}
+			}
+			if !found {
+				hasAll = false
+				break
+			}
+		}
+		hasPermission = hasAll
 		
 		if !hasPermission {
 			log.Warn("Authorization failed: insufficient permissions",
