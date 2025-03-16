@@ -2,8 +2,6 @@ package middleware
 
 import (
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/cors"
