@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // Use a single instance of Validate, it caches struct info
@@ -62,7 +62,7 @@ func init() {
 }
 
 // ValidationMiddleware returns a middleware that validates request bodies
-func ValidationMiddleware(log *logger.Logger, config ...ValidationConfig) gin.HandlerFunc {
+func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultValidationConfig()
 	if len(config) > 0 {

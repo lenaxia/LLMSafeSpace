@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // TracingConfig defines configuration for the tracing middleware
@@ -43,7 +43,7 @@ func DefaultTracingConfig() TracingConfig {
 }
 
 // TracingMiddleware returns a middleware that adds request tracing
-func TracingMiddleware(log *logger.Logger, config ...TracingConfig) gin.HandlerFunc {
+func TracingMiddleware(log interfaces.LoggerInterface, config ...TracingConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultTracingConfig()
 	if len(config) > 0 {
