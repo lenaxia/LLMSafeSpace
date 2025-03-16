@@ -197,13 +197,15 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 	*/
 	
 	// Log the error with the appropriate level
-	switch logLevel {
-	case "info":
-		log.Info(fmt.Sprintf("Request error: %v", err), fields...)
-	case "warn":
-		log.Warn(fmt.Sprintf("Request error: %v", err), fields...)
-	default:
-		log.Error("Request error", err, fields...)
+	if log != nil {
+		switch logLevel {
+		case "info":
+			log.Info(fmt.Sprintf("Request error: %v", err), fields...)
+		case "warn":
+			log.Warn(fmt.Sprintf("Request error: %v", err), fields...)
+		default:
+			log.Error("Request error", err, fields...)
+		}
 	}
 }
 
@@ -233,7 +235,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 		}
 		
 		// Send error response
-		c.JSON(statusCode, gin.H{
+		c.AbortWithStatusJSON(statusCode, gin.H{
 			"error": gin.H{
 				"code":    apiErr.Code,
 				"message": apiErr.Message,
@@ -258,7 +260,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 		}
 	}
 	
-	c.JSON(http.StatusInternalServerError, errorResponse)
+	c.AbortWithStatusJSON(http.StatusInternalServerError, errorResponse)
 }
 
 // HandleAPIError handles an API error in a handler
