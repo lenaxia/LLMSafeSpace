@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/logger"
 )
 
 // AuthConfig defines configuration for the authentication middleware
@@ -43,7 +43,7 @@ func DefaultAuthConfig() AuthConfig {
 }
 
 // AuthMiddleware returns a middleware that handles authentication
-func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, config ...AuthConfig) gin.HandlerFunc {
+func AuthMiddleware(authService interfaces.AuthService, log interfaces.LoggerInterface, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultAuthConfig()
 	if len(config) > 0 {
@@ -55,7 +55,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		logger := log
 		if logger == nil {
 			// Use a no-op logger for tests
-			logger = &logger.Logger{}
+			// Just skip logging in tests when logger is nil
 		}
 		// Skip authentication for certain paths
 		path := c.Request.URL.Path
