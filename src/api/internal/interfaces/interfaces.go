@@ -108,9 +108,9 @@ type FileService interface {
 // MetricsService defines the interface for metrics services
 type MetricsService interface {
 	RecordRequest(method, path string, status int, duration time.Duration, size int)
-	RecordSandboxCreation(runtime string, warmPodUsed bool)
-	RecordSandboxTermination(runtime string)
-	RecordExecution(execType, runtime, status string, duration time.Duration)
+	RecordSandboxCreation(runtime string, warmPodUsed bool, userID string)
+	RecordSandboxTermination(runtime, reason string)
+	RecordExecution(execType, runtime, status, userID string, duration time.Duration)
 	IncrementActiveConnections(connType string)
 	DecrementActiveConnections(connType string)
 	RecordWarmPoolHit()

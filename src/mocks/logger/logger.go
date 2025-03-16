@@ -40,12 +40,12 @@ func (m *MockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) 
 }
 
 // With returns a logger with additional fields
-func (m *MockLogger) With(keysAndValues ...interface{}) *MockLogger {
+func (m *MockLogger) With(keysAndValues ...interface{}) interface{} {
 	args := m.Called(keysAndValues)
 	if args.Get(0) == nil {
 		return m
 	}
-	return args.Get(0).(*MockLogger)
+	return args.Get(0)
 }
 
 // Sync flushes any buffered log entries
