@@ -60,7 +60,7 @@ func (e *APIError) Unwrap() error {
 func (e *APIError) StatusCode() int {
 	switch e.Type {
 	case ErrorTypeValidation:
-		return http.StatusBadRequest
+		return http.StatusUnprocessableEntity
 	case ErrorTypeAuth:
 		return http.StatusUnauthorized
 	case ErrorTypeNotFound:
