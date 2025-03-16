@@ -108,6 +108,7 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
+		_, exists := c.Get("logger")
 		if exists {
 			c.String(http.StatusOK, "Logger found")
 		} else {
@@ -142,7 +143,7 @@ func TestTracingMiddleware_StartTime(t *testing.T) {
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
-		startTime, exists := c.Get("start_time")
+		_, exists := c.Get("start_time")
 		if exists {
 			c.String(http.StatusOK, "Start time found")
 		} else {
