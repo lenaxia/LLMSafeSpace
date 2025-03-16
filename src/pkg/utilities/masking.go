@@ -1,7 +1,6 @@
 package utilities
 
 import (
-	"fmt"
 )
 
 // MaskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
@@ -22,14 +21,17 @@ func MaskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []
 
 // MaskSensitiveFields masks common sensitive fields in a map
 func MaskSensitiveFields(data map[string]interface{}) {
-	sensitiveKeys := []string{"password", "api_key", "token", "secret"}
+	sensitiveKeys := []string{"password", "api_key", "apikey", "token", "secret"}
 	MaskSensitiveFieldsWithList(data, sensitiveKeys)
 }
 
 // MaskString masks a string by replacing all but the first and last characters with asterisks
 func MaskString(s string) string {
-	if len(s) <= 2 {
-		return "**"
-	}
-	return fmt.Sprintf("%c%s%c", s[0], string(make([]byte, len(s)-2)).Replace(string(make([]byte, len(s)-2)), "", "*"), s[len(s)-1])
+	if len(s) <= 8 {
+            return "********"
+        } else if len(s) <= 12 {
+            return s[:1] + "..." + s[len(s)-2:]
+        }
+        return s[:4] + "..." + s[len(s)-4:]
 }
+      

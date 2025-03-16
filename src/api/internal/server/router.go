@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	//"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
@@ -75,7 +75,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, config ...Ro
 	}
 	
 	// Create handlers
-	h := handlers.New(logger, services)
+	//h := handlers.New(logger, services)
 	
 	// Register routes
 	h.RegisterRoutes(router)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // ValidateCreateWarmPoolRequest validates a warm pool creation request

@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	//"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // Mock implementations

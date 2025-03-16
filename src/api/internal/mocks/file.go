@@ -3,7 +3,7 @@ package mocks
 import (
 	"context"
 
-	"github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
 

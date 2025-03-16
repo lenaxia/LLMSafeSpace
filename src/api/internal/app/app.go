@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/kubernetes"
+	//"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -22,7 +22,7 @@ type App struct {
 	server     *http.Server
 	k8sClient  *kubernetes.Client
 	services   *services.Services
-	handlers   *handlers.Handlers
+	//handlers   *handlers.Handlers
 	shutdownCh chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -59,11 +59,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	router.Use(gin.Recovery())
 	
 	// Add middleware
-	router.Use(handlers.LoggerMiddleware(log))
-	router.Use(handlers.MetricsMiddleware(svc.Metrics))
+	//router.Use(handlers.LoggerMiddleware(log))
+	//router.Use(handlers.MetricsMiddleware(svc.Metrics))
 	
 	// Initialize handlers
-	h := handlers.New(log, svc)
+	//h := handlers.New(log, svc)
 	
 	// Register routes
 	h.RegisterRoutes(router)
@@ -89,7 +89,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		server:     server,
 		k8sClient:  k8sClient,
 		services:   svc,
-		handlers:   h,
+		//handlers:   h,
 		shutdownCh: make(chan struct{}),
 		ctx:        ctx,
 		cancel:     cancel,
