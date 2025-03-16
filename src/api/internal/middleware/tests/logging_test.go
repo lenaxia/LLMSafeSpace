@@ -75,6 +75,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		LogRequestBody:  true,
 		LogResponseBody: true,
 		SensitiveFields: []string{"password", "token"},
+		MaxBodyLogSize:  4096, // Ensure bodies aren't truncated
 	}
 	
 	router := gin.New()
