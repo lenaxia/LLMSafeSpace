@@ -60,11 +60,15 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	var responseFields []interface{}
 	
 	mockLogger.On("Info", "Request received", mock.Anything).Run(func(args mock.Arguments) {
+		// Get the variadic arguments
 		requestFields = args.Get(1).([]interface{})
+		t.Logf("Request fields captured: %+v", requestFields)
 	}).Once()
 	
 	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
+		// Get the variadic arguments
 		responseFields = args.Get(1).([]interface{})
+		t.Logf("Response fields captured: %+v", responseFields)
 	}).Once()
 
 	config := middleware.LoggingConfig{
@@ -99,9 +103,14 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Find request body in log fields
 	var requestBody map[string]interface{}
 	for i := 0; i < len(requestFields); i += 2 {
+		t.Logf("Request field %d: %v = %v", i/2, requestFields[i], requestFields[i+1])
 		if requestFields[i] == "request_body" {
+			t.Logf("Found request_body at index %d", i)
 			if body, ok := requestFields[i+1].(map[string]interface{}); ok {
 				requestBody = body
+				t.Logf("Successfully cast request_body to map: %+v", requestBody)
+			} else {
+				t.Logf("Failed to cast request_body to map, type: %T, value: %v", requestFields[i+1], requestFields[i+1])
 			}
 		}
 	}
@@ -109,21 +118,30 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Find response body in log fields
 	var responseBody map[string]interface{}
 	for i := 0; i < len(responseFields); i += 2 {
+		t.Logf("Response field %d: %v = %v", i/2, responseFields[i], responseFields[i+1])
 		if responseFields[i] == "response_body" {
+			t.Logf("Found response_body at index %d", i)
 			if body, ok := responseFields[i+1].(map[string]interface{}); ok {
 				responseBody = body
+				t.Logf("Successfully cast response_body to map: %+v", responseBody)
+			} else {
+				t.Logf("Failed to cast response_body to map, type: %T, value: %v", responseFields[i+1], responseFields[i+1])
 			}
 		}
 	}
 	
 	// Check that sensitive fields are masked
-	assert.NotNil(t, requestBody)
-	assert.Equal(t, "********", requestBody["password"])
-	assert.Equal(t, "testuser", requestBody["username"])
+	assert.NotNil(t, requestBody, "Request body should not be nil")
+	if requestBody != nil {
+		assert.Equal(t, "********", requestBody["password"], "Password should be masked")
+		assert.Equal(t, "testuser", requestBody["username"], "Username should be preserved")
+	}
 	
-	assert.NotNil(t, responseBody)
-	assert.Equal(t, "********", responseBody["token"])
-	assert.Equal(t, "logged in", responseBody["message"])
+	assert.NotNil(t, responseBody, "Response body should not be nil")
+	if responseBody != nil {
+		assert.Equal(t, "********", responseBody["token"], "Token should be masked")
+		assert.Equal(t, "logged in", responseBody["message"], "Message should be preserved")
+	}
 	
 	mockLogger.AssertExpectations(t)
 }
