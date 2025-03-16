@@ -118,6 +118,7 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 			} else {
 				var jsonBody map[string]interface{}
 				if err := json.Unmarshal(body, &jsonBody); err == nil {
+					// Use the maskSensitiveFieldsWithList function to mask sensitive fields
 					maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
 					fields = append(fields, "request_body", jsonBody)
 				} else {
@@ -149,6 +150,7 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 		} else {
 			var jsonBody map[string]interface{}
 			if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
+				// Use the maskSensitiveFieldsWithList function to mask sensitive fields
 				maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
 				fields = append(fields, "response_body", jsonBody)
 			} else {
@@ -162,9 +164,21 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 
 func maskSensitiveFields(data map[string]interface{}) {
 	sensitiveKeys := []string{"password", "api_key", "token", "secret"}
-	for _, k := range sensitiveKeys {
-		if v, exists := data[k]; exists {
-			data[k] = utilities.MaskString(fmt.Sprint(v))
+	maskSensitiveFieldsWithList(data, sensitiveKeys)
+}
+
+// maskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
+func maskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
+	for _, k := range sensitiveFields {
+		if _, exists := data[k]; exists {
+			data[k] = "********"
+		}
+	}
+	
+	// Also check nested maps
+	for k, v := range data {
+		if nestedMap, ok := v.(map[string]interface{}); ok {
+			maskSensitiveFieldsWithList(nestedMap, sensitiveFields)
 		}
 	}
 }
