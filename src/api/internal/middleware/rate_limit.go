@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 	"golang.org/x/time/rate"
 )
@@ -32,7 +32,7 @@ type rateLimitContext struct {
 	limiters map[string]*rate.Limiter
 }
 
-func RateLimitMiddleware(rl interfaces.RateLimiterService, log *logger.Logger, config RateLimitConfig) gin.HandlerFunc {
+func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
 	ctx := &rateLimitContext{
 		limiters: make(map[string]*rate.Limiter),
 	}
@@ -108,7 +108,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log *logger.Logger, c
 	}
 }
 
-func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string, limit, burst int, log *logger.Logger) error {
+func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string, limit, burst int, log pkginterfaces.LoggerInterface) error {
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
 
@@ -141,7 +141,7 @@ func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string
 	return nil
 }
 
-func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log *logger.Logger) error {
+func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log pkginterfaces.LoggerInterface) error {
 	counterKey := fmt.Sprintf("%s:%s:%s", config.StoragePrefix, key, c.FullPath())
 
 	count, err := rl.Increment(c.Request.Context(), counterKey, 1, config.DefaultWindow)
@@ -178,7 +178,7 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 	return nil
 }
 
-func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log *logger.Logger) error {
+func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log pkginterfaces.LoggerInterface) error {
 	now := time.Now().UnixNano()
 	windowKey := fmt.Sprintf("%s:%s:%s:timestamps", config.StoragePrefix, key, c.FullPath())
 

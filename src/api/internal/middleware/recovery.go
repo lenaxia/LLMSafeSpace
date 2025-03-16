@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // RecoveryConfig defines configuration for the recovery middleware
@@ -35,7 +35,7 @@ func DefaultRecoveryConfig() RecoveryConfig {
 }
 
 // RecoveryMiddleware returns a middleware that recovers from panics
-func RecoveryMiddleware(log *logger.Logger, config ...RecoveryConfig) gin.HandlerFunc {
+func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultRecoveryConfig()
 	if len(config) > 0 {

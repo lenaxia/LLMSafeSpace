@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/unrolled/secure"
 )
 
@@ -73,7 +73,7 @@ func DefaultSecurityConfig() SecurityConfig {
 }
 
 // SecurityMiddleware returns a middleware that adds security headers
-func SecurityMiddleware(log *logger.Logger, config ...SecurityConfig) gin.HandlerFunc {
+func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultSecurityConfig()
 	if len(config) > 0 {
@@ -182,7 +182,7 @@ func SecurityMiddleware(log *logger.Logger, config ...SecurityConfig) gin.Handle
 }
 
 // WebSocketSecurityMiddleware returns a middleware that adds WebSocket security
-func WebSocketSecurityMiddleware(log *logger.Logger, allowedOrigins ...string) gin.HandlerFunc {
+func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check origin header for WebSocket connections
 		if strings.Contains(c.GetHeader("Connection"), "Upgrade") && 
@@ -240,7 +240,7 @@ func WebSocketSecurityMiddleware(log *logger.Logger, allowedOrigins ...string) g
 }
 
 // CSPReportingMiddleware returns a middleware that handles CSP violation reports
-func CSPReportingMiddleware(log *logger.Logger) gin.HandlerFunc {
+func CSPReportingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Only process POST requests to the CSP report endpoint
 		if c.Request.Method == "POST" && c.Request.URL.Path == "/api/v1/csp-report" {
