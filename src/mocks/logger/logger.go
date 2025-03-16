@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -40,12 +41,12 @@ func (m *MockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) 
 }
 
 // With returns a logger with additional fields
-func (m *MockLogger) With(keysAndValues ...interface{}) interface{} {
+func (m *MockLogger) With(keysAndValues ...interface{}) interfaces.LoggerInterface {
 	args := m.Called(keysAndValues)
-	if args.Get(0) == nil {
-		return m
+	if ret, ok := args.Get(0).(interfaces.LoggerInterface); ok {
+		return ret
 	}
-	return args.Get(0)
+	return m
 }
 
 // Sync flushes any buffered log entries
