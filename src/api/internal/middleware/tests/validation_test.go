@@ -31,25 +31,28 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
-	router.Use(middleware.ValidationMiddleware(mockLogger))
 	
-	router.POST("/users", func(c *gin.Context) {
-		// Set validation model
-		c.Set("validationModel", &TestUser{})
-		c.Next()
-		
-		// Get validated model
-		validatedModel, exists := c.Get("validatedModel")
-		if !exists {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
-			return
-		}
-		
-		user := validatedModel.(*TestUser)
-		c.JSON(http.StatusOK, gin.H{
-			"message": "User created",
-			"user":    user,
-		})
+	router.POST("/users", 
+		// Set validation model before validation middleware
+		func(c *gin.Context) {
+			c.Set("validationModel", &TestUser{})
+			c.Next()
+		},
+		middleware.ValidationMiddleware(mockLogger),
+		func(c *gin.Context) {
+			// Get validated model
+			validatedModel, exists := c.Get("validatedModel")
+			if !exists {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
+				return
+			}
+			
+			user := validatedModel.(*TestUser)
+			c.JSON(http.StatusOK, gin.H{
+				"message": "User created",
+				"user":    user,
+			})
+		},
 	})
 	
 	// Execute with valid data
