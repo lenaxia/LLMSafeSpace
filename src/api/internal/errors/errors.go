@@ -99,6 +99,20 @@ func NewAuthenticationError(message string, err error) *APIError {
         }
 }
 
+// NewNotFoundError creates a new not found error
+func NewNotFoundError(resourceType, resourceID string, err error) *APIError {
+	return &APIError{
+		Type:    ErrorTypeNotFound,
+		Code:    "not_found",
+		Message: fmt.Sprintf("%s %s not found", resourceType, resourceID),
+		Details: map[string]interface{}{
+			"resourceType": resourceType,
+			"resourceId":   resourceID,
+		},
+		Err: err,
+	}
+}
+
 // NewForbiddenError creates a new forbidden error
 func NewForbiddenError(message string, err error) *APIError {
 	return &APIError{
