@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,7 +11,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
-	"golang.org/x/time/rate"
 )
 
 type RateLimitConfig struct {
@@ -27,16 +25,7 @@ type RateLimitConfig struct {
 	StoragePrefix  string
 }
 
-type rateLimitContext struct {
-	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
-}
-
 func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
-	ctx := &rateLimitContext{
-		limiters: make(map[string]*rate.Limiter),
-	}
-
 	return func(c *gin.Context) {
 		if !config.Enabled {
 			c.Next()
@@ -74,14 +63,14 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		var err error
 		switch config.Strategy {
 		case "token_bucket":
-			err = applyTokenBucketRateLimit(c, ctx, keyStr, limit, burst, log)
+			err = applyTokenBucketRateLimit(c, rl, keyStr, limit, burst, log)
 		case "fixed_window":
 			err = applyFixedWindowRateLimit(c, rl, config, keyStr, limit, log)
 		case "sliding_window":
 			err = applySlidingWindowRateLimit(c, rl, config, keyStr, limit, log)
 		case "":
 			// Default to token bucket if no strategy specified
-			err = applyTokenBucketRateLimit(c, ctx, keyStr, limit, burst, log)
+			err = applyTokenBucketRateLimit(c, rl, keyStr, limit, burst, log)
 		default:
 			err = fmt.Errorf("unsupported rate limit strategy: %s", config.Strategy)
 		}
@@ -108,20 +97,12 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 	}
 }
 
-func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string, limit, burst int, log pkginterfaces.LoggerInterface) error {
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
-
-	// Use a consistent key format
-	limiterKey := key
+func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService, key string, limit, burst int, log pkginterfaces.LoggerInterface) error {
+	// Calculate rate from limit (requests per second)
+	rate := float64(limit)
 	
-	limiter, exists := ctx.limiters[limiterKey]
-	if !exists {
-		limiter = rate.NewLimiter(rate.Limit(limit), burst)
-		ctx.limiters[limiterKey] = limiter
-	}
-
-	if !limiter.Allow() {
+	// Use the RateLimiterService.Allow method
+	if !rl.Allow(key, rate, burst) {
 		log.Warn("Rate limit exceeded",
 			"api_key", utilities.MaskString(key),
 			"limit", strconv.Itoa(limit),
@@ -133,7 +114,8 @@ func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	remaining := burst - int(limiter.Tokens())
+	// Since we're not tracking tokens directly anymore, we can approximate remaining
+	remaining := burst - 1 // Assume one token used
 	if remaining < 0 {
 		remaining = 0
 	}
