@@ -11,7 +11,7 @@ import (
 	
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // ErrorHandlerConfig defines configuration for the error handler middleware
@@ -40,7 +40,7 @@ func DefaultErrorHandlerConfig() ErrorHandlerConfig {
 }
 
 // ErrorHandlerMiddleware returns a middleware that handles errors
-func ErrorHandlerMiddleware(log *logger.Logger, config ...ErrorHandlerConfig) gin.HandlerFunc {
+func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandlerConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultErrorHandlerConfig()
 	if len(config) > 0 {
@@ -76,8 +76,20 @@ func ErrorHandlerMiddleware(log *logger.Logger, config ...ErrorHandlerConfig) gi
 	}
 }
 
+// bodyLogWriter is a gin.ResponseWriter that captures the response body
+type bodyLogWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+// Write captures the response body
+func (w *bodyLogWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
 // logError logs an error with request details
-func logError(log *logger.Logger, c *gin.Context, err error, requestBody []byte, responseBody string, cfg ErrorHandlerConfig) {
+func logError(log interfaces.LoggerInterface, c *gin.Context, err error, requestBody []byte, responseBody string, cfg ErrorHandlerConfig) {
 	// Determine log level based on error type
 	var logLevel string
 	if apiErr, ok := err.(*errors.APIError); ok {
