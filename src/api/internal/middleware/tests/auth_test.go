@@ -9,6 +9,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -59,7 +60,7 @@ func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
 
 func TestAuthMiddleware(t *testing.T) {
 	mockAuthService := new(MockAuthService)
-	mockLogger := interfaces.LoggerInterface(nil) // Use a no-op logger
+	mockLogger := pkginterfaces.LoggerInterface(nil) // Use a no-op logger
 
 	// Test case: Valid token
 	mockAuthService.On("ValidateToken", "valid_token").Return("user_id", nil)
@@ -91,7 +92,7 @@ func TestAuthMiddleware(t *testing.T) {
 	mockAuthService.AssertExpectations(t)
 }
 
-func setupTestRouter(authService interfaces.AuthService, logger interfaces.LoggerInterface) *gin.Engine {
+func setupTestRouter(authService interfaces.AuthService, logger pkginterfaces.LoggerInterface) *gin.Engine {
 	r := gin.New()
 	r.Use(middleware.AuthMiddleware(authService, logger))
 	r.GET("/test", func(c *gin.Context) {
