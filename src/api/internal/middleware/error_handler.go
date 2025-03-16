@@ -10,7 +10,7 @@ import (
 	"strings"
 	
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/errors"
+	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
@@ -92,11 +92,11 @@ func (w *bodyLogWriter) Write(b []byte) (int, error) {
 func logError(log interfaces.LoggerInterface, c *gin.Context, err error, requestBody []byte, responseBody string, cfg ErrorHandlerConfig) {
 	// Determine log level based on error type
 	var logLevel string
-	if apiErr, ok := err.(*errors.APIError); ok {
+	if apiErr, ok := err.(*apiErrors.APIError); ok {
 		switch apiErr.Type {
-		case errors.ErrorTypeValidation, errors.ErrorTypeBadRequest:
+		case apiErrors.ErrorTypeValidation, apiErrors.ErrorTypeBadRequest:
 			logLevel = "warn"
-		case errors.ErrorTypeNotFound:
+		case apiErrors.ErrorTypeNotFound:
 			logLevel = "info"
 		default:
 			logLevel = "error"
@@ -159,12 +159,12 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 	}
 	
 	// Add stack trace for internal errors
-	if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeInternal || cfg.LogStackTrace {
+	if apiErr, ok := err.(*apiErrors.APIError); ok && apiErr.Type == apiErrors.ErrorTypeInternal || cfg.LogStackTrace {
 		fields = append(fields, "stack_trace", string(debug.Stack()))
 	}
 	
 	// Add error details
-	if apiErr, ok := err.(*errors.APIError); ok {
+	if apiErr, ok := err.(*apiErrors.APIError); ok {
 		fields = append(fields, "error_type", apiErr.Type)
 		fields = append(fields, "error_code", apiErr.Code)
 		
@@ -190,7 +190,7 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 			attribute.String("error.message", err.Error()),
 		)
 		
-		if apiErr, ok := err.(*errors.APIError); ok {
+		if apiErr, ok := err.(*apiErrors.APIError); ok {
 			span.SetAttributes(attribute.String("error.code", apiErr.Code))
 		}
 	}
@@ -210,12 +210,12 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 // handleError sends an appropriate error response
 func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 	// Check if it's an API error
-	if apiErr, ok := err.(*errors.APIError); ok {
+	if apiErr, ok := err.(*apiErrors.APIError); ok {
 		// Get status code from API error
 		statusCode := apiErr.StatusCode()
 		
 		// Add rate limit headers if applicable
-		if apiErr.Type == errors.ErrorTypeRateLimit {
+		if apiErr.Type == apiErrors.ErrorTypeRateLimit {
 			if limit, ok := apiErr.Details["limit"].(int); ok {
 				c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 			}
@@ -225,7 +225,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 		}
 		
 		// Include stack trace if configured
-		if cfg.IncludeStackTrace && apiErr.Type == errors.ErrorTypeInternal {
+		if cfg.IncludeStackTrace && apiErr.Type == apiErrors.ErrorTypeInternal {
 			if apiErr.Details == nil {
 				apiErr.Details = make(map[string]interface{})
 			}
