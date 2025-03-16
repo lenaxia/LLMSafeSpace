@@ -135,11 +135,19 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 			connType = "websocket"
 		}
 		
+		// Get userID from context if available
+		userID := ""
+		if id, exists := c.Get("userID"); exists {
+			if idStr, ok := id.(string); ok {
+				userID = idStr
+			}
+		}
+		
 		// Increment active connections before processing
 		wsConnectionsActive.WithLabelValues(connType).Inc()
 		wsConnectionsTotal.WithLabelValues(connType).Inc()
 		
-		metricsService.IncrementActiveConnections(connType)
+		metricsService.IncrementActiveConnections(connType, userID)
 		
 		// Process request
 		c.Next()
@@ -147,7 +155,7 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		// Decrement active connections after processing
 		wsConnectionsActive.WithLabelValues(connType).Dec()
 		
-		metricsService.DecrementActiveConnections(connType)
+		metricsService.DecrementActiveConnections(connType, userID)
 	}
 }
 
