@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -18,7 +19,7 @@ import (
 func TestErrorHandlerMiddleware_APIError(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockLogger.On("Warn", mock.Anything, mock.Anything).Maybe()
 	mockLogger.On("Info", mock.Anything, mock.Anything).Maybe()
@@ -91,7 +92,7 @@ func TestErrorHandlerMiddleware_APIError(t *testing.T) {
 func TestErrorHandlerMiddleware_StackTrace(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything).Once()
 	
 	config := middleware.ErrorHandlerConfig{
@@ -130,7 +131,7 @@ func TestErrorHandlerMiddleware_StackTrace(t *testing.T) {
 func TestErrorHandlerMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	// Capture log fields
 	var logFields []interface{}
