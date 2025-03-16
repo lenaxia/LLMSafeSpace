@@ -1,10 +1,8 @@
 package tests
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -150,7 +148,6 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
-	now := time.Now().UnixNano()
 	
 	// First request
 	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
