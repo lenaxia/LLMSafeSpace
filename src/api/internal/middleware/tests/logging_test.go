@@ -66,7 +66,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
 		responseFields = args.Get(1).([]interface{})
 	}).Once()
-	
+
 	config := middleware.LoggingConfig{
 		LogRequestBody:  true,
 		LogResponseBody: true,
