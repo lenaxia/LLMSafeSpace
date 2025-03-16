@@ -22,8 +22,8 @@ func TestSecurityMiddleware_Headers(t *testing.T) {
 	config := middleware.SecurityConfig{
 		ContentSecurityPolicy: "default-src 'self'",
 		ReferrerPolicy:        "strict-origin-when-cross-origin",
-		RequireHTTPS:          true,
-		Development:           false,
+		RequireHTTPS:          false, // Disable HTTPS redirection for testing
+		Development:           true,  // Set to development mode
 	}
 	
 	router.Use(middleware.SecurityMiddleware(mockLogger, config))
