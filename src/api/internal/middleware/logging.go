@@ -111,21 +111,22 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 			// Add content length
 			fields = append(fields, "request_body_size", len(body))
 			
-			// If body is too large, truncate it
-			if len(body) > cfg.MaxBodyLogSize {
-				truncatedBody := string(body[:cfg.MaxBodyLogSize]) + "... (truncated)"
-				fields = append(fields, "request_body", truncatedBody)
+			// Try to parse as JSON first
+			var jsonBody map[string]interface{}
+			if err := json.Unmarshal(body, &jsonBody); err == nil {
+				// Create a copy of the map to avoid modifying the original
+				maskedBody := make(map[string]interface{})
+				for k, v := range jsonBody {
+					maskedBody[k] = v
+				}
+				// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
+				utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
+				fields = append(fields, "request_body", maskedBody)
 			} else {
-				var jsonBody map[string]interface{}
-				if err := json.Unmarshal(body, &jsonBody); err == nil {
-					// Create a copy of the map to avoid modifying the original
-					maskedBody := make(map[string]interface{})
-					for k, v := range jsonBody {
-						maskedBody[k] = v
-					}
-					// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
-					utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
-					fields = append(fields, "request_body", maskedBody)
+				// If not JSON or too large, truncate it
+				if len(body) > cfg.MaxBodyLogSize {
+					truncatedBody := string(body[:cfg.MaxBodyLogSize]) + "... (truncated)"
+					fields = append(fields, "request_body", truncatedBody)
 				} else {
 					fields = append(fields, "request_body", string(body))
 				}
@@ -149,20 +150,22 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 	// 1. It's an error response (status >= 400)
 	// 2. LogResponseBody is true for all responses
 	if (cfg.LogResponseBody || c.Writer.Status() >= 400) && responseBody != "" {
-		if len(responseBody) > cfg.MaxBodyLogSize {
-			truncatedBody := responseBody[:cfg.MaxBodyLogSize] + "... (truncated)"
-			fields = append(fields, "response_body", truncatedBody)
+		// Try to parse as JSON first
+		var jsonBody map[string]interface{}
+		if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
+			// Create a copy of the map to avoid modifying the original
+			maskedBody := make(map[string]interface{})
+			for k, v := range jsonBody {
+				maskedBody[k] = v
+			}
+			// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
+			utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
+			fields = append(fields, "response_body", maskedBody)
 		} else {
-			var jsonBody map[string]interface{}
-			if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
-				// Create a copy of the map to avoid modifying the original
-				maskedBody := make(map[string]interface{})
-				for k, v := range jsonBody {
-					maskedBody[k] = v
-				}
-				// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
-				utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
-				fields = append(fields, "response_body", maskedBody)
+			// If not JSON or too large, truncate it
+			if len(responseBody) > cfg.MaxBodyLogSize {
+				truncatedBody := responseBody[:cfg.MaxBodyLogSize] + "... (truncated)"
+				fields = append(fields, "response_body", truncatedBody)
 			} else {
 				fields = append(fields, "response_body", responseBody)
 			}
