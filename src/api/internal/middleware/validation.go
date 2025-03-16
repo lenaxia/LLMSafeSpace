@@ -114,28 +114,44 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 		// Unmarshal the request body into the model
 		if err := json.Unmarshal(bodyBytes, modelValue); err != nil {
 			apiErr := errors.NewValidationError("Invalid request body", map[string]interface{}{
-				"error": err.Error(),
+				"errors": map[string]string{
+					"body": "Invalid JSON format",
+				},
 			}, err)
-			HandleAPIError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+				"error": gin.H{
+					"code":    apiErr.Code,
+					"message": apiErr.Message,
+					"details": apiErr.Details,
+				},
+			})
 			return
 		}
-		
+
 		// Validate the model
 		if err := validate.Struct(modelValue); err != nil {
 			// Convert validation errors to a map
 			validationErrors := make(map[string]string)
-			for _, err := range err.(validator.ValidationErrors) {
-				validationErrors[err.Field()] = getValidationErrorMessage(err, cfg.CustomErrorMessages)
+			if verrors, ok := err.(validator.ValidationErrors); ok {
+				for _, verr := range verrors {
+					validationErrors[verr.Field()] = getValidationErrorMessage(verr, cfg.CustomErrorMessages)
+				}
 			}
-			
+
 			apiErr := errors.NewValidationError("Validation failed", map[string]interface{}{
 				"errors": validationErrors,
 			}, err)
-			HandleAPIError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+				"error": gin.H{
+					"code":    apiErr.Code,
+					"message": apiErr.Message,
+					"details": apiErr.Details,
+				},
+			})
 			return
 		}
-		
-		// Store the validated model in the context
+
+		// Set the validated model in context for handler to use
 		c.Set("validatedModel", modelValue)
 		
 		// Validate query parameters if configured
