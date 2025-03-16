@@ -134,7 +134,10 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 			validationErrors := make(map[string]string)
 			if verrors, ok := err.(validator.ValidationErrors); ok {
 				for _, verr := range verrors {
-					validationErrors[verr.Field()] = getValidationErrorMessage(verr, cfg.CustomErrorMessages)
+					// Use the field name with first letter capitalized
+					// This matches what the test is expecting
+					fieldName := verr.Field() // This will be the struct field name, which is capitalized
+					validationErrors[fieldName] = getValidationErrorMessage(verr, cfg.CustomErrorMessages)
 				}
 			}
 
