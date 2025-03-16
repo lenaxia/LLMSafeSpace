@@ -43,7 +43,7 @@ func DefaultAuthConfig() AuthConfig {
 }
 
 // AuthMiddleware returns a middleware that handles authentication
-func AuthMiddleware(authService interfaces.AuthService, log interfaces.LoggerInterface, config ...AuthConfig) gin.HandlerFunc {
+func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultAuthConfig()
 	if len(config) > 0 {
