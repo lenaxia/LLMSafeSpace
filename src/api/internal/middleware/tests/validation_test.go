@@ -53,7 +53,7 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 				"user":    user,
 			})
 		},
-	})
+	)
 	
 	// Execute with valid data
 	w := httptest.NewRecorder()
