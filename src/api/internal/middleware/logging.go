@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
@@ -27,7 +27,7 @@ var (
 	}
 )
 
-func LoggingMiddleware(log *logger.Logger) gin.HandlerFunc {
+func LoggingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		requestID := generateRequestID()
@@ -47,7 +47,7 @@ func LoggingMiddleware(log *logger.Logger) gin.HandlerFunc {
 	}
 }
 
-func logRequest(c *gin.Context, log *logger.Logger, requestID string) {
+func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string) {
 	fields := []interface{}{
 		"method", c.Request.Method,
 		"path", c.Request.URL.Path,
@@ -77,7 +77,7 @@ func logRequest(c *gin.Context, log *logger.Logger, requestID string) {
 	log.Info("Request received", fields...)
 }
 
-func logResponse(c *gin.Context, log *logger.Logger, requestID string, start time.Time, responseBody string) {
+func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID string, start time.Time, responseBody string) {
 	duration := time.Since(start)
 	fields := []interface{}{
 		"status", c.Writer.Status(),
