@@ -197,7 +197,12 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 				)
 				
 				apiErr := errors.NewForbiddenError("Origin header is required for WebSocket connections", nil)
-				HandleAPIError(c, apiErr)
+				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+					"error": gin.H{
+						"code":    apiErr.Code,
+						"message": apiErr.Message,
+					},
+				})
 				return
 			}
 			
@@ -219,7 +224,12 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 				)
 				
 				apiErr := errors.NewForbiddenError("Origin not allowed", nil)
-				HandleAPIError(c, apiErr)
+				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+					"error": gin.H{
+						"code":    apiErr.Code,
+						"message": apiErr.Message,
+					},
+				})
 				return
 			}
 			
