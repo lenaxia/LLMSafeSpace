@@ -141,7 +141,7 @@ func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 		requestFields = args.Get(1).([]interface{})
 	}).Once()
 	
-	mockLogger.On("Info", "Request processed", mock.Anything).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Once()
 	
 	config := middleware.LoggingConfig{
 		LogRequestBody: true,

@@ -27,13 +27,57 @@ var (
 	}
 )
 
-func LoggingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
+// LoggingConfig defines configuration for the logging middleware
+type LoggingConfig struct {
+	// LogRequestBody indicates whether to log request bodies
+	LogRequestBody bool
+	
+	// LogResponseBody indicates whether to log response bodies
+	LogResponseBody bool
+	
+	// MaxBodyLogSize is the maximum size of request/response bodies to log
+	MaxBodyLogSize int
+	
+	// SensitiveFields are JSON fields that should be redacted in request/response bodies
+	SensitiveFields []string
+	
+	// SkipPaths are paths that should not be logged
+	SkipPaths []string
+}
+
+// DefaultLoggingConfig returns the default logging configuration
+func DefaultLoggingConfig() LoggingConfig {
+	return LoggingConfig{
+		LogRequestBody:  true,
+		LogResponseBody: true,
+		MaxBodyLogSize:  1024, // 1KB
+		SensitiveFields: []string{"password", "token", "secret", "key", "apiKey", "credit_card"},
+		SkipPaths:       []string{"/health", "/metrics"},
+	}
+}
+
+func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) gin.HandlerFunc {
+	// Use default config if none provided
+	cfg := DefaultLoggingConfig()
+	if len(config) > 0 {
+		cfg = config[0]
+	}
+	
 	return func(c *gin.Context) {
+		// Skip logging for certain paths
+		path := c.Request.URL.Path
+		for _, skipPath := range cfg.SkipPaths {
+			if path == skipPath {
+				c.Next()
+				return
+			}
+		}
+		
 		start := time.Now()
 		requestID := generateRequestID()
 
 		// Log request details
-		logRequest(c, log, requestID)
+		logRequest(c, log, requestID, cfg)
 
 		// Capture response
 		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
@@ -43,11 +87,11 @@ func LoggingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
 		c.Next()
 
 		// Log response details
-		logResponse(c, log, requestID, start, blw.body.String())
+		logResponse(c, log, requestID, start, blw.body.String(), cfg)
 	}
 }
 
-func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string) {
+func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string, cfg LoggingConfig) {
 	fields := []interface{}{
 		"method", c.Request.Method,
 		"path", c.Request.URL.Path,
@@ -60,16 +104,25 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 		fields = append(fields, "api_key", utilities.MaskString(apiKey.(string)))
 	}
 
-	// Log request body if present
-	if c.Request.Body != nil && c.Request.ContentLength > 0 {
+	// Log request body if present and configured to do so
+	if cfg.LogRequestBody && c.Request.Body != nil && c.Request.ContentLength > 0 {
 		body, err := readAndReplaceBody(c)
 		if err == nil {
-			var jsonBody map[string]interface{}
-			if err := json.Unmarshal(body, &jsonBody); err == nil {
-				maskSensitiveFields(jsonBody)
-				fields = append(fields, "body", jsonBody)
+			// Add content length
+			fields = append(fields, "request_body_size", len(body))
+			
+			// If body is too large, truncate it
+			if len(body) > cfg.MaxBodyLogSize {
+				truncatedBody := string(body[:cfg.MaxBodyLogSize]) + "... (truncated)"
+				fields = append(fields, "request_body", truncatedBody)
 			} else {
-				fields = append(fields, "body", string(body))
+				var jsonBody map[string]interface{}
+				if err := json.Unmarshal(body, &jsonBody); err == nil {
+					maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
+					fields = append(fields, "request_body", jsonBody)
+				} else {
+					fields = append(fields, "request_body", string(body))
+				}
 			}
 		}
 	}
@@ -77,7 +130,7 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 	log.Info("Request received", fields...)
 }
 
-func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID string, start time.Time, responseBody string) {
+func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID string, start time.Time, responseBody string, cfg LoggingConfig) {
 	duration := time.Since(start)
 	fields := []interface{}{
 		"status", c.Writer.Status(),
@@ -86,13 +139,21 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 		"request_id", requestID,
 	}
 
-	if c.Writer.Status() >= 400 && responseBody != "" {
-		var jsonBody map[string]interface{}
-		if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
-			maskSensitiveFields(jsonBody)
-			fields = append(fields, "response_body", jsonBody)
+	// Log response body if configured to do so and either:
+	// 1. It's an error response (status >= 400)
+	// 2. LogResponseBody is true for all responses
+	if (cfg.LogResponseBody || c.Writer.Status() >= 400) && responseBody != "" {
+		if len(responseBody) > cfg.MaxBodyLogSize {
+			truncatedBody := responseBody[:cfg.MaxBodyLogSize] + "... (truncated)"
+			fields = append(fields, "response_body", truncatedBody)
 		} else {
-			fields = append(fields, "response_body", truncateString(responseBody, maxBodyLogSize))
+			var jsonBody map[string]interface{}
+			if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
+				maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
+				fields = append(fields, "response_body", jsonBody)
+			} else {
+				fields = append(fields, "response_body", responseBody)
+			}
 		}
 	}
 
