@@ -28,7 +28,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	}))
 	
 	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
+	router.Use(middleware.AuthMiddleware(mockAuth, nil))
 	router.GET("/protected", func(c *gin.Context) {
 		userID, _ := c.Get("userID")
 		c.String(http.StatusOK, "user: %s", userID)
@@ -61,7 +61,7 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	}))
 	
 	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
+	router.Use(middleware.AuthMiddleware(mockAuth, nil))
 	router.GET("/protected", func(c *gin.Context) {
 		c.String(http.StatusOK, "should not reach here")
 	})
@@ -94,7 +94,7 @@ func TestAuthMiddleware_SkipPaths(t *testing.T) {
 	}
 	
 	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger, config))
+	router.Use(middleware.AuthMiddleware(mockAuth, nil, config))
 	router.GET("/public", func(c *gin.Context) {
 		c.String(http.StatusOK, "public endpoint")
 	})
@@ -136,7 +136,7 @@ func TestRequirePermissions(t *testing.T) {
 	mockAuth.On("CheckResourceAccess", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(false)
 	
 	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
+	router.Use(middleware.AuthMiddleware(mockAuth, nil))
 	router.GET("/write-access", middleware.RequirePermissions("write"), func(c *gin.Context) {
 		c.String(http.StatusOK, "write access granted")
 	})
@@ -166,7 +166,7 @@ func TestRequireRoles(t *testing.T) {
 	}))
 	
 	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
+	router.Use(middleware.AuthMiddleware(mockAuth, nil))
 	router.GET("/admin-only", middleware.RequireRoles("admin"), func(c *gin.Context) {
 		c.String(http.StatusOK, "admin access granted")
 	})

@@ -51,6 +51,12 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 	}
 	
 	return func(c *gin.Context) {
+		// Create a no-op logger if none provided
+		logger := log
+		if logger == nil {
+			// Use a no-op logger for tests
+			logger = &logger.Logger{}
+		}
 		// Skip authentication for certain paths
 		path := c.Request.URL.Path
 		if shouldSkipAuth(path, cfg.SkipPaths, cfg.SkipPathPrefixes) {
@@ -61,12 +67,14 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		// Extract token from request
 		token := extractToken(c, cfg)
 		if token == "" {
-			log.Warn("Authentication failed: no token provided",
+			if log != nil {
+				log.Warn("Authentication failed: no token provided",
 				"path", path,
 				"method", c.Request.Method,
 				"client_ip", c.ClientIP(),
 				"request_id", c.GetString("request_id"),
-			)
+				)
+			}
 			
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			HandleAPIError(c, apiErr)
@@ -76,13 +84,15 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		// Validate token
 		userID, err := authService.ValidateToken(token)
 		if err != nil {
-			log.Warn("Authentication failed: invalid token",
+			if log != nil {
+				log.Warn("Authentication failed: invalid token",
 				"path", path,
 				"method", c.Request.Method,
 				"client_ip", c.ClientIP(),
 				"request_id", c.GetString("request_id"),
 				"error", err.Error(),
-			)
+				)
+			}
 			
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			HandleAPIError(c, apiErr)
