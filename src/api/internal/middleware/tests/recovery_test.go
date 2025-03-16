@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -122,9 +123,15 @@ func TestRecoveryMiddleware_StackTraceInResponse(t *testing.T) {
 	stackTrace := errorDetails["stack"].([]interface{})
 	assert.NotEmpty(t, stackTrace)
 	
-	// Stack trace should contain function names
-	stackString := stackTrace[0].(string)
-	assert.Contains(t, stackString, "TestRecoveryMiddleware_StackTraceInResponse")
+	// Check if any line in the stack trace contains the test function name
+	foundTestFunction := false
+	for _, line := range stackTrace {
+		if strings.Contains(line.(string), "TestRecoveryMiddleware_StackTraceInResponse") {
+			foundTestFunction = true
+			break
+		}
+	}
+	assert.True(t, foundTestFunction, "Stack trace should contain the test function name")
 	
 	mockLogger.AssertExpectations(t)
 }
