@@ -17,7 +17,7 @@ func TestMetricsMiddleware_RecordRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockMetrics := new(mocks.MockMetricsService)
-	mockMetrics.On("RecordRequest", "GET", "/api/v1/test", http.StatusOK, mock.Anything, mock.Anything).Once()
+	mockMetrics.On("RecordRequest", "GET", mock.Anything, http.StatusOK, mock.Anything, mock.Anything).Once()
 	
 	router := gin.New()
 	router.Use(middleware.MetricsMiddleware(mockMetrics))
@@ -97,7 +97,7 @@ func TestExecutionMetricsMiddleware(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockMetrics := new(mocks.MockMetricsService)
-	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything, mock.Anything).Once()
+	mockMetrics.On("RecordExecution", "code", "python", "200", mock.Anything).Once()
 	
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

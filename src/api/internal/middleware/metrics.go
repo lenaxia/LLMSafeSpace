@@ -187,7 +187,15 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		codeExecutionsTotal.WithLabelValues(execType, runtime, status).Inc()
 		codeExecutionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
 		
-		metricsService.RecordExecution(execType, runtime, status, duration)
+		// Get userID from context if available
+		userID := ""
+		if id, exists := c.Get("userID"); exists {
+			if idStr, ok := id.(string); ok {
+				userID = idStr
+			}
+		}
+		
+		metricsService.RecordExecution(execType, runtime, status, userID, duration)
 	}
 }
 

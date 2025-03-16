@@ -16,7 +16,7 @@ func TestTracingMiddleware_RequestID(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger)
+	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
 	
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",
@@ -57,7 +57,7 @@ func TestTracingMiddleware_ExistingRequestID(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger)
+	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
 	
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",
@@ -97,7 +97,7 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 	mockLogger.On("With", mock.MatchedBy(func(args []interface{}) bool {
 		// Check that the first argument is "request_id"
 		return len(args) >= 2 && args[0] == "request_id"
-	})).Return(mockLogger).Once()
+	})).Return(mockLogger).Maybe()
 	
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",

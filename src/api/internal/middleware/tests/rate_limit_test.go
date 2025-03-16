@@ -24,11 +24,11 @@ func TestRateLimitMiddleware_TokenBucket(t *testing.T) {
 	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
 	// First request - allowed
-	mockRateLimiter.On("Allow", "test-key:default", mock.Anything, 2).Return(true).Once()
+	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(true).Once()
 	// Second request - allowed
-	mockRateLimiter.On("Allow", "test-key:default", mock.Anything, 2).Return(true).Once()
+	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(true).Once()
 	// Third request - denied
-	mockRateLimiter.On("Allow", "test-key:default", mock.Anything, 2).Return(false).Once()
+	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(false).Once()
 	
 	config := middleware.RateLimitConfig{
 		Enabled:      true,

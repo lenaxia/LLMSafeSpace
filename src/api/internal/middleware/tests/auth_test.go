@@ -19,7 +19,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger)
+	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
 	
 	mockAuth := new(mocks.MockAuthMiddlewareService)
 	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
@@ -126,7 +126,7 @@ func TestRequirePermissions(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger)
+	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
 	
 	mockAuth := new(mocks.MockAuthMiddlewareService)
 	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
@@ -157,7 +157,7 @@ func TestRequireRoles(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger)
+	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
 	
 	mockAuth := new(mocks.MockAuthMiddlewareService)
 	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)

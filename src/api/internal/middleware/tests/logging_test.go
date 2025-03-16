@@ -20,7 +20,7 @@ func TestLoggingMiddleware_RequestResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Info", "Request received", mock.Anything).Once()
-	mockLogger.On("Info", "Request processed", mock.Anything).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Once()
 	
 	config := middleware.LoggingConfig{
 		LogRequestBody:  true,
@@ -64,7 +64,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		requestFields = args.Get(1).([]interface{})
 	}).Once()
 	
-	mockLogger.On("Info", "Request processed", mock.Anything).Run(func(args mock.Arguments) {
+	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
 		responseFields = args.Get(1).([]interface{})
 	}).Once()
 	
@@ -215,7 +215,7 @@ func TestLoggingMiddleware_SkipPaths(t *testing.T) {
 	
 	// Execute request to non-skipped path
 	mockLogger.On("Info", "Request received", mock.Anything).Once()
-	mockLogger.On("Info", "Request processed", mock.Anything).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Once()
 	
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/api", nil)

@@ -79,6 +79,9 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log *logger.Logger, c
 			err = applyFixedWindowRateLimit(c, rl, config, keyStr, limit, log)
 		case "sliding_window":
 			err = applySlidingWindowRateLimit(c, rl, config, keyStr, limit, log)
+		case "":
+			// Default to token bucket if no strategy specified
+			err = applyTokenBucketRateLimit(c, ctx, keyStr, limit, burst, log)
 		default:
 			err = fmt.Errorf("unsupported rate limit strategy: %s", config.Strategy)
 		}
@@ -109,10 +112,13 @@ func applyTokenBucketRateLimit(c *gin.Context, ctx *rateLimitContext, key string
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
 
-	limiter, exists := ctx.limiters[key]
+	// Use a consistent key format
+	limiterKey := key
+	
+	limiter, exists := ctx.limiters[limiterKey]
 	if !exists {
 		limiter = rate.NewLimiter(rate.Limit(limit), burst)
-		ctx.limiters[key] = limiter
+		ctx.limiters[limiterKey] = limiter
 	}
 
 	if !limiter.Allow() {
