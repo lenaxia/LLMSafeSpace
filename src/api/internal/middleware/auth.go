@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // AuthConfig defines configuration for the authentication middleware
@@ -43,7 +43,7 @@ func DefaultAuthConfig() AuthConfig {
 }
 
 // AuthMiddleware returns a middleware that handles authentication
-func AuthMiddleware(authService interfaces.AuthService, log pkginterfaces.LoggerInterface, config ...AuthConfig) gin.HandlerFunc {
+func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.LoggerInterface, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultAuthConfig()
 	if len(config) > 0 {
@@ -123,7 +123,7 @@ func AuthMiddleware(authService interfaces.AuthService, log pkginterfaces.Logger
 }
 
 // AuthorizationMiddleware returns a middleware that handles authorization
-func AuthorizationMiddleware(authService interfaces.AuthService, log pkginterfaces.LoggerInterface) gin.HandlerFunc {
+func AuthorizationMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.LoggerInterface) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Skip authorization for certain paths
 		if c.Request.Method == "OPTIONS" {
