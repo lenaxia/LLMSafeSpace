@@ -156,19 +156,18 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(1, nil).Once()
-	mockRateLimiter.On("GetWindowEntries", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", 0, 0).Return([]string{strconv.FormatInt(now, 10)}, nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:sliding:test-key:default:timestamps").Return(time.Minute, nil).Once()
 	
 	// Second request
 	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(2, nil).Once()
-	mockRateLimiter.On("GetWindowEntries", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", 0, 0).Return([]string{strconv.FormatInt(now, 10)}, nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:sliding:test-key:default:timestamps").Return(time.Minute, nil).Once()
 	
 	// Third request - exceeds limit
 	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
 	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(3, nil).Once()
-	mockRateLimiter.On("GetWindowEntries", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", 0, 0).Return([]string{strconv.FormatInt(now, 10)}, nil).Once()
 	
 	config := middleware.RateLimitConfig{
 		Enabled:      true,
