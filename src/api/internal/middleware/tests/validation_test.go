@@ -85,16 +85,18 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
-	router.Use(middleware.ValidationMiddleware(mockLogger))
 	
-	router.POST("/users", func(c *gin.Context) {
-		// Set validation model
-		c.Set("validationModel", &TestUser{})
-		c.Next()
-		
-		// This should not be reached for invalid data
-		c.JSON(http.StatusOK, gin.H{"message": "User created"})
-	})
+	router.POST("/users", 
+		func(c *gin.Context) {
+			c.Set("validationModel", &TestUser{})
+			c.Next()
+		},
+		middleware.ValidationMiddleware(mockLogger),
+		func(c *gin.Context) {
+			// This should not be reached for invalid data
+			c.JSON(http.StatusOK, gin.H{"message": "User created"})
+		},
+	)
 	
 	// Execute with invalid data
 	w := httptest.NewRecorder()
