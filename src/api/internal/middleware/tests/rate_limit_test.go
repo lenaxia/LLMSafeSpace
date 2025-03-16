@@ -10,6 +10,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -20,13 +21,16 @@ func TestRateLimitMiddleware_TokenBucket(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
+	// Hash the test key
+	hashedKey := utilities.HashString("test-key")
+	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
 	// First request - allowed
-	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(true).Once()
+	mockRateLimiter.On("Allow", hashedKey, mock.Anything, 2).Return(true).Once()
 	// Second request - allowed
-	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(true).Once()
+	mockRateLimiter.On("Allow", hashedKey, mock.Anything, 2).Return(true).Once()
 	// Third request - denied
-	mockRateLimiter.On("Allow", "test-key", mock.Anything, 2).Return(false).Once()
+	mockRateLimiter.On("Allow", hashedKey, mock.Anything, 2).Return(false).Once()
 	
 	config := middleware.RateLimitConfig{
 		Enabled:      true,
@@ -82,18 +86,21 @@ func TestRateLimitMiddleware_FixedWindow(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
+	// Hash the test key
+	hashedKey := utilities.HashString("test-key")
+	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
 	// First request - count = 1
-	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:test-key:default", int64(1), time.Minute).Return(int64(1), nil).Once()
-	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:test-key:default").Return(time.Minute, nil).Once()
+	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:"+hashedKey+":fixed_window", int64(1), time.Minute).Return(int64(1), nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:"+hashedKey+":fixed_window").Return(time.Minute, nil).Once()
 	
 	// Second request - count = 2
-	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:test-key:default", int64(1), time.Minute).Return(int64(2), nil).Once()
-	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:test-key:default").Return(time.Minute, nil).Once()
+	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:"+hashedKey+":fixed_window", int64(1), time.Minute).Return(int64(2), nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:"+hashedKey+":fixed_window").Return(time.Minute, nil).Once()
 	
 	// Third request - count = 3, exceeds limit
-	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:test-key:default", int64(1), time.Minute).Return(int64(3), nil).Once()
-	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:test-key:default").Return(time.Minute, nil).Once()
+	mockRateLimiter.On("Increment", mock.Anything, "ratelimit:"+hashedKey+":fixed_window", int64(1), time.Minute).Return(int64(3), nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:"+hashedKey+":fixed_window").Return(time.Minute, nil).Once()
 	
 	config := middleware.RateLimitConfig{
 		Enabled:      true,
@@ -147,24 +154,27 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	
+	// Hash the test key
+	hashedKey := utilities.HashString("test-key")
+	
 	mockRateLimiter := new(mocks.MockRateLimiterService)
 	
 	// First request
-	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(1, nil).Once()
-	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:sliding:test-key:default:timestamps").Return(time.Minute, nil).Once()
+	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything).Return(1, nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:"+hashedKey+":sliding_window").Return(time.Minute, nil).Once()
 	
 	// Second request
-	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(2, nil).Once()
-	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:sliding:test-key:default:timestamps").Return(time.Minute, nil).Once()
+	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything).Return(2, nil).Once()
+	mockRateLimiter.On("GetTTL", mock.Anything, "ratelimit:"+hashedKey+":sliding_window").Return(time.Minute, nil).Once()
 	
 	// Third request - exceeds limit
-	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything).Return(nil).Once()
-	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:sliding:test-key:default:timestamps", mock.Anything, mock.Anything).Return(3, nil).Once()
+	mockRateLimiter.On("AddToWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("RemoveFromWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything).Return(nil).Once()
+	mockRateLimiter.On("CountInWindow", mock.Anything, "ratelimit:"+hashedKey+":sliding_window", mock.Anything, mock.Anything).Return(3, nil).Once()
 	
 	config := middleware.RateLimitConfig{
 		Enabled:      true,
