@@ -111,8 +111,8 @@ type MetricsService interface {
 	RecordSandboxCreation(runtime string, warmPodUsed bool, userID string)
 	RecordSandboxTermination(runtime, reason string)
 	RecordExecution(execType, runtime, status, userID string, duration time.Duration)
-	IncrementActiveConnections(connType string)
-	DecrementActiveConnections(connType string)
+	IncrementActiveConnections(connType string, userID string)
+	DecrementActiveConnections(connType string, userID string)
 	RecordWarmPoolHit()
 	Start() error
 	Stop() error
