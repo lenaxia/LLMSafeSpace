@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // AuthConfig defines configuration for the authentication middleware
@@ -43,7 +43,7 @@ func DefaultAuthConfig() AuthConfig {
 }
 
 // AuthMiddleware returns a middleware that handles authentication
-func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, config ...AuthConfig) gin.HandlerFunc {
+func AuthMiddleware(authService interfaces.AuthService, log pkginterfaces.LoggerInterface, config ...AuthConfig) gin.HandlerFunc {
 	// Use default config if none provided
 	cfg := DefaultAuthConfig()
 	if len(config) > 0 {
@@ -104,7 +104,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 		
 		// Add user ID to logger context
 		if requestLogger, exists := c.Get("logger"); exists {
-			if typedLogger, ok := requestLogger.(*logger.Logger); ok {
+			if typedLogger, ok := requestLogger.(pkginterfaces.LoggerInterface); ok {
 				newLogger := typedLogger.With("user_id", userID)
 				c.Set("logger", newLogger)
 			}
@@ -123,7 +123,7 @@ func AuthMiddleware(authService interfaces.AuthService, log *logger.Logger, conf
 }
 
 // AuthorizationMiddleware returns a middleware that handles authorization
-func AuthorizationMiddleware(authService interfaces.AuthService, log *logger.Logger) gin.HandlerFunc {
+func AuthorizationMiddleware(authService interfaces.AuthService, log pkginterfaces.LoggerInterface) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Skip authorization for certain paths
 		if c.Request.Method == "OPTIONS" {
