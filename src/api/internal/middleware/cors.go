@@ -2,9 +2,10 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/cors"
 )
 
 // CORSConfig defines configuration for CORS middleware
@@ -37,14 +38,14 @@ type CORSConfig struct {
 // DefaultCORSConfig returns the default CORS configuration
 func DefaultCORSConfig() CORSConfig {
 	return CORSConfig{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
-		AllowCredentials: true,
-		MaxAge:           86400,
+		AllowedOrigins:     []string{"*"},
+		AllowedMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
+		ExposedHeaders:     []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
+		AllowCredentials:   true,
+		MaxAge:            86400,
 		OptionsPassthrough: false,
-		Debug:            false,
+		Debug:             false,
 	}
 }
 
@@ -55,74 +56,51 @@ func CORSMiddleware(config ...CORSConfig) gin.HandlerFunc {
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
-	// Create cors.Options from config
-	options := cors.Options{
-		AllowedOrigins:   cfg.AllowedOrigins,
-		AllowedMethods:   cfg.AllowedMethods,
-		AllowedHeaders:   cfg.AllowedHeaders,
-		ExposedHeaders:   cfg.ExposedHeaders,
-		AllowCredentials: cfg.AllowCredentials,
-		MaxAge:           cfg.MaxAge,
-		Debug:            cfg.Debug,
-	}
-	
-	// Create cors handler
-	corsHandler := cors.New(options).Handler
-	
+
 	return func(c *gin.Context) {
-		// Handle preflight OPTIONS request directly if not using passthrough
+		// Handle preflight OPTIONS request
 		if !cfg.OptionsPassthrough && c.Request.Method == "OPTIONS" {
-			// Create a response recorder
-			w := &responseRecorder{
-				ResponseWriter: c.Writer,
-				statusCode:     http.StatusOK,
-			}
-			
-			// Process with cors handler
-			corsHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Do nothing, just let CORS headers be added
-			})).ServeHTTP(w, c.Request)
-			
 			// Set CORS headers
-			for key, values := range w.Header() {
-				for _, value := range values {
-					c.Header(key, value)
+			headers := c.Writer.Header()
+			if origin := c.Request.Header.Get("Origin"); origin != "" && isAllowedOrigin(origin, cfg.AllowedOrigins) {
+				headers.Set("Access-Control-Allow-Origin", origin)
+				headers.Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
+				headers.Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
+				headers.Set("Access-Control-Expose-Headers", strings.Join(cfg.ExposedHeaders, ", "))
+				if cfg.AllowCredentials {
+					headers.Set("Access-Control-Allow-Credentials", "true")
+				}
+				if cfg.MaxAge > 0 {
+					headers.Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
 				}
 			}
-			
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-		
-		// For all other requests, process with cors handler then continue
-		corsHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Copy headers from response writer to gin context
-			for key, values := range w.Header() {
-				for _, value := range values {
-					c.Header(key, value)
-				}
+
+		// For actual requests, set CORS headers
+		if origin := c.Request.Header.Get("Origin"); origin != "" && isAllowedOrigin(origin, cfg.AllowedOrigins) {
+			headers := c.Writer.Header()
+			headers.Set("Access-Control-Allow-Origin", origin)
+			headers.Set("Access-Control-Expose-Headers", strings.Join(cfg.ExposedHeaders, ", "))
+			if cfg.AllowCredentials {
+				headers.Set("Access-Control-Allow-Credentials", "true")
 			}
-			
-			// Continue processing
-			c.Next()
-		})).ServeHTTP(c.Writer, c.Request)
+		}
+
+		c.Next()
 	}
 }
 
-// responseRecorder is a wrapper for http.ResponseWriter that captures status code
-type responseRecorder struct {
-	gin.ResponseWriter
-	statusCode int
-}
-
-// WriteHeader captures the status code
-func (r *responseRecorder) WriteHeader(statusCode int) {
-	r.statusCode = statusCode
-	r.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Status returns the status code
-func (r *responseRecorder) Status() int {
-	return r.statusCode
+// isAllowedOrigin checks if the given origin is allowed
+func isAllowedOrigin(origin string, allowedOrigins []string) bool {
+	if len(allowedOrigins) == 0 {
+		return true
+	}
+	for _, allowed := range allowedOrigins {
+		if allowed == "*" || allowed == origin {
+			return true
+		}
+	}
+	return false
 }
