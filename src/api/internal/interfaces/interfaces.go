@@ -114,6 +114,13 @@ type MetricsService interface {
 	IncrementActiveConnections(connType string, userID string)
 	DecrementActiveConnections(connType string, userID string)
 	RecordWarmPoolHit()
+	RecordError(errorType, endpoint, code string)
+	RecordPackageInstallation(runtime, manager, status string)
+	RecordFileOperation(operation, status string)
+	RecordResourceUsage(sandboxID string, cpu float64, memoryBytes int64)
+	RecordWarmPoolMetrics(runtime, poolName string, utilization float64)
+	RecordWarmPoolScaling(runtime, operation, reason string)
+	UpdateWarmPoolHitRatio(runtime string, ratio float64)
 	Start() error
 	Stop() error
 }
