@@ -117,8 +117,8 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 			} else {
 				var jsonBody map[string]interface{}
 				if err := json.Unmarshal(body, &jsonBody); err == nil {
-					// Use the maskSensitiveFieldsWithList function to mask sensitive fields
-					maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
+					// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
+					utilities.MaskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
 					fields = append(fields, "request_body", jsonBody)
 				} else {
 					fields = append(fields, "request_body", string(body))
@@ -149,8 +149,8 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 		} else {
 			var jsonBody map[string]interface{}
 			if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
-				// Use the maskSensitiveFieldsWithList function to mask sensitive fields
-				maskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
+				// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
+				utilities.MaskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
 				fields = append(fields, "response_body", jsonBody)
 			} else {
 				fields = append(fields, "response_body", responseBody)
@@ -161,25 +161,6 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 	log.Info("Request completed", fields...)
 }
 
-func maskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
-	for _, key := range sensitiveFields {
-		if _, exists := data[key]; exists {
-			data[key] = "********"
-		}
-	}
-	
-	// Also check nested maps
-	for _, v := range data {
-		if nestedMap, ok := v.(map[string]interface{}); ok {
-			maskSensitiveFieldsWithList(nestedMap, sensitiveFields)
-		}
-	}
-}
-
-func maskSensitiveFields(data map[string]interface{}) {
-	sensitiveKeys := []string{"password", "api_key", "token", "secret"}
-	maskSensitiveFieldsWithList(data, sensitiveKeys)
-}
 
 func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	body, err := io.ReadAll(c.Request.Body)
