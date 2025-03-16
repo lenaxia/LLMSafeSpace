@@ -51,12 +51,6 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 	}
 	
 	return func(c *gin.Context) {
-		// Create a no-op logger if none provided
-		logger := log
-		if logger == nil {
-			// Use a no-op logger for tests
-			// Just skip logging in tests when logger is nil
-		}
 		// Skip authentication for certain paths
 		path := c.Request.URL.Path
 		if shouldSkipAuth(path, cfg.SkipPaths, cfg.SkipPathPrefixes) {
