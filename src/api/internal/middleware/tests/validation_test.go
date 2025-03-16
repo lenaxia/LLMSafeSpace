@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -28,7 +29,7 @@ type TestUser struct {
 func TestValidationMiddleware_ValidRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
 	router.Use(middleware.ValidationMiddleware(mockLogger))
@@ -79,7 +80,7 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
 	router.Use(middleware.ValidationMiddleware(mockLogger))
@@ -131,7 +132,7 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 func TestValidationMiddleware_InvalidJSON(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
 	router.Use(middleware.ValidationMiddleware(mockLogger))
@@ -169,7 +170,7 @@ func TestValidationMiddleware_InvalidJSON(t *testing.T) {
 func TestValidationMiddleware_CustomValidator(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	// Create custom validation config
 	config := middleware.ValidationConfig{

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -16,13 +17,6 @@ import (
 // MockAuthService is a mock implementation of the AuthService interface
 type MockAuthService struct {
 	mock.Mock
-}
-
-type AuthResult struct {
-	UserID      string
-	Role        string
-	APIKey      string
-	Permissions []string
 }
 
 func (m *MockAuthService) Start() error {
@@ -35,30 +29,47 @@ func (m *MockAuthService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockAuthService) ValidateToken(ctx context.Context, token string) (AuthResult, error) {
-	args := m.Called(ctx, token)
-	return args.Get(0).(AuthResult), args.Error(1)
+func (m *MockAuthService) ValidateToken(token string) (string, error) {
+	args := m.Called(token)
+	return args.String(0), args.Error(1)
 }
 
-func (m *MockAuthService) CheckPermissions(ctx context.Context, userPermissions []string, requiredPermissions []string) bool {
-	args := m.Called(ctx, userPermissions, requiredPermissions)
+func (m *MockAuthService) GetUserID(c *gin.Context) string {
+	args := m.Called(c)
+	return args.String(0)
+}
+
+func (m *MockAuthService) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
+	args := m.Called(userID, resourceType, resourceID, action)
 	return args.Bool(0)
+}
+
+func (m *MockAuthService) GenerateToken(userID string) (string, error) {
+	args := m.Called(userID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
 }
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	mockAuth := new(MockAuthService)
-	mockAuth.On("ValidateToken", mock.Anything, "valid-token").Return(
-		AuthResult{
-			UserID:      "user123",
-			Role:        "admin",
-			APIKey:      "api-key-123",
-			Permissions: []string{"read", "write"},
-		}, nil)
+	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
+	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		c.Next()
+	}))
 	
 	router := gin.New()
 	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
@@ -84,12 +95,14 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Warn", mock.Anything, mock.Anything).Once()
 	
 	mockAuth := new(MockAuthService)
-	mockAuth.On("ValidateToken", mock.Anything, "invalid-token").Return(
-		AuthResult{}, errors.New("invalid token"))
+	mockAuth.On("ValidateToken", "invalid-token").Return("", errors.New("invalid token"))
+	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		c.Next()
+	}))
 	
 	router := gin.New()
 	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
@@ -114,8 +127,11 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 func TestAuthMiddleware_SkipPaths(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockAuth := new(MockAuthService)
+	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		c.Next()
+	}))
 	
 	config := middleware.AuthConfig{
 		SkipPaths: []string{"/public", "/health"},
@@ -153,17 +169,15 @@ func TestAuthMiddleware_SkipPaths(t *testing.T) {
 func TestRequirePermissions(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	mockAuth := new(MockAuthService)
-	mockAuth.On("ValidateToken", mock.Anything, "valid-token").Return(
-		AuthResult{
-			UserID:      "user123",
-			Role:        "user",
-			Permissions: []string{"read"},
-		}, nil)
-	mockAuth.On("CheckPermissions", mock.Anything, []string{"read"}, []string{"write"}).Return(false)
+	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
+	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		c.Next()
+	}))
+	mockAuth.On("CheckResourceAccess", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(false)
 	
 	router := gin.New()
 	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
@@ -186,15 +200,14 @@ func TestRequirePermissions(t *testing.T) {
 func TestRequireRoles(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	mockAuth := new(MockAuthService)
-	mockAuth.On("ValidateToken", mock.Anything, "valid-token").Return(
-		AuthResult{
-			UserID: "user123",
-			Role:   "user",
-		}, nil)
+	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
+	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		c.Next()
+	}))
 	
 	router := gin.New()
 	router.Use(middleware.AuthMiddleware(mockAuth, mockLogger))
