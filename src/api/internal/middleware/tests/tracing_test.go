@@ -108,7 +108,6 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
-		logger, exists := c.Get("logger")
 		if exists {
 			c.String(http.StatusOK, "Logger found")
 		} else {
