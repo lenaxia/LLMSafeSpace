@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,7 +49,7 @@ func (m *MockAuthService) GenerateToken(userID string) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockAuthService) AuthenticateAPIKey(ctx interface{}, apiKey string) (string, error) {
+func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	args := m.Called(ctx, apiKey)
 	return args.String(0), args.Error(1)
 }
