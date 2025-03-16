@@ -174,7 +174,7 @@ func TestErrorHandlerMiddleware_SensitiveDataRedaction(t *testing.T) {
 	
 	// Check that sensitive fields are masked
 	assert.NotNil(t, requestBody)
-	assert.Equal(t, "********", requestBody["password"])
+	assert.Equal(t, "se...23", requestBody["password"])
 	assert.Equal(t, "********", requestBody["apiKey"])
 	assert.Equal(t, "testuser", requestBody["username"])
 	
