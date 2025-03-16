@@ -117,9 +117,14 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 			} else {
 				var jsonBody map[string]interface{}
 				if err := json.Unmarshal(body, &jsonBody); err == nil {
+					// Create a copy of the map to avoid modifying the original
+					maskedBody := make(map[string]interface{})
+					for k, v := range jsonBody {
+						maskedBody[k] = v
+					}
 					// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
-					utilities.MaskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
-					fields = append(fields, "request_body", jsonBody)
+					utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
+					fields = append(fields, "request_body", maskedBody)
 				} else {
 					fields = append(fields, "request_body", string(body))
 				}
@@ -149,9 +154,14 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 		} else {
 			var jsonBody map[string]interface{}
 			if err := json.Unmarshal([]byte(responseBody), &jsonBody); err == nil {
+				// Create a copy of the map to avoid modifying the original
+				maskedBody := make(map[string]interface{})
+				for k, v := range jsonBody {
+					maskedBody[k] = v
+				}
 				// Use the utilities.MaskSensitiveFieldsWithList function to mask sensitive fields
-				utilities.MaskSensitiveFieldsWithList(jsonBody, cfg.SensitiveFields)
-				fields = append(fields, "response_body", jsonBody)
+				utilities.MaskSensitiveFieldsWithList(maskedBody, cfg.SensitiveFields)
+				fields = append(fields, "response_body", maskedBody)
 			} else {
 				fields = append(fields, "response_body", responseBody)
 			}
@@ -161,6 +171,17 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 	log.Info("Request completed", fields...)
 }
 
+// bodyLogWriter is a gin.ResponseWriter that captures the response body
+type bodyLogWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+// Write captures the response body
+func (w *bodyLogWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
 
 func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	body, err := io.ReadAll(c.Request.Body)
