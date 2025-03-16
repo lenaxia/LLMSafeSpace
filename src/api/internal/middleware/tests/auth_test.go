@@ -63,6 +63,10 @@ func TestAuthMiddleware(t *testing.T) {
 	mockAuthService := new(MockAuthService)
 	mockLogger := pkginterfaces.LoggerInterface(nil) // Use a no-op logger
 
+	t.Cleanup(func() {
+		mockAuthService.AssertExpectations(t)
+	})
+
 	// Test case: Valid token
 	mockAuthService.On("ValidateToken", "valid_token").Return("user_id", nil)
 	r := setupTestRouter(mockAuthService, mockLogger)
@@ -95,7 +99,10 @@ func TestAuthMiddleware(t *testing.T) {
 
 func setupTestRouter(authService interfaces.AuthService, logger pkginterfaces.LoggerInterface) *gin.Engine {
 	r := gin.New()
-	r.Use(middleware.AuthMiddleware(authService, logger))
+	r.Use(
+		middleware.ErrorHandlerMiddleware(logger),
+		middleware.AuthMiddleware(authService, logger),
+	)
 	r.GET("/test", func(c *gin.Context) {
 		userID, _ := c.Get("userID")
 		c.Writer.Header().Set("X-User-ID", userID.(string))

@@ -72,6 +72,9 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			HandleAPIError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+				"error": apiErr.Message,
+			})
 			return
 		}
 		
@@ -90,6 +93,9 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			HandleAPIError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
+				"error": apiErr.Message,
+			})
 			return
 		}
 		
