@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // ErrorHandlerConfig defines configuration for the error handler middleware
@@ -131,7 +132,7 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 		if json.Unmarshal(requestBody, &prettyBody) == nil {
 			// Mask sensitive fields
 			if mapBody, ok := prettyBody.(map[string]interface{}); ok {
-				maskSensitiveFieldsWithList(mapBody, cfg.SensitiveFields)
+				utilities.MaskSensitiveFieldsWithList(mapBody, cfg.SensitiveFields)
 			}
 			fields = append(fields, "request_body", prettyBody)
 		} else {
@@ -150,7 +151,7 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 		if json.Unmarshal([]byte(responseBody), &prettyBody) == nil {
 			// Mask sensitive fields
 			if mapBody, ok := prettyBody.(map[string]interface{}); ok {
-				maskSensitiveFieldsWithList(mapBody, cfg.SensitiveFields)
+				utilities.MaskSensitiveFieldsWithList(mapBody, cfg.SensitiveFields)
 			}
 			fields = append(fields, "response_body", prettyBody)
 		} else {
@@ -272,11 +273,3 @@ func HandleAPIError(c *gin.Context, err error) {
 	c.Abort()
 }
 
-// maskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
-func maskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
-	for _, k := range sensitiveFields {
-		if _, exists := data[k]; exists {
-			data[k] = "********"
-		}
-	}
-}
