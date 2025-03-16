@@ -22,7 +22,6 @@ type RateLimitConfig struct {
 	ExemptRoles    []string
 	CustomLimits   map[string]int
 	CustomBursts   map[string]int
-	StoragePrefix  string
 }
 
 func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
@@ -49,6 +48,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		}
 
 		keyStr := apiKey.(string)
+		hashedKey := utilities.HashString(keyStr)
 		limit := config.DefaultLimit
 		burst := config.BurstSize
 
@@ -63,14 +63,14 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		var err error
 		switch config.Strategy {
 		case "token_bucket":
-			err = applyTokenBucketRateLimit(c, rl, keyStr, limit, burst, log)
+			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
 		case "fixed_window":
-			err = applyFixedWindowRateLimit(c, rl, config, keyStr, limit, log)
+			err = applyFixedWindowRateLimit(c, rl, config, hashedKey, limit, log)
 		case "sliding_window":
-			err = applySlidingWindowRateLimit(c, rl, config, keyStr, limit, log)
+			err = applySlidingWindowRateLimit(c, rl, config, hashedKey, limit, log)
 		case "":
 			// Default to token bucket if no strategy specified
-			err = applyTokenBucketRateLimit(c, rl, keyStr, limit, burst, log)
+			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
 		default:
 			err = fmt.Errorf("unsupported rate limit strategy: %s", config.Strategy)
 		}
@@ -104,7 +104,7 @@ func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 	// Use the RateLimiterService.Allow method
 	if !rl.Allow(key, rate, burst) {
 		log.Warn("Rate limit exceeded",
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"limit", strconv.Itoa(limit),
 			"burst", strconv.Itoa(burst),
 			"path", c.FullPath(),
@@ -124,12 +124,12 @@ func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 }
 
 func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log pkginterfaces.LoggerInterface) error {
-	counterKey := fmt.Sprintf("%s:%s:%s", config.StoragePrefix, key, c.FullPath())
+	counterKey := fmt.Sprintf("ratelimit:%s:fixed_window", key)
 
 	count, err := rl.Increment(c.Request.Context(), counterKey, 1, config.DefaultWindow)
 	if err != nil {
 		log.Error("Failed to increment rate limit counter", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", counterKey,
 		)
 		return errors.NewInternalError("Rate limit service unavailable", err)
@@ -138,14 +138,14 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 	ttl, err := rl.GetTTL(c.Request.Context(), counterKey)
 	if err != nil {
 		log.Error("Failed to get rate limit TTL", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", counterKey,
 		)
 	}
 
 	if count > int64(limit) {
 		log.Warn("Rate limit exceeded",
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"count", count,
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
@@ -162,13 +162,13 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 
 func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log pkginterfaces.LoggerInterface) error {
 	now := time.Now().UnixNano()
-	windowKey := fmt.Sprintf("%s:%s:%s:timestamps", config.StoragePrefix, key, c.FullPath())
+	windowKey := fmt.Sprintf("ratelimit:%s:sliding_window", key)
 
 	// Add current timestamp to the window
 	err := rl.AddToWindow(c.Request.Context(), windowKey, now, strconv.FormatInt(now, 10), config.DefaultWindow)
 	if err != nil {
 		log.Error("Failed to add timestamp to rate limit window", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", windowKey,
 		)
 		return errors.NewInternalError("Rate limit service unavailable", err)
@@ -179,7 +179,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	err = rl.RemoveFromWindow(c.Request.Context(), windowKey, cutoff)
 	if err != nil {
 		log.Error("Failed to clean up rate limit window", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", windowKey,
 		)
 	}
@@ -188,7 +188,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	count, err := rl.CountInWindow(c.Request.Context(), windowKey, cutoff, now)
 	if err != nil {
 		log.Error("Failed to count rate limit window entries", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", windowKey,
 		)
 		return errors.NewInternalError("Rate limit service unavailable", err)
@@ -196,7 +196,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 
 	if count > limit {
 		log.Warn("Rate limit exceeded",
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"count", count,
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
@@ -209,7 +209,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	ttl, err := rl.GetTTL(c.Request.Context(), windowKey)
 	if err != nil {
 		log.Error("Failed to get rate limit window TTL", err,
-			"api_key", utilities.MaskString(key),
+			"hashed_key", key,
 			"key", windowKey,
 		)
 	}
