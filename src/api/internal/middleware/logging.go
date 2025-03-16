@@ -161,25 +161,24 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 	log.Info("Request completed", fields...)
 }
 
-func maskSensitiveFields(data map[string]interface{}) {
-	sensitiveKeys := []string{"password", "api_key", "token", "secret"}
-	maskSensitiveFieldsWithList(data, sensitiveKeys)
-}
-
-// maskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
 func maskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
-	for _, k := range sensitiveFields {
-		if _, exists := data[k]; exists {
-			data[k] = "********"
+	for _, key := range sensitiveFields {
+		if _, exists := data[key]; exists {
+			data[key] = "********"
 		}
 	}
 	
 	// Also check nested maps
-	for k, v := range data {
+	for _, v := range data {
 		if nestedMap, ok := v.(map[string]interface{}); ok {
 			maskSensitiveFieldsWithList(nestedMap, sensitiveFields)
 		}
 	}
+}
+
+func maskSensitiveFields(data map[string]interface{}) {
+	sensitiveKeys := []string{"password", "api_key", "token", "secret"}
+	maskSensitiveFieldsWithList(data, sensitiveKeys)
 }
 
 func readAndReplaceBody(c *gin.Context) ([]byte, error) {
