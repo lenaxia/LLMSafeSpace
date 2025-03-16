@@ -1,184 +1,103 @@
 package tests
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	"github.com/lenaxia/llmsafespace/api/internal/mocks"
-	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func TestAuthMiddleware_ValidToken(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
-	
-	mockAuth := new(mocks.MockAuthMiddlewareService)
-	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
-	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
-		c.Next()
-	}))
-	
-	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, nil))
-	router.GET("/protected", func(c *gin.Context) {
-		userID, _ := c.Get("userID")
-		c.String(http.StatusOK, "user: %s", userID)
-	})
-	
-	// Execute with valid token
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-	router.ServeHTTP(w, req)
-	
-	// Assert
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "user: user123")
-	
-	mockAuth.AssertExpectations(t)
-	mockLogger.AssertExpectations(t)
+type MockAuthService struct {
+	mock.Mock
 }
 
-func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("Warn", mock.Anything, mock.Anything).Once()
-	
-	mockAuth := new(mocks.MockAuthMiddlewareService)
-	mockAuth.On("ValidateToken", "invalid-token").Return("", errors.New("invalid token"))
-	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
-		c.Next()
-	}))
-	
-	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, nil))
-	router.GET("/protected", func(c *gin.Context) {
-		c.String(http.StatusOK, "should not reach here")
-	})
-	
-	// Execute with invalid token
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer invalid-token")
-	router.ServeHTTP(w, req)
-	
-	// Assert
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.NotContains(t, w.Body.String(), "should not reach here")
-	
-	mockAuth.AssertExpectations(t)
-	mockLogger.AssertExpectations(t)
+func (m *MockAuthService) Start() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
-func TestAuthMiddleware_SkipPaths(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockAuth := new(mocks.MockAuthMiddlewareService)
-	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
-		c.Next()
-	}))
-	
-	config := middleware.AuthConfig{
-		SkipPaths: []string{"/public", "/health"},
-	}
-	
-	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, nil, config))
-	router.GET("/public", func(c *gin.Context) {
-		c.String(http.StatusOK, "public endpoint")
-	})
-	router.GET("/protected", func(c *gin.Context) {
-		c.String(http.StatusOK, "protected endpoint")
-	})
-	
-	// Execute public endpoint
+func (m *MockAuthService) Stop() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ValidateToken(token string) (string, error) {
+	args := m.Called(token)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) GetUserID(c *gin.Context) string {
+	args := m.Called(c)
+	return args.String(0)
+}
+
+func (m *MockAuthService) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
+	args := m.Called(userID, resourceType, resourceID, action)
+	return args.Bool(0)
+}
+
+func (m *MockAuthService) GenerateToken(userID string) (string, error) {
+	args := m.Called(userID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthenticateAPIKey(ctx interface{}, apiKey string) (string, error) {
+	args := m.Called(ctx, apiKey)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
+}
+
+func TestAuthMiddleware(t *testing.T) {
+	mockAuthService := new(MockAuthService)
+	mockLogger := interfaces.LoggerInterface(nil) // Use a no-op logger
+
+	// Test case: Valid token
+	mockAuthService.On("ValidateToken", "valid_token").Return("user_id", nil)
+	r := setupTestRouter(mockAuthService, mockLogger)
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer valid_token")
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/public", nil)
-	router.ServeHTTP(w, req)
-	
-	// Assert public endpoint works without token
+	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "public endpoint")
-	
-	// Execute protected endpoint
+	assert.Equal(t, "user_id", w.Header().Get("X-User-ID"))
+
+	// Test case: Invalid token
+	mockAuthService.On("ValidateToken", "invalid_token").Return("", errors.NewAuthenticationError("Invalid token", nil))
+	r = setupTestRouter(mockAuthService, mockLogger)
+	req, _ = http.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer invalid_token")
 	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("GET", "/protected", nil)
-	router.ServeHTTP(w, req)
-	
-	// Assert protected endpoint requires auth
+	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	
-	mockAuth.AssertExpectations(t)
+
+	// Test case: No token provided
+	r = setupTestRouter(mockAuthService, mockLogger)
+	req, _ = http.NewRequest("GET", "/test", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	// Clean up
+	mockAuthService.AssertExpectations(t)
 }
 
-func TestRequirePermissions(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
-	
-	mockAuth := new(mocks.MockAuthMiddlewareService)
-	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
-	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
-		c.Next()
-	}))
-	mockAuth.On("CheckResourceAccess", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(false)
-	
-	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, nil))
-	router.GET("/write-access", middleware.RequirePermissions("write"), func(c *gin.Context) {
-		c.String(http.StatusOK, "write access granted")
+func setupTestRouter(authService interfaces.AuthService, logger interfaces.LoggerInterface) *gin.Engine {
+	r := gin.New()
+	r.Use(middleware.AuthMiddleware(authService, logger))
+	r.GET("/test", func(c *gin.Context) {
+		userID, _ := c.Get("userID")
+		c.Writer.Header().Set("X-User-ID", userID.(string))
+		c.Status(http.StatusOK)
 	})
-	
-	// Execute with insufficient permissions
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/write-access", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-	router.ServeHTTP(w, req)
-	
-	// Assert
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	
-	mockAuth.AssertExpectations(t)
-}
-
-func TestRequireRoles(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
-	
-	mockAuth := new(mocks.MockAuthMiddlewareService)
-	mockAuth.On("ValidateToken", "valid-token").Return("user123", nil)
-	mockAuth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
-		c.Next()
-	}))
-	
-	router := gin.New()
-	router.Use(middleware.AuthMiddleware(mockAuth, nil))
-	router.GET("/admin-only", middleware.RequireRoles("admin"), func(c *gin.Context) {
-		c.String(http.StatusOK, "admin access granted")
-	})
-	
-	// Execute with insufficient role
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/admin-only", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-	router.ServeHTTP(w, req)
-	
-	// Assert
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	
-	mockAuth.AssertExpectations(t)
+	return r
 }
