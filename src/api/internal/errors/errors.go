@@ -89,7 +89,15 @@ func NewValidationError(message string, details map[string]interface{}, err erro
 	}
 }
 
-
+// NewAuthenticationError creates a new authentication error
+func NewAuthenticationError(message string, err error) *APIError {
+        return &APIError{
+                Type:    ErrorTypeAuth,
+                Code:    "unauthorized",
+                Message: message,
+                Err:     err,
+        }
+}
 
 // NewForbiddenError creates a new forbidden error
 func NewForbiddenError(message string, err error) *APIError {
