@@ -74,7 +74,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	config := middleware.LoggingConfig{
 		LogRequestBody:  true,
 		LogResponseBody: true,
-		SensitiveFields: []string{"password", "token"},
+		SensitiveFields: []string{"password", "token", "email", "api_key", "credit_card"},
 		MaxBodyLogSize:  4096, // Ensure bodies aren't truncated
 	}
 	
@@ -85,15 +85,23 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		if err := c.ShouldBindJSON(&data); err == nil {
 			c.JSON(http.StatusOK, gin.H{
 				"message": "logged in",
-				"token": "secret-jwt-token",
+				"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
 				"user": data["username"],
+				"email": data["email"],
+				"api_key": "sk_live_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R",
 			})
 		}
 	})
 	
 	// Execute
 	w := httptest.NewRecorder()
-	reqBody := `{"username": "testuser", "password": "secret123"}`
+	reqBody := `{
+		"username": "testuser", 
+		"password": "secret123", 
+		"email": "user@example.com", 
+		"credit_card": "4242-4242-4242-4242",
+		"api_key": "pk_test_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R"
+	}`
 	req, _ := http.NewRequest("POST", "/login", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
@@ -136,12 +144,17 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	if requestBody != nil {
 		assert.Equal(t, "********", requestBody["password"], "Password should be masked")
 		assert.Equal(t, "testuser", requestBody["username"], "Username should be preserved")
+		assert.Equal(t, "********", requestBody["email"], "Email should be masked")
+		assert.Equal(t, "********", requestBody["credit_card"], "Credit card should be masked")
+		assert.Equal(t, "********", requestBody["api_key"], "API key should be masked")
 	}
 	
 	assert.NotNil(t, responseBody, "Response body should not be nil")
 	if responseBody != nil {
 		assert.Equal(t, "********", responseBody["token"], "Token should be masked")
 		assert.Equal(t, "logged in", responseBody["message"], "Message should be preserved")
+		assert.Equal(t, "********", responseBody["email"], "Email should be masked")
+		assert.Equal(t, "********", responseBody["api_key"], "API key should be masked")
 	}
 	
 	mockLogger.AssertExpectations(t)
