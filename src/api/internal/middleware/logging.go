@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	httputil "github.com/lenaxia/llmsafespace/pkg/http"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
@@ -79,14 +80,14 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 		logRequest(c, log, requestID, cfg)
 
 		// Capture response
-		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
-		c.Writer = blw
+		writer := httputil.NewBodyCaptureWriter(c)
+		c.Writer = writer
 
 		// Process request
 		c.Next()
 
 		// Log response details
-		logResponse(c, log, requestID, start, blw.body.String(), cfg)
+		logResponse(c, log, requestID, start, writer.GetBody(), cfg)
 	}
 }
 

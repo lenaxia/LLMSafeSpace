@@ -11,6 +11,7 @@ import (
 	
 	"github.com/gin-gonic/gin"
 	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	httputil "github.com/lenaxia/llmsafespace/pkg/http"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
@@ -57,8 +58,8 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 		}
 		
 		// Create a response writer that captures the response
-		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
-		c.Writer = blw
+		writer := httputil.NewBodyCaptureWriter(c)
+		c.Writer = writer
 		
 		// Process request
 		c.Next()
@@ -69,7 +70,7 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 			err := c.Errors.Last().Err
 			
 			// Log the error with request details
-			logError(log, c, err, requestBody, blw.body.String(), cfg)
+			logError(log, c, err, requestBody, writer.GetBody(), cfg)
 			
 			// Handle the error
 			handleError(c, err, cfg)
@@ -77,11 +78,6 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 	}
 }
 
-// bodyLogWriter is a gin.ResponseWriter that captures the response body
-type bodyLogWriter struct {
-	gin.ResponseWriter
-	body *bytes.Buffer
-}
 
 // Write captures the response body
 func (w *bodyLogWriter) Write(b []byte) (int, error) {
