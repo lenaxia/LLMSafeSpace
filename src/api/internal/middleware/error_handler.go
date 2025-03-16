@@ -79,12 +79,6 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 }
 
 
-// Write captures the response body
-func (w *bodyLogWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
-	return w.ResponseWriter.Write(b)
-}
-
 // logError logs an error with request details
 func logError(log interfaces.LoggerInterface, c *gin.Context, err error, requestBody []byte, responseBody string, cfg ErrorHandlerConfig) {
 	// Determine log level based on error type
