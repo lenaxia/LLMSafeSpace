@@ -6,8 +6,13 @@ import (
 // MaskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
 func MaskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
 	for _, key := range sensitiveFields {
-		if _, exists := data[key]; exists {
-			data[key] = "********"
+		if value, exists := data[key]; exists {
+			// Use MaskString for string values
+			if strValue, ok := value.(string); ok {
+				data[key] = MaskString(strValue)
+			} else {
+				data[key] = "********"
+			}
 		}
 	}
 	
@@ -25,13 +30,17 @@ func MaskSensitiveFields(data map[string]interface{}) {
 	MaskSensitiveFieldsWithList(data, sensitiveKeys)
 }
 
-// MaskString masks a string by replacing all but the first and last characters with asterisks
+// MaskString masks a string by showing parts of the beginning and end
+// while hiding the middle portion with asterisks
 func MaskString(s string) string {
 	if len(s) <= 8 {
-            return "********"
-        } else if len(s) <= 12 {
-            return s[:1] + "..." + s[len(s)-2:]
-        }
-        return s[:4] + "..." + s[len(s)-4:]
+		return "********"
+	} else if len(s) <= 12 {
+		return s[:2] + "..." + s[len(s)-2:]
+	} else if len(s) <= 20 {
+		return s[:3] + "..." + s[len(s)-3:]
+	} else {
+		return s[:4] + "..." + s[len(s)-4:]
+	}
 }
       

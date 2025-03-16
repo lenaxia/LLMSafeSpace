@@ -142,19 +142,26 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Check that sensitive fields are masked
 	assert.NotNil(t, requestBody, "Request body should not be nil")
 	if requestBody != nil {
-		assert.Equal(t, "********", requestBody["password"], "Password should be masked")
+		assert.NotEqual(t, "secret123", requestBody["password"], "Password should be masked")
+		assert.Contains(t, requestBody["password"].(string), "...", "Password should use MaskString format")
 		assert.Equal(t, "testuser", requestBody["username"], "Username should be preserved")
-		assert.Equal(t, "********", requestBody["email"], "Email should be masked")
-		assert.Equal(t, "********", requestBody["credit_card"], "Credit card should be masked")
-		assert.Equal(t, "********", requestBody["api_key"], "API key should be masked")
+		assert.NotEqual(t, "user@example.com", requestBody["email"], "Email should be masked")
+		assert.Contains(t, requestBody["email"].(string), "...", "Email should use MaskString format")
+		assert.NotEqual(t, "4242-4242-4242-4242", requestBody["credit_card"], "Credit card should be masked")
+		assert.Contains(t, requestBody["credit_card"].(string), "...", "Credit card should use MaskString format")
+		assert.NotEqual(t, "pk_test_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R", requestBody["api_key"], "API key should be masked")
+		assert.Contains(t, requestBody["api_key"].(string), "...", "API key should use MaskString format")
 	}
 	
 	assert.NotNil(t, responseBody, "Response body should not be nil")
 	if responseBody != nil {
-		assert.Equal(t, "********", responseBody["token"], "Token should be masked")
+		assert.NotEqual(t, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ", responseBody["token"], "Token should be masked")
+		assert.Contains(t, responseBody["token"].(string), "...", "Token should use MaskString format")
 		assert.Equal(t, "logged in", responseBody["message"], "Message should be preserved")
-		assert.Equal(t, "********", responseBody["email"], "Email should be masked")
-		assert.Equal(t, "********", responseBody["api_key"], "API key should be masked")
+		assert.NotEqual(t, "user@example.com", responseBody["email"], "Email should be masked")
+		assert.Contains(t, responseBody["email"].(string), "...", "Email should use MaskString format")
+		assert.NotEqual(t, "sk_live_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R", responseBody["api_key"], "API key should be masked")
+		assert.Contains(t, responseBody["api_key"].(string), "...", "API key should use MaskString format")
 	}
 	
 	mockLogger.AssertExpectations(t)
