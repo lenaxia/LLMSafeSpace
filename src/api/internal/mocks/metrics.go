@@ -73,6 +73,10 @@ func (m *MockMetricsService) UpdateWarmPoolHitRatio(runtime string, ratio float6
 	m.Called(runtime, ratio)
 }
 
+func (m *MockMetricsService) RecordWarmPoolHit() {
+	m.Called()
+}
+
 // Keep the old MockMetricsRecorder for backward compatibility
 type MockMetricsRecorder struct {
 	mock.Mock
