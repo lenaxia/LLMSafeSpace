@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -14,7 +15,7 @@ import (
 func TestTracingMiddleware_RequestID(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	config := middleware.TracingConfig{
@@ -55,7 +56,7 @@ func TestTracingMiddleware_RequestID(t *testing.T) {
 func TestTracingMiddleware_ExistingRequestID(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	config := middleware.TracingConfig{
@@ -92,7 +93,7 @@ func TestTracingMiddleware_ExistingRequestID(t *testing.T) {
 func TestTracingMiddleware_LoggerContext(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.MatchedBy(func(args []interface{}) bool {
 		// Check that the first argument is "request_id"
 		return len(args) >= 2 && args[0] == "request_id"
@@ -130,7 +131,7 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 func TestTracingMiddleware_StartTime(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
 	
 	config := middleware.TracingConfig{

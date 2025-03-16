@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -17,7 +18,7 @@ import (
 func TestLoggingMiddleware_RequestResponse(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Info", "Request received", mock.Anything).Once()
 	mockLogger.On("Info", "Request processed", mock.Anything).Once()
 	
@@ -53,7 +54,7 @@ func TestLoggingMiddleware_RequestResponse(t *testing.T) {
 func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	// Capture the log fields for inspection
 	var requestFields []interface{}
@@ -131,7 +132,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	
 	// Capture the log fields for inspection
 	var requestFields []interface{}
@@ -189,7 +190,7 @@ func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 func TestLoggingMiddleware_SkipPaths(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	// No log calls expected for skipped paths
 	
 	config := middleware.LoggingConfig{

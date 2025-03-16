@@ -1,12 +1,14 @@
 package tests
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -14,7 +16,7 @@ import (
 func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Error", "Recovery from panic", mock.Anything, mock.Anything).Once()
 	
 	config := middleware.RecoveryConfig{
@@ -46,7 +48,7 @@ func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 func TestRecoveryMiddleware_CustomHandler(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Error", "Recovery from panic", mock.Anything, mock.Anything).Once()
 	
 	customHandlerCalled := false
@@ -86,7 +88,7 @@ func TestRecoveryMiddleware_CustomHandler(t *testing.T) {
 func TestRecoveryMiddleware_StackTraceInResponse(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	mockLogger := new(MockLogger)
+	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Error", "Recovery from panic", mock.Anything, mock.Anything).Once()
 	
 	config := middleware.RecoveryConfig{
