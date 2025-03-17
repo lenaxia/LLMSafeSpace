@@ -213,7 +213,9 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 	// Unmarshal the request body into the model
 	if err := json.Unmarshal(bodyBytes, model); err != nil {
 		return errors.NewValidationError("Invalid request body", map[string]interface{}{
-			"error": err.Error(),
+			"errors": map[string]string{
+				"body": "Invalid JSON format",
+			},
 		}, err)
 	}
 	
@@ -221,8 +223,11 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 	if err := validate.Struct(model); err != nil {
 		// Convert validation errors to a map
 		validationErrors := make(map[string]string)
-		for _, err := range err.(validator.ValidationErrors) {
-			validationErrors[err.Field()] = getValidationErrorMessage(err, nil)
+		if verrors, ok := err.(validator.ValidationErrors); ok {
+			for _, verr := range verrors {
+				fieldName := strings.ToLower(verr.Field())
+				validationErrors[fieldName] = getValidationErrorMessage(verr, nil)
+			}
 		}
 		
 		return errors.NewValidationError("Validation failed", map[string]interface{}{
@@ -323,6 +328,8 @@ func getValidationErrorMessage(err validator.FieldError, customMessages map[stri
 		return "Must be valid JSON"
 	case "file":
 		return "Must be a valid file"
+	case "custom_alpha":
+		return "Must contain only alphabetic characters"
 	default:
 		return "Invalid value"
 	}

@@ -205,26 +205,31 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 	}
 	
 	router := gin.New()
-	router.Use(middleware.ValidationMiddleware(mockLogger, config))
 	
-	router.POST("/custom", func(c *gin.Context) {
-		// Set validation model
-		c.Set("validationModel", &CustomModel{})
-		c.Next()
-		
-		// Get validated model
-		validatedModel, exists := c.Get("validatedModel")
-		if !exists {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
-			return
-		}
-		
-		model := validatedModel.(*CustomModel)
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Valid data",
-			"data":    model,
-		})
-	})
+	router.POST("/custom", 
+		// Set validation model first
+		func(c *gin.Context) {
+			c.Set("validationModel", &CustomModel{})
+			c.Next()
+		},
+		// Then apply validation middleware with custom config
+		middleware.ValidationMiddleware(mockLogger, config),
+		// This handler should only be reached for valid data
+		func(c *gin.Context) {
+			// Get validated model
+			validatedModel, exists := c.Get("validatedModel")
+			if !exists {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
+				return
+			}
+			
+			model := validatedModel.(*CustomModel)
+			c.JSON(http.StatusOK, gin.H{
+				"message": "Valid data",
+				"data":    model,
+			})
+		},
+	)
 	
 	// Execute with invalid data for custom validator
 	w := httptest.NewRecorder()
