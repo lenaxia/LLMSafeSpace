@@ -232,3 +232,8 @@ func TestCreateDirectory(t *testing.T) {
 
 	mockK8sClient.AssertExpectations(t)
 }
+
+// TODO: Add test cases for invalid or malformed paths
+// TODO: Add test cases for edge cases like empty files, large files, or deeply nested directories
+// TODO: Add test cases for concurrent file operations
+// TODO: Add test cases for file operations on non-existent sandboxes or paths
