@@ -9,7 +9,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Common errors
@@ -63,8 +62,6 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient, metrics i
 
 // Execute executes code or a command in a sandbox
 func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error) {
-	startTime := time.Now()
-	
 	// Validate inputs
 	if err := s.validateExecuteParams(sandbox, execType, content); err != nil {
 		return nil, err
@@ -99,6 +96,7 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 		return nil, fmt.Errorf("%w: %v", ErrContextCancelled, err)
 	}
 
+	startTime := time.Now()
 	// Execute code via Kubernetes API
 	execResult, err := s.k8sClient.ExecuteInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq)
 	if err != nil {
@@ -143,8 +141,6 @@ func (s *Service) ExecuteStream(
 	timeout int,
 	outputCallback func(stream, content string),
 ) (*types.ExecutionResult, error) {
-	startTime := time.Now()
-	
 	// Validate inputs
 	if err := s.validateExecuteParams(sandbox, execType, content); err != nil {
 		return nil, err
@@ -185,6 +181,7 @@ func (s *Service) ExecuteStream(
 		return nil, fmt.Errorf("%w: %v", ErrContextCancelled, err)
 	}
 
+	startTime := time.Now()
 	// Execute code via Kubernetes API with streaming
 	execResult, err := s.k8sClient.ExecuteStreamInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq, outputCallback)
 	if err != nil {

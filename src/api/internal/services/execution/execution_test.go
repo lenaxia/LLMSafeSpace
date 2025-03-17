@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -17,7 +17,7 @@ import (
 // Mock implementations
 type MockK8sClient struct {
 	mock.Mock
-	kubernetes.Client
+	interfaces.KubernetesClient
 }
 
 func (m *MockK8sClient) ExecuteInSandbox(ctx context.Context, namespace, name string, execReq *types.ExecutionRequest) (*types.ExecutionResult, error) {
@@ -40,16 +40,17 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create mock service instance
+	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
-	var k8sClient interfaces.KubernetesClient = mockK8sClient
-
+	mockMetrics := new(mocks.MockMetricsService)
+	
 	// Test successful creation
-	service, err := New(log, k8sClient)
+	service, err := New(log, mockK8sClient, mockMetrics)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, log, service.logger)
 	assert.Equal(t, mockK8sClient, service.k8sClient)
+	assert.Equal(t, mockMetrics, service.metrics)
 
 	mockK8sClient.AssertExpectations(t)
 }
@@ -58,11 +59,12 @@ func TestExecute(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create a mock K8s client
+	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
+	mockMetrics := new(mocks.MockMetricsService)
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, mockK8sClient, mockMetrics)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
@@ -103,11 +105,12 @@ func TestExecuteStream(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create a mock K8s client
+	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
+	mockMetrics := new(mocks.MockMetricsService)
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, mockK8sClient, mockMetrics)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
@@ -149,11 +152,12 @@ func TestInstallPackages(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
 	
-	// Create a mock K8s client
+	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
+	mockMetrics := new(mocks.MockMetricsService)
 
 	// Create the service
-	service, _ := New(log, mockK8sClient)
+	service, _ := New(log, mockK8sClient, mockMetrics)
 
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
