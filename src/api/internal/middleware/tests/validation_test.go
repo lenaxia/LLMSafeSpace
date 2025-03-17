@@ -139,16 +139,20 @@ func TestValidationMiddleware_InvalidJSON(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	
 	router := gin.New()
-	router.Use(middleware.ValidationMiddleware(mockLogger))
 	
-	router.POST("/users", func(c *gin.Context) {
-		// Set validation model
-		c.Set("validationModel", &TestUser{})
-		c.Next()
-		
+	router.POST("/users", 
+		// Set validation model first
+		func(c *gin.Context) {
+			c.Set("validationModel", &TestUser{})
+			c.Next()
+		},
+		// Then apply validation middleware
+		middleware.ValidationMiddleware(mockLogger),
 		// This should not be reached for invalid JSON
-		c.JSON(http.StatusOK, gin.H{"message": "User created"})
-	})
+		func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"message": "User created"})
+		},
+	)
 	
 	// Execute with invalid JSON
 	w := httptest.NewRecorder()
