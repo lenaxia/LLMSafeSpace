@@ -1,0 +1,95 @@
+
+**Informer Types:**
+- Sandbox (watch for phase changes)
+- WarmPool (track capacity metrics)
+- WarmPod (monitor assignment status)
+- RuntimeEnvironment (validate availability)
+- SandboxProfile (apply security profiles)
+
+---
+
+## CRD Definitions
+
+**Package:** `types`  
+**Custom Resources:**
+
+1. **Sandbox** (`llmsafespace.dev/v1`)
+   - Spec: Runtime, SecurityLevel, ResourceRequirements, NetworkPolicy
+   - Status: Phase (Pending/Running/Terminated), PodName, ResourceUsage
+   ```go
+   sb := &types.Sandbox{
+       Spec: types.SandboxSpec{
+           Runtime: "python:3.10",
+           SecurityLevel: "high",
+           Resources: &types.ResourceRequirements{
+               CPU: "1000m",
+               Memory: "2Gi",
+           },
+       },
+   }
+   ```
+
+2. **WarmPool** (`llmsafespace.dev/v1`)
+   - Spec: Min/MaxSize, TTL, PreloadScripts, AutoScaling
+   - Status: AvailablePods, AssignedPods, ScalingHistory
+
+3. **RuntimeEnvironment** (`llmsafespace.dev/v1`)
+   - Spec: Language, Version, PreInstalledPackages
+   - Status: Available, LastValidated
+
+4. **SandboxProfile** (`llmsafespace.dev/v1`)
+   - Security baselines with NetworkPolicies and Seccomp profiles
+   ```yaml
+   apiVersion: llmsafespace.dev/v1
+   kind: SandboxProfile
+   metadata:
+     name: python-secure
+   spec:
+     language: python
+     securityLevel: high
+     seccompProfile: /profiles/python-secure.json
+   ```
+
+---
+
+## Utilities
+
+**Package:** `utilities`  
+**Core Functions:**
+
+1. **Secure Hashing**
+   ```go
+   hashed := utilities.HashString("sensitive-data") // SHA-256 hex digest
+   ```
+
+2. **Data Masking**
+   ```go
+   masked := utilities.MaskString("API_KEY_12345") // "API...2345"
+   utilities.MaskSensitiveFields(map[string]interface{}{
+       "password": "secret",
+       "metadata": map[string]string{"token": "abc123"},
+   })
+   ```
+
+3. **File Path Validation**
+   ```go
+   valid := utilities.ValidatePath("/safe/dir", userInputPath)
+   ```
+
+4. **Kubernetes Helpers**
+   - Safe label/value formatting
+   - Resource quantity conversions
+   - Condition status checks
+
+---
+
+## Logging
+
+**Package:** `logger`  
+**Features:**
+- Zap-based structured logging
+- Contextual field injection
+- Dynamic log level control
+- Sensitive data filtering
+
+**Usage:**
