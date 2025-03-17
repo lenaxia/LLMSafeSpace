@@ -109,6 +109,9 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
 		"apikey:"+apiKey, "api_user", mock.Anything).Return(nil).Once()
 
+	// Configure the service to recognize API keys
+	service.config.Auth.APIKeyPrefix = "api_"
+	
 	userID, err = service.ValidateToken(apiKey)
 	assert.NoError(t, err)
 	assert.Equal(t, "api_user", userID)
@@ -179,8 +182,8 @@ func TestValidateToken(t *testing.T) {
 	token, _ := service.GenerateToken(userID)
 
 	// Test case: Valid token
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("", errors.New("not found")).Once()
-	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token).Return("", errors.New("not found")).Once()
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token, userID, mock.Anything).Return(nil).Once()
 	
 	// Configure the service to recognize API keys
 	service.config.Auth.APIKeyPrefix = "api_"
@@ -223,7 +226,7 @@ func TestValidateToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "token is expired", "should detect expired token")
 
 	// Test case: Revoked token
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("revoked", nil).Once()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token).Return("revoked", nil).Once()
 	
 	// For API key format tokens, we need to mock the database call
 	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), token).
