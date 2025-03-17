@@ -1,12 +1,12 @@
 package middleware
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"strings"
 )
 
 // AuthConfig defines configuration for the authentication middleware
@@ -252,34 +252,13 @@ func shouldSkipAuth(path string, skipPaths, skipPathPrefixes []string) bool {
 
 // extractToken extracts the authentication token from the request
 func extractToken(c *gin.Context, cfg AuthConfig) string {
-	// Check header
-	authHeader := c.GetHeader(cfg.HeaderName)
-	if authHeader != "" {
-		// If token type is specified, check for it
-		if cfg.TokenType != "" {
-			if strings.HasPrefix(authHeader, cfg.TokenType+" ") {
-				return strings.TrimPrefix(authHeader, cfg.TokenType+" ")
-			}
-		} else {
-			return authHeader
-		}
+	// Convert AuthConfig to TokenExtractorConfig
+	extractorConfig := utilities.TokenExtractorConfig{
+		HeaderName:     cfg.HeaderName,
+		TokenType:      cfg.TokenType,
+		QueryParamName: cfg.QueryParamName,
+		CookieName:     cfg.CookieName,
 	}
 	
-	// Check query parameter
-	if cfg.QueryParamName != "" {
-		token := c.Query(cfg.QueryParamName)
-		if token != "" {
-			return token
-		}
-	}
-	
-	// Check cookie
-	if cfg.CookieName != "" {
-		token, err := c.Cookie(cfg.CookieName)
-		if err == nil && token != "" {
-			return token
-		}
-	}
-	
-	return ""
+	return utilities.ExtractToken(c, extractorConfig)
 }

@@ -470,3 +470,129 @@ func TestGetUserFromContext(t *testing.T) {
 	userID = service.GetUserID(c)
 	assert.Equal(t, "", userID)
 }
+
+func TestValidateAPIKey(t *testing.T) {
+	// Create test dependencies
+	log, _ := logger.New(true, "debug", "console")
+	
+	// Create service
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+	
+	// Create mock service instances
+	mockDbService := new(MockDatabaseService)
+	mockCacheService := new(MockCacheService)
+	
+	service, _ := New(cfg, log, mockDbService, mockCacheService)
+
+	// Test case: Valid API key (cached)
+	ctx := context.Background()
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_valid").Return("user123", nil).Once()
+	
+	userID, err := service.validateAPIKey("api_valid")
+	assert.NoError(t, err)
+	assert.Equal(t, "user123", userID)
+
+	// Test case: Valid API key (not cached)
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_new").Return("user456", nil).Once()
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new", "user456", mock.Anything).Return(nil).Once()
+	
+	userID, err = service.validateAPIKey("api_new")
+	assert.NoError(t, err)
+	assert.Equal(t, "user456", userID)
+
+	// Test case: Invalid API key
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_invalid").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_invalid").Return("", nil).Once()
+	
+	userID, err = service.validateAPIKey("api_invalid")
+	assert.Error(t, err)
+	assert.Equal(t, "", userID)
+	assert.Contains(t, err.Error(), "invalid API key")
+
+	// Test case: Database error
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_error").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_error").Return("", errors.New("database error")).Once()
+	
+	userID, err = service.validateAPIKey("api_error")
+	assert.Error(t, err)
+	assert.Equal(t, "", userID)
+	assert.Contains(t, err.Error(), "database error")
+
+	mockCacheService.AssertExpectations(t)
+	mockDbService.AssertExpectations(t)
+}
+
+func TestIsAPIKey(t *testing.T) {
+	// Test cases
+	testCases := []struct {
+		name     string
+		token    string
+		prefix   string
+		expected bool
+	}{
+		{"Valid API key", "api_12345", "api_", true},
+		{"Not an API key", "jwt_token", "api_", false},
+		{"Empty token", "", "api_", false},
+		{"Empty prefix", "api_12345", "", false},
+		{"Prefix only", "api_", "api_", true},
+		{"Case sensitive", "API_12345", "api_", false},
+	}
+	
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isAPIKey(tc.token, tc.prefix)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestExtractToken(t *testing.T) {
+	// Test cases
+	testCases := []struct {
+		name     string
+		setup    func(*gin.Context)
+		expected string
+	}{
+		{
+			"Bearer token",
+			func(c *gin.Context) {
+				c.Request.Header.Set("Authorization", "Bearer token123")
+			},
+			"token123",
+		},
+		{
+			"Plain token",
+			func(c *gin.Context) {
+				c.Request.Header.Set("Authorization", "token123")
+			},
+			"token123",
+		},
+		{
+			"Query parameter",
+			func(c *gin.Context) {
+				c.Request.URL.RawQuery = "token=token123"
+			},
+			"token123",
+		},
+		{
+			"No token",
+			func(c *gin.Context) {},
+			"",
+		},
+	}
+	
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request, _ = http.NewRequest("GET", "/", nil)
+			tc.setup(c)
+			
+			result := extractToken(c)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
