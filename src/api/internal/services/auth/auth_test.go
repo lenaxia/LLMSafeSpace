@@ -443,6 +443,7 @@ func TestIsAPIKey(t *testing.T) {
 		{"Empty token", "", "api_", false},
 		{"Empty prefix", "api_12345", "", false},
 		{"Prefix only", "api_", "api_", true},
+		{"Prefix with separator", "api_12345", "api_", true},
 		{"Case sensitive", "API_12345", "api_", false},
 	}
 	
