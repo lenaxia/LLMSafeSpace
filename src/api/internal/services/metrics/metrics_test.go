@@ -6,6 +6,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -54,15 +55,15 @@ func TestRecordRequest(t *testing.T) {
 
 	metric, err := svc.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 
 	metric, err = svc.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	assert.InDelta(t, 0.1, promValue(metric), 0.01)
+	assert.InDelta(t, 0.1, promHistogramValue(metric), 0.01)
 
 	metric, err = svc.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	assert.Equal(t, 1024.0, promValue(metric))
+	assert.InDelta(t, 1024.0, promHistogramValue(metric), 0.1)
 }
 
 func TestRecordSandboxCreation(t *testing.T) {
@@ -73,7 +74,7 @@ func TestRecordSandboxCreation(t *testing.T) {
 
 	metric, err := svc.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "true", "user-123")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordSandboxTermination(t *testing.T) {
@@ -84,7 +85,7 @@ func TestRecordSandboxTermination(t *testing.T) {
 
 	metric, err := svc.sandboxesTerminated.GetMetricWithLabelValues("python:3.10", "timeout")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordExecution(t *testing.T) {
@@ -95,11 +96,11 @@ func TestRecordExecution(t *testing.T) {
 
 	metric, err := svc.executionsTotal.GetMetricWithLabelValues("code", "python:3.10", "success", "user-123")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 
 	metric, err = svc.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
 	assert.NoError(t, err)
-	assert.InDelta(t, 0.5, promValue(metric), 0.01)
+	assert.InDelta(t, 0.5, promHistogramValue(metric), 0.01)
 }
 
 func TestRecordError(t *testing.T) {
@@ -110,7 +111,7 @@ func TestRecordError(t *testing.T) {
 
 	metric, err := svc.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/sandboxes", "404")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordPackageInstallation(t *testing.T) {
@@ -121,7 +122,7 @@ func TestRecordPackageInstallation(t *testing.T) {
 
 	metric, err := svc.packageInstalls.GetMetricWithLabelValues("python:3.10", "pip", "success")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordFileOperation(t *testing.T) {
@@ -132,7 +133,7 @@ func TestRecordFileOperation(t *testing.T) {
 
 	metric, err := svc.fileOperations.GetMetricWithLabelValues("upload", "success")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordResourceUsage(t *testing.T) {
@@ -143,11 +144,11 @@ func TestRecordResourceUsage(t *testing.T) {
 
 	metric, err := svc.resourceUsage.GetMetricWithLabelValues("sandbox-123", "cpu")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.5, promValue(metric))
+	assert.Equal(t, 0.5, promGaugeValue(metric))
 
 	metric, err = svc.resourceUsage.GetMetricWithLabelValues("sandbox-123", "memory")
 	assert.NoError(t, err)
-	assert.Equal(t, 1024*1024*1024.0, promValue(metric))
+	assert.Equal(t, float64(1024*1024*1024), promGaugeValue(metric))
 }
 
 func TestRecordWarmPoolMetrics(t *testing.T) {
@@ -158,7 +159,7 @@ func TestRecordWarmPoolMetrics(t *testing.T) {
 
 	metric, err := svc.warmPoolUtilization.GetMetricWithLabelValues("python:3.10", "pool-1")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.8, promValue(metric))
+	assert.Equal(t, 0.8, promGaugeValue(metric))
 }
 
 func TestRecordWarmPoolScaling(t *testing.T) {
@@ -169,7 +170,7 @@ func TestRecordWarmPoolScaling(t *testing.T) {
 
 	metric, err := svc.warmPoolScaling.GetMetricWithLabelValues("python:3.10", "scale_up", "high_demand")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestIncrementActiveConnections(t *testing.T) {
@@ -180,7 +181,7 @@ func TestIncrementActiveConnections(t *testing.T) {
 
 	metric, err := svc.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promValue(metric))
+	assert.Equal(t, 1.0, promGaugeValue(metric))
 }
 
 func TestDecrementActiveConnections(t *testing.T) {
@@ -192,7 +193,7 @@ func TestDecrementActiveConnections(t *testing.T) {
 
 	metric, err := svc.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.0, promValue(metric))
+	assert.Equal(t, 0.0, promGaugeValue(metric))
 }
 
 func TestUpdateWarmPoolHitRatio(t *testing.T) {
@@ -203,11 +204,36 @@ func TestUpdateWarmPoolHitRatio(t *testing.T) {
 
 	metric, err := svc.warmPoolHitRatio.GetMetricWithLabelValues("python:3.10")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.75, promValue(metric))
+	assert.Equal(t, 0.75, promGaugeValue(metric))
 }
 
-func promValue(metric prometheus.Metric) float64 {
-	var value float64
-	metric.Write(&value)
-	return value
+// Helper functions to extract values from different Prometheus metric types
+func promCounterValue(metric prometheus.Metric) float64 {
+	var m dto.Metric
+	err := metric.Write(&m)
+	if err != nil {
+		return 0
+	}
+	return m.Counter.GetValue()
+}
+
+func promGaugeValue(metric prometheus.Metric) float64 {
+	var m dto.Metric
+	err := metric.Write(&m)
+	if err != nil {
+		return 0
+	}
+	return m.Gauge.GetValue()
+}
+
+func promHistogramValue(metric prometheus.Metric) float64 {
+	var m dto.Metric
+	err := metric.Write(&m)
+	if err != nil {
+		return 0
+	}
+	
+	// For histograms, we return the sum of observations
+	// This is a simplification for testing purposes
+	return m.Histogram.GetSampleSum()
 }
