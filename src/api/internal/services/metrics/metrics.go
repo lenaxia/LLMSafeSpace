@@ -247,13 +247,7 @@ func (s *Service) IncrementActiveConnections(connType, userID string) {
 
 // DecrementActiveConnections decrements the active connections counter
 func (s *Service) DecrementActiveConnections(connType, userID string) {
-	metric, err := s.activeConnections.GetMetricWithLabelValues(connType, userID)
-	if err != nil {
-		s.logger.Error("Failed to get active connections metric", err)
-		return
-	}
-
-	metric.Dec()
+	s.activeConnections.WithLabelValues(connType, userID).Dec()
 }
 
 // UpdateWarmPoolHitRatio updates the warm pool hit ratio metric
