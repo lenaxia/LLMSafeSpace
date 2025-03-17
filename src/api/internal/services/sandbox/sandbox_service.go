@@ -154,7 +154,6 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			"userID", req.UserID)
 		return nil, errors.NewInternalError(
 			"sandbox_creation_failed",
-			"Failed to create sandbox",
 			err,
 		)
 	}
@@ -175,7 +174,6 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		
 		return nil, errors.NewInternalError(
 			"metadata_creation_failed",
-			"Failed to store sandbox metadata",
 			err,
 		)
 	}
@@ -207,7 +205,6 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 		s.logger.Error("Failed to list sandboxes", err, "sandboxID", sandboxID)
 		return nil, errors.NewInternalError(
 			"sandbox_retrieval_failed",
-			"Failed to retrieve sandbox",
 			err,
 		)
 	}
@@ -233,7 +230,6 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		s.logger.Error("Failed to list sandboxes from database", err, "userID", userID)
 		return nil, errors.NewInternalError(
 			"sandbox_list_failed",
-			"Failed to list sandboxes",
 			err,
 		)
 	}
@@ -327,7 +323,6 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 		}
 		return nil, errors.NewInternalError(
 			"sandbox_retrieval_failed",
-			"Failed to retrieve sandbox status",
 			err,
 		)
 	}
