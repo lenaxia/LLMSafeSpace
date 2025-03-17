@@ -1,8 +1,8 @@
 package metrics
 
 import (
+	"os"
 	"testing"
-	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,63 +10,67 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNew(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+var metricsService *Service
 
-	assert.NotNil(t, svc.requestCounter)
-	assert.NotNil(t, svc.requestDuration)
-	assert.NotNil(t, svc.responseSize)
-	assert.NotNil(t, svc.activeConnections)
-	assert.NotNil(t, svc.sandboxesCreated)
-	assert.NotNil(t, svc.sandboxesTerminated)
-	assert.NotNil(t, svc.executionsTotal)
-	assert.NotNil(t, svc.executionDuration)
-	assert.NotNil(t, svc.errorsTotal)
-	assert.NotNil(t, svc.packageInstalls)
-	assert.NotNil(t, svc.fileOperations)
-	assert.NotNil(t, svc.resourceUsage)
-	assert.NotNil(t, svc.warmPoolHitRatio)
-	assert.NotNil(t, svc.warmPoolUtilization)
-	assert.NotNil(t, svc.warmPoolScaling)
+func TestMain(m *testing.M) {
+	// Initialize logger and metrics service
+	logger, _ := logger.New(true, "debug", "console")
+	metricsService = New(logger)
+
+	// Run tests
+	exitCode := m.Run()
+
+	// Clean up
+	metricsService.Stop()
+
+	os.Exit(exitCode)
+}
+
+func TestNew(t *testing.T) {
+	assert.NotNil(t, metricsService.requestCounter)
+	assert.NotNil(t, metricsService.requestDuration)
+	assert.NotNil(t, metricsService.responseSize)
+	assert.NotNil(t, metricsService.activeConnections)
+	assert.NotNil(t, metricsService.sandboxesCreated)
+	assert.NotNil(t, metricsService.sandboxesTerminated)
+	assert.NotNil(t, metricsService.executionsTotal)
+	assert.NotNil(t, metricsService.executionDuration)
+	assert.NotNil(t, metricsService.errorsTotal)
+	assert.NotNil(t, metricsService.packageInstalls)
+	assert.NotNil(t, metricsService.fileOperations)
+	assert.NotNil(t, metricsService.resourceUsage)
+	assert.NotNil(t, metricsService.warmPoolHitRatio)
+	assert.NotNil(t, metricsService.warmPoolUtilization)
+	assert.NotNil(t, metricsService.warmPoolScaling)
 }
 
 func TestStart(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
-
-	err := svc.Start()
+	err := metricsService.Start()
 	assert.NoError(t, err)
 }
 
 func TestStop(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
-
-	err := svc.Stop()
+	err := metricsService.Stop()
 	assert.NoError(t, err)
 }
 
 func TestRecordRequest(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
-
-	svc.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
+	metricsService.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
 
 	// Test request counter
-	metric, err := svc.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
+	metric, err := metricsService.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 
 	// Test request duration histogram
-	observer, err := svc.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	observer, err := metricsService.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
 	histogram, ok := observer.(prometheus.Histogram)
 	assert.True(t, ok, "Expected Histogram type")
 	assert.InDelta(t, 0.1, promHistogramValue(histogram), 0.01)
 
 	// Test response size histogram
-	observer, err = svc.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	observer, err = metricsService.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
 	histogram, ok = observer.(prometheus.Histogram)
 	assert.True(t, ok, "Expected Histogram type")
@@ -74,40 +78,31 @@ func TestRecordRequest(t *testing.T) {
 }
 
 func TestRecordSandboxCreation(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordSandboxCreation("python:3.10", true, "user-123")
 
-	svc.RecordSandboxCreation("python:3.10", true, "user-123")
-
-	metric, err := svc.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "true", "user-123")
+	metric, err := metricsService.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "true", "user-123")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordSandboxTermination(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordSandboxTermination("python:3.10", "timeout")
 
-	svc.RecordSandboxTermination("python:3.10", "timeout")
-
-	metric, err := svc.sandboxesTerminated.GetMetricWithLabelValues("python:3.10", "timeout")
+	metric, err := metricsService.sandboxesTerminated.GetMetricWithLabelValues("python:3.10", "timeout")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordExecution(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
-
-	svc.RecordExecution("code", "python:3.10", "success", "user-123", 500*time.Millisecond)
+	metricsService.RecordExecution("code", "python:3.10", "success", "user-123", 500*time.Millisecond)
 
 	// Test executions counter
-	metric, err := svc.executionsTotal.GetMetricWithLabelValues("code", "python:3.10", "success", "user-123")
+	metric, err := metricsService.executionsTotal.GetMetricWithLabelValues("code", "python:3.10", "success", "user-123")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 
 	// Test execution duration histogram
-	observer, err := svc.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
+	observer, err := metricsService.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
 	assert.NoError(t, err)
 	histogram, ok := observer.(prometheus.Histogram)
 	assert.True(t, ok, "Expected Histogram type")
@@ -115,105 +110,78 @@ func TestRecordExecution(t *testing.T) {
 }
 
 func TestRecordError(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordError("api_error", "/api/v1/sandboxes", "404")
 
-	svc.RecordError("api_error", "/api/v1/sandboxes", "404")
-
-	metric, err := svc.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/sandboxes", "404")
+	metric, err := metricsService.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/sandboxes", "404")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordPackageInstallation(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordPackageInstallation("python:3.10", "pip", "success")
 
-	svc.RecordPackageInstallation("python:3.10", "pip", "success")
-
-	metric, err := svc.packageInstalls.GetMetricWithLabelValues("python:3.10", "pip", "success")
+	metric, err := metricsService.packageInstalls.GetMetricWithLabelValues("python:3.10", "pip", "success")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordFileOperation(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordFileOperation("upload", "success")
 
-	svc.RecordFileOperation("upload", "success")
-
-	metric, err := svc.fileOperations.GetMetricWithLabelValues("upload", "success")
+	metric, err := metricsService.fileOperations.GetMetricWithLabelValues("upload", "success")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestRecordResourceUsage(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordResourceUsage("sandbox-123", 0.5, 1024*1024*1024)
 
-	svc.RecordResourceUsage("sandbox-123", 0.5, 1024*1024*1024)
-
-	metric, err := svc.resourceUsage.GetMetricWithLabelValues("sandbox-123", "cpu")
+	metric, err := metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "cpu")
 	assert.NoError(t, err)
 	assert.Equal(t, 0.5, promGaugeValue(metric))
 
-	metric, err = svc.resourceUsage.GetMetricWithLabelValues("sandbox-123", "memory")
+	metric, err = metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "memory")
 	assert.NoError(t, err)
 	assert.Equal(t, float64(1024*1024*1024), promGaugeValue(metric))
 }
 
 func TestRecordWarmPoolMetrics(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordWarmPoolMetrics("python:3.10", "pool-1", 0.8)
 
-	svc.RecordWarmPoolMetrics("python:3.10", "pool-1", 0.8)
-
-	metric, err := svc.warmPoolUtilization.GetMetricWithLabelValues("python:3.10", "pool-1")
+	metric, err := metricsService.warmPoolUtilization.GetMetricWithLabelValues("python:3.10", "pool-1")
 	assert.NoError(t, err)
 	assert.Equal(t, 0.8, promGaugeValue(metric))
 }
 
 func TestRecordWarmPoolScaling(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.RecordWarmPoolScaling("python:3.10", "scale_up", "high_demand")
 
-	svc.RecordWarmPoolScaling("python:3.10", "scale_up", "high_demand")
-
-	metric, err := svc.warmPoolScaling.GetMetricWithLabelValues("python:3.10", "scale_up", "high_demand")
+	metric, err := metricsService.warmPoolScaling.GetMetricWithLabelValues("python:3.10", "scale_up", "high_demand")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 }
 
 func TestIncrementActiveConnections(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.IncrementActiveConnections("websocket", "user-123")
 
-	svc.IncrementActiveConnections("websocket", "user-123")
-
-	metric, err := svc.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
+	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promGaugeValue(metric))
 }
 
 func TestDecrementActiveConnections(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.IncrementActiveConnections("websocket", "user-123")
+	metricsService.DecrementActiveConnections("websocket", "user-123")
 
-	svc.IncrementActiveConnections("websocket", "user-123")
-	svc.DecrementActiveConnections("websocket", "user-123")
-
-	metric, err := svc.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
+	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
 	assert.NoError(t, err)
 	assert.Equal(t, 0.0, promGaugeValue(metric))
 }
 
 func TestUpdateWarmPoolHitRatio(t *testing.T) {
-	logger, _ := logger.New(true, "debug", "console")
-	svc := New(logger)
+	metricsService.UpdateWarmPoolHitRatio("python:3.10", 0.75)
 
-	svc.UpdateWarmPoolHitRatio("python:3.10", 0.75)
-
-	metric, err := svc.warmPoolHitRatio.GetMetricWithLabelValues("python:3.10")
+	metric, err := metricsService.warmPoolHitRatio.GetMetricWithLabelValues("python:3.10")
 	assert.NoError(t, err)
 	assert.Equal(t, 0.75, promGaugeValue(metric))
 }
