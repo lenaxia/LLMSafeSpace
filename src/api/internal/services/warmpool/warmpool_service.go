@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -21,7 +21,7 @@ const (
 
 type service struct {
 	logger      interfaces.LoggerInterface
-	k8sClient   interfaces.KubernetesClient
+	k8sClient   pkginterfaces.KubernetesClient
 	cacheClient interfaces.CacheService
 	dbClient    interfaces.DatabaseService
 }
@@ -29,7 +29,7 @@ type service struct {
 // NewService creates a new warm pool service
 func NewService(
 	logger interfaces.LoggerInterface,
-	k8sClient interfaces.KubernetesClient,
+	k8sClient pkginterfaces.KubernetesClient,
 	cacheClient interfaces.CacheService,
 	dbClient interfaces.DatabaseService,
 ) interfaces.WarmPoolService {
