@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
@@ -53,11 +52,9 @@ func (s *WarmPoolTestSuite) SetupTest() {
 	s.llmV1Mock.On("WarmPools", mock.Anything).Return(s.wpMock)
 	s.k8sMock.On("LlmsafespaceV1").Return(s.llmV1Mock)
 
-	// Create a logger that wraps the mock
-	wrappedLogger := &logger.Logger{} // Create an empty logger struct to satisfy the type requirement
-
+	// Use the mock logger directly instead of trying to wrap it
 	s.service = NewService(
-		wrappedLogger,
+		s.loggerMock,
 		s.k8sMock,
 		s.cacheMock,
 		s.dbMock,
