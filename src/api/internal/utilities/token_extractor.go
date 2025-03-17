@@ -46,6 +46,9 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 		if cfg.TokenType != "" {
 			if strings.HasPrefix(authHeader, cfg.TokenType+" ") {
 				return strings.TrimPrefix(authHeader, cfg.TokenType+" ")
+			} else if cfg.TokenType == "Bearer" {
+				// For backward compatibility, return the raw header if no prefix is found
+				return authHeader
 			}
 		} else {
 			return authHeader
