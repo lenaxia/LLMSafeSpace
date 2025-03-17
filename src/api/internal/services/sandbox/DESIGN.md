@@ -21,7 +21,7 @@ Key Components:
 
 **Files to Modify/Create:**
 - `src/api/internal/services/sandbox/sandbox_service.go`
-- `src/api/internal/services/sandbox/client/k8s_client.go`
+- `src/pkg/kubernetes/client.go
 - `src/api/internal/services/sandbox/sandbox_service_test.go`
 - `src/api/internal/services/sandbox/validation/validators.go`
 
