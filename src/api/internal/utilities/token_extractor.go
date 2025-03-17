@@ -73,5 +73,8 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 
 // IsAPIKey checks if a token is an API key based on its prefix
 func IsAPIKey(token, prefix string) bool {
-	return len(token) > len(prefix) && token[:len(prefix)] == prefix
+	if prefix == "" {
+		return false
+	}
+	return strings.HasPrefix(token, prefix)
 }
