@@ -82,53 +82,6 @@ func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseSe
 	}, nil
 }
 
-// AuthMiddleware returns a middleware function for authentication
-func (s *Service) AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Extract token from Authorization header
-		token := extractToken(c)
-		if token == "" {
-			c.AbortWithStatusJSON(401, gin.H{
-				"error": "Authentication required",
-			})
-			return
-		}
-
-		// Get context from request
-		ctx := c.Request.Context()
-
-		// Check if token is an API key
-		if isAPIKey(token, s.config.Auth.APIKeyPrefix) {
-			userID, err := s.AuthenticateAPIKey(ctx, token)
-			if err != nil {
-				c.AbortWithStatusJSON(401, gin.H{
-					"error": "Invalid API key",
-				})
-				return
-			}
-
-			// Store user ID in context
-			c.Set("userID", userID)
-			c.Set("apiKey", token)
-			c.Next()
-			return
-		}
-
-		// Validate JWT token
-		userID, err := s.ValidateToken(token)
-		if err != nil {
-			c.AbortWithStatusJSON(401, gin.H{
-				"error": "Invalid or expired token",
-			})
-			return
-		}
-
-		// Store user ID in context
-		c.Set("userID", userID)
-		c.Next()
-	}
-}
-
 // GetUserID gets the user ID from the context
 func (s *Service) GetUserID(c *gin.Context) string {
 	userID, exists := c.Get("userID")
