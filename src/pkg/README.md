@@ -11,6 +11,7 @@ This document provides technical documentation for the core Go packages that pow
 5. [HTTP Utilities](#http-utilities)
 6. [Configuration](#configuration)
 7. [Interfaces](#interfaces)
+8. [Testing Strategy](#testing-strategy)
 
 ---
 
@@ -19,8 +20,9 @@ This document provides technical documentation for the core Go packages that pow
 **Package:** `kubernetes`  
 **Key Components:**
 - Client management with leader election
-- Custom resource informers
+- Custom resource informers (30s resync interval)
 - Sandbox operations executor
 - Warm pool/pod controller
+- Distributed command execution (exec API)
 
 **Key Features:**
