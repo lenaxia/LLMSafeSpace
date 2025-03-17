@@ -171,12 +171,30 @@ func TestIncrementActiveConnections(t *testing.T) {
 }
 
 func TestDecrementActiveConnections(t *testing.T) {
+	// Reset the metric to ensure we start from a clean state
+	metricsService.activeConnections.Reset()
+	
+	// Get initial value for debugging
+	initialMetric, _ := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
+	initialValue := promGaugeValue(initialMetric)
+	t.Logf("Initial value: %f", initialValue)
+	
 	metricsService.IncrementActiveConnections("websocket", "user-123")
+	
+	// Get value after increment for debugging
+	afterIncMetric, _ := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
+	afterIncValue := promGaugeValue(afterIncMetric)
+	t.Logf("After increment: %f", afterIncValue)
+	
 	metricsService.DecrementActiveConnections("websocket", "user-123")
-
+	
+	// Get final value
 	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
+	finalValue := promGaugeValue(metric)
+	t.Logf("Final value: %f", finalValue)
+	
 	assert.NoError(t, err)
-	assert.Equal(t, 0.0, promGaugeValue(metric))
+	assert.Equal(t, 0.0, finalValue)
 }
 
 func TestUpdateWarmPoolHitRatio(t *testing.T) {
