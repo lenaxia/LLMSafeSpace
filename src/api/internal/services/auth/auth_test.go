@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -488,7 +491,6 @@ func TestValidateAPIKey(t *testing.T) {
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key (cached)
-	ctx := context.Background()
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_valid").Return("user123", nil).Once()
 	
 	userID, err := service.validateAPIKey("api_valid")
@@ -544,7 +546,7 @@ func TestIsAPIKey(t *testing.T) {
 	
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := isAPIKey(tc.token, tc.prefix)
+			result := utilities.IsAPIKey(tc.token, tc.prefix)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -591,7 +593,7 @@ func TestExtractToken(t *testing.T) {
 			c.Request, _ = http.NewRequest("GET", "/", nil)
 			tc.setup(c)
 			
-			result := extractToken(c)
+			result := utilities.ExtractToken(c)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
