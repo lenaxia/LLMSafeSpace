@@ -59,7 +59,7 @@ func (s *service) CheckAvailability(ctx context.Context, runtime, securityLevel 
 	})
 
 	// List warm pools matching the criteria
-	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{
+	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{
 		LabelSelector: selector.String(),
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *service) RemoveFromWarmPool(ctx context.Context, sandboxID string) erro
 // GetWarmPoolStatus gets the status of a warm pool
 func (s *service) GetWarmPoolStatus(ctx context.Context, name, namespace string) (map[string]interface{}, error) {
 	// Get warm pool
-	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(ctx, name, metav1.GetOptions{})
+	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, fmt.Errorf("warm pool %s not found in namespace %s", name, namespace)
@@ -154,7 +154,7 @@ func (s *service) GetWarmPoolStatus(ctx context.Context, name, namespace string)
 // GetGlobalWarmPoolStatus gets the global status of all warm pools
 func (s *service) GetGlobalWarmPoolStatus(ctx context.Context) (map[string]interface{}, error) {
 	// List all warm pools
-	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{})
+	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list warm pools: %w", err)
 	}
@@ -233,7 +233,7 @@ func (s *service) CreateWarmPool(ctx context.Context, req types.CreateWarmPoolRe
 	}
 
 	// Create warm pool in Kubernetes
-	created, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(ctx, warmPool, metav1.CreateOptions{})
+	created, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Create(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create warm pool: %w", err)
 	}
@@ -243,7 +243,7 @@ func (s *service) CreateWarmPool(ctx context.Context, req types.CreateWarmPoolRe
 
 // GetWarmPool gets a warm pool by name
 func (s *service) GetWarmPool(ctx context.Context, name, namespace string) (*types.WarmPool, error) {
-	return s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(ctx, name, metav1.GetOptions{})
+	return s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Get(name, metav1.GetOptions{})
 }
 
 // ListWarmPools lists warm pools for a user
@@ -253,7 +253,7 @@ func (s *service) ListWarmPools(ctx context.Context, userID string, limit, offse
 		"user-id": userID,
 	})
 
-	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(ctx, metav1.ListOptions{
+	warmPools, err := s.k8sClient.LlmsafespaceV1().WarmPools("").List(metav1.ListOptions{
 		LabelSelector: selector.String(),
 	})
 	if err != nil {
@@ -300,7 +300,7 @@ func (s *service) UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRe
 	}
 
 	// Get existing warm pool
-	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+	warmPool, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Get(req.Name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, fmt.Errorf("warm pool %s not found in namespace %s", req.Name, req.Namespace)
@@ -332,7 +332,7 @@ func (s *service) UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRe
 	}
 
 	// Update warm pool in Kubernetes
-	updated, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(ctx, warmPool, metav1.UpdateOptions{})
+	updated, err := s.k8sClient.LlmsafespaceV1().WarmPools(req.Namespace).Update(warmPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update warm pool: %w", err)
 	}
@@ -342,7 +342,7 @@ func (s *service) UpdateWarmPool(ctx context.Context, req types.UpdateWarmPoolRe
 
 // DeleteWarmPool deletes a warm pool
 func (s *service) DeleteWarmPool(ctx context.Context, name, namespace string) error {
-	return s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	return s.k8sClient.LlmsafespaceV1().WarmPools(namespace).Delete(name, metav1.DeleteOptions{})
 }
 
 // Start initializes the warm pool service
