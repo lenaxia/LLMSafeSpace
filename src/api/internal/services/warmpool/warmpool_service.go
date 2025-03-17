@@ -20,7 +20,7 @@ const (
 )
 
 type service struct {
-	logger      interfaces.LoggerInterface
+	logger      pkginterfaces.LoggerInterface
 	k8sClient   pkginterfaces.KubernetesClient
 	cacheClient interfaces.CacheService
 	dbClient    interfaces.DatabaseService
@@ -28,7 +28,7 @@ type service struct {
 
 // NewService creates a new warm pool service
 func NewService(
-	logger interfaces.LoggerInterface,
+	logger pkginterfaces.LoggerInterface,
 	k8sClient pkginterfaces.KubernetesClient,
 	cacheClient interfaces.CacheService,
 	dbClient interfaces.DatabaseService,
