@@ -67,6 +67,9 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 	return userID, nil
 }
 
+// Note: The redundant AuthMiddleware method has been removed as it duplicates
+// functionality in the middleware package
+
 // New creates a new auth service
 func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseService, cacheService interfaces.CacheService) (*Service, error) {
 	if cfg.Auth.JWTSecret == "" {
