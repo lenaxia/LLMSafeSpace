@@ -100,7 +100,21 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.Equal(t, "cached-user", userID)
 
 	mockDbService.AssertExpectations(t)
+	// Test case: API key validation
+	apiKey := "api_test_key"
+	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+apiKey).
+		Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiKey).
+		Return("api_user", nil).Once()
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
+		"apikey:"+apiKey, "api_user", mock.Anything).Return(nil).Once()
+
+	extractedUserID, err = service.ValidateToken(apiKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "api_user", extractedUserID)
+
 	mockCacheService.AssertExpectations(t)
+	mockDbService.AssertExpectations(t)
 }
 
 func TestGenerateToken(t *testing.T) {
@@ -167,6 +181,9 @@ func TestValidateToken(t *testing.T) {
 	// Test case: Valid token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("", errors.New("not found")).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	
+	// Configure the service to recognize API keys
+	service.config.Auth.APIKeyPrefix = "api_"
 
 	extractedUserID, err := service.ValidateToken(token)
 	assert.NoError(t, err)
@@ -175,6 +192,10 @@ func TestValidateToken(t *testing.T) {
 	// Test case: Invalid token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:invalid-token").
 		Return("", errors.New("not found")).Once()
+	
+	// For API key format tokens, we need to mock the database call
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "invalid-token").
+		Return("", errors.New("invalid API key")).Maybe()
 	
 	extractedUserID, err = service.ValidateToken("invalid-token")
 	assert.Error(t, err)
@@ -191,6 +212,10 @@ func TestValidateToken(t *testing.T) {
 
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+tokenString).
 		Return("", errors.New("not found")).Once()
+	
+	// For API key format tokens, we need to mock the database call
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), tokenString).
+		Return("", errors.New("invalid API key")).Maybe()
 
 	extractedUserID, err = service.ValidateToken(tokenString)
 	assert.Error(t, err)
@@ -199,6 +224,10 @@ func TestValidateToken(t *testing.T) {
 
 	// Test case: Revoked token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.Anything).Return("revoked", nil).Once()
+	
+	// For API key format tokens, we need to mock the database call
+	mockDbService.On("GetUserIDByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), token).
+		Return("", errors.New("invalid API key")).Maybe()
 
 	extractedUserID, err = service.ValidateToken(token)
 	assert.Error(t, err)
