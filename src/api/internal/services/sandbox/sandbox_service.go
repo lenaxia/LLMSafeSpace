@@ -10,6 +10,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox/validation"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -84,9 +85,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 
 	// Validate request
 	if err := validation.ValidateCreateSandboxRequest(req); err != nil {
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeValidation,
-			"invalid_request",
+		return nil, errors.NewValidationError(
 			"Invalid sandbox creation request",
 			map[string]interface{}{"details": err.Error()},
 			err,
@@ -148,16 +147,14 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	}
 
 	// Create sandbox in Kubernetes
-	createdSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Create(sandbox, metav1.CreateOptions{})
+	createdSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Create(sandbox)
 	if err != nil {
 		s.logger.Error("Failed to create sandbox in Kubernetes", err, 
 			"runtime", req.Runtime, 
 			"userID", req.UserID)
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return nil, errors.NewInternalError(
 			"sandbox_creation_failed",
 			"Failed to create sandbox",
-			nil,
 			err,
 		)
 	}
@@ -176,11 +173,9 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 				"sandboxID", createdSandbox.Name)
 		}
 		
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return nil, errors.NewInternalError(
 			"metadata_creation_failed",
 			"Failed to store sandbox metadata",
-			nil,
 			err,
 		)
 	}
@@ -210,11 +205,9 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 	})
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes", err, "sandboxID", sandboxID)
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return nil, errors.NewInternalError(
 			"sandbox_retrieval_failed",
 			"Failed to retrieve sandbox",
-			nil,
 			err,
 		)
 	}
@@ -238,11 +231,9 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	sandboxes, err := s.dbService.ListSandboxes(ctx, userID, limit, offset)
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes from database", err, "userID", userID)
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return nil, errors.NewInternalError(
 			"sandbox_list_failed",
 			"Failed to list sandboxes",
-			nil,
 			err,
 		)
 	}
@@ -287,19 +278,15 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	sandbox, err := s.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
-			return errors.NewAPIError(
-				errors.ErrorTypeNotFound,
+			return errors.NewNotFoundError(
 				"sandbox_not_found",
 				fmt.Sprintf("Sandbox %s not found", sandboxID),
-				nil,
 				err,
 			)
 		}
-		return errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return errors.NewInternalError(
 			"sandbox_retrieval_failed",
 			"Failed to retrieve sandbox for termination",
-			nil,
 			err,
 		)
 	}
@@ -308,11 +295,9 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
 		s.logger.Error("Failed to delete sandbox", err, "sandboxID", sandboxID)
-		return errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return errors.NewInternalError(
 			"sandbox_termination_failed",
 			"Failed to terminate sandbox",
-			nil,
 			err,
 		)
 	}
@@ -334,19 +319,15 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 	sandbox, err := s.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
-			return nil, errors.NewAPIError(
-				errors.ErrorTypeNotFound,
+			return nil, errors.NewNotFoundError(
 				"sandbox_not_found",
 				fmt.Sprintf("Sandbox %s not found", sandboxID),
-				nil,
 				err,
 			)
 		}
-		return nil, errors.NewAPIError(
-			errors.ErrorTypeInternal,
+		return nil, errors.NewInternalError(
 			"sandbox_retrieval_failed",
 			"Failed to retrieve sandbox status",
-			nil,
 			err,
 		)
 	}
@@ -357,11 +338,9 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 // Execute executes code or a command in a sandbox
 func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*types.ExecutionResult, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"Execute method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -369,11 +348,9 @@ func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*types
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"ListFiles method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -381,11 +358,9 @@ func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]type
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"DownloadFile method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -393,11 +368,9 @@ func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 // UploadFile uploads a file to a sandbox
 func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"UploadFile method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -405,11 +378,9 @@ func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, conten
 // DeleteFile deletes a file in a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error {
 	// This will be implemented in a future phase
-	return errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return errors.NewNotImplementedError(
 		"not_implemented",
 		"DeleteFile method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -417,11 +388,9 @@ func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 // InstallPackages installs packages in a sandbox
 func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"InstallPackages method not yet implemented",
-		nil,
 		nil,
 	)
 }
@@ -429,11 +398,9 @@ func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackages
 // CreateSession creates a WebSocket session for a sandbox
 func (s *Service) CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewAPIError(
-		errors.ErrorTypeNotImplemented,
+	return nil, errors.NewNotImplementedError(
 		"not_implemented",
 		"CreateSession method not yet implemented",
-		nil,
 		nil,
 	)
 }
