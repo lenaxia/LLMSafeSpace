@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
