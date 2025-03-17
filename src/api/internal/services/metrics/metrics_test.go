@@ -53,17 +53,24 @@ func TestRecordRequest(t *testing.T) {
 
 	svc.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
 
+	// Test request counter
 	metric, err := svc.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 
-	metric, err = svc.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	// Test request duration histogram
+	observer, err := svc.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	assert.InDelta(t, 0.1, promHistogramValue(metric), 0.01)
+	histogram, ok := observer.(prometheus.Histogram)
+	assert.True(t, ok, "Expected Histogram type")
+	assert.InDelta(t, 0.1, promHistogramValue(histogram), 0.01)
 
-	metric, err = svc.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	// Test response size histogram
+	observer, err = svc.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	assert.InDelta(t, 1024.0, promHistogramValue(metric), 0.1)
+	histogram, ok = observer.(prometheus.Histogram)
+	assert.True(t, ok, "Expected Histogram type")
+	assert.InDelta(t, 1024.0, promHistogramValue(histogram), 0.1)
 }
 
 func TestRecordSandboxCreation(t *testing.T) {
@@ -94,13 +101,17 @@ func TestRecordExecution(t *testing.T) {
 
 	svc.RecordExecution("code", "python:3.10", "success", "user-123", 500*time.Millisecond)
 
+	// Test executions counter
 	metric, err := svc.executionsTotal.GetMetricWithLabelValues("code", "python:3.10", "success", "user-123")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, promCounterValue(metric))
 
-	metric, err = svc.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
+	// Test execution duration histogram
+	observer, err := svc.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
 	assert.NoError(t, err)
-	assert.InDelta(t, 0.5, promHistogramValue(metric), 0.01)
+	histogram, ok := observer.(prometheus.Histogram)
+	assert.True(t, ok, "Expected Histogram type")
+	assert.InDelta(t, 0.5, promHistogramValue(histogram), 0.01)
 }
 
 func TestRecordError(t *testing.T) {
