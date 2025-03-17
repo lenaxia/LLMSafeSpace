@@ -231,7 +231,6 @@ func (s *Service) ExecuteStream(
 
 // InstallPackages installs packages in a sandbox
 func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error) {
-	startTime := time.Now()
 	userID := getUserIDFromSandbox(sandbox)
 	
 	// Validate sandbox
