@@ -125,10 +125,10 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 	details := errorObj["details"].(map[string]interface{})
 	errors := details["errors"].(map[string]interface{})
 	
-	assert.Contains(t, errors, "Username")
-	assert.Contains(t, errors, "Email")
-	assert.Contains(t, errors, "Password")
-	assert.Contains(t, errors, "Age")
+	assert.Contains(t, errors, "username")
+	assert.Contains(t, errors, "email")
+	assert.Contains(t, errors, "password")
+	assert.Contains(t, errors, "age")
 	
 	mockLogger.AssertExpectations(t)
 }
@@ -244,7 +244,7 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 	details := errorObj["details"].(map[string]interface{})
 	errors := details["errors"].(map[string]interface{})
 	
-	assert.Contains(t, errors["Name"], "Must contain only alphabetic characters")
+	assert.Contains(t, errors["name"], "Must contain only alphabetic characters")
 	
 	mockLogger.AssertExpectations(t)
 }

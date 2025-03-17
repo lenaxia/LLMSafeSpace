@@ -134,9 +134,24 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 			validationErrors := make(map[string]string)
 			if verrors, ok := err.(validator.ValidationErrors); ok {
 				for _, verr := range verrors {
-					// Use the field name with first letter capitalized
-					// This matches what the test is expecting
-					fieldName := verr.Field() // This will be the struct field name, which is capitalized
+					// Use the JSON field name (lowercase) instead of struct field name
+					fieldName := verr.Field()
+					
+					// Get the JSON tag name for this field
+					field, _ := modelType.FieldByName(fieldName)
+					jsonTag := field.Tag.Get("json")
+					if jsonTag != "" {
+						// Extract the field name part before any comma
+						if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
+							fieldName = jsonTag[:commaIdx]
+						} else {
+							fieldName = jsonTag
+						}
+					} else {
+						// If no JSON tag, use the lowercase field name
+						fieldName = strings.ToLower(fieldName[:1]) + fieldName[1:]
+					}
+					
 					validationErrors[fieldName] = getValidationErrorMessage(verr, cfg.CustomErrorMessages)
 				}
 			}
