@@ -11,7 +11,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	assert.NotNil(t, svc.requestCounter)
@@ -32,7 +32,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestStart(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	err := svc.Start()
@@ -40,7 +40,7 @@ func TestStart(t *testing.T) {
 }
 
 func TestStop(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	err := svc.Stop()
@@ -48,7 +48,7 @@ func TestStop(t *testing.T) {
 }
 
 func TestRecordRequest(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
@@ -67,7 +67,7 @@ func TestRecordRequest(t *testing.T) {
 }
 
 func TestRecordSandboxCreation(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordSandboxCreation("python:3.10", true, "user-123")
@@ -78,7 +78,7 @@ func TestRecordSandboxCreation(t *testing.T) {
 }
 
 func TestRecordSandboxTermination(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordSandboxTermination("python:3.10", "timeout")
@@ -89,7 +89,7 @@ func TestRecordSandboxTermination(t *testing.T) {
 }
 
 func TestRecordExecution(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordExecution("code", "python:3.10", "success", "user-123", 500*time.Millisecond)
@@ -104,7 +104,7 @@ func TestRecordExecution(t *testing.T) {
 }
 
 func TestRecordError(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordError("api_error", "/api/v1/sandboxes", "404")
@@ -115,7 +115,7 @@ func TestRecordError(t *testing.T) {
 }
 
 func TestRecordPackageInstallation(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordPackageInstallation("python:3.10", "pip", "success")
@@ -126,7 +126,7 @@ func TestRecordPackageInstallation(t *testing.T) {
 }
 
 func TestRecordFileOperation(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordFileOperation("upload", "success")
@@ -137,7 +137,7 @@ func TestRecordFileOperation(t *testing.T) {
 }
 
 func TestRecordResourceUsage(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordResourceUsage("sandbox-123", 0.5, 1024*1024*1024)
@@ -152,7 +152,7 @@ func TestRecordResourceUsage(t *testing.T) {
 }
 
 func TestRecordWarmPoolMetrics(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordWarmPoolMetrics("python:3.10", "pool-1", 0.8)
@@ -163,7 +163,7 @@ func TestRecordWarmPoolMetrics(t *testing.T) {
 }
 
 func TestRecordWarmPoolScaling(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.RecordWarmPoolScaling("python:3.10", "scale_up", "high_demand")
@@ -174,7 +174,7 @@ func TestRecordWarmPoolScaling(t *testing.T) {
 }
 
 func TestIncrementActiveConnections(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.IncrementActiveConnections("websocket", "user-123")
@@ -185,7 +185,7 @@ func TestIncrementActiveConnections(t *testing.T) {
 }
 
 func TestDecrementActiveConnections(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.IncrementActiveConnections("websocket", "user-123")
@@ -197,7 +197,7 @@ func TestDecrementActiveConnections(t *testing.T) {
 }
 
 func TestUpdateWarmPoolHitRatio(t *testing.T) {
-	logger := logger.New("test")
+	logger, _ := logger.New(true, "debug", "console")
 	svc := New(logger)
 
 	svc.UpdateWarmPoolHitRatio("python:3.10", 0.75)
