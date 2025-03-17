@@ -3,6 +3,7 @@ package metrics
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/prometheus/client_golang/prometheus"
