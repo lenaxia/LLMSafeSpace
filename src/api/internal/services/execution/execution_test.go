@@ -71,6 +71,12 @@ func TestExecute(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
+			Labels: map[string]string{
+				"user": "test-user",
+			},
+		},
+		Spec: types.SandboxSpec{
+			Runtime: "python:3.10",
 		},
 		Status: types.SandboxStatus{
 			PodName:      "test-pod",
@@ -91,6 +97,9 @@ func TestExecute(t *testing.T) {
 		Stderr:      "",
 	}, nil).Once()
 
+	// Set up mock expectation for RecordExecution
+	mockMetrics.On("RecordExecution", "code", "python:3.10", "completed", "test-user", mock.AnythingOfType("time.Duration")).Return()
+
 	// Test case: Successful execution
 	ctx := context.Background()
 	result, err := service.Execute(ctx, sandbox, "code", "print('Hello, World!')", 30)
@@ -99,6 +108,7 @@ func TestExecute(t *testing.T) {
 	assert.Equal(t, "Hello, World!\n", result.Stdout)
 
 	mockK8sClient.AssertExpectations(t)
+	mockMetrics.AssertExpectations(t)
 }
 
 func TestExecuteStream(t *testing.T) {
@@ -117,6 +127,12 @@ func TestExecuteStream(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
+			Labels: map[string]string{
+				"user": "test-user",
+			},
+		},
+		Spec: types.SandboxSpec{
+			Runtime: "python:3.10",
 		},
 		Status: types.SandboxStatus{
 			PodName:      "test-pod",
@@ -137,6 +153,9 @@ func TestExecuteStream(t *testing.T) {
 		Stderr:      "",
 	}, nil).Once()
 
+	// Set up mock expectation for RecordExecution
+	mockMetrics.On("RecordExecution", "code", "python:3.10", "completed", "test-user", mock.AnythingOfType("time.Duration")).Return()
+
 	// Test case: Successful stream execution
 	ctx := context.Background()
 	outputCallback := func(stream, content string) {}
@@ -146,6 +165,7 @@ func TestExecuteStream(t *testing.T) {
 	assert.Equal(t, "Hello, World!\n", result.Stdout)
 
 	mockK8sClient.AssertExpectations(t)
+	mockMetrics.AssertExpectations(t)
 }
 
 func TestInstallPackages(t *testing.T) {
@@ -164,6 +184,9 @@ func TestInstallPackages(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-sandbox",
 			Namespace: "default",
+			Labels: map[string]string{
+				"user": "test-user",
+			},
 		},
 		Spec: types.SandboxSpec{
 			Runtime: "python:3.10",
@@ -187,6 +210,10 @@ func TestInstallPackages(t *testing.T) {
 		Stderr:      "",
 	}, nil).Once()
 
+	// Set up mock expectations for metrics
+	mockMetrics.On("RecordExecution", "command", "python:3.10", "completed", "test-user", mock.AnythingOfType("time.Duration")).Return()
+	mockMetrics.On("RecordPackageInstallation", "python:3.10", "pip", "completed").Return()
+
 	// Test case: Successful package installation
 	ctx := context.Background()
 	packages := []string{"numpy", "pandas"}
@@ -196,4 +223,5 @@ func TestInstallPackages(t *testing.T) {
 	assert.Contains(t, result.Stdout, "Successfully installed")
 
 	mockK8sClient.AssertExpectations(t)
+	mockMetrics.AssertExpectations(t)
 }
