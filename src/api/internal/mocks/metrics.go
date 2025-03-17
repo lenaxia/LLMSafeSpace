@@ -72,3 +72,7 @@ func (m *MockMetricsService) DecrementActiveConnections(connType, userID string)
 func (m *MockMetricsService) UpdateWarmPoolHitRatio(runtime string, ratio float64) {
 	m.Called(runtime, ratio)
 }
+
+func (m *MockMetricsService) RecordWarmPoolHit() {
+	m.Called()
+}
