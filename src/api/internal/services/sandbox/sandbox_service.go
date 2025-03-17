@@ -8,22 +8,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox/validation"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // Service implements the SandboxService interface
 type Service struct {
-	logger        interfaces.LoggerInterface
-	k8sClient     interfaces.KubernetesClient
-	dbService     interfaces.DatabaseService
-	cacheService  interfaces.CacheService
-	metricsService interfaces.MetricsService
-	warmPoolService interfaces.WarmPoolService
-	fileService   interfaces.FileService
-	execService   interfaces.ExecutionService
+	logger        pkginterfaces.LoggerInterface
+	k8sClient     pkginterfaces.KubernetesClient
+	dbService     apiinterfaces.DatabaseService
+	cacheService  apiinterfaces.CacheService
+	metricsService apiinterfaces.MetricsService
+	warmPoolService apiinterfaces.WarmPoolService
+	fileService   apiinterfaces.FileService
+	execService   apiinterfaces.ExecutionService
 	config        *Config
 }
 
@@ -36,14 +36,14 @@ type Config struct {
 
 // New creates a new sandbox service
 func New(
-	logger interfaces.LoggerInterface,
-	k8sClient interfaces.KubernetesClient,
-	dbService interfaces.DatabaseService,
-	cacheService interfaces.CacheService,
-	metricsService interfaces.MetricsService,
-	warmPoolService interfaces.WarmPoolService,
-	fileService interfaces.FileService,
-	execService interfaces.ExecutionService,
+	logger pkginterfaces.LoggerInterface,
+	k8sClient pkginterfaces.KubernetesClient,
+	dbService apiinterfaces.DatabaseService,
+	cacheService apiinterfaces.CacheService,
+	metricsService apiinterfaces.MetricsService,
+	warmPoolService apiinterfaces.WarmPoolService,
+	fileService apiinterfaces.FileService,
+	execService apiinterfaces.ExecutionService,
 	config *Config,
 ) (*Service, error) {
 	if logger == nil {
@@ -204,7 +204,7 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes", err, "sandboxID", sandboxID)
 		return nil, errors.NewInternalError(
-			"sandbox_retrieval_failed",
+			"Failed to retrieve sandbox",
 			err,
 		)
 	}
