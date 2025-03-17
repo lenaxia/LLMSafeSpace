@@ -85,10 +85,10 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		if err := c.ShouldBindJSON(&data); err == nil {
 			c.JSON(http.StatusOK, gin.H{
 				"message": "logged in",
-				"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+				"token": "test_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
 				"user": data["username"],
 				"email": data["email"],
-				"api_key": "sk_live_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R",
+				"api_key": "test_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R",
 			})
 		}
 	})
@@ -160,7 +160,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		assert.Equal(t, "logged in", responseBody["message"], "Message should be preserved")
 		assert.NotEqual(t, "user@example.com", responseBody["email"], "Email should be masked")
 		assert.Contains(t, responseBody["email"].(string), "...", "Email should use MaskString format")
-		assert.NotEqual(t, "sk_live_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R", responseBody["api_key"], "API key should be masked")
+		assert.NotEqual(t, "test_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R", responseBody["api_key"], "API key should be masked")
 		assert.Contains(t, responseBody["api_key"].(string), "...", "API key should use MaskString format")
 	}
 	
