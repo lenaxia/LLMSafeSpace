@@ -11,6 +11,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 )
 
 // Service handles authentication and authorization
@@ -198,8 +199,13 @@ func (s *Service) GenerateToken(userID string) (string, error) {
 	return tokenString, nil
 }
 
-// ValidateToken validates a JWT token
+// ValidateToken validates a JWT token or API key
 func (s *Service) ValidateToken(tokenString string) (string, error) {
+	// Check if token is an API key
+	if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
+		return s.validateAPIKey(tokenString)
+	}
+
 	// Check if token is cached
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -303,27 +309,7 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	return userID, nil
 }
 
-// isAPIKey checks if a token is an API key
-func isAPIKey(token, prefix string) bool {
-	return len(token) > len(prefix) && token[:len(prefix)] == prefix
-}
-
 // extractToken extracts the token from the Authorization header
 func extractToken(c *gin.Context) string {
-	// Check Authorization header
-	authHeader := c.GetHeader("Authorization")
-	if authHeader != "" {
-		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			return authHeader[7:]
-		}
-		return authHeader
-	}
-
-	// Check query parameter
-	token := c.Query("token")
-	if token != "" {
-		return token
-	}
-
-	return ""
+	return utilities.ExtractToken(c)
 }
