@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -53,8 +53,11 @@ func (s *WarmPoolTestSuite) SetupTest() {
 	s.llmV1Mock.On("WarmPools", mock.Anything).Return(s.wpMock)
 	s.k8sMock.On("LlmsafespaceV1").Return(s.llmV1Mock)
 
+	// Create a logger that wraps the mock
+	wrappedLogger := &logger.Logger{} // Create an empty logger struct to satisfy the type requirement
+
 	s.service = NewService(
-		s.loggerMock,
+		wrappedLogger,
 		s.k8sMock,
 		s.cacheMock,
 		s.dbMock,
@@ -484,7 +487,7 @@ func (s *WarmPoolTestSuite) TestGetWarmPoolStatus_NotFound() {
 	namespace := "default"
 	
 	// Mock Kubernetes get not found error
-	notFoundErr := errors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "warmpools"}, name)
+	notFoundErr := k8serrors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "warmpools"}, name)
 	s.wpMock.On("Get", name, mock.Anything).Return(nil, notFoundErr)
 	
 	// Execute
@@ -739,7 +742,7 @@ func (s *WarmPoolTestSuite) TestUpdateWarmPool_NotFound() {
 	}
 	
 	// Mock Kubernetes get not found error
-	notFoundErr := errors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "warmpools"}, req.Name)
+	notFoundErr := k8serrors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "warmpools"}, req.Name)
 	s.wpMock.On("Get", req.Name, mock.Anything).Return(nil, notFoundErr)
 	
 	// Execute
