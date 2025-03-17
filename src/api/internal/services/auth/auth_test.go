@@ -12,139 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
-
-// Mock implementations
-type MockDatabaseService struct {
-	mock.Mock
-}
-
-// Ensure MockDatabaseService implements the DatabaseService interface
-var _ interfaces.DatabaseService = (*MockDatabaseService)(nil)
-
-func (m *MockDatabaseService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockDatabaseService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockDatabaseService) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
-
-func (m *MockDatabaseService) GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
-	args := m.Called(ctx, sandboxID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
-
-func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
-	args := m.Called(ctx, userID, limit, offset)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]map[string]interface{}), args.Error(1)
-}
-
-func (m *MockDatabaseService) GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error) {
-	args := m.Called(ctx, apiKey)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockDatabaseService) CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error) {
-	args := m.Called(userID, resourceType, resourceID)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
-	args := m.Called(userID, resourceType, resourceID, action)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *MockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
-	args := m.Called(ctx, sandboxID, userID, runtime)
-	return args.Error(0)
-}
-
-func (m *MockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
-	args := m.Called(ctx, sandboxID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
-
-type MockCacheService struct {
-	mock.Mock
-}
-
-func (m *MockCacheService) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockCacheService) Stop() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) {
-	args := m.Called(ctx, key)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
-	args := m.Called(ctx, key, value, expiration)
-	return args.Error(0)
-}
-
-func (m *MockCacheService) Delete(ctx context.Context, key string) error {
-	args := m.Called(ctx, key)
-	return args.Error(0)
-}
-
-func (m *MockCacheService) GetObject(ctx context.Context, key string, value interface{}) error {
-	args := m.Called(ctx, key, value)
-	return args.Error(0)
-}
-
-func (m *MockCacheService) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
-	args := m.Called(ctx, key, value, expiration)
-	return args.Error(0)
-}
-
-func (m *MockCacheService) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
-	args := m.Called(ctx, sessionID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
-
-func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
-	args := m.Called(ctx, sessionID, session, expiration)
-	return args.Error(0)
-}
-
-func (m *MockCacheService) DeleteSession(ctx context.Context, sessionID string) error {
-	args := m.Called(ctx, sessionID)
-	return args.Error(0)
-}
 
 func TestNew(t *testing.T) {
 	// Create test dependencies
@@ -155,8 +28,8 @@ func TestNew(t *testing.T) {
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
-	mockDb := new(MockDatabaseService)
-	mockCache := new(MockCacheService)
+	mockDb := new(mocks.MockDatabaseService)
+	mockCache := new(mocks.MockCacheService)
 	
 	service, err := New(cfg, log, mockDb, mockCache)
 	assert.NoError(t, err)
@@ -186,8 +59,8 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
@@ -240,8 +113,8 @@ func TestGenerateToken(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
@@ -280,8 +153,8 @@ func TestValidateToken(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	// Create service with mocks
 	service, err := New(cfg, log, mockDbService, mockCacheService)
@@ -345,8 +218,8 @@ func TestRevokeToken(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
@@ -397,8 +270,8 @@ func TestCheckResourceAccess(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	// Create service with mocks
 	service, err := New(cfg, log, mockDbService, mockCacheService)
@@ -455,8 +328,8 @@ func TestGetUserFromContext(t *testing.T) {
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
@@ -485,8 +358,8 @@ func TestValidateAPIKey(t *testing.T) {
 	cfg.Auth.APIKeyPrefix = "api_"
 	
 	// Create mock service instances
-	mockDbService := new(MockDatabaseService)
-	mockCacheService := new(MockCacheService)
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
 	
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
