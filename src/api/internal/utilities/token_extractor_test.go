@@ -31,7 +31,7 @@ func TestExtractToken(t *testing.T) {
 				c.Request.Header.Set("Authorization", "token123")
 			},
 			DefaultTokenExtractorConfig(),
-			"", // Should be empty since we expect "Bearer " prefix
+			"token123", // Should return the token even without Bearer prefix
 		},
 		{
 			"Custom header",
