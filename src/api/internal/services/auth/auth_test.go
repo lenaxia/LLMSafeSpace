@@ -109,9 +109,9 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
 		"apikey:"+apiKey, "api_user", mock.Anything).Return(nil).Once()
 
-	extractedUserID, err = service.ValidateToken(apiKey)
+	userID, err = service.ValidateToken(apiKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "api_user", extractedUserID)
+	assert.Equal(t, "api_user", userID)
 
 	mockCacheService.AssertExpectations(t)
 	mockDbService.AssertExpectations(t)
