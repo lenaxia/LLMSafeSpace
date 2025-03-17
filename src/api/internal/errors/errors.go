@@ -171,6 +171,16 @@ func NewBadRequestError(message string, err error) *APIError {
 	}
 }
 
+// NewNotImplementedError creates a new not implemented error
+func NewNotImplementedError(code string, message string, err error) *APIError {
+	return &APIError{
+		Type:    ErrorTypeInternal,
+		Code:    code,
+		Message: message,
+		Err:     err,
+	}
+}
+
 // IsSandboxNotFoundError checks if the error is a SandboxNotFoundError
 func IsSandboxNotFoundError(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
