@@ -31,13 +31,12 @@ echo "Groups/Versions: types:v1"
 MODULE_NAME=$(grep -m 1 "module" "${SCRIPT_ROOT}/go.mod" | awk '{print $2}')
 echo "Using module name: ${MODULE_NAME}"
 
-# Generate deepcopy functions
-"${CODEGEN_PKG}/generate-groups.sh" "deepcopy" \
-  "${MODULE_NAME}/pkg/client" \
-  "${MODULE_NAME}/src/pkg" \
-  "types:v1" \
+# Generate deepcopy functions using go run
+echo "Using go run to execute deepcopy-gen directly"
+go run k8s.io/code-generator/cmd/deepcopy-gen \
+  --input-dirs "${MODULE_NAME}/src/pkg/types" \
+  --output-file-base zz_generated.deepcopy \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  --output-base "${SCRIPT_ROOT}" \
   --v=1
 
 RESULT=$?
@@ -51,13 +50,8 @@ fi
 echo "=== Generating deepcopy functions using direct approach ==="
 echo "Input directories: github.com/llmsafespace/src/pkg/types"
 
-# Alternative direct approach if the above doesn't work
-"${CODEGEN_PKG}/kube_codegen.sh" deepcopy \
-  --input-dirs github.com/llmsafespace/src/pkg/types \
-  --output-base "${SCRIPT_ROOT}" \
-  --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  --v=1 \
-  --boilerplate-file="${SCRIPT_ROOT}/hack/boilerplate.go.txt"
+# No need for alternative approach anymore
+echo "Direct deepcopy-gen execution completed"
 
 RESULT=$?
 if [ $RESULT -eq 0 ]; then
