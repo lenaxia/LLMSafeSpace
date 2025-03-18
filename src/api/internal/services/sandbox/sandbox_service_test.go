@@ -621,6 +621,39 @@ func TestGetSandboxStatus_NotFound(t *testing.T) {
 	mockSandbox.AssertExpectations(t)
 }
 //
+func TestConvertFromSandboxCRD(t *testing.T) {
+	// Setup
+	crdSandbox := &types.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-12345",
+			Namespace: "default",
+		},
+		Spec: types.SandboxSpec{
+			Runtime:       "python:3.10",
+			SecurityLevel: "standard",
+			Timeout:       300,
+		},
+		Status: types.SandboxStatus{
+			Phase: "Running",
+		},
+	}
+
+	// Execute
+	apiSandbox := convertFromSandboxCRD(crdSandbox)
+
+	// Assert
+	assert.Equal(t, "sb-12345", apiSandbox.Name)
+	assert.Equal(t, "default", apiSandbox.Namespace)
+	assert.Equal(t, "python:3.10", apiSandbox.Spec.Runtime)
+	assert.Equal(t, "standard", apiSandbox.Spec.SecurityLevel)
+	assert.Equal(t, 300, apiSandbox.Spec.Timeout)
+	assert.Equal(t, "Running", apiSandbox.Status.Phase)
+	
+	// Verify it's a deep copy (modifying the original shouldn't affect the copy)
+	crdSandbox.Name = "modified"
+	assert.Equal(t, "sb-12345", apiSandbox.Name)
+}
+
 func TestSandboxLifecycle(t *testing.T) {
 	// Setup
 	service, _, _, mockSandbox, mockDB, mockWarmPool, mockMetrics, _ := setupTestService()
