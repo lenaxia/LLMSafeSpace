@@ -9,14 +9,14 @@ CODEGEN_PKG=${CODEGEN_PKG:-$(go env GOPATH)/pkg/mod/k8s.io/code-generator@v0.28.
 
 # Generate deepcopy functions
 "${CODEGEN_PKG}/generate-groups.sh" "deepcopy" \
-  github.com/yourdomain/yourproject/pkg/client \
-  github.com/yourdomain/yourproject/src/pkg \
+  github.com/llmsafespace/pkg/client \
+  github.com/llmsafespace/src/pkg \
   "types:v1" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
   --output-base "${SCRIPT_ROOT}"
 
 # Alternative direct approach if the above doesn't work
-# "${CODEGEN_PKG}/kube_codegen.sh" deepcopy \
-#   --input-dirs github.com/yourdomain/yourproject/src/pkg/types \
-#   --output-base "${SCRIPT_ROOT}" \
-#   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt"
+"${CODEGEN_PKG}/kube_codegen.sh" deepcopy \
+  --input-dirs github.com/llmsafespace/src/pkg/types \
+  --output-base "${SCRIPT_ROOT}" \
+  --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt"
