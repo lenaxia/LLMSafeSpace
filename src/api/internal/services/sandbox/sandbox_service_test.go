@@ -9,186 +9,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/informers"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/mocks/logger"
 )
 
-// Mock implementations
-type mockKubernetesClient struct {
-	mock.Mock
-}
-
-func (m *mockKubernetesClient) Clientset() kubernetes.Interface {
-	return fake.NewSimpleClientset()
-}
-
-func (m *mockKubernetesClient) LlmsafespaceV1() mockLLMSafespaceV1Interface {
-	args := m.Called()
-	return args.Get(0).(mockLLMSafespaceV1Interface)
-}
-
-func (m *mockKubernetesClient) Start() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *mockKubernetesClient) Stop() {
-	m.Called()
-}
-
-type mockLLMSafespaceV1Interface struct {
-	mock.Mock
-}
-
-func (m *mockLLMSafespaceV1Interface) Sandboxes(namespace string) mockSandboxInterface {
-	args := m.Called(namespace)
-	return args.Get(0).(mockSandboxInterface)
-}
-
-func (m *mockLLMSafespaceV1Interface) WarmPods(namespace string) interface{} {
-	args := m.Called(namespace)
-	return args.Get(0)
-}
-
-type mockSandboxInterface struct {
-	mock.Mock
-}
-
-func (m *mockSandboxInterface) Create(sandbox *types.Sandbox, opts metav1.CreateOptions) (*types.Sandbox, error) {
-	args := m.Called(sandbox, opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.Sandbox), args.Error(1)
-}
-
-func (m *mockSandboxInterface) Delete(name string, opts metav1.DeleteOptions) error {
-	args := m.Called(name, opts)
-	return args.Error(0)
-}
-
-func (m *mockSandboxInterface) Get(name string, opts metav1.GetOptions) (*types.Sandbox, error) {
-	args := m.Called(name, opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.Sandbox), args.Error(1)
-}
-
-func (m *mockSandboxInterface) List(opts metav1.ListOptions) (*types.SandboxList, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.SandboxList), args.Error(1)
-}
-
-type mockDatabaseService struct {
-	mock.Mock
-}
-
-func (m *mockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
-	args := m.Called(userID, resourceType, resourceID, action)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
-	args := m.Called(ctx, sandboxID, userID, runtime)
-	return args.Error(0)
-}
-
-func (m *mockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
-	args := m.Called(ctx, userID, limit, offset)
-	return args.Get(0).([]map[string]interface{}), args.Error(1)
-}
-
-func (m *mockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
-	args := m.Called(ctx, sandboxID)
-	return args.Get(0).(map[string]interface{}), args.Error(1)
-}
-
-func (m *mockDatabaseService) CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error) {
-	args := m.Called(userID, resourceType, resourceID)
-	return args.Bool(0), args.Error(1)
-}
-
-type mockWarmPoolService struct {
-	mock.Mock
-}
-
-func (m *mockWarmPoolService) AddToWarmPool(ctx context.Context, sandboxID, runtime string) error {
-	args := m.Called(ctx, sandboxID, runtime)
-	return args.Error(0)
-}
-
-func (m *mockWarmPoolService) GetWarmSandbox(ctx context.Context, runtime string) (string, error) {
-	args := m.Called(ctx, runtime)
-	return args.String(0), args.Error(1)
-}
-
-type mockMetricsService struct {
-	mock.Mock
-}
-
-func (m *mockMetricsService) DecrementActiveConnections(connType, userID string) {
-	m.Called(connType, userID)
-}
-
-func (m *mockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
-	m.Called(method, path, status, duration, size)
-}
-
-func (m *mockMetricsService) RecordSandboxCreation(runtime string, warmPodUsed bool, userID string) {
-	m.Called(runtime, warmPodUsed, userID)
-}
-
-func (m *mockMetricsService) RecordSandboxTermination(runtime, reason string) {
-	m.Called(runtime, reason)
-}
-
-type mockLogger struct {
-	mock.Mock
-}
-
-func (m *mockLogger) Debug(msg string, keysAndValues ...interface{}) {
-	m.Called(msg, keysAndValues)
-}
-
-func (m *mockLogger) Info(msg string, keysAndValues ...interface{}) {
-	m.Called(msg, keysAndValues)
-}
-
-func (m *mockLogger) Warn(msg string, keysAndValues ...interface{}) {
-	m.Called(msg, keysAndValues)
-}
-
-func (m *mockLogger) Error(msg string, err error, keysAndValues ...interface{}) {
-	m.Called(msg, err, keysAndValues)
-}
-
-func (m *mockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) {
-	m.Called(msg, err, keysAndValues)
-}
-
-func (m *mockLogger) With(keysAndValues ...interface{}) interfaces.LoggerInterface {
-	args := m.Called(keysAndValues)
-	return m
-}
-
-func (m *mockLogger) Sync() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
 // Test setup helper
-func setupTestService() (*Service, *mockKubernetesClient, *mockLLMSafespaceV1Interface, *mockSandboxInterface, *mockDatabaseService, *mockWarmPoolService, *mockMetricsService, *mockLogger) {
-	mockK8s := new(mockKubernetesClient)
-	mockLLMSafespaceV1 := new(mockLLMSafespaceV1Interface)
-	mockSandbox := new(mockSandboxInterface)
-	mockDB := new(mockDatabaseService)
-	mockWarmPool := new(mockWarmPoolService)
-	mockMetrics := new(mockMetricsService)
-	mockLog := new(mockLogger)
+func setupTestService() (*Service, *kubernetes.MockKubernetesClient, *kubernetes.MockLLMSafespaceV1Interface, *kubernetes.MockSandboxInterface, *interfaces.MockDatabaseService, *interfaces.MockWarmPoolService, *interfaces.MockMetricsService, *logger.MockLogger) {
+	mockK8s := new(kubernetes.MockKubernetesClient)
+	mockLLMSafespaceV1 := new(kubernetes.MockLLMSafespaceV1Interface)
+	mockSandbox := new(kubernetes.MockSandboxInterface)
+	mockDB := new(interfaces.MockDatabaseService)
+	mockWarmPool := new(interfaces.MockWarmPoolService)
+	mockMetrics := new(interfaces.MockMetricsService)
+	mockLog := new(logger.MockLogger)
 
 	// Setup default expectations
 	mockK8s.On("LlmsafespaceV1").Return(mockLLMSafespaceV1)
@@ -199,13 +40,17 @@ func setupTestService() (*Service, *mockKubernetesClient, *mockLLMSafespaceV1Int
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 	
 	// Add required method implementations for the interfaces
-	mockK8s.On("Clientset").Return(nil)
+	mockK8s.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8s.On("DynamicClient").Return(nil)
-	mockK8s.On("RESTConfig").Return((*rest.Config)(nil))
+	mockK8s.On("RESTConfig").Return(&rest.Config{})
 	mockK8s.On("InformerFactory").Return(nil)
+	mockK8s.On("Start").Return(nil)
+	mockK8s.On("Stop").Return()
 	
 	mockLog.On("With", mock.Anything).Return(mockLog)
 	mockLog.On("Sync").Return(nil)
+	mockLog.On("Debug", mock.Anything, mock.Anything).Return()
+	mockLog.On("Fatal", mock.Anything, mock.Anything, mock.Anything).Return()
 	
 	mockDB.On("Start").Return(nil)
 	mockDB.On("Stop").Return(nil)
@@ -235,10 +80,10 @@ func setupTestService() (*Service, *mockKubernetesClient, *mockLLMSafespaceV1Int
 	mockWarmPool.On("GetWarmPoolStatus", mock.Anything, mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
 	mockWarmPool.On("GetGlobalWarmPoolStatus", mock.Anything).Return(map[string]interface{}{}, nil)
 	mockWarmPool.On("CheckAvailability", mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
-	mockWarmPool.On("CreateWarmPool", mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
-	mockWarmPool.On("GetWarmPool", mock.Anything, mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
+	mockWarmPool.On("CreateWarmPool", mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
+	mockWarmPool.On("GetWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
 	mockWarmPool.On("ListWarmPools", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]map[string]interface{}{}, nil)
-	mockWarmPool.On("UpdateWarmPool", mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
+	mockWarmPool.On("UpdateWarmPool", mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
 	mockWarmPool.On("DeleteWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	service, _ := New(
@@ -284,7 +129,7 @@ func TestCreateSandbox_Success(t *testing.T) {
 		},
 	}
 	
-	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox"), mock.Anything).Return(createdSandbox, nil)
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 
@@ -317,7 +162,7 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	// Mock expectations
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
 	
-	mockWarmPodInterface := new(mockSandboxInterface)
+	mockWarmPodInterface := new(kubernetes.MockWarmPodInterface)
 	mockLLMSafespaceV1.On("WarmPods", "default").Return(mockWarmPodInterface)
 	
 	warmPod := &types.WarmPod{
@@ -347,7 +192,7 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 		},
 	}
 	
-	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox"), mock.Anything).Return(createdSandbox, nil)
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", true, "user123").Return()
 
@@ -383,7 +228,7 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid_request")
+	assert.Contains(t, err.Error(), "validation_error")
 	
 	// Ensure no Kubernetes or DB calls were made
 	mockSandbox.AssertNotCalled(t, "Create")
@@ -404,7 +249,7 @@ func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 
 	// Mock expectations
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
-	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox"), mock.Anything).Return(nil, errors.New("kubernetes error"))
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(nil, errors.New("kubernetes error"))
 	mockLog.On("Error", "Failed to create sandbox in Kubernetes", mock.Anything, "runtime", "python:3.10", "userID", "user123").Return()
 
 	// Execute
@@ -413,7 +258,7 @@ func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "sandbox_creation_failed")
+	assert.Contains(t, err.Error(), "Failed to create sandbox in Kubernetes")
 	
 	// Ensure no DB calls were made
 	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
@@ -446,7 +291,7 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 		},
 	}
 	
-	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox"), mock.Anything).Return(createdSandbox, nil)
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(errors.New("database error"))
 	mockLog.On("Error", "Failed to store sandbox metadata", mock.Anything, "sandboxID", "sb-12345", "userID", "user123").Return()
 	
@@ -459,7 +304,7 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "metadata_creation_failed")
+	assert.Contains(t, err.Error(), "Failed to store sandbox metadata")
 	
 	// Ensure cleanup was called
 	mockSandbox.AssertCalled(t, "Delete", "sb-12345", mock.Anything)
@@ -756,7 +601,7 @@ func TestGetSandboxStatus_NotFound(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, status)
-	assert.Contains(t, err.Error(), "sandbox_not_found")
+	assert.Contains(t, err.Error(), "not_found")
 	mockSandbox.AssertExpectations(t)
 }
 
@@ -787,7 +632,7 @@ func TestSandboxLifecycle(t *testing.T) {
 		},
 	}
 	
-	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox"), mock.Anything).Return(createdSandbox, nil)
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 
