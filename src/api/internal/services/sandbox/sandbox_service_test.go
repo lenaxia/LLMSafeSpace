@@ -35,7 +35,7 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockLog.On("Warn", mock.Anything, mock.Anything).Return()
 	mockLog.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordSandboxCreation", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordSandboxCreation", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	
 	// Add required method implementations for the interfaces
 	mockK8s.On("Clientset").Return(fake.NewSimpleClientset())
