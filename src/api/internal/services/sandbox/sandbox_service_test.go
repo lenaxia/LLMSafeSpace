@@ -193,31 +193,31 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	mockMetrics.AssertExpectations(t)
 }
 
-//func TestCreateSandbox_ValidationFailure(t *testing.T) {
-//	// Setup
-//	service, _, _, mockSandbox, mockDB, _, _, _ := setupTestService()
-//	ctx := context.Background()
-//
-//	req := &types.CreateSandboxRequest{
-//		Runtime:       "",  // Empty runtime should fail validation
-//		SecurityLevel: "invalid-level",
-//		Timeout:       9999999,  // Exceeds max timeout
-//		UserID:        "user123",
-//	}
-//
-//	// Execute
-//	result, err := service.CreateSandbox(ctx, req)
-//
-//	// Assert
-//	assert.Error(t, err)
-//	assert.Nil(t, result)
-//	assert.Contains(t, err.Error(), "validation_error")
-//	
-//	// Ensure no Kubernetes or DB calls were made
-//	mockSandbox.AssertNotCalled(t, "Create")
-//	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
-//}
-//
+func TestCreateSandbox_ValidationFailure(t *testing.T) {
+	// Setup
+	service, _, _, mockSandbox, mockDB, _, _, _ := setupTestService()
+	ctx := context.Background()
+
+	req := &types.CreateSandboxRequest{
+		Runtime:       "",  // Empty runtime should fail validation
+		SecurityLevel: "invalid-level",
+		Timeout:       9999999,  // Exceeds max timeout
+		UserID:        "user123",
+	}
+
+	// Execute
+	result, err := service.CreateSandbox(ctx, req)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "validation_error")
+	
+	// Ensure no Kubernetes or DB calls were made
+	mockSandbox.AssertNotCalled(t, "Create")
+	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
+}
+
 //func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 //	// Setup
 //	service, _, _, mockSandbox, mockDB, mockWarmPool, _, mockLog := setupTestService()
