@@ -418,7 +418,7 @@ func TestListSandboxes_Success(t *testing.T) {
 		{
 			"id":      "sb-67890",
 			"runtime": "nodejs:16",
-			"created": time.Now(),
+			"created": time.Now().Add(-1 * time.Hour), // Older sandbox
 		},
 	}
 	
@@ -456,14 +456,27 @@ func TestListSandboxes_Success(t *testing.T) {
 	mockSandbox.On("Get", "sb-67890", mock.Anything).Return(sandbox2, nil)
 
 	// Execute
-	result, err := service.ListSandboxes(ctx, "user123", 10, 0)
+	result, paginationMetadata, err := service.ListSandboxes(ctx, "user123", 10, 0)
 
 	// Assert
 	assert.NoError(t, err)
 	assert.Len(t, result, 2)
+	// First result should be the newer sandbox (sb-12345) due to sorting
+	assert.Equal(t, "sb-12345", result[0]["id"])
 	assert.Equal(t, "Running", result[0]["status"])
-	assert.Equal(t, "Pending", result[1]["status"])
 	assert.Equal(t, "100m", result[0]["cpuUsage"])
+	// Second result should be the older sandbox (sb-67890)
+	assert.Equal(t, "sb-67890", result[1]["id"])
+	assert.Equal(t, "Pending", result[1]["status"])
+	
+	// Verify pagination metadata
+	assert.NotNil(t, paginationMetadata)
+	assert.Equal(t, 2, paginationMetadata.Total)
+	assert.Equal(t, 0, paginationMetadata.Start)
+	assert.Equal(t, 2, paginationMetadata.End)
+	assert.Equal(t, 10, paginationMetadata.Limit)
+	assert.Equal(t, 0, paginationMetadata.Offset)
+	
 	mockDB.AssertExpectations(t)
 	mockSandbox.AssertExpectations(t)
 }
@@ -478,11 +491,12 @@ func TestListSandboxes_DatabaseFailure(t *testing.T) {
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 
 	// Execute
-	result, err := service.ListSandboxes(ctx, "user123", 10, 0)
+	result, paginationMetadata, err := service.ListSandboxes(ctx, "user123", 10, 0)
 
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
+	assert.Nil(t, paginationMetadata)
 	assert.Contains(t, err.Error(), "sandbox_list_failed")
 	mockDB.AssertExpectations(t)
 }
@@ -652,6 +666,46 @@ func TestConvertFromSandboxCRD(t *testing.T) {
 	// Verify it's a deep copy (modifying the original shouldn't affect the copy)
 	crdSandbox.Name = "modified"
 	assert.Equal(t, "sb-12345", apiSandbox.Name)
+}
+
+func TestListSandboxes_NotFound(t *testing.T) {
+	// Setup
+	service, _, _, _, mockDB, _, mockMetrics, _ := setupTestService()
+	ctx := context.Background()
+
+	// Mock database error - not found
+	mockDB.On("ListSandboxes", ctx, "user123", 10, 0).Return([]map[string]interface{}{}, types.ErrNotFound)
+	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+
+	// Execute
+	result, paginationMetadata, err := service.ListSandboxes(ctx, "user123", 10, 0)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Nil(t, paginationMetadata)
+	assert.Contains(t, err.Error(), "not_found")
+	mockDB.AssertExpectations(t)
+}
+
+func TestListSandboxes_PermissionDenied(t *testing.T) {
+	// Setup
+	service, _, _, _, mockDB, _, mockMetrics, _ := setupTestService()
+	ctx := context.Background()
+
+	// Mock database error - permission denied
+	mockDB.On("ListSandboxes", ctx, "user123", 10, 0).Return([]map[string]interface{}{}, types.ErrPermissionDenied)
+	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+
+	// Execute
+	result, paginationMetadata, err := service.ListSandboxes(ctx, "user123", 10, 0)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Nil(t, paginationMetadata)
+	assert.Contains(t, err.Error(), "forbidden")
+	mockDB.AssertExpectations(t)
 }
 
 func TestSandboxLifecycle(t *testing.T) {

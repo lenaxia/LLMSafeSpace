@@ -41,7 +41,7 @@ type AuthService interface {
 type DatabaseService interface {
 	GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error)
 	GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error)
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
+	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, *types.PaginationMetadata, error)
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error)

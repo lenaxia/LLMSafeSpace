@@ -3,8 +3,18 @@ package types
 import (
 	"time"
 	"fmt"
+	"errors"
 	
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// Common error types
+var (
+	ErrNotFound         = errors.New("resource not found")
+	ErrPermissionDenied = errors.New("permission denied")
+	ErrInvalidInput     = errors.New("invalid input")
+	ErrTimeout          = errors.New("operation timed out")
+	ErrConflict         = errors.New("resource conflict")
 )
 
 // WSConnection defines the interface for a WebSocket connection
@@ -618,6 +628,15 @@ type SandboxProfileList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SandboxProfile `json:"items"`
+}
+
+// PaginationMetadata contains metadata for paginated responses
+type PaginationMetadata struct {
+	Total  int `json:"total"`  // Total number of items
+	Start  int `json:"start"`  // Start index of current page
+	End    int `json:"end"`    // End index of current page
+	Limit  int `json:"limit"`  // Maximum items per page
+	Offset int `json:"offset"` // Offset from beginning
 }
 
 // Message represents a WebSocket message
