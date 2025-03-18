@@ -1,3 +1,5 @@
+// +k8s:deepcopy-gen=package
+
 package types
 
 import (
@@ -15,6 +17,8 @@ var (
 	ErrInvalidInput     = errors.New("invalid input")
 	ErrAlreadyExists    = errors.New("resource already exists")
 )
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Sandbox represents a sandbox environment
 type Sandbox struct {
@@ -299,6 +303,8 @@ type WarmPodReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 // SandboxList contains a list of Sandbox
 type SandboxList struct {
 	metav1.TypeMeta `json:",inline"`
@@ -492,6 +498,8 @@ type User struct {
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 // WarmPod represents a warm pod
 type WarmPod struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -524,6 +532,8 @@ type WarmPodStatus struct {
 	// Creation time
 	CreationTime *metav1.Time `json:"creationTime,omitempty"`
 }
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // WarmPool represents a warm pool
 type WarmPool struct {
@@ -564,6 +574,8 @@ type WarmPoolStatus struct {
 	WarmPods []string `json:"warmPods,omitempty"`
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 // RuntimeEnvironment represents a runtime environment
 type RuntimeEnvironment struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -596,6 +608,8 @@ type RuntimeEnvironmentStatus struct {
 	// Last update time
 	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
 }
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // SandboxProfile represents a sandbox profile
 type SandboxProfile struct {
