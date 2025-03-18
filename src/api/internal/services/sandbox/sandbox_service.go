@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -353,7 +354,7 @@ func convertFromSandboxCRD(sandbox *types.Sandbox) *types.Sandbox {
 }
 
 // ListSandboxes lists sandboxes for a user with pagination
-func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, *types.PaginationMetadata, error) {
 	startTime := time.Now()
 	defer func() {
 		s.metricsService.RecordRequest("ListSandboxes", "", 0, time.Since(startTime), 0)
@@ -363,7 +364,23 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	sandboxes, err := s.dbService.ListSandboxes(ctx, userID, limit, offset)
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes from database", err, "userID", userID)
-		return nil, errors.NewInternalError(
+		
+		// Improved error handling with more specific error types
+		if errors.Is(err, types.ErrNotFound) {
+			return nil, nil, errors.NewNotFoundError(
+				"sandboxes",
+				fmt.Sprintf("user %s", userID),
+				err,
+			)
+		}
+		if errors.Is(err, types.ErrPermissionDenied) {
+			return nil, nil, errors.NewForbiddenError(
+				"User does not have permission to list sandboxes",
+				err,
+			)
+		}
+		
+		return nil, nil, errors.NewInternalError(
 			"sandbox_list_failed",
 			err,
 		)
@@ -394,8 +411,39 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 
 		sandboxes[i] = sandbox
 	}
+	
+	// Sort sandboxes by creation time (newest first)
+	sort.Slice(sandboxes, func(i, j int) bool {
+		createdAtI, okI := sandboxes[i]["created"].(time.Time)
+		createdAtJ, okJ := sandboxes[j]["created"].(time.Time)
+		
+		// If either isn't a time.Time, fall back to comparing by ID
+		if !okI || !okJ {
+			idI, _ := sandboxes[i]["id"].(string)
+			idJ, _ := sandboxes[j]["id"].(string)
+			return idI > idJ
+		}
+		
+		return createdAtI.After(createdAtJ)
+	})
 
-	return sandboxes, nil
+	// Calculate pagination metadata
+	totalItems := len(sandboxes)
+	startIndex := offset
+	endIndex := offset + len(sandboxes)
+	if endIndex > totalItems {
+		endIndex = totalItems
+	}
+
+	paginationMetadata := &types.PaginationMetadata{
+		Total:  totalItems,
+		Start:  startIndex,
+		End:    endIndex,
+		Limit:  limit,
+		Offset: offset,
+	}
+
+	return sandboxes, paginationMetadata, nil
 }
 
 // TerminateSandbox terminates a sandbox
