@@ -108,11 +108,6 @@ func TestCreateSandbox_Success(t *testing.T) {
 	
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	
-	sandboxMetadata := &types.SandboxMetadata{
-		ID:      "sb-12345",
-		UserID:  "user123",
-		Runtime: "python:3.10",
-	}
 	mockDB.On("CreateSandbox", ctx, mock.MatchedBy(func(s *types.SandboxMetadata) bool {
 		return s.ID == "sb-12345" && s.UserID == "user123" && s.Runtime == "python:3.10"
 	})).Return(nil)
