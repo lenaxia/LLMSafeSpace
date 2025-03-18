@@ -2,13 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/errors"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox/validation"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
@@ -121,7 +122,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			"error", err.Error(), 
 			"runtime", req.Runtime, 
 			"userID", req.UserID)
-		return nil, errors.NewValidationError(
+		return nil, apierrors.NewValidationError(
 			"Invalid sandbox creation request",
 			map[string]interface{}{"details": err.Error()},
 			err,
@@ -132,7 +133,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	user, err := s.dbService.GetUser(ctx, req.UserID)
 	if err != nil {
 		s.logger.Error("Error retrieving user", err, "userID", req.UserID)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"user_retrieval_failed",
 			err,
 		)
@@ -140,7 +141,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	
 	if user == nil {
 		s.logger.Error("User not found", nil, "userID", req.UserID)
-		return nil, errors.NewNotFoundError(
+		return nil, apierrors.NewNotFoundError(
 			"user",
 			req.UserID,
 			fmt.Errorf("user not found"),
@@ -153,14 +154,14 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	hasPermission, err := s.dbService.CheckPermission(req.UserID, "sandbox", "", "create")
 	if err != nil {
 		s.logger.Error("Failed to check permissions", err, "userID", req.UserID)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"permission_check_failed",
 			err,
 		)
 	}
 	if !hasPermission {
 		s.logger.Warn("Permission denied", "userID", req.UserID, "action", "create", "resource", "sandbox")
-		return nil, errors.NewForbiddenError(
+		return nil, apierrors.NewForbiddenError(
 			"User does not have permission to create sandboxes",
 			fmt.Errorf("permission denied for user %s", req.UserID),
 		)
@@ -209,7 +210,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			"runtime", req.Runtime, 
 			"userID", req.UserID,
 			"namespace", s.config.Namespace)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"sandbox_creation_failed",
 			err,
 		)
@@ -248,7 +249,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 				"sandboxID", createdSandbox.Name)
 		}
 		
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"metadata_creation_failed",
 			err,
 		)
@@ -327,7 +328,7 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 	})
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes", err, "sandboxID", sandboxID)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"Failed to retrieve sandbox",
 			err,
 		)
@@ -377,20 +378,20 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		
 		// Improved error handling with more specific error types
 		if errors.Is(err, types.ErrNotFound) {
-			return nil, errors.NewNotFoundError(
+			return nil, apierrors.NewNotFoundError(
 				"sandboxes",
 				fmt.Sprintf("user %s", userID),
 				err,
 			)
 		}
 		if errors.Is(err, types.ErrPermissionDenied) {
-			return nil, errors.NewForbiddenError(
+			return nil, apierrors.NewForbiddenError(
 				"User does not have permission to list sandboxes",
 				err,
 			)
 		}
 		
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"sandbox_list_failed",
 			err,
 		)
@@ -481,13 +482,13 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	sandbox, err := s.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
-			return errors.NewNotFoundError(
+			return apierrors.NewNotFoundError(
 				"sandbox",
 				sandboxID,
 				err,
 			)
 		}
-		return errors.NewInternalError(
+		return apierrors.NewInternalError(
 			"sandbox_retrieval_failed",
 			err,
 		)
@@ -497,7 +498,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	userID := getUserIDFromContext(ctx)
 	if userID == "" {
 		s.logger.Warn("No user ID found in context for sandbox termination", "sandboxID", sandboxID)
-		return errors.NewForbiddenError(
+		return apierrors.NewForbiddenError(
 			"User authentication required",
 			fmt.Errorf("no user ID in context"),
 		)
@@ -509,7 +510,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		s.logger.Error("Failed to check resource ownership", err, 
 			"userID", userID, 
 			"sandboxID", sandboxID)
-		return errors.NewInternalError(
+		return apierrors.NewInternalError(
 			"ownership_check_failed",
 			err,
 		)
@@ -522,7 +523,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 			s.logger.Error("Failed to check permissions", err, 
 				"userID", userID, 
 				"sandboxID", sandboxID)
-			return errors.NewInternalError(
+			return apierrors.NewInternalError(
 				"permission_check_failed",
 				err,
 			)
@@ -532,7 +533,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 				"userID", userID, 
 				"action", "delete", 
 				"resource", sandboxID)
-			return errors.NewForbiddenError(
+			return apierrors.NewForbiddenError(
 				"User does not have permission to terminate this sandbox",
 				fmt.Errorf("permission denied for user %s", userID),
 			)
@@ -543,7 +544,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
 		s.logger.Error("Failed to delete sandbox", err, "sandboxID", sandboxID)
-		return errors.NewInternalError(
+		return apierrors.NewInternalError(
 			"sandbox_termination_failed",
 			err,
 		)
@@ -554,7 +555,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	if err != nil {
 		s.logger.Error("Failed to delete sandbox metadata", err, "sandboxID", sandboxID)
 		// Continue even if metadata deletion fails, but return an error
-		return errors.NewInternalError(
+		return apierrors.NewInternalError(
 			"metadata_deletion_failed",
 			fmt.Errorf("sandbox terminated but metadata deletion failed: %w", err),
 		)
@@ -582,13 +583,13 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 	sandbox, err := s.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
-			return nil, errors.NewNotFoundError(
+			return nil, apierrors.NewNotFoundError(
 				"sandbox",
 				sandboxID,
 				err,
 			)
 		}
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"Failed to retrieve sandbox status",
 			err,
 		)
@@ -600,7 +601,7 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 // Execute executes code or a command in a sandbox
 func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*types.ExecutionResult, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"Execute method not yet implemented",
 		nil,
@@ -610,7 +611,7 @@ func (s *Service) Execute(ctx context.Context, req types.ExecuteRequest) (*types
 // ListFiles lists files in a sandbox
 func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]types.FileInfo, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"ListFiles method not yet implemented",
 		nil,
@@ -620,7 +621,7 @@ func (s *Service) ListFiles(ctx context.Context, sandboxID, path string) ([]type
 // DownloadFile downloads a file from a sandbox
 func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]byte, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"DownloadFile method not yet implemented",
 		nil,
@@ -630,7 +631,7 @@ func (s *Service) DownloadFile(ctx context.Context, sandboxID, path string) ([]b
 // UploadFile uploads a file to a sandbox
 func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, content []byte) (*types.FileInfo, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"UploadFile method not yet implemented",
 		nil,
@@ -640,7 +641,7 @@ func (s *Service) UploadFile(ctx context.Context, sandboxID, path string, conten
 // DeleteFile deletes a file in a sandbox
 func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error {
 	// This will be implemented in a future phase
-	return errors.NewNotImplementedError(
+	return apierrors.NewNotImplementedError(
 		"not_implemented",
 		"DeleteFile method not yet implemented",
 		nil,
@@ -650,7 +651,7 @@ func (s *Service) DeleteFile(ctx context.Context, sandboxID, path string) error 
 // InstallPackages installs packages in a sandbox
 func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackagesRequest) (*types.ExecutionResult, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"InstallPackages method not yet implemented",
 		nil,
@@ -660,7 +661,7 @@ func (s *Service) InstallPackages(ctx context.Context, req types.InstallPackages
 // CreateSession creates a WebSocket session for a sandbox
 func (s *Service) CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error) {
 	// This will be implemented in a future phase
-	return nil, errors.NewNotImplementedError(
+	return nil, apierrors.NewNotImplementedError(
 		"not_implemented",
 		"CreateSession method not yet implemented",
 		nil,
