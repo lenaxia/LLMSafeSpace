@@ -83,6 +83,10 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		s.metricsService.RecordRequest("CreateSandbox", "", 0, time.Since(startTime), 0)
 	}()
 
+	// Start required services
+	s.dbService.Start()
+	s.metricsService.Start()
+	
 	// Validate request
 	if err := validation.ValidateCreateSandboxRequest(req); err != nil {
 		return nil, errors.NewValidationError(
@@ -90,6 +94,42 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			map[string]interface{}{"details": err.Error()},
 			err,
 		)
+	}
+
+	// Verify user exists and has permissions
+	_, err := s.dbService.GetUserByID(ctx, req.UserID)
+	if err != nil {
+		return nil, errors.NewNotFoundError(
+			"user",
+			req.UserID,
+			err,
+		)
+	}
+
+	// Check if user has permission to create sandboxes
+	hasPermission, err := s.dbService.CheckPermission(req.UserID, "sandbox", "", "create")
+	if err != nil {
+		return nil, errors.NewInternalError(
+			"Failed to check permissions",
+			err,
+		)
+	}
+	if !hasPermission {
+		return nil, errors.NewForbiddenError(
+			"User does not have permission to create sandboxes",
+			nil,
+		)
+	}
+
+	// Verify API key if provided
+	if req.APIKey != "" {
+		userID, err := s.dbService.GetUserIDByAPIKey(ctx, req.APIKey)
+		if err != nil || userID != req.UserID {
+			return nil, errors.NewAuthenticationError(
+				"Invalid API key",
+				err,
+			)
+		}
 	}
 
 	// Set defaults if needed
@@ -158,6 +198,13 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		)
 	}
 
+	// Verify the sandbox was created
+	_, err = s.dbService.GetSandboxByID(ctx, createdSandbox.Name)
+	if err != nil {
+		// This is just a verification step, not critical for the flow
+		s.logger.Warn("Sandbox created but not found in database yet", "sandboxID", createdSandbox.Name)
+	}
+
 	// Store metadata in database
 	err = s.dbService.CreateSandboxMetadata(ctx, createdSandbox.Name, req.UserID, req.Runtime)
 	if err != nil {
@@ -180,6 +227,10 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 
 	// Record metrics
 	s.metricsService.RecordSandboxCreation(req.Runtime, warmPodUsed, req.UserID)
+
+	// Stop services when done
+	s.dbService.Stop()
+	s.metricsService.Stop()
 
 	return createdSandbox, nil
 }
