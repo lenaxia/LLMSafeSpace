@@ -33,11 +33,18 @@ echo "Using module name: ${MODULE_NAME}"
 
 # Generate deepcopy functions using go run
 echo "Using go run to execute deepcopy-gen directly"
+
+# Print current directory for debugging
+echo "Current directory: $(pwd)"
+echo "Looking for types in: ${SCRIPT_ROOT}/src/pkg/types"
+
+# Run deepcopy-gen with absolute paths
 go run k8s.io/code-generator/cmd/deepcopy-gen \
-  --bounding-dirs "${MODULE_NAME}/src/pkg/types" \
-  --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
+  --input-dirs "${MODULE_NAME}/src/pkg/types" \
+  --output-base "" \
+  --output-file-base "zz_generated.deepcopy" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  -v=1
+  -v=5
 
 RESULT=$?
 if [ $RESULT -eq 0 ]; then
@@ -70,8 +77,24 @@ if [ -f "$GENERATED_FILE" ]; then
     echo "..."
     echo "Generation successful!"
 else
-    echo "❌ Generated file not found at: $GENERATED_FILE"
-    echo "Generation failed. Please check the error messages above."
+    echo "❌ Generated file not found at expected location: $GENERATED_FILE"
+    echo "Searching for generated file in other locations..."
+    
+    # Search for the generated file in common locations
+    find "${SCRIPT_ROOT}" -name "zz_generated.deepcopy.go" -o -name "generated.deepcopy.go" | while read -r file; do
+        echo "Found generated file at: $file"
+        echo "File size: $(wc -l < "$file") lines"
+        echo "First few lines:"
+        head -n 5 "$file"
+        echo "..."
+    done
+    
+    # Also check the Go module cache and GOPATH
+    find "$(go env GOPATH)/pkg" -name "zz_generated.deepcopy.go" -o -name "generated.deepcopy.go" 2>/dev/null | while read -r file; do
+        echo "Found generated file in GOPATH at: $file"
+    done
+    
+    echo "Generation may have failed. Please check the error messages above."
     exit 1
 fi
 
