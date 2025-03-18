@@ -540,6 +540,8 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		}
 	}
 
+	// TODO: Make sandbox and metadata deletion atomic
+
 	// Delete the sandbox
 	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
