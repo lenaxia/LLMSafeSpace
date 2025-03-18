@@ -316,13 +316,13 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
 			return nil, errors.NewNotFoundError(
-				"sandbox_not_found",
-				fmt.Sprintf("Sandbox %s not found", sandboxID),
+				"sandbox",
+				sandboxID,
 				err,
 			)
 		}
 		return nil, errors.NewInternalError(
-			"sandbox_retrieval_failed",
+			"Failed to retrieve sandbox status",
 			err,
 		)
 	}
