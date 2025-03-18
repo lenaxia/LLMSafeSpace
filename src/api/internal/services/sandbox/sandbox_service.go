@@ -152,7 +152,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		s.logger.Warn("Permission denied", "userID", req.UserID, "action", "create", "resource", "sandbox")
 		return nil, errors.NewForbiddenError(
 			"User does not have permission to create sandboxes",
-			map[string]interface{}{"userID": req.UserID},
+			fmt.Errorf("permission denied for user %s", req.UserID),
 		)
 	}
 
@@ -276,9 +276,8 @@ func convertToSandboxCRD(req *types.CreateSandboxRequest, namespace string, warm
 			Timeout:       req.Timeout,
 			Resources:     req.Resources,
 			NetworkAccess: req.NetworkAccess,
-			Storage:       req.Storage,
-			FileSystem:    req.FileSystem,
-			SecurityContext: req.SecurityContext,
+			// Only include optional fields if they're defined in the request type
+			// These fields may not be present in the CreateSandboxRequest type
 		},
 	}
 
