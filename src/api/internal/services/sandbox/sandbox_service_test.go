@@ -53,7 +53,7 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockDB.On("Stop").Return(nil)
 	mockDB.On("GetUserByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
 	mockDB.On("GetSandboxByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
-	mockDB.On("GetUserIDByAPIKey", mock.Anything, mock.Anything).Return("", nil)
+	mockDB.On("GetUserIDByAPIKey", mock.Anything, mock.Anything).Return("user123", nil)
 	mockDB.On("CheckPermission", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
 	
 	mockMetrics.On("Start").Return(nil)
@@ -112,6 +112,14 @@ func TestCreateSandbox_Success(t *testing.T) {
 	}
 
 	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
+	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
 	
 	createdSandbox := &types.Sandbox{
@@ -127,6 +135,7 @@ func TestCreateSandbox_Success(t *testing.T) {
 	}
 	
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
+	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 
@@ -157,6 +166,14 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	}
 
 	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
+	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
 	
 	mockWarmPodInterface := kmocks.NewMockWarmPodInterface()
@@ -190,6 +207,7 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	}
 	
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
+	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", true, "user123").Return()
 
@@ -245,6 +263,12 @@ func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 	}
 
 	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(nil, errors.New("kubernetes error"))
 	mockLog.On("Error", "Failed to create sandbox in Kubernetes", mock.Anything, "runtime", "python:3.10", "userID", "user123").Return()
@@ -274,6 +298,12 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 	}
 
 	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
 	
 	createdSandbox := &types.Sandbox{
@@ -289,6 +319,7 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 	}
 	
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
+	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{}, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(errors.New("database error"))
 	mockLog.On("Error", "Failed to store sandbox metadata", mock.Anything, "sandboxID", "sb-12345", "userID", "user123").Return()
 	
@@ -615,6 +646,14 @@ func TestSandboxLifecycle(t *testing.T) {
 		UserID:        "user123",
 	}
 
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
+	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
 	
 	createdSandbox := &types.Sandbox{
@@ -630,6 +669,7 @@ func TestSandboxLifecycle(t *testing.T) {
 	}
 	
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
+	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 
