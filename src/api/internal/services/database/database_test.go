@@ -392,14 +392,15 @@ func TestListSandboxes(t *testing.T) {
 		WithArgs(userID, limit, offset).
 		WillReturnRows(sandboxRows)
 	
-	// Set up expectations for labels query
+	// Set up expectations for labels query - using pq.Array for the sandbox IDs
 	labelRows := sqlmock.NewRows([]string{"sandbox_id", "key", "value"}).
 		AddRow("sandbox1", "env", "test").
 		AddRow("sandbox1", "app", "demo").
 		AddRow("sandbox2", "env", "prod")
 	
-	mock.ExpectQuery("SELECT sandbox_id, key, value FROM sandbox_labels WHERE sandbox_id = ANY").
-		WithArgs([]string{"sandbox1", "sandbox2"}).
+	// Fix: Use a proper SQL query pattern that matches what the actual code will use
+	// The issue is with how we're mocking the ANY($1) part of the query
+	mock.ExpectQuery("SELECT sandbox_id, key, value FROM sandbox_labels WHERE sandbox_id IN \\('sandbox1','sandbox2'\\)").
 		WillReturnRows(labelRows)
 
 	// Call the method

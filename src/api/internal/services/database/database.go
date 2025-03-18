@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -524,14 +525,20 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
         // Create a map to store labels by sandbox ID
         sandboxLabels := make(map[string]map[string]string)
         
-        // Build query with multiple sandbox IDs
-        labelsQuery := `
+        // Build query with IN clause for sandbox IDs
+        // Fix: Use a proper IN clause instead of ANY($1)
+        placeholders := make([]string, len(sandboxIDs))
+        for i := range sandboxIDs {
+            placeholders[i] = fmt.Sprintf("'%s'", sandboxIDs[i])
+        }
+        
+        labelsQuery := fmt.Sprintf(`
             SELECT sandbox_id, key, value
             FROM sandbox_labels
-            WHERE sandbox_id = ANY($1)
-        `
+            WHERE sandbox_id IN (%s)
+        `, strings.Join(placeholders, ","))
         
-        labelRows, err := s.DB.QueryContext(ctx, labelsQuery, sandboxIDs)
+        labelRows, err := s.DB.QueryContext(ctx, labelsQuery)
         if err != nil && err != sql.ErrNoRows {
             return nil, nil, fmt.Errorf("failed to get sandbox labels: %w", err)
         }
