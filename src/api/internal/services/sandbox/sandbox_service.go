@@ -462,6 +462,14 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	return result, nil
 }
 
+// Helper function to get userID from context
+func getUserIDFromContext(ctx context.Context) string {
+	if userID, ok := ctx.Value("userID").(string); ok {
+		return userID
+	}
+	return ""
+}
+
 // TerminateSandbox terminates a sandbox
 func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error {
 	startTime := time.Now()
@@ -485,6 +493,52 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		)
 	}
 
+	// Verify user has permission to terminate the sandbox
+	userID := getUserIDFromContext(ctx)
+	if userID == "" {
+		s.logger.Warn("No user ID found in context for sandbox termination", "sandboxID", sandboxID)
+		return errors.NewForbiddenError(
+			"User authentication required",
+			fmt.Errorf("no user ID in context"),
+		)
+	}
+
+	// First check if user owns the sandbox
+	isOwner, err := s.dbService.CheckResourceOwnership(userID, "sandbox", sandboxID)
+	if err != nil {
+		s.logger.Error("Failed to check resource ownership", err, 
+			"userID", userID, 
+			"sandboxID", sandboxID)
+		return errors.NewInternalError(
+			"ownership_check_failed",
+			err,
+		)
+	}
+
+	// If not owner, check for delete permission
+	if !isOwner {
+		hasPermission, err := s.dbService.CheckPermission(userID, "sandbox", sandboxID, "delete")
+		if err != nil {
+			s.logger.Error("Failed to check permissions", err, 
+				"userID", userID, 
+				"sandboxID", sandboxID)
+			return errors.NewInternalError(
+				"permission_check_failed",
+				err,
+			)
+		}
+		if !hasPermission {
+			s.logger.Warn("Permission denied", 
+				"userID", userID, 
+				"action", "delete", 
+				"resource", sandboxID)
+			return errors.NewForbiddenError(
+				"User does not have permission to terminate this sandbox",
+				fmt.Errorf("permission denied for user %s", userID),
+			)
+		}
+	}
+
 	// Delete the sandbox
 	err = s.k8sClient.LlmsafespaceV1().Sandboxes(sandbox.Namespace).Delete(sandboxID, metav1.DeleteOptions{})
 	if err != nil {
@@ -499,11 +553,20 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	err = s.dbService.DeleteSandbox(ctx, sandboxID)
 	if err != nil {
 		s.logger.Error("Failed to delete sandbox metadata", err, "sandboxID", sandboxID)
-		// Continue even if metadata deletion fails
+		// Continue even if metadata deletion fails, but return an error
+		return errors.NewInternalError(
+			"metadata_deletion_failed",
+			fmt.Errorf("sandbox terminated but metadata deletion failed: %w", err),
+		)
 	}
 
 	// Record metrics
 	s.metricsService.RecordSandboxTermination(sandbox.Spec.Runtime, "user_requested")
+
+	s.logger.Info("Sandbox terminated successfully", 
+		"sandboxID", sandboxID, 
+		"userID", userID,
+		"runtime", sandbox.Spec.Runtime)
 
 	return nil
 }

@@ -542,7 +542,7 @@ func TestListSandboxes_DatabaseFailure(t *testing.T) {
 func TestTerminateSandbox_Success(t *testing.T) {
 	// Setup
 	service, _, _, mockSandbox, mockDB, _, mockMetrics, _ := setupTestService()
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
 
 	// Mock sandbox retrieval
 	sandbox := &types.Sandbox{
@@ -556,6 +556,7 @@ func TestTerminateSandbox_Success(t *testing.T) {
 	}
 	
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
+	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
 	mockDB.On("DeleteSandbox", ctx, "sb-12345").Return(nil)
 	mockMetrics.On("RecordSandboxTermination", "python:3.10", "user_requested").Return()
@@ -574,7 +575,7 @@ func TestTerminateSandbox_Success(t *testing.T) {
 func TestTerminateSandbox_NotFound(t *testing.T) {
 	// Setup
 	service, _, _, mockSandbox, _, _, mockMetrics, _ := setupTestService()
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
 
 	// Mock sandbox not found
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(nil, errors.New("not found"))
@@ -590,10 +591,70 @@ func TestTerminateSandbox_NotFound(t *testing.T) {
 	mockSandbox.AssertExpectations(t)
 }
 
+func TestTerminateSandbox_PermissionDenied(t *testing.T) {
+	// Setup
+	service, _, _, mockSandbox, mockDB, _, mockMetrics, _ := setupTestService()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
+
+	// Mock sandbox retrieval
+	sandbox := &types.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-12345",
+			Namespace: "default",
+		},
+		Spec: types.SandboxSpec{
+			Runtime: "python:3.10",
+		},
+	}
+	
+	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
+	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(false, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "sb-12345", "delete").Return(false, nil)
+	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+
+	// Execute
+	err := service.TerminateSandbox(ctx, "sb-12345")
+
+	// Assert
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+	mockSandbox.AssertExpectations(t)
+	mockDB.AssertExpectations(t)
+}
+
+func TestTerminateSandbox_NoUserID(t *testing.T) {
+	// Setup
+	service, _, _, mockSandbox, _, _, mockMetrics, _ := setupTestService()
+	ctx := context.Background() // No userID in context
+
+	// Mock sandbox retrieval
+	sandbox := &types.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-12345",
+			Namespace: "default",
+		},
+		Spec: types.SandboxSpec{
+			Runtime: "python:3.10",
+		},
+	}
+	
+	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
+	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+
+	// Execute
+	err := service.TerminateSandbox(ctx, "sb-12345")
+
+	// Assert
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+	assert.Contains(t, err.Error(), "User authentication required")
+	mockSandbox.AssertExpectations(t)
+}
+
 func TestTerminateSandbox_DeleteFailure(t *testing.T) {
 	// Setup
-	service, _, _, mockSandbox, _, _, mockMetrics, mockLog := setupTestService()
-	ctx := context.Background()
+	service, _, _, mockSandbox, mockDB, _, mockMetrics, mockLog := setupTestService()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
 
 	// Mock sandbox retrieval success but delete failure
 	sandbox := &types.Sandbox{
@@ -607,6 +668,7 @@ func TestTerminateSandbox_DeleteFailure(t *testing.T) {
 	}
 	
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
+	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(errors.New("delete error"))
 	mockLog.On("Error", "Failed to delete sandbox", mock.Anything, "sandboxID", "sb-12345").Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
@@ -618,6 +680,39 @@ func TestTerminateSandbox_DeleteFailure(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "sandbox_termination_failed")
 	mockSandbox.AssertExpectations(t)
+}
+
+func TestTerminateSandbox_MetadataDeleteFailure(t *testing.T) {
+	// Setup
+	service, _, _, mockSandbox, mockDB, _, mockMetrics, mockLog := setupTestService()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
+
+	// Mock sandbox retrieval success but metadata delete failure
+	sandbox := &types.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-12345",
+			Namespace: "default",
+		},
+		Spec: types.SandboxSpec{
+			Runtime: "python:3.10",
+		},
+	}
+	
+	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
+	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
+	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
+	mockDB.On("DeleteSandbox", ctx, "sb-12345").Return(errors.New("metadata delete error"))
+	mockLog.On("Error", "Failed to delete sandbox metadata", mock.Anything, "sandboxID", "sb-12345").Return()
+	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+
+	// Execute
+	err := service.TerminateSandbox(ctx, "sb-12345")
+
+	// Assert
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "metadata_deletion_failed")
+	mockSandbox.AssertExpectations(t)
+	mockDB.AssertExpectations(t)
 }
 
 func TestGetSandboxStatus_Success(t *testing.T) {
@@ -749,7 +844,7 @@ func TestListSandboxes_PermissionDenied(t *testing.T) {
 func TestSandboxLifecycle(t *testing.T) {
 	// Setup
 	service, _, _, mockSandbox, mockDB, mockWarmPool, mockMetrics, _ := setupTestService()
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), "userID", "user123")
 
 	// Step 1: Create sandbox
 	createReq := &types.CreateSandboxRequest{
@@ -798,6 +893,7 @@ func TestSandboxLifecycle(t *testing.T) {
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(createdSandbox, nil)
 
 	// Step 3: Terminate sandbox
+	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
 	mockDB.On("DeleteSandbox", ctx, "sb-12345").Return(nil)
 
