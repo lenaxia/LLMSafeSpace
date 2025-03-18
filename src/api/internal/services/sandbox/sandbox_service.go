@@ -135,7 +135,6 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	// Let's always try to get a warm pod for now to make the test pass
 	// In a real implementation, you'd want to check req.UseWarmPool
 	//if req.UseWarmPool {
-	var err error
 	warmPodID, err := s.warmPoolService.GetWarmSandbox(ctx, req.Runtime)
 	if err == nil && warmPodID != "" {
 		// Get the warm pod details
