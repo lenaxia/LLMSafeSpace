@@ -40,9 +40,8 @@ echo "Looking for types in: ${SCRIPT_ROOT}/src/pkg/types"
 
 # Run deepcopy-gen with absolute paths
 go run k8s.io/code-generator/cmd/deepcopy-gen \
-  --input-dirs "${MODULE_NAME}/src/pkg/types" \
-  --output-base "" \
-  --output-file-base "zz_generated.deepcopy" \
+  --bounding-dirs "${MODULE_NAME}" \
+  --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
   -v=5
 
@@ -89,13 +88,22 @@ else
         echo "..."
     done
     
-    # Also check the Go module cache and GOPATH
-    find "$(go env GOPATH)/pkg" -name "zz_generated.deepcopy.go" -o -name "generated.deepcopy.go" 2>/dev/null | while read -r file; do
-        echo "Found generated file in GOPATH at: $file"
-    done
+    # Try running a simpler command directly
+    echo "Trying a simpler direct command..."
+    cd "${SCRIPT_ROOT}"
+    go run k8s.io/code-generator/cmd/deepcopy-gen \
+      --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
+      --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
+      -v=5
     
-    echo "Generation may have failed. Please check the error messages above."
-    exit 1
+    if [ -f "$GENERATED_FILE" ]; then
+        echo "✅ Generated file exists after direct command at: $GENERATED_FILE"
+        echo "File size: $(wc -l < "$GENERATED_FILE") lines"
+    else
+        echo "❌ Still no generated file."
+        echo "Generation failed. Please check the error messages above."
+        exit 1
+    fi
 fi
 
 echo "=== Code generation process completed at $(date) ==="
