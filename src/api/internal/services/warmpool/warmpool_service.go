@@ -393,3 +393,29 @@ func validateUpdateWarmPoolRequest(req types.UpdateWarmPoolRequest) error {
 	}
 	return nil
 }
+
+// New creates a new warm pool service
+func New(
+	logger pkginterfaces.LoggerInterface,
+	k8sClient pkginterfaces.KubernetesClient,
+	dbClient interfaces.DatabaseService,
+	metricsService interfaces.MetricsService,
+) (interfaces.WarmPoolService, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger cannot be nil")
+	}
+	if k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client cannot be nil")
+	}
+	if dbClient == nil {
+		return nil, fmt.Errorf("database client cannot be nil")
+	}
+	
+	// Create a service without cache for now
+	// In a real implementation, we would inject the cache service
+	return &service{
+		logger:      logger.With("component", "warmpool-service"),
+		k8sClient:   k8sClient,
+		dbClient:    dbClient,
+	}, nil
+}
