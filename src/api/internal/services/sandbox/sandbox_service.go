@@ -275,14 +275,13 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	if err != nil {
 		if _, ok := err.(*types.SandboxNotFoundError); ok {
 			return errors.NewNotFoundError(
-				"sandbox_not_found",
-				fmt.Sprintf("Sandbox %s not found", sandboxID),
+				"sandbox",
+				sandboxID,
 				err,
 			)
 		}
 		return errors.NewInternalError(
 			"sandbox_retrieval_failed",
-			"Failed to retrieve sandbox for termination",
 			err,
 		)
 	}
@@ -293,7 +292,6 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 		s.logger.Error("Failed to delete sandbox", err, "sandboxID", sandboxID)
 		return errors.NewInternalError(
 			"sandbox_termination_failed",
-			"Failed to terminate sandbox",
 			err,
 		)
 	}
