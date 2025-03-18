@@ -121,16 +121,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		)
 	}
 
-	// Verify API key if provided
-	if req.APIKey != "" {
-		userID, err := s.dbService.GetUserIDByAPIKey(ctx, req.APIKey)
-		if err != nil || userID != req.UserID {
-			return nil, errors.NewAuthenticationError(
-				"Invalid API key",
-				err,
-			)
-		}
-	}
+	// API key validation is handled by the auth middleware
 
 	// Set defaults if needed
 	if req.Timeout <= 0 {
