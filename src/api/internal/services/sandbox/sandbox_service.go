@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
@@ -597,7 +598,181 @@ func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*type
 		)
 	}
 
-	return &sandbox.Status, nil
+	// Extract detailed status information
+	status := &types.SandboxStatus{
+		Phase:      sandbox.Status.Phase,
+		StartTime:  sandbox.Status.StartTime,
+		Resources:  sandbox.Status.Resources,
+		Conditions: sandbox.Status.Conditions,
+		PodName:    sandbox.Status.PodName,
+		WarmPodRef: sandbox.Status.WarmPodRef,
+	}
+
+	// Extract additional status information from the pod
+	if sandbox.Status.PodName != "" {
+		pod, err := s.k8sClient.CoreV1().Pods(sandbox.Namespace).Get(ctx, sandbox.Status.PodName, metav1.GetOptions{})
+		if err != nil {
+			s.logger.Warn("Failed to get pod details", 
+				"error", err, 
+				"podName", sandbox.Status.PodName,
+				"namespace", sandbox.Namespace)
+		} else {
+			status.PodStatus = string(pod.Status.Phase)
+			status.PodIP = pod.Status.PodIP
+			status.PodStartTime = pod.Status.StartTime
+			status.NodeName = pod.Spec.NodeName
+			
+			// Extract container statuses
+			status.ContainerStatuses = make([]types.ContainerStatus, 0, len(pod.Status.ContainerStatuses))
+			for _, containerStatus := range pod.Status.ContainerStatuses {
+				cs := types.ContainerStatus{
+					Name:         containerStatus.Name,
+					Ready:        containerStatus.Ready,
+					RestartCount: containerStatus.RestartCount,
+					State:        convertContainerState(containerStatus.State),
+				}
+				
+				// Add detailed state information
+				if containerStatus.State.Running != nil {
+					cs.StartedAt = &containerStatus.State.Running.StartedAt
+				} else if containerStatus.State.Terminated != nil {
+					cs.StartedAt = &containerStatus.State.Terminated.StartedAt
+					cs.FinishedAt = &containerStatus.State.Terminated.FinishedAt
+					cs.ExitCode = containerStatus.State.Terminated.ExitCode
+					cs.Reason = containerStatus.State.Terminated.Reason
+					cs.Message = containerStatus.State.Terminated.Message
+				} else if containerStatus.State.Waiting != nil {
+					cs.Reason = containerStatus.State.Waiting.Reason
+					cs.Message = containerStatus.State.Waiting.Message
+				}
+				
+				status.ContainerStatuses = append(status.ContainerStatuses, cs)
+			}
+			
+			// Extract resource usage if available
+			if status.Resources == nil {
+				status.Resources = &types.ResourceStatus{}
+			}
+			
+			// If we don't have resource usage from the CRD, try to get it from metrics API
+			if status.Resources.CPUUsage == "" || status.Resources.MemoryUsage == "" {
+				// This would typically use the metrics API, but for now we'll just log
+				s.logger.Debug("Resource usage not available from CRD, metrics API integration needed", 
+					"sandboxID", sandboxID, 
+					"podName", sandbox.Status.PodName)
+				
+				// In a real implementation, we would call the metrics API here
+				// For example:
+				// metrics, err := s.k8sClient.MetricsV1beta1().PodMetricses(sandbox.Namespace).Get(ctx, sandbox.Status.PodName, metav1.GetOptions{})
+				// if err == nil {
+				//     // Extract CPU and memory usage
+				//     for _, container := range metrics.Containers {
+				//         status.Resources.CPUUsage = container.Usage.Cpu().String()
+				//         status.Resources.MemoryUsage = container.Usage.Memory().String()
+				//         break // Just use the first container for now
+				//     }
+				// }
+			}
+			
+			// Add network information
+			status.NetworkInfo = &types.NetworkInfo{
+				PodIP:     pod.Status.PodIP,
+				HostIP:    pod.Status.HostIP,
+				Ingress:   sandbox.Spec.NetworkAccess != nil && sandbox.Spec.NetworkAccess.Ingress,
+				EgressDomains: []string{},
+			}
+			
+			// Extract egress domains
+			if sandbox.Spec.NetworkAccess != nil && sandbox.Spec.NetworkAccess.Egress != nil {
+				for _, rule := range sandbox.Spec.NetworkAccess.Egress {
+					status.NetworkInfo.EgressDomains = append(status.NetworkInfo.EgressDomains, rule.Domain)
+				}
+			}
+		}
+	}
+
+	// Add events related to this sandbox
+	events, err := s.k8sClient.CoreV1().Events(sandbox.Namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s", sandbox.Name),
+	})
+	if err != nil {
+		s.logger.Warn("Failed to get events for sandbox", 
+			"error", err, 
+			"sandboxID", sandboxID,
+			"namespace", sandbox.Namespace)
+	} else {
+		status.Events = make([]types.Event, 0, len(events.Items))
+		for _, event := range events.Items {
+			status.Events = append(status.Events, types.Event{
+				Type:    event.Type,
+				Reason:  event.Reason,
+				Message: event.Message,
+				Count:   event.Count,
+				Time:    &event.LastTimestamp,
+			})
+		}
+		
+		// Sort events by time (newest first)
+		sort.Slice(status.Events, func(i, j int) bool {
+			if status.Events[i].Time == nil || status.Events[j].Time == nil {
+				return false
+			}
+			return status.Events[i].Time.After(*status.Events[j].Time)
+		})
+	}
+
+	// Add pod events if we have a pod name
+	if sandbox.Status.PodName != "" {
+		podEvents, err := s.k8sClient.CoreV1().Events(sandbox.Namespace).List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", sandbox.Status.PodName),
+		})
+		if err != nil {
+			s.logger.Warn("Failed to get events for pod", 
+				"error", err, 
+				"podName", sandbox.Status.PodName,
+				"namespace", sandbox.Namespace)
+		} else {
+			// If we don't have events yet, initialize the slice
+			if status.Events == nil {
+				status.Events = make([]types.Event, 0, len(podEvents.Items))
+			}
+			
+			for _, event := range podEvents.Items {
+				status.Events = append(status.Events, types.Event{
+					Type:    event.Type,
+					Reason:  event.Reason,
+					Message: event.Message,
+					Count:   event.Count,
+					Time:    &event.LastTimestamp,
+					Source:  "Pod",
+				})
+			}
+			
+			// Re-sort events by time (newest first)
+			sort.Slice(status.Events, func(i, j int) bool {
+				if status.Events[i].Time == nil || status.Events[j].Time == nil {
+					return false
+				}
+				return status.Events[i].Time.After(*status.Events[j].Time)
+			})
+		}
+	}
+
+	return status, nil
+}
+
+// convertContainerState converts Kubernetes container state to our API representation
+func convertContainerState(state corev1.ContainerState) types.ContainerStateValue {
+	switch {
+	case state.Running != nil:
+		return types.ContainerStateRunning
+	case state.Terminated != nil:
+		return types.ContainerStateTerminated
+	case state.Waiting != nil:
+		return types.ContainerStateWaiting
+	default:
+		return types.ContainerStateUnknown
+	}
 }
 
 // Execute executes code or a command in a sandbox
