@@ -240,22 +240,12 @@ func (in *WarmPoolSpec) DeepCopyInto(out *WarmPoolSpec) {
 		*out = new(ProfileReference)
 		**out = **in
 	}
-	if in.PreloadPackages != nil {
-		in, out := &in.PreloadPackages, &out.PreloadPackages
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.PreloadScripts != nil {
 		in, out := &in.PreloadScripts, &out.PreloadScripts
 		*out = make([]PreloadScript, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
-	}
-	if in.AutoScaling != nil {
-		in, out := &in.AutoScaling, &out.AutoScaling
-		*out = new(AutoScalingConfig)
-		**out = **in
 	}
 }
 
@@ -448,16 +438,6 @@ func (in *RuntimeEnvironmentSpec) DeepCopyInto(out *RuntimeEnvironmentSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.SecurityFeatures != nil {
-		in, out := &in.SecurityFeatures, &out.SecurityFeatures
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.ResourceRequirements != nil {
-		in, out := &in.ResourceRequirements, &out.ResourceRequirements
-		*out = new(RuntimeResourceRequirements)
-		**out = **in
-	}
 }
 
 // DeepCopyInto copies all properties of RuntimeEnvironmentStatus into another object of the same type
@@ -544,13 +524,13 @@ func (in *SandboxProfileSpec) DeepCopyInto(out *SandboxProfileSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.ResourceDefaults != nil {
-		in, out := &in.ResourceDefaults, &out.ResourceDefaults
-		*out = new(ResourceDefaults)
+	if in.Resources != nil {
+		in, out := &in.Resources, &out.Resources
+		*out = new(ResourceRequirements)
 		**out = **in
 	}
-	if in.FilesystemConfig != nil {
-		in, out := &in.FilesystemConfig, &out.FilesystemConfig
+	if in.Filesystem != nil {
+		in, out := &in.Filesystem, &out.Filesystem
 		*out = new(ProfileFilesystemConfig)
 		(*in).DeepCopyInto(*out)
 	}
