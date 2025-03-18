@@ -17,6 +17,29 @@ var (
 	ErrConflict         = errors.New("resource conflict")
 )
 
+// User represents a user in the system
+type User struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Active    bool      `json:"active"`
+	Role      string    `json:"role"`
+}
+
+// SandboxMetadata represents metadata about a sandbox
+type SandboxMetadata struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"userId"`
+	Runtime   string    `json:"runtime"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Status    string    `json:"status"`
+	Name      string    `json:"name,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
 // WSConnection defines the interface for a WebSocket connection
 type WSConnection interface {
 	ReadMessage() (messageType int, p []byte, err error)

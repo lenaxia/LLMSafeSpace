@@ -39,14 +39,25 @@ type AuthService interface {
 
 // DatabaseService defines the interface for database services
 type DatabaseService interface {
-	GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error)
-	GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error)
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, *types.PaginationMetadata, error)
-	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+	// User operations
+	GetUser(ctx context.Context, userID string) (*types.User, error)
+	CreateUser(ctx context.Context, user *types.User) error
+	UpdateUser(ctx context.Context, userID string, updates map[string]interface{}) error
+	DeleteUser(ctx context.Context, userID string) error
+	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
+
+	// Sandbox operations
+	GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error)
+	CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error
+	UpdateSandbox(ctx context.Context, sandboxID string, updates map[string]interface{}) error
+	DeleteSandbox(ctx context.Context, sandboxID string) error
+	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error)
+
+	// Permission operations
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
-	GetUserIDByAPIKey(ctx context.Context, apiKey string) (string, error)
-	CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error
-	GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error)
+	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+
+	// Service lifecycle
 	Start() error
 	Stop() error
 }
