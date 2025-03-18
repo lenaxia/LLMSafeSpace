@@ -34,9 +34,10 @@ echo "Using module name: ${MODULE_NAME}"
 # Generate deepcopy functions using go run
 echo "Using go run to execute deepcopy-gen directly"
 go run k8s.io/code-generator/cmd/deepcopy-gen \
-  --input-dirs "${MODULE_NAME}/pkg/types" \
-  --output-file-base zz_generated.deepcopy \
+  --bounding-dirs "${MODULE_NAME}/pkg/types" \
+  --output-file "${SCRIPT_ROOT}/pkg/types/zz_generated.deepcopy.go" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
+  -O zz_generated.deepcopy \
   -v=1
 
 RESULT=$?
