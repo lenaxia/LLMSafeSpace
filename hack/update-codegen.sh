@@ -34,10 +34,10 @@ echo "Using module name: ${MODULE_NAME}"
 # Generate deepcopy functions using go run
 echo "Using go run to execute deepcopy-gen directly"
 go run k8s.io/code-generator/cmd/deepcopy-gen \
-  --input-dirs "${MODULE_NAME}/src/pkg/types" \
-  --output-file-base zz_generated.deepcopy \
+  --bounding-dirs "${MODULE_NAME}/src/pkg/types" \
+  --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  --v=1
+  -v=1
 
 RESULT=$?
 if [ $RESULT -eq 0 ]; then
@@ -66,9 +66,13 @@ if [ -f "$GENERATED_FILE" ]; then
     echo "✅ Generated file exists at: $GENERATED_FILE"
     echo "File size: $(wc -l < "$GENERATED_FILE") lines"
     echo "First few lines:"
-    head -n 5 "$GENERATED_FILE"
+    head -n 10 "$GENERATED_FILE"
+    echo "..."
+    echo "Generation successful!"
 else
     echo "❌ Generated file not found at: $GENERATED_FILE"
+    echo "Generation failed. Please check the error messages above."
+    exit 1
 fi
 
 echo "=== Code generation process completed at $(date) ==="
