@@ -119,79 +119,79 @@ func TestCreateSandbox_Success(t *testing.T) {
 	mockMetrics.AssertExpectations(t)
 }
 
-//func TestCreateSandbox_WithWarmPod(t *testing.T) {
-//	// Setup
-//	service, _, mockLLMSafespaceV1, mockSandbox, mockDB, mockWarmPool, mockMetrics, _ := setupTestService()
-//	ctx := context.Background()
-//
-//	req := &types.CreateSandboxRequest{
-//		Runtime:       "python:3.10",
-//		SecurityLevel: "standard",
-//		Timeout:       300,
-//		UserID:        "user123",
-//		UseWarmPool:   true,
-//	}
-//
-//	// Mock expectations
-//	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
-//	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
-//	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
-//	mockDB.On("Start").Return(nil)
-//	mockDB.On("Stop").Return(nil)
-//	mockMetrics.On("Start").Return(nil)
-//	mockMetrics.On("Stop").Return(nil)
-//	
-//	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
-//	
-//	mockWarmPodInterface := kmocks.NewMockWarmPodInterface()
-//	mockLLMSafespaceV1.On("WarmPods", "default").Return(mockWarmPodInterface)
-//	
-//	warmPod := &types.WarmPod{
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      "warm-pod-123",
-//			Namespace: "default",
-//		},
-//	}
-//	
-//	mockWarmPodInterface.On("Get", "warm-pod-123", mock.Anything).Return(warmPod, nil)
-//	
-//	createdSandbox := &types.Sandbox{
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      "sb-12345",
-//			Namespace: "default",
-//		},
-//		Spec: types.SandboxSpec{
-//			Runtime:       "python:3.10",
-//			SecurityLevel: "standard",
-//			Timeout:       300,
-//		},
-//		Status: types.SandboxStatus{
-//			WarmPodRef: &types.WarmPodReference{
-//				Name:      "warm-pod-123",
-//				Namespace: "default",
-//			},
-//		},
-//	}
-//	
-//	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
-//	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
-//	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
-//	mockMetrics.On("RecordSandboxCreation", "python:3.10", true, "user123").Return()
-//
-//	// Execute
-//	result, err := service.CreateSandbox(ctx, req)
-//
-//	// Assert
-//	assert.NoError(t, err)
-//	assert.NotNil(t, result)
-//	assert.Equal(t, "sb-12345", result.Name)
-//	assert.Equal(t, "warm-pod-123", result.Status.WarmPodRef.Name)
-//	mockSandbox.AssertExpectations(t)
-//	mockDB.AssertExpectations(t)
-//	mockWarmPool.AssertExpectations(t)
-//	mockMetrics.AssertExpectations(t)
-//}
-//
+func TestCreateSandbox_WithWarmPod(t *testing.T) {
+	// Setup
+	service, _, mockLLMSafespaceV1, mockSandbox, mockDB, mockWarmPool, mockMetrics, _ := setupTestService()
+	ctx := context.Background()
+
+	req := &types.CreateSandboxRequest{
+		Runtime:       "python:3.10",
+		SecurityLevel: "standard",
+		Timeout:       300,
+		UserID:        "user123",
+		UseWarmPool:   true,
+	}
+
+	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
+	
+	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
+	
+	mockWarmPodInterface := kmocks.NewMockWarmPodInterface()
+	mockLLMSafespaceV1.On("WarmPods", "default").Return(mockWarmPodInterface)
+	
+	warmPod := &types.WarmPod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "warm-pod-123",
+			Namespace: "default",
+		},
+	}
+	
+	mockWarmPodInterface.On("Get", "warm-pod-123", mock.Anything).Return(warmPod, nil)
+	
+	createdSandbox := &types.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-12345",
+			Namespace: "default",
+		},
+		Spec: types.SandboxSpec{
+			Runtime:       "python:3.10",
+			SecurityLevel: "standard",
+			Timeout:       300,
+		},
+		Status: types.SandboxStatus{
+			WarmPodRef: &types.WarmPodReference{
+				Name:      "warm-pod-123",
+				Namespace: "default",
+			},
+		},
+	}
+	
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
+	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
+	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
+	mockMetrics.On("RecordSandboxCreation", "python:3.10", true, "user123").Return()
+
+	// Execute
+	result, err := service.CreateSandbox(ctx, req)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "sb-12345", result.Name)
+	assert.Equal(t, "warm-pod-123", result.Status.WarmPodRef.Name)
+	mockSandbox.AssertExpectations(t)
+	mockDB.AssertExpectations(t)
+	mockWarmPool.AssertExpectations(t)
+	mockMetrics.AssertExpectations(t)
+}
+
 //func TestCreateSandbox_ValidationFailure(t *testing.T) {
 //	// Setup
 //	service, _, _, mockSandbox, mockDB, _, _, _ := setupTestService()
