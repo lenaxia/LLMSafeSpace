@@ -222,41 +222,41 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
 }
 
-//func TestCreateSandbox_KubernetesFailure(t *testing.T) {
-//	// Setup
-//	service, _, _, mockSandbox, mockDB, mockWarmPool, _, mockLog := setupTestService()
-//	ctx := context.Background()
-//
-//	req := &types.CreateSandboxRequest{
-//		Runtime:       "python:3.10",
-//		SecurityLevel: "standard",
-//		Timeout:       300,
-//		UserID:        "user123",
-//	}
-//
-//	// Mock expectations
-//	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
-//	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
-//	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
-//	mockDB.On("Start").Return(nil)
-//	mockDB.On("Stop").Return(nil)
-//	
-//	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
-//	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(nil, errors.New("kubernetes error"))
-//	mockLog.On("Error", "Failed to create sandbox in Kubernetes", mock.Anything, "runtime", "python:3.10", "userID", "user123").Return()
-//
-//	// Execute
-//	result, err := service.CreateSandbox(ctx, req)
-//
-//	// Assert
-//	assert.Error(t, err)
-//	assert.Nil(t, result)
-//	assert.Contains(t, err.Error(), "Failed to create sandbox in Kubernetes")
-//	
-//	// Ensure no DB calls were made
-//	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
-//}
-//
+func TestCreateSandbox_KubernetesFailure(t *testing.T) {
+	// Setup
+	service, _, _, mockSandbox, mockDB, mockWarmPool, _, mockLog := setupTestService()
+	ctx := context.Background()
+
+	req := &types.CreateSandboxRequest{
+		Runtime:       "python:3.10",
+		SecurityLevel: "standard",
+		Timeout:       300,
+		UserID:        "user123",
+	}
+
+	// Mock expectations
+	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
+	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	
+	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
+	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(nil, errors.New("kubernetes error"))
+	mockLog.On("Error", "Failed to create sandbox in Kubernetes", mock.Anything, "runtime", "python:3.10", "userID", "user123").Return()
+
+	// Execute
+	result, err := service.CreateSandbox(ctx, req)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "Failed to create sandbox in Kubernetes")
+	
+	// Ensure no DB calls were made
+	mockDB.AssertNotCalled(t, "CreateSandboxMetadata")
+}
+
 //func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 //	// Setup
 //	service, _, _, mockSandbox, mockDB, mockWarmPool, _, mockLog := setupTestService()
