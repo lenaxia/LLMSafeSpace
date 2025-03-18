@@ -207,7 +207,9 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 
 	// Mock expectations for service start/stop calls
 	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
 	
 	// Execute
 	result, err := service.CreateSandbox(ctx, req)
