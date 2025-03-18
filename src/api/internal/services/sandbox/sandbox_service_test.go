@@ -35,6 +35,7 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockLog.On("Warn", mock.Anything, mock.Anything).Return()
 	mockLog.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordSandboxCreation", mock.Anything, mock.Anything, mock.Anything).Return()
 	
 	// Add required method implementations for the interfaces
 	mockK8s.On("Clientset").Return(fake.NewSimpleClientset())
@@ -48,40 +49,6 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockLog.On("Sync").Return(nil)
 	mockLog.On("Debug", mock.Anything, mock.Anything).Return()
 	mockLog.On("Fatal", mock.Anything, mock.Anything, mock.Anything).Return()
-	
-	mockDB.On("Start").Return(nil)
-	mockDB.On("Stop").Return(nil)
-	mockDB.On("GetUserByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
-	mockDB.On("GetSandboxByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
-	mockDB.On("GetUserIDByAPIKey", mock.Anything, mock.Anything).Return("user123", nil)
-	mockDB.On("CheckPermission", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
-	
-	mockMetrics.On("Start").Return(nil)
-	mockMetrics.On("Stop").Return(nil)
-	mockMetrics.On("RecordExecution", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("IncrementActiveConnections", mock.Anything, mock.Anything).Return()
-	mockMetrics.On("DecrementActiveConnections", mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordWarmPoolHit").Return()
-	mockMetrics.On("RecordError", mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordPackageInstallation", mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordFileOperation", mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordResourceUsage", mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordWarmPoolMetrics", mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("RecordWarmPoolScaling", mock.Anything, mock.Anything, mock.Anything).Return()
-	mockMetrics.On("UpdateWarmPoolHitRatio", mock.Anything, mock.Anything).Return()
-	
-	mockWarmPool.On("Start").Return(nil)
-	mockWarmPool.On("Stop").Return(nil)
-	mockWarmPool.On("AddToWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	mockWarmPool.On("RemoveFromWarmPool", mock.Anything, mock.Anything).Return(nil)
-	mockWarmPool.On("GetWarmPoolStatus", mock.Anything, mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
-	mockWarmPool.On("GetGlobalWarmPoolStatus", mock.Anything).Return(map[string]interface{}{}, nil)
-	mockWarmPool.On("CheckAvailability", mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
-	mockWarmPool.On("CreateWarmPool", mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
-	mockWarmPool.On("GetWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
-	mockWarmPool.On("ListWarmPools", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]map[string]interface{}{}, nil)
-	mockWarmPool.On("UpdateWarmPool", mock.Anything, mock.Anything).Return(&types.WarmPool{}, nil)
-	mockWarmPool.On("DeleteWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	service, _ := New(
 		mockLog,
@@ -111,17 +78,15 @@ func TestCreateSandbox_Success(t *testing.T) {
 		UserID:        "user123",
 	}
 
-	// Mock expectations
+	// Mock expectations - only set up what's actually used in the test
 	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
 	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
-	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
 	mockDB.On("Start").Return(nil)
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
 	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
-	mockWarmPool.On("GetWarmSandbox", mock.Anything, "python:3.10").Return("", errors.New("no warm pod available"))
 	
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -138,7 +103,6 @@ func TestCreateSandbox_Success(t *testing.T) {
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
 	mockDB.On("GetSandboxByID", ctx, "sb-12345").Return(map[string]interface{}{"id": "sb-12345"}, nil)
 	mockDB.On("CreateSandboxMetadata", ctx, "sb-12345", "user123", "python:3.10").Return(nil)
-	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 
 	// Execute
 	result, err := service.CreateSandbox(ctx, req)
