@@ -70,10 +70,18 @@ func (m *MockDatabaseService) DeleteSandbox(ctx context.Context, sandboxID strin
 
 func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error) {
 	args := m.Called(ctx, userID, limit, offset)
-	if args.Get(0) == nil {
-		return nil, nil, args.Error(2)
+	
+	var sandboxes []*types.SandboxMetadata
+	if args.Get(0) != nil {
+		sandboxes = args.Get(0).([]*types.SandboxMetadata)
 	}
-	return args.Get(0).([]*types.SandboxMetadata), args.Get(1).(*types.PaginationMetadata), args.Error(2)
+	
+	var pagination *types.PaginationMetadata
+	if args.Get(1) != nil {
+		pagination = args.Get(1).(*types.PaginationMetadata)
+	}
+	
+	return sandboxes, pagination, args.Error(2)
 }
 
 // Permission operations
@@ -96,4 +104,43 @@ func (m *MockDatabaseService) Start() error {
 func (m *MockDatabaseService) Stop() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+// GetUserByID is a convenience method for tests that expect the old interface
+func (m *MockDatabaseService) GetUserByID(ctx context.Context, userID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+// GetSandboxByID is a convenience method for tests that expect the old interface
+func (m *MockDatabaseService) GetSandboxByID(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
+// CreateSandboxMetadata is a convenience method for tests that expect the old interface
+func (m *MockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
+	args := m.Called(ctx, sandboxID, userID, runtime)
+	return args.Error(0)
+}
+
+// DeleteSandboxMetadata is a convenience method for tests that expect the old interface
+func (m *MockDatabaseService) DeleteSandboxMetadata(ctx context.Context, sandboxID string) error {
+	args := m.Called(ctx, sandboxID)
+	return args.Error(0)
+}
+
+// GetSandboxMetadata is a convenience method for tests that expect the old interface
+func (m *MockDatabaseService) GetSandboxMetadata(ctx context.Context, sandboxID string) (map[string]interface{}, error) {
+	args := m.Called(ctx, sandboxID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
