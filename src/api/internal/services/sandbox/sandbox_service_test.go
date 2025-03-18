@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -180,6 +179,49 @@ func setupTestService() (*Service, *mockKubernetesClient, *mockLLMSafespaceV1Int
 	mockLog.On("Warn", mock.Anything, mock.Anything).Return()
 	mockLog.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+	
+	// Add required method implementations for the interfaces
+	mockK8s.On("Clientset").Return(nil)
+	mockK8s.On("DynamicClient").Return(nil)
+	mockK8s.On("RESTConfig").Return((*rest.Config)(nil))
+	mockK8s.On("InformerFactory").Return(nil)
+	
+	mockLog.On("With", mock.Anything).Return(mockLog)
+	mockLog.On("Sync").Return(nil)
+	
+	mockDB.On("Start").Return(nil)
+	mockDB.On("Stop").Return(nil)
+	mockDB.On("GetUserByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
+	mockDB.On("GetSandboxByID", mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
+	mockDB.On("GetUserIDByAPIKey", mock.Anything, mock.Anything).Return("", nil)
+	mockDB.On("CheckPermission", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
+	
+	mockMetrics.On("Start").Return(nil)
+	mockMetrics.On("Stop").Return(nil)
+	mockMetrics.On("RecordExecution", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("IncrementActiveConnections", mock.Anything, mock.Anything).Return()
+	mockMetrics.On("DecrementActiveConnections", mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordWarmPoolHit").Return()
+	mockMetrics.On("RecordError", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordPackageInstallation", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordFileOperation", mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordResourceUsage", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordWarmPoolMetrics", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RecordWarmPoolScaling", mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("UpdateWarmPoolHitRatio", mock.Anything, mock.Anything).Return()
+	
+	mockWarmPool.On("Start").Return(nil)
+	mockWarmPool.On("Stop").Return(nil)
+	mockWarmPool.On("AddToWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockWarmPool.On("RemoveFromWarmPool", mock.Anything, mock.Anything).Return(nil)
+	mockWarmPool.On("GetWarmPoolStatus", mock.Anything, mock.Anything, mock.Anything).Return(map[string]interface{}{}, nil)
+	mockWarmPool.On("GetGlobalWarmPoolStatus", mock.Anything).Return(map[string]interface{}{}, nil)
+	mockWarmPool.On("CheckAvailability", mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
+	mockWarmPool.On("CreateWarmPool", mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
+	mockWarmPool.On("GetWarmPool", mock.Anything, mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
+	mockWarmPool.On("ListWarmPools", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]map[string]interface{}{}, nil)
+	mockWarmPool.On("UpdateWarmPool", mock.Anything, mock.Anything).Return((*types.WarmPool)(nil), nil)
+	mockWarmPool.On("DeleteWarmPool", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	service, _ := New(
 		mockLog,
