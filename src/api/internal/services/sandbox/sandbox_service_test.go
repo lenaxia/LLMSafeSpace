@@ -195,7 +195,7 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 
 func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	// Setup
-	service, _, _, mockSandbox, mockDB, _, _, _ := setupTestService()
+	service, _, _, mockSandbox, mockDB, _, mockMetrics, _ := setupTestService()
 	ctx := context.Background()
 
 	req := &types.CreateSandboxRequest{
@@ -205,6 +205,10 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 		UserID:        "user123",
 	}
 
+	// Mock expectations for service start/stop calls
+	mockDB.On("Start").Return(nil)
+	mockMetrics.On("Start").Return(nil)
+	
 	// Execute
 	result, err := service.CreateSandbox(ctx, req)
 
