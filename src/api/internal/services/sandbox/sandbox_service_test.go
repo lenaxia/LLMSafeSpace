@@ -9,27 +9,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/informers"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	"github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	"github.com/lenaxia/llmsafespace/mocks/logger"
 )
 
 // Test setup helper
-func setupTestService() (*Service, *kubernetes.MockKubernetesClient, *kubernetes.MockLLMSafespaceV1Interface, *kubernetes.MockSandboxInterface, *interfaces.MockDatabaseService, *interfaces.MockWarmPoolService, *interfaces.MockMetricsService, *logger.MockLogger) {
-	mockK8s := new(kubernetes.MockKubernetesClient)
-	mockLLMSafespaceV1 := new(kubernetes.MockLLMSafespaceV1Interface)
-	mockSandbox := new(kubernetes.MockSandboxInterface)
-	mockDB := new(interfaces.MockDatabaseService)
-	mockWarmPool := new(interfaces.MockWarmPoolService)
-	mockMetrics := new(interfaces.MockMetricsService)
-	mockLog := new(logger.MockLogger)
+func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLMSafespaceV1Interface, *kmocks.MockSandboxInterface, *imocks.MockDatabaseService, *imocks.MockWarmPoolService, *imocks.MockMetricsService, *lmocks.MockLogger) {
+	mockK8s := kmocks.NewMockKubernetesClient()
+	mockLLMSafespaceV1 := kmocks.NewMockLLMSafespaceV1Interface()
+	mockSandbox := kmocks.NewMockSandboxInterface()
+	mockDB := new(imocks.MockDatabaseService)
+	mockWarmPool := new(imocks.MockWarmPoolService)
+	mockMetrics := new(imocks.MockMetricsService)
+	mockLog := lmocks.NewMockLogger()
 
 	// Setup default expectations
 	mockK8s.On("LlmsafespaceV1").Return(mockLLMSafespaceV1)
@@ -162,7 +159,7 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	// Mock expectations
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
 	
-	mockWarmPodInterface := new(kubernetes.MockWarmPodInterface)
+	mockWarmPodInterface := kmocks.NewMockWarmPodInterface()
 	mockLLMSafespaceV1.On("WarmPods", "default").Return(mockWarmPodInterface)
 	
 	warmPod := &types.WarmPod{
