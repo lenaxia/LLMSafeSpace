@@ -299,13 +299,18 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 		s.metricsService.RecordRequest("GetSandbox", "", 0, time.Since(startTime), 0)
 	}()
 
+	s.logger.Debug("Getting sandbox", "sandboxID", sandboxID, "namespace", s.config.Namespace)
+
 	// First try in the configured namespace
 	sandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sandboxID, metav1.GetOptions{})
 	if err == nil {
-		return sandbox, nil
+		s.logger.Debug("Found sandbox in default namespace", "sandboxID", sandboxID, "namespace", s.config.Namespace)
+		return convertFromSandboxCRD(sandbox), nil
 	}
 
-	// If not found and it's a "not found" error, try listing across all namespaces
+	s.logger.Debug("Sandbox not found in default namespace, searching all namespaces", "sandboxID", sandboxID)
+
+	// If not found, try listing across all namespaces with a field selector for efficiency
 	sandboxList, err := s.k8sClient.LlmsafespaceV1().Sandboxes("").List(metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("metadata.name=%s", sandboxID),
 	})
@@ -318,11 +323,33 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 	}
 
 	if len(sandboxList.Items) == 0 {
+		s.logger.Warn("Sandbox not found in any namespace", "sandboxID", sandboxID)
 		return nil, &types.SandboxNotFoundError{ID: sandboxID}
 	}
 
+	s.logger.Debug("Found sandbox in alternate namespace", 
+		"sandboxID", sandboxID, 
+		"namespace", sandboxList.Items[0].Namespace)
+
 	// Return the first matching sandbox
-	return &sandboxList.Items[0], nil
+	return convertFromSandboxCRD(&sandboxList.Items[0]), nil
+}
+
+// convertFromSandboxCRD converts a Kubernetes CRD to an API type
+// This function allows us to perform any necessary transformations between
+// the Kubernetes CRD representation and our API representation
+func convertFromSandboxCRD(sandbox *types.Sandbox) *types.Sandbox {
+	// Create a deep copy to avoid modifying the original
+	result := sandbox.DeepCopy()
+	
+	// Add any necessary transformations here
+	// For example, we might want to:
+	// - Set default values for missing fields
+	// - Transform field formats
+	// - Add computed fields
+	
+	// For now, we're just returning the copy as-is
+	return result
 }
 
 // ListSandboxes lists sandboxes for a user with pagination
