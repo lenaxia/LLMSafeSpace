@@ -173,7 +173,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		}
 		
 		return nil, errors.NewInternalError(
-			"metadata_creation_failed",
+			"metadata_creation_failed: Failed to store sandbox metadata",
 			err,
 		)
 	}
