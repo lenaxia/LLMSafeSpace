@@ -18,6 +18,10 @@ type mockKubernetesClient struct {
 	mock.Mock
 }
 
+func (m *mockKubernetesClient) Clientset() kubernetes.Interface {
+	return fake.NewSimpleClientset()
+}
+
 func (m *mockKubernetesClient) LlmsafespaceV1() mockLLMSafespaceV1Interface {
 	args := m.Called()
 	return args.Get(0).(mockLLMSafespaceV1Interface)
@@ -83,6 +87,11 @@ type mockDatabaseService struct {
 	mock.Mock
 }
 
+func (m *mockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
+	args := m.Called(userID, resourceType, resourceID, action)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockDatabaseService) CreateSandboxMetadata(ctx context.Context, sandboxID, userID, runtime string) error {
 	args := m.Called(ctx, sandboxID, userID, runtime)
 	return args.Error(0)
@@ -107,6 +116,11 @@ type mockWarmPoolService struct {
 	mock.Mock
 }
 
+func (m *mockWarmPoolService) AddToWarmPool(ctx context.Context, sandboxID, runtime string) error {
+	args := m.Called(ctx, sandboxID, runtime)
+	return args.Error(0)
+}
+
 func (m *mockWarmPoolService) GetWarmSandbox(ctx context.Context, runtime string) (string, error) {
 	args := m.Called(ctx, runtime)
 	return args.String(0), args.Error(1)
@@ -114,6 +128,10 @@ func (m *mockWarmPoolService) GetWarmSandbox(ctx context.Context, runtime string
 
 type mockMetricsService struct {
 	mock.Mock
+}
+
+func (m *mockMetricsService) DecrementActiveConnections(connType, userID string) {
+	m.Called(connType, userID)
 }
 
 func (m *mockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
@@ -152,9 +170,9 @@ func (m *mockLogger) Fatal(msg string, err error, keysAndValues ...interface{}) 
 	m.Called(msg, err, keysAndValues)
 }
 
-func (m *mockLogger) With(keysAndValues ...interface{}) interface{} {
+func (m *mockLogger) With(keysAndValues ...interface{}) interfaces.LoggerInterface {
 	args := m.Called(keysAndValues)
-	return args.Get(0)
+	return m
 }
 
 func (m *mockLogger) Sync() error {
