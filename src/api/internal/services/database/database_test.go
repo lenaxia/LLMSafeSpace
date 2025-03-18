@@ -351,7 +351,7 @@ func TestCreateSandbox(t *testing.T) {
 	// Set up expectations for transaction with error
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO sandboxes").
-		WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, mock.AnyArg(), mock.AnyArg(), errorSandbox.Status, errorSandbox.Name).
+		WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, sqlmock.AnyArg(), sqlmock.AnyArg(), errorSandbox.Status, errorSandbox.Name).
 		WillReturnError(sql.ErrConnDone)
 	
 	// Expect rollback
