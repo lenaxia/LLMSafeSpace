@@ -81,6 +81,7 @@ func TestCreateSandbox_Success(t *testing.T) {
 	// Mock expectations - only set up what's actually used in the test
 	mockDB.On("GetUserByID", ctx, "user123").Return(map[string]interface{}{"id": "user123", "name": "Test User"}, nil)
 	mockDB.On("CheckPermission", "user123", "sandbox", "", "create").Return(true, nil)
+	mockDB.On("GetUserIDByAPIKey", ctx, "").Return("", nil)
 	mockDB.On("Start").Return(nil)
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
