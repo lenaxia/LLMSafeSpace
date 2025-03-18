@@ -34,8 +34,8 @@ echo "Using module name: ${MODULE_NAME}"
 # Generate deepcopy functions using go run
 echo "Using go run to execute deepcopy-gen directly"
 go run k8s.io/code-generator/cmd/deepcopy-gen \
-  --bounding-dirs "${MODULE_NAME}/src/pkg/types" \
-  --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
+  --input-dirs "${MODULE_NAME}/pkg/types" \
+  --output-file-base zz_generated.deepcopy \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
   -v=1
 
@@ -61,7 +61,7 @@ else
 fi
 
 # Check if the generated file exists
-GENERATED_FILE="${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go"
+GENERATED_FILE="${SCRIPT_ROOT}/pkg/types/zz_generated.deepcopy.go"
 if [ -f "$GENERATED_FILE" ]; then
     echo "✅ Generated file exists at: $GENERATED_FILE"
     echo "File size: $(wc -l < "$GENERATED_FILE") lines"
