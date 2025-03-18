@@ -121,6 +121,7 @@ func TestCreateSandbox_Success(t *testing.T) {
 	mockMetrics.On("Stop").Return(nil)
 	
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
+	mockWarmPool.On("GetWarmSandbox", mock.Anything, "python:3.10").Return("", errors.New("no warm pod available"))
 	
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
