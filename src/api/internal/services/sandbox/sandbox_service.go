@@ -94,14 +94,14 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	// Start required services
 	if err := s.dbService.Start(); err != nil {
 		s.logger.Error("Failed to start database service", err)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"service_initialization_failed",
 			err,
 		)
 	}
 	if err := s.metricsService.Start(); err != nil {
 		s.logger.Error("Failed to start metrics service", err)
-		return nil, errors.NewInternalError(
+		return nil, apierrors.NewInternalError(
 			"service_initialization_failed",
 			err,
 		)
