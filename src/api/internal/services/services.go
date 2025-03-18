@@ -12,7 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
-	//"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/warmpool"
 )
 
@@ -61,10 +61,10 @@ func (s *Services) GetMetrics() interfaces.MetricsService {
 	return s.Metrics
 }
 
-//// GetSandbox returns the sandbox service
-//func (s *Services) GetSandbox() interfaces.SandboxService {
-//	return s.Sandbox
-//}
+// GetSandbox returns the sandbox service
+func (s *Services) GetSandbox() interfaces.SandboxService {
+	return s.Sandbox
+}
 
 // GetWarmPool returns the warm pool service
 func (s *Services) GetWarmPool() interfaces.WarmPoolService {
@@ -112,11 +112,27 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		return nil, fmt.Errorf("failed to initialize execution service: %w", err)
 	}
 
-	//// Initialize sandbox service
-	//sandboxService, err := sandbox.New(log, k8sClient, dbService, warmPoolService, fileService, executionService, metricsService, cacheService)
-	//if err != nil {
-	//	return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
-	//}
+	// Initialize sandbox service
+	sandboxConfig := &sandbox.Config{
+		Namespace:      cfg.Kubernetes.Namespace,
+		DefaultTimeout: 300, // Default timeout in seconds
+		MaxSandboxes:   100, // Maximum number of sandboxes per user
+	}
+	
+	sandboxService, err := sandbox.New(
+		log,
+		k8sClient,
+		dbService,
+		cacheService,
+		metricsService,
+		warmPoolService,
+		fileService,
+		executionService,
+		sandboxConfig,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
+	}
 
 	return &Services{
 		Auth:      authService,
@@ -125,7 +141,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		Execution: executionService,
 		File:      fileService,
 		Metrics:   metricsService,
-		//Sandbox:   sandboxService,
+		Sandbox:   sandboxService,
 		WarmPool:  warmPoolService,
 	}, nil
 }
@@ -179,15 +195,15 @@ func (s *Services) Start() error {
 		return fmt.Errorf("failed to start warm pool service: %w", err)
 	}
 	
-	//if err := s.Sandbox.Start(); err != nil {
-	//	s.WarmPool.Stop() // Clean up previous services
-	//	s.Execution.Stop()
-	//	s.File.Stop()
-	//	s.Auth.Stop()
-	//	s.Database.Stop()
-	//	s.Metrics.Stop()
-	//	return fmt.Errorf("failed to start sandbox service: %w", err)
-	//}
+	if err := s.Sandbox.Start(); err != nil {
+		s.WarmPool.Stop() // Clean up previous services
+		s.Execution.Stop()
+		s.File.Stop()
+		s.Auth.Stop()
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start sandbox service: %w", err)
+	}
 
 	return nil
 }
@@ -197,9 +213,9 @@ func (s *Services) Stop() error {
 	var errs []error
 	
 	// Stop services in reverse order of initialization
-	//if err := s.Sandbox.Stop(); err != nil {
-	//	errs = append(errs, fmt.Errorf("failed to stop sandbox service: %w", err))
-	//}
+	if err := s.Sandbox.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop sandbox service: %w", err))
+	}
 	
 	if err := s.WarmPool.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to stop warm pool service: %w", err))

@@ -47,24 +47,24 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 		return cachedStatus, nil
 	}
 
-	// Get user ID from database
-	userID, err := s.dbService.GetUserIDByAPIKey(ctx, apiKey)
+	// Get user from database
+	user, err := s.dbService.GetUserByAPIKey(ctx, apiKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to authenticate API key: %w", err)
 	}
 
-	if userID == "" {
+	if user == nil {
 		return "", errors.New("invalid API key")
 	}
 
 	// Cache the API key for 15 minutes
-	err = s.cacheService.Set(ctx, cacheKey, userID, 15*time.Minute)
+	err = s.cacheService.Set(ctx, cacheKey, user.ID, 15*time.Minute)
 	if err != nil {
-		s.logger.Error("Failed to cache API key", err, "user_id", userID)
+		s.logger.Error("Failed to cache API key", err, "user_id", user.ID)
 		// Continue even if caching fails
 	}
 
-	return userID, nil
+	return user.ID, nil
 }
 
 // Note: The redundant AuthMiddleware method has been removed as it duplicates
@@ -292,27 +292,52 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 		return cachedUserID, nil
 	}
 
-	// Get user ID from database
-	userID, err := s.dbService.GetUserIDByAPIKey(ctx, apiKey)
+	// Get user from database
+	user, err := s.dbService.GetUserByAPIKey(ctx, apiKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to get user ID by API key: %w", err)
+		return "", fmt.Errorf("failed to get user by API key: %w", err)
 	}
 
-	if userID == "" {
+	if user == nil {
 		return "", errors.New("invalid API key")
 	}
 
 	// Cache the API key for 15 minutes
-	err = s.cacheService.Set(ctx, cacheKey, userID, 15*time.Minute)
+	err = s.cacheService.Set(ctx, cacheKey, user.ID, 15*time.Minute)
 	if err != nil {
-		s.logger.Error("Failed to cache API key", err, "user_id", userID)
+		s.logger.Error("Failed to cache API key", err, "user_id", user.ID)
 		// Continue even if caching fails
 	}
 
-	return userID, nil
+	return user.ID, nil
 }
 
 // extractToken extracts the token from the Authorization header
 func extractToken(c *gin.Context) string {
 	return utilities.ExtractToken(c)
+}
+
+// AuthMiddleware returns a middleware that validates JWT tokens
+func (s *Service) AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Extract token from request
+		tokenString := extractToken(c)
+		if tokenString == "" {
+			c.JSON(401, gin.H{"error": "Authorization token required"})
+			c.Abort()
+			return
+		}
+
+		// Validate token
+		userID, err := s.ValidateToken(tokenString)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		// Set user ID in context
+		c.Set("userID", userID)
+		c.Next()
+	}
 }
