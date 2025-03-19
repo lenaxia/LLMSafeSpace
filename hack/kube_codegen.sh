@@ -69,7 +69,7 @@ function kube::codegen::internal::grep() {
 #
 function kube::codegen::gen_helpers() {
     local in_dir=""
-    local boilerplate="${KUBE_CODEGEN_ROOT}/hack/boilerplate.go.txt"
+    local boilerplate="${KUBE_CODEGEN_ROOT}/boilerplate.go.txt"
     local v="${KUBE_VERBOSE:-0}"
     local extra_peers=()
 
@@ -458,7 +458,7 @@ function kube::codegen::gen_client() {
     local watchable="false"
     local listers_subdir="listers"
     local informers_subdir="informers"
-    local boilerplate="${KUBE_CODEGEN_ROOT}/hack/boilerplate.go.txt"
+    local boilerplate="${KUBE_CODEGEN_ROOT}/boilerplate.go.txt"
     local plural_exceptions=""
     local v="${KUBE_VERBOSE:-0}"
     local prefers_protobuf="false"
@@ -700,7 +700,7 @@ function kube::codegen::gen_client() {
 #
 function kube::codegen::gen_register() {
     local in_dir=""
-    local boilerplate="${KUBE_CODEGEN_ROOT}/hack/boilerplate.go.txt"
+    local boilerplate="${KUBE_CODEGEN_ROOT}/boilerplate.go.txt"
     local v="${KUBE_VERBOSE:-0}"
 
     while [ "$#" -gt 0 ]; do
