@@ -1,15 +1,15 @@
-#!/usr/bin/env bash
+ #!/usr/bin/env bash
 
-set -o errexit
-set -o nounset
-set -o pipefail
+ set -o errexit
+ set -o nounset
+ set -o pipefail
 
-SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+ SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 
-# Source the helper functions
-source "${SCRIPT_ROOT}/hack/kube_codegen.sh"
+ # Source the helper functions
+ source "${SCRIPT_ROOT}/hack/kube_codegen.sh"
 
-# Call the helper function
-# The argument should be the root directory where your Go files are located
-kube::codegen::gen_helpers "${SCRIPT_ROOT}"
+ # Call the helper function with the correct path
+ # Use the local path rather than the import path
+ kube::codegen::gen_helpers "${SCRIPT_ROOT}"
 

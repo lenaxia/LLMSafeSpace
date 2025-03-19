@@ -261,7 +261,7 @@ function kube::codegen::gen_openapi() {
     local extra_pkgs=()
     local report="/dev/null"
     local update_report=""
-    local boilerplate="${KUBE_CODEGEN_ROOT}/hack/boilerplate.go.txt"
+    local boilerplate="${KUBE_CODEGEN_ROOT}/boilerplate.go.txt"
     local v="${KUBE_VERBOSE:-0}"
 
     while [ "$#" -gt 0 ]; do
