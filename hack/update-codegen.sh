@@ -24,7 +24,7 @@ fi
 
 echo "=== Generating deepcopy functions using generate-groups.sh ==="
 echo "Target package: github.com/llmsafespace/pkg/client"
-echo "API Package: github.com/llmsafespace/src/pkg"
+echo "API Package: github.com/llmsafespace/pkg"
 echo "Groups/Versions: types:v1"
 
 # Get the module name from go.mod
@@ -36,12 +36,12 @@ echo "Using go run to execute deepcopy-gen directly"
 
 # Print current directory for debugging
 echo "Current directory: $(pwd)"
-echo "Looking for types in: ${SCRIPT_ROOT}/src/pkg/types"
+echo "Looking for types in: ${SCRIPT_ROOT}/pkg/types"
 
 # Run deepcopy-gen with absolute paths
 go run k8s.io/code-generator/cmd/deepcopy-gen \
   --bounding-dirs "${MODULE_NAME}" \
-  --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
+  --output-file "${SCRIPT_ROOT}/pkg/types/zz_generated.deepcopy.go" \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
   -v=5
 
@@ -54,7 +54,7 @@ else
 fi
 
 echo "=== Generating deepcopy functions using direct approach ==="
-echo "Input directories: github.com/llmsafespace/src/pkg/types"
+echo "Input directories: github.com/llmsafespace/pkg/types"
 
 # No need for alternative approach anymore
 echo "Direct deepcopy-gen execution completed"
@@ -67,7 +67,7 @@ else
 fi
 
 # Check if the generated file exists
-GENERATED_FILE="${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go"
+GENERATED_FILE="${SCRIPT_ROOT}/pkg/types/zz_generated.deepcopy.go"
 if [ -f "$GENERATED_FILE" ]; then
     echo "✅ Generated file exists at: $GENERATED_FILE"
     echo "File size: $(wc -l < "$GENERATED_FILE") lines"
@@ -92,7 +92,7 @@ else
     echo "Trying a simpler direct command..."
     cd "${SCRIPT_ROOT}"
     go run k8s.io/code-generator/cmd/deepcopy-gen \
-      --output-file "${SCRIPT_ROOT}/src/pkg/types/zz_generated.deepcopy.go" \
+      --output-file "${SCRIPT_ROOT}/pkg/types/zz_generated.deepcopy.go" \
       --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
       -v=5
     
