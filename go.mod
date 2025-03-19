@@ -1,4 +1,4 @@
-module github.com/lenaxia/llmsafespace/controller
+module github.com/lenaxia/llmsafespace
 
 go 1.23.4
 
