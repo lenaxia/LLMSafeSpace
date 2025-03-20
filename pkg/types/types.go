@@ -44,7 +44,6 @@ type SandboxMetadata struct {
 type WSConnection interface {
 	ReadMessage() (messageType int, p []byte, err error)
 	WriteMessage(messageType int, data []byte) error
-	WriteJSON(v interface{}) error
 	Close() error
 	SetWriteDeadline(t time.Time) error
 }
@@ -662,28 +661,13 @@ type PaginationMetadata struct {
 	Offset int `json:"offset"` // Offset from beginning
 }
 
-// Message represents a WebSocket message
-type Message struct {
-	Type        string      `json:"type"`
-	ExecutionID string      `json:"executionId,omitempty"` // Deprecated: Use ID instead
-	ID          string      `json:"id,omitempty"`
-	Stream      string      `json:"stream,omitempty"`
-	Content     string      `json:"content,omitempty"`
-	Code        string      `json:"code,omitempty"`
-	Message     string      `json:"message,omitempty"`
-	ExitCode    int         `json:"exitCode,omitempty"`
-	Timestamp   int64       `json:"timestamp,omitempty"`
-	Data        interface{} `json:"data,omitempty"`
-}
-
 // Session represents a WebSocket session
 type Session struct {
 	ID        string
 	UserID    string
 	SandboxID string
 	Conn      WSConnection
-	SendError func(code, message string) error
-	Send      func(msg Message) error
+	CreatedAt time.Time
 }
 
 // CreateSandboxRequest defines the request for creating a sandbox
