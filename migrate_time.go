@@ -401,6 +401,95 @@
                      }
                  }
              }
+             
+         // Handle metav1.Now().Add() needing to be wrapped in metav1.Time
+         case *ast.CallExpr:
+             if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+                 // Check if it's metav1.Now().Add()
+                 if expr, ok := sel.X.(*ast.CallExpr); ok {
+                     if exprSel, ok := expr.Fun.(*ast.SelectorExpr); ok {
+                         if ident, ok := exprSel.X.(*ast.Ident); ok && ident.Name == "metav1" && exprSel.Sel.Name == "Now" {
+                             if sel.Sel.Name == "Add" {
+                                 // This is metav1.Now().Add(...)
+                                 // Get the original code
+                                 var buf bytes.Buffer
+                                 format.Node(&buf, fset, x)
+                                 oldCode := buf.String()
+                                 
+                                 // Create the replacement code
+                                 newCode := fmt.Sprintf("metav1.Time{Time: %s}", oldCode)
+                                 
+                                 // Record for replacement
+                                 tracker.recordTimeLiteral(filename, x, oldCode, newCode)
+                                 
+                                 modified = true
+                                 tracker.recordAutomaticConversion(filename)
+                                 tracker.markNeedsImport(filename)
+                             }
+                         }
+                     }
+                 }
+                 
+                 // Check if it's a method that expects time.Duration arguments
+                 methodsExpectingTimeDuration := map[string]bool{
+                     "Add": true,
+                     "Sub": true,
+                     "After": true,
+                     "Before": true,
+                 }
+                 
+                 if methodsExpectingTimeDuration[sel.Sel.Name] {
+                     // Check each argument
+                     for i, arg := range x.Args {
+                         // Look for metav1.Duration{...} arguments
+                         if compLit, ok := arg.(*ast.CompositeLit); ok {
+                             if typeExpr, ok := compLit.Type.(*ast.SelectorExpr); ok {
+                                 if ident, ok := typeExpr.X.(*ast.Ident); ok && ident.Name == "metav1" && typeExpr.Sel.Name == "Duration" {
+                                     // This is a metav1.Duration being used where time.Duration is expected
+                                     var buf bytes.Buffer
+                                     format.Node(&buf, fset, arg)
+                                     oldCode := buf.String()
+                                     
+                                     // Create the replacement code to access the Duration field
+                                     newCode := fmt.Sprintf("%s.Duration", oldCode)
+                                     
+                                     // Record for replacement
+                                     tracker.recordTimeLiteral(filename, arg, oldCode, newCode)
+                                     
+                                     modified = true
+                                     tracker.recordAutomaticConversion(filename)
+                                 }
+                             }
+                         }
+                         
+                         // Also look for selector expressions like someVar.SomeDuration where someVar is metav1.Duration
+                         if sel, ok := arg.(*ast.SelectorExpr); ok {
+                             // This is more complex as we need type information
+                             // For now, we can look for patterns like "duration" in variable names
+                             if ident, ok := sel.X.(*ast.Ident); ok {
+                                 if strings.Contains(strings.ToLower(ident.Name), "duration") {
+                                     // This might be a metav1.Duration variable
+                                     var buf bytes.Buffer
+                                     format.Node(&buf, fset, arg)
+                                     oldCode := buf.String()
+                                     
+                                     // Create the replacement code
+                                     newCode := fmt.Sprintf("%s.Duration", oldCode)
+                                     
+                                     // Record this as a manual conversion with suggestion
+                                     tracker.recordManualConversion(
+                                         filename,
+                                         arg,
+                                         "Duration Access",
+                                         "Possible metav1.Duration needing .Duration field access",
+                                         fmt.Sprintf("Suggested: %s", newCode),
+                                     )
+                                 }
+                             }
+                         }
+                     }
+                 }
+             }
 
          // Check for variable declarations with time types
          case *ast.ValueSpec:
