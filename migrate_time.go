@@ -331,16 +331,35 @@
                          buf.String(),
                      )
                  case "Second", "Minute", "Hour", "Nanosecond", "Microsecond", "Millisecond":
-                     // Time constants need special handling
-                     var buf bytes.Buffer
-                     format.Node(&buf, fset, n)
-                     tracker.recordManualConversion(
-                         filename,
-                         n,
-                         "Time Constant",
-                         fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
-                         buf.String(),
-                     )
+                     // Replace time.X with metav1.Duration{Duration: time.X}
+                     x.X = ast.NewIdent(metav1ImportName)
+                     
+                     // Store the original time.X expression
+                     timeExpr := &ast.SelectorExpr{
+                         X:   ast.NewIdent("time"),
+                         Sel: ast.NewIdent(x.Sel.Name),
+                     }
+                     
+                     // Create a new composite literal
+                     compositeLit := &ast.CompositeLit{
+                         Type: &ast.SelectorExpr{
+                             X:   ast.NewIdent(metav1ImportName),
+                             Sel: ast.NewIdent("Duration"),
+                         },
+                         Elts: []ast.Expr{
+                             &ast.KeyValueExpr{
+                                 Key:   ast.NewIdent("Duration"),
+                                 Value: timeExpr,
+                             },
+                         },
+                     }
+                     
+                     // Replace the original node with the composite literal
+                     *n.(*ast.SelectorExpr) = *compositeLit
+                     
+                     modified = true
+                     tracker.recordAutomaticConversion(filename)
+                     tracker.markNeedsImport(filename)
                  }
              }
 
