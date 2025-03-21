@@ -378,7 +378,9 @@
                                  }
                                  
                                  // Replace the binary expression with the composite literal
-                                 *n.(*ast.BinaryExpr) = *compositeLit
+                                 if parent, ok := n.(*ast.BinaryExpr); ok {
+                                     *parent = *compositeLit
+                                 }
                                  
                                  modified = true
                                  tracker.recordAutomaticConversion(filename)
