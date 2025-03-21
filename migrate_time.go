@@ -43,6 +43,13 @@
  }
 
  // Tracks files that need imports added
+ // TimeLiteral represents a time literal that needs to be replaced
+ type TimeLiteral struct {
+     Position token.Position
+     OldCode  string
+     NewCode  string
+ }
+
  type fileImportTracker struct {
      needsMetav1Import map[string]bool
      hasTimeImport     map[string]bool
@@ -50,6 +57,7 @@
      globalStats       *GlobalStats
      fset              *token.FileSet
      dryRun            bool
+     timeLiterals      map[string][]TimeLiteral
  }
 
  func newFileImportTracker(fset *token.FileSet, dryRun bool) *fileImportTracker {
@@ -60,6 +68,7 @@
          globalStats:       &GlobalStats{Issues: []ConversionIssue{}},
          fset:              fset,
          dryRun:            dryRun,
+         timeLiterals:      make(map[string][]TimeLiteral),
      }
  }
 
@@ -113,6 +122,19 @@
 
  func (f *fileImportTracker) recordFileModified() {
      f.globalStats.FilesModified++
+ }
+
+ func (f *fileImportTracker) recordTimeLiteral(filename string, node ast.Node, oldCode, newCode string) {
+     position := f.fset.Position(node.Pos())
+     f.timeLiterals[filename] = append(f.timeLiterals[filename], TimeLiteral{
+         Position: position,
+         OldCode:  oldCode,
+         NewCode:  newCode,
+     })
+ }
+
+ func (f *fileImportTracker) getTimeLiterals(filename string) []TimeLiteral {
+     return f.timeLiterals[filename]
  }
 
  func (f *fileImportTracker) generateReport() string {
@@ -359,28 +381,16 @@
                          units := []string{"Nanosecond", "Microsecond", "Millisecond", "Second", "Minute", "Hour"}
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
-                                 // Create the metav1.Duration literal
-                                 compositeLit := &ast.CompositeLit{
-                                     Type: &ast.SelectorExpr{
-                                         X:   ast.NewIdent(metav1ImportName),
-                                         Sel: ast.NewIdent("Duration"),
-                                     },
-                                     Elts: []ast.Expr{
-                                         &ast.KeyValueExpr{
-                                             Key: ast.NewIdent("Duration"),
-                                             Value: &ast.BinaryExpr{
-                                                 X:  x.X,
-                                                 Op: x.Op,
-                                                 Y:  x.Y,
-                                             },
-                                         },
-                                     },
-                                 }
+                                 // Get the original code
+                                 var buf bytes.Buffer
+                                 format.Node(&buf, fset, x)
+                                 oldCode := buf.String()
                                  
-                                 // Replace the binary expression with the composite literal
-                                 if parent, ok := n.(*ast.BinaryExpr); ok {
-                                     *parent = *compositeLit
-                                 }
+                                 // Create the replacement code
+                                 newCode := fmt.Sprintf("metav1.Duration{Duration: %s}", oldCode)
+                                 
+                                 // Record the time literal for replacement
+                                 tracker.recordTimeLiteral(filename, x, oldCode, newCode)
                                  
                                  modified = true
                                  tracker.recordAutomaticConversion(filename)
@@ -540,12 +550,31 @@
          tracker.recordFileModified()
 
          if !tracker.dryRun {
+             // Convert the AST to source code
              var buf bytes.Buffer
              if err := format.Node(&buf, fset, file); err != nil {
                  return fmt.Errorf("error formatting modified file %s: %v", filename, err)
              }
-
-             if err := ioutil.WriteFile(filename, buf.Bytes(), 0644); err != nil {
+             
+             // Get the source code as string
+             src := buf.String()
+             
+             // Apply all time literal replacements
+             timeLiterals := tracker.getTimeLiterals(filename)
+             if len(timeLiterals) > 0 {
+                 // Sort time literals by position in reverse order to avoid offset issues
+                 sort.Slice(timeLiterals, func(i, j int) bool {
+                     return timeLiterals[i].Position.Offset > timeLiterals[j].Position.Offset
+                 })
+                 
+                 // Apply replacements
+                 for _, tl := range timeLiterals {
+                     src = strings.Replace(src, tl.OldCode, tl.NewCode, 1)
+                 }
+             }
+             
+             // Write the modified source back to the file
+             if err := ioutil.WriteFile(filename, []byte(src), 0644); err != nil {
                  return fmt.Errorf("error writing modified file %s: %v", filename, err)
              }
 
