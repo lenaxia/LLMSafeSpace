@@ -296,27 +296,15 @@
                      tracker.markNeedsImport(filename)
                  case "Since", "Until":
                      // These functions need special handling
-                     // Replace time.Since/Until with metav1.Now().Sub/Add
-                     if x.Sel.Name == "Since" {
-                         x.Sel.Name = ast.NewIdent("Sub")
-                         x.X = &ast.CallExpr{
-                             Fun: &ast.SelectorExpr{
-                                 X:   ast.NewIdent("metav1"),
-                                 Sel: ast.NewIdent("Now"),
-                             },
-                         }
-                     } else {
-                         x.Sel.Name = ast.NewIdent("Add")
-                         x.X = x.Args[0]
-                         x.Args = []ast.Expr{
-                             &ast.CallExpr{
-                                 Fun: &ast.SelectorExpr{
-                                     X:   ast.NewIdent("metav1"),
-                                     Sel: ast.NewIdent("Now"),
-                                 },
-                             },
-                         }
-                     }
+                     var buf bytes.Buffer
+                     format.Node(&buf, fset, n)
+                     tracker.recordManualConversion(
+                         filename,
+                         n,
+                         "Time Function",
+                         fmt.Sprintf("time.%s needs manual conversion to metav1.Now().Sub/metav1.Time.Sub", x.Sel.Name),
+                         buf.String(),
+                     )
                      modified = true
                      tracker.recordAutomaticConversion(filename)
                      tracker.markNeedsImport(filename)
