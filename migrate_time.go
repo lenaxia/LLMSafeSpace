@@ -1,5 +1,4 @@
-
- package main
+package main
 
  import (
      "bytes"
@@ -43,6 +42,13 @@
  }
 
  // Tracks files that need imports added
+ // TimeLiteral represents a time literal that needs to be replaced
+ type TimeLiteral struct {
+     Position token.Position
+     OldCode  string
+     NewCode  string
+ }
+
  type fileImportTracker struct {
      needsMetav1Import map[string]bool
      hasTimeImport     map[string]bool
@@ -50,6 +56,7 @@
      globalStats       *GlobalStats
      fset              *token.FileSet
      dryRun            bool
+     timeLiterals      map[string][]TimeLiteral
  }
 
  func newFileImportTracker(fset *token.FileSet, dryRun bool) *fileImportTracker {
@@ -60,6 +67,7 @@
          globalStats:       &GlobalStats{Issues: []ConversionIssue{}},
          fset:              fset,
          dryRun:            dryRun,
+         timeLiterals:      make(map[string][]TimeLiteral),
      }
  }
 
@@ -113,6 +121,19 @@
 
  func (f *fileImportTracker) recordFileModified() {
      f.globalStats.FilesModified++
+ }
+
+ func (f *fileImportTracker) recordTimeLiteral(filename string, node ast.Node, oldCode, newCode string) {
+     position := f.fset.Position(node.Pos())
+     f.timeLiterals[filename] = append(f.timeLiterals[filename], TimeLiteral{
+         Position: position,
+         OldCode:  oldCode,
+         NewCode:  newCode,
+     })
+ }
+
+ func (f *fileImportTracker) getTimeLiterals(filename string) []TimeLiteral {
+     return f.timeLiterals[filename]
  }
 
  func (f *fileImportTracker) generateReport() string {
@@ -302,9 +323,12 @@
                          filename,
                          n,
                          "Time Function",
-                         fmt.Sprintf("time.%s needs manual conversion", x.Sel.Name),
+                         fmt.Sprintf("time.%s needs manual conversion to metav1.Now().Sub/metav1.Time.Sub", x.Sel.Name),
                          buf.String(),
                      )
+                     modified = true
+                     tracker.recordAutomaticConversion(filename)
+                     tracker.markNeedsImport(filename)
                  case "Parse", "ParseDuration", "ParseInLocation", "Unix", "UnixMilli", "UnixMicro", "UnixNano":
                      // These functions need special handling
                      var buf bytes.Buffer
@@ -328,16 +352,22 @@
                          buf.String(),
                      )
                  case "Second", "Minute", "Hour", "Nanosecond", "Microsecond", "Millisecond":
-                     // Time constants need special handling
+                     // Record the original time constant for manual conversion
                      var buf bytes.Buffer
                      format.Node(&buf, fset, n)
+
+                     // Record this as a manual conversion with the suggested replacement
                      tracker.recordManualConversion(
                          filename,
                          n,
                          "Time Constant",
                          fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
-                         buf.String(),
+                         fmt.Sprintf("metav1.Duration{Duration: %s}", buf.String()),
                      )
+
+                     // Mark the file as modified so we add the metav1 import
+                     modified = true
+                     tracker.markNeedsImport(filename)
                  }
              }
 
@@ -350,15 +380,20 @@
                          units := []string{"Nanosecond", "Microsecond", "Millisecond", "Second", "Minute", "Hour"}
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
+                                 // Get the original code
                                  var buf bytes.Buffer
                                  format.Node(&buf, fset, x)
-                                 tracker.recordManualConversion(
-                                     filename,
-                                     n,
-                                     "Time Literal",
-                                     fmt.Sprintf("Time literal needs conversion to metav1.Duration"),
-                                     buf.String(),
-                                 )
+                                 oldCode := buf.String()
+
+                                 // Create the replacement code
+                                 newCode := fmt.Sprintf("metav1.Duration{Duration: %s}", oldCode)
+
+                                 // Record the time literal for replacement
+                                 tracker.recordTimeLiteral(filename, x, oldCode, newCode)
+
+                                 modified = true
+                                 tracker.recordAutomaticConversion(filename)
+                                 tracker.markNeedsImport(filename)
                                  break
                              }
                          }
@@ -402,15 +437,30 @@
                                      tracker.recordAutomaticConversion(filename)
                                      tracker.markNeedsImport(filename)
                                  } else if sel.Sel.Name == "Parse" || sel.Sel.Name == "ParseDuration" {
-                                     var buf bytes.Buffer
-                                     format.Node(&buf, fset, call)
-                                     tracker.recordManualConversion(
-                                         filename,
-                                         call,
-                                         "Time Parsing",
-                                         fmt.Sprintf("time.%s needs manual conversion", sel.Sel.Name),
-                                         buf.String(),
-                                     )
+                                     if len(call.Args) > 0 {
+                                         // Replace time.Parse() call with manual parsing
+                                         call.Fun = &ast.SelectorExpr{
+                                             X:   ast.NewIdent("metav1"),
+                                             Sel: ast.NewIdent("ParseTime"),
+                                         }
+                                         modified = true
+                                         tracker.recordManualConversion(
+                                             filename,
+                                             call,
+                                             "Time Parsing",
+                                             "time.Parse needs manual conversion to metav1.ParseTime",
+                                             "",
+                                         )
+                                     } else {
+                                         // time.Now() call
+                                         call.Fun = &ast.SelectorExpr{
+                                             X:   ast.NewIdent("metav1"),
+                                             Sel: ast.NewIdent("Now"),
+                                         }
+                                         modified = true
+                                         tracker.recordAutomaticConversion(filename)
+                                         tracker.markNeedsImport(filename)
+                                     }
                                  }
                              }
                          }
@@ -499,12 +549,31 @@
          tracker.recordFileModified()
 
          if !tracker.dryRun {
+             // Convert the AST to source code
              var buf bytes.Buffer
              if err := format.Node(&buf, fset, file); err != nil {
                  return fmt.Errorf("error formatting modified file %s: %v", filename, err)
              }
 
-             if err := ioutil.WriteFile(filename, buf.Bytes(), 0644); err != nil {
+             // Get the source code as string
+             src := buf.String()
+
+             // Apply all time literal replacements
+             timeLiterals := tracker.getTimeLiterals(filename)
+             if len(timeLiterals) > 0 {
+                 // Sort time literals by position in reverse order to avoid offset issues
+                 sort.Slice(timeLiterals, func(i, j int) bool {
+                     return timeLiterals[i].Position.Offset > timeLiterals[j].Position.Offset
+                 })
+
+                 // Apply replacements
+                 for _, tl := range timeLiterals {
+                     src = strings.Replace(src, tl.OldCode, tl.NewCode, 1)
+                 }
+             }
+
+             // Write the modified source back to the file
+             if err := ioutil.WriteFile(filename, []byte(src), 0644); err != nil {
                  return fmt.Errorf("error writing modified file %s: %v", filename, err)
              }
 
@@ -559,4 +628,3 @@
          }, file.Decls...)
      }
  }
-
