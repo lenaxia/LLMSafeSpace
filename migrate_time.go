@@ -335,16 +335,13 @@
                      var buf bytes.Buffer
                      format.Node(&buf, fset, n)
                      
-                     // Create a replacement string that will be used in the report
-                     replacement := fmt.Sprintf("metav1.Duration{Duration: %s}", buf.String())
-                     
                      // Record this as a manual conversion with the suggested replacement
                      tracker.recordManualConversion(
                          filename,
                          n,
                          "Time Constant",
                          fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
-                         buf.String(),
+                         fmt.Sprintf("metav1.Duration{Duration: %s}", buf.String()),
                      )
                      
                      // Mark the file as modified so we add the metav1 import
