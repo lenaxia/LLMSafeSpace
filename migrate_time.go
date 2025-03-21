@@ -331,53 +331,24 @@
                          buf.String(),
                      )
                  case "Second", "Minute", "Hour", "Nanosecond", "Microsecond", "Millisecond":
-                     // Replace time.X with metav1.Duration{Duration: time.X}
-                     x.X = ast.NewIdent(metav1ImportName)
+                     // Record the original time constant for manual conversion
+                     var buf bytes.Buffer
+                     format.Node(&buf, fset, n)
                      
-                     // Store the original time.X expression
-                     timeExpr := &ast.SelectorExpr{
-                         X:   ast.NewIdent("time"),
-                         Sel: ast.NewIdent(x.Sel.Name),
-                     }
+                     // Create a replacement string that will be used in the report
+                     replacement := fmt.Sprintf("metav1.Duration{Duration: %s}", buf.String())
                      
-                     // Create a new composite literal
-                     compositeLit := &ast.CompositeLit{
-                         Type: &ast.SelectorExpr{
-                             X:   ast.NewIdent(metav1ImportName),
-                             Sel: ast.NewIdent("Duration"),
-                         },
-                         Elts: []ast.Expr{
-                             &ast.KeyValueExpr{
-                                 Key:   ast.NewIdent("Duration"),
-                                 Value: timeExpr,
-                             },
-                         },
-                     }
+                     // Record this as a manual conversion with the suggested replacement
+                     tracker.recordManualConversion(
+                         filename,
+                         n,
+                         "Time Constant",
+                         fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
+                         buf.String(),
+                     )
                      
-                     // Replace the original node with the composite literal
-                     // We need to replace the parent node, not just assign to it
-                     switch parent := n.(type) {
-                     case *ast.SelectorExpr:
-                         // Create a new node to replace the selector expression
-                         *parent = ast.SelectorExpr{
-                             X: compositeLit,
-                             Sel: ast.NewIdent("Duration"),
-                         }
-                     default:
-                         // For other cases, just record it as a manual conversion
-                         var buf bytes.Buffer
-                         format.Node(&buf, fset, n)
-                         tracker.recordManualConversion(
-                             filename,
-                             n,
-                             "Time Constant",
-                             fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
-                             buf.String(),
-                         )
-                     }
-                     
+                     // Mark the file as modified so we add the metav1 import
                      modified = true
-                     tracker.recordAutomaticConversion(filename)
                      tracker.markNeedsImport(filename)
                  }
              }
@@ -391,21 +362,21 @@
                          units := []string{"Nanosecond", "Microsecond", "Millisecond", "Second", "Minute", "Hour"}
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
-                                 // Replace time literal with metav1.Duration{Duration: ...}
-                                 x.Y = &ast.CompositeLit{
-                                     Type: &ast.SelectorExpr{
-                                         X:   ast.NewIdent(metav1ImportName),
-                                         Sel: ast.NewIdent("Duration"),
-                                     },
-                                     Elts: []ast.Expr{
-                                         &ast.KeyValueExpr{
-                                             Key:   ast.NewIdent("Duration"),
-                                             Value: x.Y,
-                                         },
-                                     },
-                                 }
+                                 // Record the original time literal for manual conversion
+                                 var buf bytes.Buffer
+                                 format.Node(&buf, fset, x)
+                                 
+                                 // Record this as a manual conversion
+                                 tracker.recordManualConversion(
+                                     filename,
+                                     x,
+                                     "Time Literal",
+                                     fmt.Sprintf("Time literal needs conversion to metav1.Duration"),
+                                     buf.String(),
+                                 )
+                                 
+                                 // Mark the file as modified so we add the metav1 import
                                  modified = true
-                                 tracker.recordAutomaticConversion(filename)
                                  tracker.markNeedsImport(filename)
                                  break
                              }
