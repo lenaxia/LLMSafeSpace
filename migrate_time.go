@@ -355,7 +355,26 @@
                      }
                      
                      // Replace the original node with the composite literal
-                     *n.(*ast.SelectorExpr) = *compositeLit
+                     // We need to replace the parent node, not just assign to it
+                     switch parent := n.(type) {
+                     case *ast.SelectorExpr:
+                         // Create a new node to replace the selector expression
+                         *parent = ast.SelectorExpr{
+                             X: compositeLit,
+                             Sel: ast.NewIdent("Duration"),
+                         }
+                     default:
+                         // For other cases, just record it as a manual conversion
+                         var buf bytes.Buffer
+                         format.Node(&buf, fset, n)
+                         tracker.recordManualConversion(
+                             filename,
+                             n,
+                             "Time Constant",
+                             fmt.Sprintf("time.%s needs conversion to metav1.Duration", x.Sel.Name),
+                             buf.String(),
+                         )
+                     }
                      
                      modified = true
                      tracker.recordAutomaticConversion(filename)
