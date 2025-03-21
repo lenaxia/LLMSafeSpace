@@ -360,7 +360,7 @@
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
                                  // Create the metav1.Duration literal
-                                 *x = *&ast.CompositeLit{
+                                 compositeLit := &ast.CompositeLit{
                                      Type: &ast.SelectorExpr{
                                          X:   ast.NewIdent(metav1ImportName),
                                          Sel: ast.NewIdent("Duration"),
@@ -376,6 +376,9 @@
                                          },
                                      },
                                  }
+                                 
+                                 // Replace the binary expression with the composite literal
+                                 *n.(*ast.BinaryExpr) = *compositeLit
                                  
                                  modified = true
                                  tracker.recordAutomaticConversion(filename)
