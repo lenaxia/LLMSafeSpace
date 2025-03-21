@@ -493,7 +493,7 @@
 
          // Check for variable declarations with time types
          case *ast.ValueSpec:
-             for i, _ := range x.Names {
+             for _, name := range x.Names {
                  // Check if type is specified
                  if x.Type != nil {
                      if sel, ok := x.Type.(*ast.SelectorExpr); ok {
