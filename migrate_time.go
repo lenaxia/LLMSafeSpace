@@ -359,21 +359,26 @@
                          units := []string{"Nanosecond", "Microsecond", "Millisecond", "Second", "Minute", "Hour"}
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
-                                 // Record the original time literal for manual conversion
-                                 var buf bytes.Buffer
-                                 format.Node(&buf, fset, x)
+                                 // Create the metav1.Duration literal
+                                 *x = *&ast.CompositeLit{
+                                     Type: &ast.SelectorExpr{
+                                         X:   ast.NewIdent(metav1ImportName),
+                                         Sel: ast.NewIdent("Duration"),
+                                     },
+                                     Elts: []ast.Expr{
+                                         &ast.KeyValueExpr{
+                                             Key: ast.NewIdent("Duration"),
+                                             Value: &ast.BinaryExpr{
+                                                 X:  x.X,
+                                                 Op: x.Op,
+                                                 Y:  x.Y,
+                                             },
+                                         },
+                                     },
+                                 }
                                  
-                                 // Record this as a manual conversion
-                                 tracker.recordManualConversion(
-                                     filename,
-                                     x,
-                                     "Time Literal",
-                                     fmt.Sprintf("Time literal needs conversion to metav1.Duration"),
-                                     buf.String(),
-                                 )
-                                 
-                                 // Mark the file as modified so we add the metav1 import
                                  modified = true
+                                 tracker.recordAutomaticConversion(filename)
                                  tracker.markNeedsImport(filename)
                                  break
                              }
