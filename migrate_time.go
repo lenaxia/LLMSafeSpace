@@ -296,15 +296,30 @@
                      tracker.markNeedsImport(filename)
                  case "Since", "Until":
                      // These functions need special handling
-                     var buf bytes.Buffer
-                     format.Node(&buf, fset, n)
-                     tracker.recordManualConversion(
-                         filename,
-                         n,
-                         "Time Function",
-                         fmt.Sprintf("time.%s needs manual conversion", x.Sel.Name),
-                         buf.String(),
-                     )
+                     // Replace time.Since/Until with metav1.Now().Sub/Add
+                     if x.Sel.Name == "Since" {
+                         x.Sel.Name = ast.NewIdent("Sub")
+                         x.X = &ast.CallExpr{
+                             Fun: &ast.SelectorExpr{
+                                 X:   ast.NewIdent("metav1"),
+                                 Sel: ast.NewIdent("Now"),
+                             },
+                         }
+                     } else {
+                         x.Sel.Name = ast.NewIdent("Add")
+                         x.X = x.Args[0]
+                         x.Args = []ast.Expr{
+                             &ast.CallExpr{
+                                 Fun: &ast.SelectorExpr{
+                                     X:   ast.NewIdent("metav1"),
+                                     Sel: ast.NewIdent("Now"),
+                                 },
+                             },
+                         }
+                     }
+                     modified = true
+                     tracker.recordAutomaticConversion(filename)
+                     tracker.markNeedsImport(filename)
                  case "Parse", "ParseDuration", "ParseInLocation", "Unix", "UnixMilli", "UnixMicro", "UnixNano":
                      // These functions need special handling
                      var buf bytes.Buffer
@@ -350,15 +365,22 @@
                          units := []string{"Nanosecond", "Microsecond", "Millisecond", "Second", "Minute", "Hour"}
                          for _, unit := range units {
                              if sel.Sel.Name == unit {
-                                 var buf bytes.Buffer
-                                 format.Node(&buf, fset, x)
-                                 tracker.recordManualConversion(
-                                     filename,
-                                     n,
-                                     "Time Literal",
-                                     fmt.Sprintf("Time literal needs conversion to metav1.Duration"),
-                                     buf.String(),
-                                 )
+                                 // Replace time literal with metav1.Duration{Duration: ...}
+                                 x.Y = &ast.CompositeLit{
+                                     Type: &ast.SelectorExpr{
+                                         X:   ast.NewIdent(metav1ImportName),
+                                         Sel: ast.NewIdent("Duration"),
+                                     },
+                                     Elts: []ast.Expr{
+                                         &ast.KeyValueExpr{
+                                             Key:   ast.NewIdent("Duration"),
+                                             Value: x.Y,
+                                         },
+                                     },
+                                 }
+                                 modified = true
+                                 tracker.recordAutomaticConversion(filename)
+                                 tracker.markNeedsImport(filename)
                                  break
                              }
                          }
@@ -402,15 +424,30 @@
                                      tracker.recordAutomaticConversion(filename)
                                      tracker.markNeedsImport(filename)
                                  } else if sel.Sel.Name == "Parse" || sel.Sel.Name == "ParseDuration" {
-                                     var buf bytes.Buffer
-                                     format.Node(&buf, fset, call)
-                                     tracker.recordManualConversion(
-                                         filename,
-                                         call,
-                                         "Time Parsing",
-                                         fmt.Sprintf("time.%s needs manual conversion", sel.Sel.Name),
-                                         buf.String(),
-                                     )
+                                     if len(call.Args) > 0 {
+                                         // Replace time.Parse() call with manual parsing
+                                         call.Fun = &ast.SelectorExpr{
+                                             X:   ast.NewIdent("metav1"),
+                                             Sel: ast.NewIdent("ParseTime"),
+                                         }
+                                         modified = true
+                                         tracker.recordManualConversion(
+                                             filename,
+                                             call,
+                                             "Time Parsing",
+                                             "time.Parse needs manual conversion to metav1.ParseTime",
+                                             "",
+                                         )
+                                     } else {
+                                         // time.Now() call
+                                         call.Fun = &ast.SelectorExpr{
+                                             X:   ast.NewIdent("metav1"),
+                                             Sel: ast.NewIdent("Now"),
+                                         }
+                                         modified = true
+                                         tracker.recordAutomaticConversion(filename)
+                                         tracker.markNeedsImport(filename)
+                                     }
                                  }
                              }
                          }
