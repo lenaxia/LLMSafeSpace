@@ -63,7 +63,7 @@ func (f *MockFactory) NewSandbox(name, namespace, runtime string) *types.Sandbox
 			PodName:  name + "-pod",
 			Endpoint: "http://localhost:8080",
 			startTime := metav1.Now()
-			StartTime: &startTime,
+			StartTime: &startTime
 		},
 	}
 }
@@ -197,7 +197,7 @@ func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 		Name:      path[len(path)-1:],
 		Size:      size,
 		IsDir:     isDir,
-		now := metav1.Now().Time
+		now := metav1.Now()
 		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
 		UpdatedAt: metav1.NewTime(now),
 		Mode:      0644,
@@ -213,7 +213,7 @@ func (f *MockFactory) NewFileResult(path string, size int64) *types.FileResult {
 		Path:      path,
 		Size:      size,
 		IsDir:     false,
-		now := metav1.Now().Time  
+		now := metav1.Now()
 		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
 		UpdatedAt: metav1.NewTime(now),
 		Checksum:  "mock-checksum",
