@@ -1,7 +1,6 @@
 package types
 
 import (
-	"time"
 	"fmt"
 	"errors"
 	
@@ -22,8 +21,8 @@ type User struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	CreatedAt metav1.Time `json:"createdAt"`
+	UpdatedAt metav1.Time `json:"updatedAt"`
 	Active    bool      `json:"active"`
 	Role      string    `json:"role"`
 }
@@ -33,8 +32,8 @@ type SandboxMetadata struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
 	Runtime   string    `json:"runtime"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	CreatedAt metav1.Time `json:"createdAt"`
+	UpdatedAt metav1.Time `json:"updatedAt"`
 	Status    string    `json:"status"`
 	Name      string    `json:"name,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
@@ -45,7 +44,7 @@ type WSConnection interface {
 	ReadMessage() (messageType int, p []byte, err error)
 	WriteMessage(messageType int, data []byte) error
 	Close() error
-	SetWriteDeadline(t time.Time) error
+	SetWriteDeadline(t metav1.Time) error
 }
 
 // ExecutionRequest defines a request to execute code or a command
@@ -60,8 +59,8 @@ type ExecutionRequest struct {
 type ExecutionResult struct {
 	ID          string    `json:"id"`
 	Status      string    `json:"status"`
-	StartedAt   time.Time `json:"startedAt"`
-	CompletedAt time.Time `json:"completedAt"`
+	StartedAt   metav1.Time `json:"startedAt"`
+	CompletedAt metav1.Time `json:"completedAt"`
 	ExitCode    int       `json:"exitCode"`
 	Stdout      string    `json:"stdout"`
 	Stderr      string    `json:"stderr"`
@@ -79,8 +78,8 @@ type FileResult struct {
 	Path      string    // Path to the file
 	Size      int64     // Size of the file in bytes
 	IsDir     bool      // Whether this is a directory
-	CreatedAt time.Time // Creation time
-	UpdatedAt time.Time // Last modification time
+	CreatedAt metav1.Time // Creation time
+	UpdatedAt metav1.Time // Last modification time
 	Checksum  string    // Optional checksum of the file
 }
 
@@ -90,8 +89,8 @@ type FileInfo struct {
 	Name      string    // Name of the file (basename)
 	Size      int64     // Size of the file in bytes
 	IsDir     bool      // Whether this is a directory
-	CreatedAt time.Time // Creation time
-	UpdatedAt time.Time // Last modification time
+	CreatedAt metav1.Time // Creation time
+	UpdatedAt metav1.Time // Last modification time
 	Mode      uint32    // File mode/permissions
 	Owner     string    // Owner of the file
 	Group     string    // Group of the file
@@ -110,9 +109,9 @@ type FileStat struct {
 	Size       int64     // Size of the file in bytes
 	IsDir      bool      // Whether this is a directory
 	Mode       uint32    // File mode/permissions
-	ModTime    time.Time // Last modification time
-	AccessTime time.Time // Last access time
-	ChangeTime time.Time // Last status change time
+	ModTime    metav1.Time // Last modification time
+	AccessTime metav1.Time // Last access time
+	ChangeTime metav1.Time // Last status change time
 	Owner      string    // Owner of the file
 	Group      string    // Group of the file
 	Device     uint64    // Device ID
@@ -667,7 +666,7 @@ type Session struct {
 	UserID    string
 	SandboxID string
 	Conn      WSConnection
-	CreatedAt time.Time
+	CreatedAt metav1.Time
 }
 
 // CreateSandboxRequest defines the request for creating a sandbox
