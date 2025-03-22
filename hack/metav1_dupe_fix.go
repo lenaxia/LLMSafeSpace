@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
-	"go/ast/astutil"
 	"go/format"
 	"go/parser"
 	"go/token"
