@@ -123,19 +123,39 @@ func processFile(filename string, fset *token.FileSet) error {
 		case *ast.CallExpr:
 			// Handle Add method calls with metav1.Duration arguments
 			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Add" {
-				for i, arg := range x.Args {
-					if cl, ok := arg.(*ast.CompositeLit); ok {
-						if selType, ok := cl.Type.(*ast.SelectorExpr); ok {
-							if ident, ok := selType.X.(*ast.Ident); ok && ident.Name == "metav1" && selType.Sel.Name == "Duration" {
-								for _, elt := range cl.Elts {
-									if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Duration" {
-										original := formatNode(fset, arg)
-										x.Args[i] = kv.Value
-										modified = true
-										changes = append(changes, fmt.Sprintf("Simplified duration argument: %s -> %s",
-											original, formatNode(fset, kv.Value)))
-									}
-								}
+				// Wrap any Add() result in metav1.NewTime()
+				original := formatNode(fset, x)
+				newCall := &ast.CallExpr{
+					Fun: &ast.SelectorExpr{
+						X:   &ast.Ident{Name: "metav1"},
+						Sel: &ast.Ident{Name: "NewTime"},
+					},
+					Args: []ast.Expr{x},
+				}
+				modified = true
+				changes = append(changes, fmt.Sprintf("Wrapped Add() result: %s -> %s",
+					original, formatNode(fset, newCall)))
+				astutil.Apply(x, func(cr *astutil.Cursor) bool {
+					if cr.Node() == x {
+						cr.Replace(newCall)
+						return false
+					}
+					return true
+				}, nil)
+			}
+
+		case *ast.KeyValueExpr:
+			if cl, ok := x.Value.(*ast.CompositeLit); ok {
+				if sel, ok := cl.Type.(*ast.SelectorExpr); ok {
+					if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" && sel.Sel.Name == "Time" {
+						// Replace metav1.Time{Time: ...} with direct value
+						for _, elt := range cl.Elts {
+							if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Time" {
+								original := formatNode(fset, cl)
+								x.Value = kv.Value
+								modified = true
+								changes = append(changes, fmt.Sprintf("Simplified Time struct: %s -> %s",
+									original, formatNode(fset, kv.Value)))
 							}
 						}
 					}
