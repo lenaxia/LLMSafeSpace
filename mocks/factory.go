@@ -168,14 +168,14 @@ func (f *MockFactory) NewSandboxProfile(name, language string) *types.SandboxPro
 	}
 }
 
-// NewExecutionResult creates a mock ExecutionResult
+// NewExecutionResult creates a mock ExecutionResult 
 func (f *MockFactory) NewExecutionResult(id string, exitCode int, stdout, stderr string) *types.ExecutionResult {
-	now := metav1.Now()
+	start := time.Now().Add(-1 * time.Second)
 	return &types.ExecutionResult{
 		ID:          id,
 		Status:      "completed",
-		StartedAt:   metav1.NewTime(now.Add(-1 * time.Second)),
-		CompletedAt: now,
+		StartedAt:   metav1.NewTime(start),
+		CompletedAt: metav1.NewTime(time.Now()),
 		ExitCode:    exitCode,
 		Stdout:      stdout,
 		Stderr:      stderr,
@@ -191,16 +191,23 @@ func (f *MockFactory) NewFileList(path string, files []types.FileInfo) *types.Fi
 	}
 }
 
+import (
+	"path/filepath"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
 // MockFileInfo creates a mock FileInfo
 func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
-	now := metav1.Now()
+	now := time.Now()
 	return types.FileInfo{
 		Path:      path,
 		Name:      filepath.Base(path),
 		Size:      size,
 		IsDir:     isDir,
-		CreatedAt: metav1.NewTime(metav1.Now().Add(-24 * time.Hour)),
-		UpdatedAt: metav1.NewTime(metav1.Now()),
+		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
+		UpdatedAt: metav1.NewTime(now),
 		Mode:      0644,
 		Owner:     "user",
 		Group:     "group",
@@ -209,13 +216,13 @@ func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 
 // NewFileResult creates a mock FileResult
 func (f *MockFactory) NewFileResult(path string, size int64) *types.FileResult {
-	now := metav1.Now()
+	now := time.Now()
 	return &types.FileResult{
 		Path:      path,
 		Size:      size,
 		IsDir:     false,
-		CreatedAt: metav1.NewTime(metav1.Now().Add(-24 * time.Hour)),
-		UpdatedAt: metav1.NewTime(metav1.Now()),
+		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
+		UpdatedAt: metav1.NewTime(now),
 		Checksum:  "mock-checksum",
 	}
 }
