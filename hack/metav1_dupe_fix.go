@@ -121,6 +121,52 @@ func processFile(filename string, fset *token.FileSet) error {
 			}
 
 		case *ast.CallExpr:
+		    if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Add" {
+		        // Handle duration arguments
+		        for i, arg := range x.Args {
+		            if cl, ok := arg.(*ast.CompositeLit); ok {
+		                if selType, ok := cl.Type.(*ast.SelectorExpr); ok {
+		                    if ident, ok := selType.X.(*ast.Ident); ok && ident.Name == "metav1" && selType.Sel.Name == "Duration" {
+		                        // Replace metav1.Duration{Duration: X} with X
+		                        for _, elt := range cl.Elts {
+		                            if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Duration" {
+		                                original := formatNode(fset, arg)
+		                                x.Args[i] = kv.Value
+		                                modified = true
+		                                changes = append(changes, fmt.Sprintf("Simplified duration argument: %s -> %s",
+		                                    original, formatNode(fset, kv.Value)))
+		                            }
+		                        }
+		                    }
+		                }
+		            }
+		        }
+		    }
+
+		case *ast.KeyValueExpr:
+		    if call, ok := x.Value.(*ast.CallExpr); ok {
+		        if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Add" {
+		            if selRecv, ok := sel.X.(*ast.CallExpr); ok {
+		                if selNow, ok := selRecv.Fun.(*ast.SelectorExpr); ok && selNow.Sel.Name == "Now" {
+		                    // Wrap metav1.Now().Add() with metav1.NewTime()
+		                    original := formatNode(fset, x.Value)
+		                    newCall := &ast.CallExpr{
+		                        Fun: &ast.SelectorExpr{
+		                            X:   &ast.Ident{Name: "metav1"},
+		                            Sel: &ast.Ident{Name: "NewTime"},
+		                        },
+		                        Args: []ast.Expr{call},
+		                    }
+		                    x.Value = newCall
+		                    modified = true
+		                    changes = append(changes, fmt.Sprintf("Wrapped time.Time with metav1.NewTime(): %s -> %s",
+		                        original, formatNode(fset, newCall)))
+		                }
+		            }
+		        }
+		    }
+
+		case *ast.CallExpr:
 			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
 				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 					if sel.Sel.Name == "NewTime" {
