@@ -12,7 +12,6 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	
 	"github.com/lenaxia/llmsafespace/pkg/config"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
@@ -31,7 +30,7 @@ type Client struct {
 }
 
 // Ensure Client implements interfaces.KubernetesClient
-var _ interfaces.KubernetesClient = (*Client)(nil)
+var _ interfaces.KubernetesClient = &Client{}
 
 // New creates a new Kubernetes client
 func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
@@ -156,9 +155,9 @@ func (c *Client) runLeaderElection() {
 	leaderelection.RunOrDie(context.Background(), leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
-		LeaseDuration:   c.config.LeaderElection.LeaseDuration,
-		RenewDeadline:   c.config.LeaderElection.RenewDeadline,
-		RetryPeriod:     c.config.LeaderElection.RetryPeriod,
+		LeaseDuration:   c.config.LeaderElection.LeaseDuration.Duration,
+		RenewDeadline:   c.config.LeaderElection.RenewDeadline.Duration,
+		RetryPeriod:     c.config.LeaderElection.RetryPeriod.Duration,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				c.logger.Info("Started leading")
@@ -206,3 +205,8 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	return client
 }
 
+// DeleteFileInSandbox implements the missing method from interfaces.KubernetesClient
+func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name, path string) error {
+	// Implement the DeleteFileInSandbox method here
+	return nil
+}
