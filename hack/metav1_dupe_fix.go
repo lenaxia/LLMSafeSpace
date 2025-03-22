@@ -75,29 +75,30 @@ func processFile(filename string, fset *token.FileSet) error {
 										if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 											if sel.Sel.Name == "Now" {
 												// Replace the parent node with just metav1.Now()
-												if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-													// Create a new CallExpr node to replace the UnaryExpr
-													newCall := &ast.CallExpr{
-														Fun:  call.Fun,
-														Args: call.Args,
-													}
-													*unary = ast.UnaryExpr{
-														Op: token.AND,
-														X:  newCall,
-													}
-												} else {
-													// For CompositeLit, we need to replace it with the CallExpr
-													// by modifying the parent node
-													if parent, ok := n.(*ast.CompositeLit); ok {
-														// Create a new CallExpr node
-														newCall := &ast.CallExpr{
-															Fun:  call.Fun,
-															Args: call.Args,
-														}
-														// Replace the parent node with the new CallExpr
-														*parent = *newCall
-													}
-												}
+// Replace the parent node with just metav1.Now()
+if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+    // Handle &metav1.Time{Time: metav1.Now()} case
+    newCall := &ast.CallExpr{
+        Fun:  call.Fun,
+        Args: call.Args,
+    }
+    unary.X = newCall
+    modified = true
+} else if parent, ok := n.(*ast.CompositeLit); ok {
+    // Handle metav1.Time{Time: metav1.Now()} case
+    newCall := &ast.CallExpr{
+        Fun:  call.Fun,
+        Args: call.Args,
+    }
+    astutil.Apply(parent, func(cr *astutil.Cursor) bool {
+        if cr.Node() == parent {
+            cr.Replace(newCall)
+            return false
+        }
+        return true
+    }, nil)
+    modified = true
+}
 												modified = true
 											}
 										}
@@ -194,3 +195,4 @@ func simplifyNestedDuration(cl *ast.CompositeLit) {
 		}
 	}
 }
+import "go/ast/astutil"
