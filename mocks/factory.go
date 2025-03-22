@@ -28,7 +28,7 @@ func (f *MockFactory) NewKubernetesClient() *kmocks.MockKubernetesClient {
 	client.On("RESTConfig").Return(&rest.Config{})
 	client.On("Start").Return(nil)
 	client.On("Stop").Return()
-	
+
 	return client
 }
 
@@ -63,7 +63,7 @@ func (f *MockFactory) NewSandbox(name, namespace, runtime string) *types.Sandbox
 			PodName:  name + "-pod",
 			Endpoint: "http://localhost:8080",
 			StartTime: &metav1.Time{
-				Time: time.Now(),
+				Time: metav1.Now(),
 			},
 		},
 	}
@@ -113,7 +113,7 @@ func (f *MockFactory) NewWarmPod(name, namespace, poolName string) *types.WarmPo
 				Namespace: namespace,
 			},
 			CreationTimestamp: &metav1.Time{
-				Time: time.Now(),
+				Time: metav1.Now(),
 			},
 		},
 		Status: types.WarmPodStatus{
@@ -143,7 +143,7 @@ func (f *MockFactory) NewRuntimeEnvironment(name, language, version string) *typ
 		Status: types.RuntimeEnvironmentStatus{
 			Available: true,
 			LastValidated: &metav1.Time{
-				Time: time.Now(),
+				Time: metav1.Now(),
 			},
 		},
 	}
@@ -169,7 +169,7 @@ func (f *MockFactory) NewSandboxProfile(name, language string) *types.SandboxPro
 
 // NewExecutionResult creates a mock ExecutionResult
 func (f *MockFactory) NewExecutionResult(id string, exitCode int, stdout, stderr string) *types.ExecutionResult {
-	now := time.Now()
+	now := metav1.Now()
 	return &types.ExecutionResult{
 		ID:          id,
 		Status:      "completed",
@@ -192,7 +192,7 @@ func (f *MockFactory) NewFileList(path string, files []types.FileInfo) *types.Fi
 
 // MockFileInfo creates a mock FileInfo
 func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
-	now := time.Now()
+	now := metav1.Now()
 	return types.FileInfo{
 		Path:      path,
 		Name:      path[len(path)-1:],
@@ -208,7 +208,7 @@ func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 
 // NewFileResult creates a mock FileResult
 func (f *MockFactory) NewFileResult(path string, size int64) *types.FileResult {
-	now := time.Now()
+	now := metav1.Now()
 	return &types.FileResult{
 		Path:      path,
 		Size:      size,
