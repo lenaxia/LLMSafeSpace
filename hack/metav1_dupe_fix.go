@@ -86,12 +86,17 @@ func processFile(filename string, fset *token.FileSet) error {
 														X:  newCall,
 													}
 												} else {
-													// Create a new CallExpr node to replace the CompositeLit
-													newCall := &ast.CallExpr{
-														Fun:  call.Fun,
-														Args: call.Args,
+													// For CompositeLit, we need to replace it with the CallExpr
+													// by modifying the parent node
+													if parent, ok := n.(*ast.CompositeLit); ok {
+														// Create a new CallExpr node
+														newCall := &ast.CallExpr{
+															Fun:  call.Fun,
+															Args: call.Args,
+														}
+														// Replace the parent node with the new CallExpr
+														*parent = *newCall
 													}
-													*x = *newCall
 												}
 												modified = true
 											}
