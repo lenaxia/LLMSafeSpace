@@ -28,7 +28,7 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: metav1.Duration{Duration: req.Timeout * time.Second}, // Fixed duration initialization
+		Timeout: time.Duration(req.Timeout) * time.Second, // Fixed duration initialization
 	})
 
 	// [Remainder of function unchanged...]
@@ -46,7 +46,7 @@ func (c *Client) ExecuteStreamInSandbox(
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: metav1.Duration{Duration: req.Timeout}, // Fixed duration initialization
+		Timeout: time.Duration(req.Timeout) * time.Second, // Fixed duration initialization
 	})
 
 	// [Remainder of function unchanged...]
