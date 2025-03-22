@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
-	"go/ast/astutil"
 	"go/format"
 	"go/parser"
-	"go/token"
+	"go/token" 
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/ast/astutil"
 )
 
 func main() {
