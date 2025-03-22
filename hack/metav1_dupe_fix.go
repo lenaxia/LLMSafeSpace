@@ -276,3 +276,42 @@ func simplifyNestedDuration(cl *ast.CompositeLit) {
 		}
 	}
 }
+// Add this case to handle time.Time -> metav1.Time conversions
+case *ast.CallExpr:
+    if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Now" {
+        if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "time" {
+            // Convert time.Now() to metav1.NewTime(time.Now())
+            newCall := &ast.CallExpr{
+                Fun: &ast.SelectorExpr{
+                    X:   &ast.Ident{Name: "metav1"},
+                    Sel: &ast.Ident{Name: "NewTime"},
+                },
+                Args: []ast.Expr{x},
+            }
+            astutil.Apply(x, func(cr *astutil.Cursor) bool {
+                cr.Replace(newCall)
+                return false
+            }, nil)
+            modified = true
+            changes = append(changes, fmt.Sprintf("Wrapped time.Now() with metav1.NewTime(): %s -> %s",
+                formatNode(fset, x), formatNode(fset, newCall)))
+        }
+    }
+
+// Enhance the existing Add() handler 
+case *ast.CallExpr:
+    if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Add" {
+        // Handle both metav1.Time and time.Time receivers
+        if recv, ok := sel.X.(*ast.SelectorExpr); ok {
+            if recv.Sel.Name == "Time" {
+                // Convert metav1.Time.Add() to .Time.Add()
+                newSel := &ast.SelectorExpr{
+                    X:   recv.X,
+                    Sel: &ast.Ident{Name: "Time"},
+                }
+                sel.X = newSel
+                modified = true
+                changes = append(changes, "Converted metav1.Time.Add() to .Time.Add()")
+            }
+        }
+    }
