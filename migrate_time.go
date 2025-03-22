@@ -25,6 +25,10 @@ type ConversionIssue struct {
     Code      string
 }
 
+const (
+    IssueTypeNestedMetav1 = "Nested metav1 Reference"
+)
+
 // FileStats tracks statistics for a processed file
 type FileStats struct {
     AutomaticConversions int
@@ -182,6 +186,9 @@ func (f *fileImportTracker) generateReport() string {
         report.WriteString("5. time.Since(t) → metav1.Now().Sub(t.Time) (if t is metav1.Time)\n")
         report.WriteString("6. time.Until(t) → t.Time.Sub(metav1.Now().Time) (if t is metav1.Time)\n")
         report.WriteString("7. time.Parse() → needs custom parsing and conversion to metav1.Time\n")
+        report.WriteString("8. &metav1.Time{Time: metav1.Now()} → metav1.Now()\n")
+        report.WriteString("9. metav1.Duration{Duration: metav1.Duration{...}} → metav1.Duration{Duration: ...}\n")
+        report.WriteString("10. metav1.NewTime(metav1.Now()) → metav1.Now()\n")
     }
 
     if f.dryRun {
@@ -520,6 +527,93 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                 modified = true
                                 tracker.recordAutomaticConversion(filename)
                                 tracker.markNeedsImport(filename)
+                            }
+                        }
+                    }
+                }
+            }
+
+        // Check for nested metav1 references
+        case *ast.CompositeLit:
+            if sel, ok := x.Type.(*ast.SelectorExpr); ok {
+                if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
+                    // Check for nested metav1.Time
+                    if sel.Sel.Name == "Time" {
+                        for _, elt := range x.Elts {
+                            if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Time" {
+                                if call, ok := kv.Value.(*ast.CallExpr); ok {
+                                    if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+                                        if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
+                                            if sel.Sel.Name == "Now" {
+                                                // Found &metav1.Time{Time: metav1.Now()}
+                                                var buf bytes.Buffer
+                                                format.Node(&buf, fset, x)
+                                                tracker.recordManualConversion(
+                                                    filename,
+                                                    x,
+                                                    IssueTypeNestedMetav1,
+                                                    "Unnecessary nesting of metav1.Time",
+                                                    fmt.Sprintf("Replace %s with metav1.Now()", buf.String()),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Check for nested metav1.Duration
+                    if sel.Sel.Name == "Duration" {
+                        for _, elt := range x.Elts {
+                            if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Duration" {
+                                if inner, ok := kv.Value.(*ast.CompositeLit); ok {
+                                    if innerSel, ok := inner.Type.(*ast.SelectorExpr); ok {
+                                        if innerIdent, ok := innerSel.X.(*ast.Ident); ok && innerIdent.Name == "metav1" {
+                                            if innerSel.Sel.Name == "Duration" {
+                                                // Found metav1.Duration{Duration: metav1.Duration{...}}
+                                                var buf bytes.Buffer
+                                                format.Node(&buf, fset, x)
+                                                tracker.recordManualConversion(
+                                                    filename,
+                                                    x,
+                                                    IssueTypeNestedMetav1,
+                                                    "Unnecessary nesting of metav1.Duration",
+                                                    fmt.Sprintf("Simplify %s to single metav1.Duration", buf.String()),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        // Check for unnecessary metav1.NewTime calls
+        case *ast.CallExpr:
+            if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+                if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
+                    if sel.Sel.Name == "NewTime" {
+                        if len(x.Args) == 1 {
+                            if call, ok := x.Args[0].(*ast.CallExpr); ok {
+                                if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+                                    if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
+                                        if sel.Sel.Name == "Now" {
+                                            // Found metav1.NewTime(metav1.Now())
+                                            var buf bytes.Buffer
+                                            format.Node(&buf, fset, x)
+                                            tracker.recordManualConversion(
+                                                filename,
+                                                x,
+                                                IssueTypeNestedMetav1,
+                                                "Unnecessary metav1.NewTime call",
+                                                fmt.Sprintf("Replace %s with metav1.Now()", buf.String()),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
