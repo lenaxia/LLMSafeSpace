@@ -76,9 +76,22 @@ func processFile(filename string, fset *token.FileSet) error {
 											if sel.Sel.Name == "Now" {
 												// Replace the parent node with just metav1.Now()
 												if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-													*unary = *call
+													// Create a new CallExpr node to replace the UnaryExpr
+													newCall := &ast.CallExpr{
+														Fun:  call.Fun,
+														Args: call.Args,
+													}
+													*unary = ast.UnaryExpr{
+														Op: token.AND,
+														X:  newCall,
+													}
 												} else {
-													*x = *call
+													// Create a new CallExpr node to replace the CompositeLit
+													newCall := &ast.CallExpr{
+														Fun:  call.Fun,
+														Args: call.Args,
+													}
+													*x = *newCall
 												}
 												modified = true
 											}
