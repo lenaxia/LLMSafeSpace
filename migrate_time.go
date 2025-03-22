@@ -157,6 +157,34 @@ func (f *fileImportTracker) getTimeLiterals(filename string) []TimeLiteral {
     return f.timeLiterals[filename]
 }
 
+func isNestedMetav1Duration(node ast.Node) bool {
+    if cl, ok := node.(*ast.CompositeLit); ok {
+        if sel, ok := cl.Type.(*ast.SelectorExpr); ok {
+            if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
+                if sel.Sel.Name == "Duration" {
+                    for _, elt := range cl.Elts {
+                        if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Duration" {
+                            // Recursively check if the value is another metav1.Duration
+                            if _, ok := kv.Value.(*ast.CompositeLit); ok {
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
+func simplifyMetav1Duration(code string) string {
+    // Remove all nested metav1.Duration wrappers
+    for strings.Contains(code, "metav1.Duration{Duration: metav1.Duration{") {
+        code = strings.Replace(code, "metav1.Duration{Duration: metav1.Duration{", "metav1.Duration{", 1)
+    }
+    return code
+}
+
 func (f *fileImportTracker) generateReport() string {
     var report strings.Builder
 
@@ -643,7 +671,22 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
 
         // Check for nested metav1 references
         case *ast.CompositeLit:
-            if sel, ok := x.Type.(*ast.SelectorExpr); ok {
+            if isNestedMetav1Duration(x) {
+                var buf bytes.Buffer
+                format.Node(&buf, fset, x)
+                tracker.recordRecommendation(
+                    ConversionIssue{
+                        Filename:  filename,
+                        Line:      fset.Position(x.Pos()).Line,
+                        Column:    fset.Position(x.Pos()).Column,
+                        IssueType: IssueTypeNestedMetav1,
+                        Message:   "Unnecessary nesting of metav1.Duration",
+                        Code:      buf.String(),
+                    },
+                    "This pattern creates unnecessary nesting of metav1.Duration structs",
+                    simplifyMetav1Duration(buf.String()),
+                )
+            } else if sel, ok := x.Type.(*ast.SelectorExpr); ok {
                 if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
                     // Check for nested metav1.Time
                     if sel.Sel.Name == "Time" {
@@ -667,37 +710,6 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                                     },
                                                     "This pattern creates unnecessary nesting of metav1.Time structs",
                                                     "metav1.Now()",
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Check for nested metav1.Duration
-                    if sel.Sel.Name == "Duration" {
-                        for _, elt := range x.Elts {
-                            if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Duration" {
-                                if inner, ok := kv.Value.(*ast.CompositeLit); ok {
-                                    if innerSel, ok := inner.Type.(*ast.SelectorExpr); ok {
-                                        if innerIdent, ok := innerSel.X.(*ast.Ident); ok && innerIdent.Name == "metav1" {
-                                            if innerSel.Sel.Name == "Duration" {
-                                                // Found metav1.Duration{Duration: metav1.Duration{...}}
-                                                var buf bytes.Buffer
-                                                format.Node(&buf, fset, x)
-                                                tracker.recordRecommendation(
-                                                    ConversionIssue{
-                                                        Filename:  filename,
-                                                        Line:      fset.Position(x.Pos()).Line,
-                                                        Column:    fset.Position(x.Pos()).Column,
-                                                        IssueType: IssueTypeNestedMetav1,
-                                                        Message:   "Unnecessary nesting of metav1.Duration",
-                                                        Code:      buf.String(),
-                                                    },
-                                                    "This pattern creates unnecessary nesting of metav1.Duration structs",
-                                                    strings.Replace(buf.String(), "metav1.Duration{Duration: metav1.Duration{", "metav1.Duration{", 1),
                                                 )
                                             }
                                         }
