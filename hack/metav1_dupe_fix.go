@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/ast/astutil"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -75,31 +76,29 @@ func processFile(filename string, fset *token.FileSet) error {
 										if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 											if sel.Sel.Name == "Now" {
 												// Replace the parent node with just metav1.Now()
-// Replace the parent node with just metav1.Now()
-if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-    // Handle &metav1.Time{Time: metav1.Now()} case
-    newCall := &ast.CallExpr{
-        Fun:  call.Fun,
-        Args: call.Args,
-    }
-    unary.X = newCall
-    modified = true
-} else if parent, ok := n.(*ast.CompositeLit); ok {
-    // Handle metav1.Time{Time: metav1.Now()} case
-    newCall := &ast.CallExpr{
-        Fun:  call.Fun,
-        Args: call.Args,
-    }
-    astutil.Apply(parent, func(cr *astutil.Cursor) bool {
-        if cr.Node() == parent {
-            cr.Replace(newCall)
-            return false
-        }
-        return true
-    }, nil)
-    modified = true
-}
-												modified = true
+												if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+													// Handle &metav1.Time{Time: metav1.Now()} case
+													newCall := &ast.CallExpr{
+														Fun:  call.Fun,
+														Args: call.Args,
+													}
+													unary.X = newCall
+													modified = true
+												} else if parent, ok := n.(*ast.CompositeLit); ok {
+													// Handle metav1.Time{Time: metav1.Now()} case
+													newCall := &ast.CallExpr{
+														Fun:  call.Fun,
+														Args: call.Args,
+													}
+													astutil.Apply(parent, func(cr *astutil.Cursor) bool {
+														if cr.Node() == parent {
+															cr.Replace(newCall)
+															return false
+														}
+														return true
+													}, nil)
+													modified = true
+												}
 											}
 										}
 									}
@@ -195,4 +194,3 @@ func simplifyNestedDuration(cl *ast.CompositeLit) {
 		}
 	}
 }
-import "go/ast/astutil"
