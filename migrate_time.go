@@ -53,6 +53,13 @@ type TimeLiteral struct {
     NewCode  string
 }
 
+type Recommendation struct {
+    Issue       ConversionIssue
+    Description string
+    Fix         string
+    Applied     bool
+}
+
 type fileImportTracker struct {
     needsMetav1Import map[string]bool
     hasTimeImport     map[string]bool
@@ -61,6 +68,16 @@ type fileImportTracker struct {
     fset              *token.FileSet
     dryRun            bool
     timeLiterals      map[string][]TimeLiteral
+    recommendations   []Recommendation
+}
+
+func (f *fileImportTracker) recordRecommendation(issue ConversionIssue, description string, fix string) {
+    f.recommendations = append(f.recommendations, Recommendation{
+        Issue:       issue,
+        Description: description,
+        Fix:         fix,
+        Applied:     false,
+    })
 }
 
 func newFileImportTracker(fset *token.FileSet, dryRun bool) *fileImportTracker {
@@ -198,6 +215,93 @@ func (f *fileImportTracker) generateReport() string {
     return report.String()
 }
 
+func applyFix(rec Recommendation) error {
+    // Read the file
+    content, err := ioutil.ReadFile(rec.Issue.Filename)
+    if err != nil {
+        return err
+    }
+
+    // Split into lines
+    lines := strings.Split(string(content), "\n")
+
+    // Get the line to modify
+    lineNum := rec.Issue.Line - 1
+    if lineNum >= len(lines) {
+        return fmt.Errorf("line number out of range")
+    }
+
+    // Apply the fix
+    lines[lineNum] = strings.Replace(lines[lineNum], rec.Issue.Code, rec.Fix, 1)
+
+    // Write the file back
+    newContent := strings.Join(lines, "\n")
+    return ioutil.WriteFile(rec.Issue.Filename, []byte(newContent), 0644)
+}
+
+func (f *fileImportTracker) processRecommendations() {
+    if len(f.recommendations) == 0 {
+        fmt.Println("No recommendations to process")
+        return
+    }
+
+    for i, rec := range f.recommendations {
+        if rec.Applied {
+            continue
+        }
+
+        fmt.Printf("\n=== Recommendation %d/%d ===\n", i+1, len(f.recommendations))
+        fmt.Printf("File: %s:%d:%d\n", rec.Issue.Filename, rec.Issue.Line, rec.Issue.Column)
+        fmt.Printf("Issue: %s\n", rec.Issue.Message)
+        fmt.Printf("Code: %s\n", rec.Issue.Code)
+        fmt.Printf("Description: %s\n", rec.Description)
+        fmt.Printf("Suggested Fix: %s\n", rec.Fix)
+        
+        fmt.Print("\nOptions:\n")
+        fmt.Println("1. Apply this fix")
+        fmt.Println("2. Skip this fix")
+        fmt.Println("3. View details")
+        fmt.Println("4. Quit")
+        
+        var choice int
+        fmt.Print("Select option: ")
+        _, err := fmt.Scan(&choice)
+        if err != nil {
+            fmt.Println("Invalid input")
+            continue
+        }
+
+        switch choice {
+        case 1:
+            err := applyFix(rec)
+            if err != nil {
+                fmt.Printf("Error applying fix: %v\n", err)
+            } else {
+                fmt.Println("Fix applied successfully")
+                f.recommendations[i].Applied = true
+            }
+        case 2:
+            fmt.Println("Skipping this fix")
+            continue
+        case 3:
+            fmt.Printf("\nDetailed Explanation:\n")
+            fmt.Println("The current code creates unnecessary nesting of metav1 types.")
+            fmt.Println("This can lead to:")
+            fmt.Println("- Harder to read code")
+            fmt.Println("- Potential performance overhead")
+            fmt.Println("- Inconsistent usage patterns")
+            fmt.Println("The recommended fix simplifies the code while maintaining the same functionality.")
+            continue
+        case 4:
+            fmt.Println("Exiting recommendation workflow")
+            return
+        default:
+            fmt.Println("Invalid choice")
+            continue
+        }
+    }
+}
+
 func main() {
     // Parse command line flags
     dryRun := flag.Bool("dry-run", false, "Perform a dry run without modifying files")
@@ -245,17 +349,21 @@ func main() {
 
     // Generate and output the report
     report := tracker.generateReport()
+    fmt.Println(report)
+
+    // Process recommendations interactively
+    if len(tracker.recommendations) > 0 {
+        fmt.Println("\n=== Recommendation Workflow ===")
+        tracker.processRecommendations()
+    }
 
     if *reportFile != "" {
         err := ioutil.WriteFile(*reportFile, []byte(report), 0644)
         if err != nil {
             fmt.Printf("Error writing report to %s: %v\n", *reportFile, err)
-            fmt.Println(report)
         } else {
             fmt.Printf("Report written to %s\n", *reportFile)
         }
-    } else {
-        fmt.Println(report)
     }
 }
 
@@ -548,12 +656,17 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                                 // Found &metav1.Time{Time: metav1.Now()}
                                                 var buf bytes.Buffer
                                                 format.Node(&buf, fset, x)
-                                                tracker.recordManualConversion(
-                                                    filename,
-                                                    x,
-                                                    IssueTypeNestedMetav1,
-                                                    "Unnecessary nesting of metav1.Time",
-                                                    fmt.Sprintf("Replace %s with metav1.Now()", buf.String()),
+                                                tracker.recordRecommendation(
+                                                    ConversionIssue{
+                                                        Filename:  filename,
+                                                        Line:      fset.Position(x.Pos()).Line,
+                                                        Column:    fset.Position(x.Pos()).Column,
+                                                        IssueType: IssueTypeNestedMetav1,
+                                                        Message:   "Unnecessary nesting of metav1.Time",
+                                                        Code:      buf.String(),
+                                                    },
+                                                    "This pattern creates unnecessary nesting of metav1.Time structs",
+                                                    "metav1.Now()",
                                                 )
                                             }
                                         }
@@ -574,12 +687,17 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                                 // Found metav1.Duration{Duration: metav1.Duration{...}}
                                                 var buf bytes.Buffer
                                                 format.Node(&buf, fset, x)
-                                                tracker.recordManualConversion(
-                                                    filename,
-                                                    x,
-                                                    IssueTypeNestedMetav1,
-                                                    "Unnecessary nesting of metav1.Duration",
-                                                    fmt.Sprintf("Simplify %s to single metav1.Duration", buf.String()),
+                                                tracker.recordRecommendation(
+                                                    ConversionIssue{
+                                                        Filename:  filename,
+                                                        Line:      fset.Position(x.Pos()).Line,
+                                                        Column:    fset.Position(x.Pos()).Column,
+                                                        IssueType: IssueTypeNestedMetav1,
+                                                        Message:   "Unnecessary nesting of metav1.Duration",
+                                                        Code:      buf.String(),
+                                                    },
+                                                    "This pattern creates unnecessary nesting of metav1.Duration structs",
+                                                    strings.Replace(buf.String(), "metav1.Duration{Duration: metav1.Duration{", "metav1.Duration{", 1),
                                                 )
                                             }
                                         }
@@ -604,12 +722,17 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                             // Found metav1.NewTime(metav1.Now())
                                             var buf bytes.Buffer
                                             format.Node(&buf, fset, x)
-                                            tracker.recordManualConversion(
-                                                filename,
-                                                x,
-                                                IssueTypeNestedMetav1,
-                                                "Unnecessary metav1.NewTime call",
-                                                fmt.Sprintf("Replace %s with metav1.Now()", buf.String()),
+                                            tracker.recordRecommendation(
+                                                ConversionIssue{
+                                                    Filename:  filename,
+                                                    Line:      fset.Position(x.Pos()).Line,
+                                                    Column:    fset.Position(x.Pos()).Column,
+                                                    IssueType: IssueTypeNestedMetav1,
+                                                    Message:   "Unnecessary metav1.NewTime call",
+                                                    Code:      buf.String(),
+                                                },
+                                                "metav1.NewTime is unnecessary when creating a new timestamp",
+                                                "metav1.Now()",
                                             )
                                         }
                                     }
