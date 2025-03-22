@@ -29,8 +29,8 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 	}
 
 	// Generate a unique execution ID
-	execID := fmt.Sprintf("exec-%s-%d", name, time.Now().UnixNano())
-	
+	execID := fmt.Sprintf("exec-%s-%d", name, metav1.Now().UnixNano())
+
 	// Prepare the command to execute
 	var cmd []string
 	if req.Type == "code" {
@@ -46,20 +46,20 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 
 		// Create a temporary file for the code
 		tempFile := fmt.Sprintf("/tmp/%s.tmp", execID)
-		
+
 		// First write the code to a file
 		writeCmd := []string{
 			"sh",
 			"-c",
 			fmt.Sprintf("cat > %s << 'EOL'\n%s\nEOL", tempFile, req.Content),
 		}
-		
+
 		// Execute the write command
 		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write code to file: %w", err)
 		}
-		
+
 		// Then execute the code file
 		cmd = []string{
 			"sh",
@@ -76,18 +76,18 @@ func (c *Client) ExecuteInSandbox(ctx context.Context, namespace, name string, r
 	}
 
 	// Execute the command
-	startTime := time.Now()
+	startTime := metav1.Now()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-		Stdout: stdout,
-		Stderr: stderr,
-		Timeout: time.Duration(req.Timeout) * time.Second,
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Timeout: metav1.Duration(req.Timeout * time.Second),
 	})
-	
-	completedAt := time.Now()
-	
+
+	completedAt := metav1.Now()
+
 	// Determine status based on exit code and error
 	status := "completed"
 	if err != nil {
@@ -115,7 +115,7 @@ type ExecOptions struct {
 	Stdin   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
-	Timeout time.Duration
+	Timeout metav1.Duration
 }
 
 // ExecuteCommand executes a command in a pod (exported for testing)
@@ -123,7 +123,7 @@ func (c *Client) ExecuteCommand(ctx context.Context, namespace, podName string, 
 	if options == nil {
 		options = &ExecOptions{}
 	}
-	
+
 	// Create the exec request
 	req := c.Clientset().CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -179,7 +179,6 @@ func (c *Client) ExecuteCommand(ctx context.Context, namespace, podName string, 
 	return exitCode, nil
 }
 
-
 // ExecuteStreamInSandbox executes code or a command in a sandbox and streams the output
 func (c *Client) ExecuteStreamInSandbox(
 	ctx context.Context,
@@ -198,8 +197,8 @@ func (c *Client) ExecuteStreamInSandbox(
 	}
 
 	// Generate a unique execution ID
-	execID := fmt.Sprintf("exec-%s-%d", name, time.Now().UnixNano())
-	
+	execID := fmt.Sprintf("exec-%s-%d", name, metav1.Now().UnixNano())
+
 	// Prepare the command to execute
 	var cmd []string
 	if req.Type == "code" {
@@ -215,20 +214,20 @@ func (c *Client) ExecuteStreamInSandbox(
 
 		// Create a temporary file for the code
 		tempFile := fmt.Sprintf("/tmp/%s.tmp", execID)
-		
+
 		// First write the code to a file
 		writeCmd := []string{
 			"sh",
 			"-c",
 			fmt.Sprintf("cat > %s << 'EOL'\n%s\nEOL", tempFile, req.Content),
 		}
-		
+
 		// Execute the write command
 		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, writeCmd, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write code to file: %w", err)
 		}
-		
+
 		// Then execute the code file
 		cmd = []string{
 			"sh",
@@ -245,28 +244,28 @@ func (c *Client) ExecuteStreamInSandbox(
 	}
 
 	// Execute the command with streaming
-	startTime := time.Now()
-	
+	startTime := metav1.Now()
+
 	// Create streaming buffers
 	stdoutStreamer := &StreamWriter{Stream: "stdout", Callback: outputCallback}
 	stderrStreamer := &StreamWriter{Stream: "stderr", Callback: outputCallback}
-	
+
 	// Collect full output for the result
 	stdoutCollector := &bytes.Buffer{}
 	stderrCollector := &bytes.Buffer{}
-	
+
 	// Create multi-writers to both stream and collect output
 	stdout := io.MultiWriter(stdoutStreamer, stdoutCollector)
 	stderr := io.MultiWriter(stderrStreamer, stderrCollector)
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-		Stdout: stdout,
-		Stderr: stderr,
-		Timeout: time.Duration(req.Timeout) * time.Second,
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Timeout: metav1.Duration(req.Timeout) * time.Second,
 	})
-	
-	completedAt := time.Now()
-	
+
+	completedAt := metav1.Now()
+
 	// Determine status based on exit code and error
 	status := "completed"
 	if err != nil {
@@ -302,7 +301,7 @@ func (w *StreamWriter) Write(p []byte) (n int, err error) {
 	if err != nil {
 		return n, err
 	}
-	
+
 	// Process the buffer line by line
 	for {
 		line, err := w.Buffer.ReadString('\n')
@@ -314,11 +313,11 @@ func (w *StreamWriter) Write(p []byte) (n int, err error) {
 		if err != nil {
 			return n, err
 		}
-		
+
 		// Send the line to the callback
 		w.Callback(w.Stream, line)
 	}
-	
+
 	return n, nil
 }
 
@@ -333,67 +332,67 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 	if sandbox.Status.PodName == "" {
 		return nil, fmt.Errorf("sandbox pod not found")
 	}
-	
+
 	// Default to workspace directory if path is empty
 	path := req.Path
 	if path == "" {
 		path = "/workspace"
 	}
-	
+
 	// Create command to list files with details
 	cmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("find %s -maxdepth 1 -printf '%%p|%%s|%%y|%%T@|%%C@\\n'", path),
 	}
-	
+
 	// Execute the command
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-		Stdout: stdout,
-		Stderr: stderr,
-		Timeout: 10 * time.Second,
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Timeout: metav1.Duration{Duration: 10 * time.Second},
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return nil, fmt.Errorf("failed to list files: %v (exit code: %d, stderr: %s)", 
+		return nil, fmt.Errorf("failed to list files: %v (exit code: %d, stderr: %s)",
 			err, exitCode, stderr.String())
 	}
-	
+
 	// Parse the output
 	output := stdout.String()
 	lines := strings.Split(output, "\n")
-	
+
 	files := make([]types.FileInfo, 0, len(lines))
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		
+
 		parts := strings.Split(line, "|")
 		if len(parts) != 5 {
 			continue
 		}
-		
+
 		filePath := parts[0]
-		
+
 		// Skip the directory itself when listing its contents
 		if filePath == path {
 			continue
 		}
-		
+
 		size, _ := ParseInt64(parts[1])
 		isDir := parts[2] == "d"
-		
+
 		// Parse timestamps
 		createdAtUnix, _ := ParseFloat64(parts[3])
 		updatedAtUnix, _ := ParseFloat64(parts[4])
-		
+
 		createdAt := time.Unix(int64(createdAtUnix), 0)
 		updatedAt := time.Unix(int64(updatedAtUnix), 0)
-		
+
 		files = append(files, types.FileInfo{
 			Path:      filePath,
 			Size:      size,
@@ -402,7 +401,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 			UpdatedAt: updatedAt,
 		})
 	}
-	
+
 	return &types.FileList{Files: files}, nil
 }
 
@@ -431,28 +430,28 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	if sandbox.Status.PodName == "" {
 		return nil, fmt.Errorf("sandbox pod not found")
 	}
-	
+
 	// Check if file exists and is not a directory
 	checkCmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("test -f %s && echo 'file' || (test -d %s && echo 'dir' || echo 'notfound')", req.Path, req.Path),
 	}
-	
+
 	checkStdout := &bytes.Buffer{}
 	checkStderr := &bytes.Buffer{}
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
-		Stdout: checkStdout,
-		Stderr: checkStderr,
-		Timeout: 5 * time.Second,
+		Stdout:  checkStdout,
+		Stderr:  checkStderr,
+		Timeout: metav1.Duration{Duration: 5 * time.Second},
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return nil, fmt.Errorf("failed to check file: %v (exit code: %d, stderr: %s)", 
+		return nil, fmt.Errorf("failed to check file: %v (exit code: %d, stderr: %s)",
 			err, exitCode, checkStderr.String())
 	}
-	
+
 	fileType := strings.TrimSpace(checkStdout.String())
 	if fileType == "notfound" {
 		return nil, fmt.Errorf("file not found: %s", req.Path)
@@ -460,28 +459,28 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	if fileType == "dir" {
 		return nil, fmt.Errorf("cannot download directory: %s", req.Path)
 	}
-	
+
 	// Create command to read file
 	cmd := []string{
 		"cat",
 		req.Path,
 	}
-	
+
 	// Execute the command
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-		Stdout: stdout,
-		Stderr: stderr,
-		Timeout: 30 * time.Second,
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Timeout: metav1.Duration{Duration: 30 * time.Second},
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return nil, fmt.Errorf("failed to download file: %v (exit code: %d, stderr: %s)", 
+		return nil, fmt.Errorf("failed to download file: %v (exit code: %d, stderr: %s)",
 			err, exitCode, stderr.String())
 	}
-	
+
 	return stdout.Bytes(), nil
 }
 
@@ -496,7 +495,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 	if sandbox.Status.PodName == "" {
 		return nil, fmt.Errorf("sandbox pod not found")
 	}
-	
+
 	// If this is a directory creation request
 	if req.IsDir {
 		// Create command to create directory
@@ -505,58 +504,58 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			"-p",
 			req.Path,
 		}
-		
+
 		// Execute the command
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		
+
 		exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-			Stdout: stdout,
-			Stderr: stderr,
+			Stdout:  stdout,
+			Stderr:  stderr,
 			Timeout: 10 * time.Second,
 		})
-		
+
 		if err != nil || exitCode != 0 {
-			return nil, fmt.Errorf("failed to create directory: %v (exit code: %d, stderr: %s)", 
+			return nil, fmt.Errorf("failed to create directory: %v (exit code: %d, stderr: %s)",
 				err, exitCode, stderr.String())
 		}
-		
+
 		// Get directory info
 		statCmd := []string{
 			"sh",
 			"-c",
 			fmt.Sprintf("stat -c '%%s|%%Y|%%Z' %s", req.Path),
 		}
-		
+
 		statStdout := &bytes.Buffer{}
 		statStderr := &bytes.Buffer{}
-		
+
 		exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
-			Stdout: statStdout,
-			Stderr: statStderr,
+			Stdout:  statStdout,
+			Stderr:  statStderr,
 			Timeout: 5 * time.Second,
 		})
-		
+
 		if err != nil || exitCode != 0 {
-			return nil, fmt.Errorf("failed to get directory info: %v (exit code: %d, stderr: %s)", 
+			return nil, fmt.Errorf("failed to get directory info: %v (exit code: %d, stderr: %s)",
 				err, exitCode, statStderr.String())
 		}
-		
+
 		// Parse stat output
 		statOutput := strings.TrimSpace(statStdout.String())
 		statParts := strings.Split(statOutput, "|")
-		
+
 		if len(statParts) != 3 {
 			return nil, fmt.Errorf("invalid stat output: %s", statOutput)
 		}
-		
+
 		size, _ := ParseInt64(statParts[0])
 		modTimeUnix, _ := ParseInt64(statParts[1])
 		changeTimeUnix, _ := ParseInt64(statParts[2])
-		
+
 		modTime := time.Unix(modTimeUnix, 0)
 		changeTime := time.Unix(changeTimeUnix, 0)
-		
+
 		return &types.FileResult{
 			Path:      req.Path,
 			Size:      size,
@@ -565,7 +564,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			UpdatedAt: modTime,
 		}, nil
 	}
-	
+
 	// Create parent directory if needed
 	parentDir := filepath.Dir(req.Path)
 	if parentDir != "/" {
@@ -574,75 +573,75 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			"-p",
 			parentDir,
 		}
-		
+
 		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, mkdirCmd, &ExecOptions{
 			Timeout: 5 * time.Second,
 		})
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("failed to create parent directory: %w", err)
 		}
 	}
-	
+
 	// Create command to write file
 	cmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("cat > %s", req.Path),
 	}
-	
+
 	// Execute the command
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdin:   bytes.NewReader(req.Content),
 		Stdout:  stdout,
 		Stderr:  stderr,
 		Timeout: 30 * time.Second,
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return nil, fmt.Errorf("failed to upload file: %v (exit code: %d, stderr: %s)", 
+		return nil, fmt.Errorf("failed to upload file: %v (exit code: %d, stderr: %s)",
 			err, exitCode, stderr.String())
 	}
-	
+
 	// Get file info
 	statCmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("stat -c '%%s|%%Y|%%Z' %s", req.Path),
 	}
-	
+
 	statStdout := &bytes.Buffer{}
 	statStderr := &bytes.Buffer{}
-	
+
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
-		Stdout: statStdout,
-		Stderr: statStderr,
+		Stdout:  statStdout,
+		Stderr:  statStderr,
 		Timeout: 5 * time.Second,
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return nil, fmt.Errorf("failed to get file info: %v (exit code: %d, stderr: %s)", 
+		return nil, fmt.Errorf("failed to get file info: %v (exit code: %d, stderr: %s)",
 			err, exitCode, statStderr.String())
 	}
-	
+
 	// Parse stat output
 	statOutput := strings.TrimSpace(statStdout.String())
 	statParts := strings.Split(statOutput, "|")
-	
+
 	if len(statParts) != 3 {
 		return nil, fmt.Errorf("invalid stat output: %s", statOutput)
 	}
-	
+
 	size, _ := ParseInt64(statParts[0])
 	modTimeUnix, _ := ParseInt64(statParts[1])
 	changeTimeUnix, _ := ParseInt64(statParts[2])
-	
+
 	modTime := time.Unix(modTimeUnix, 0)
 	changeTime := time.Unix(changeTimeUnix, 0)
-	
+
 	return &types.FileResult{
 		Path:      req.Path,
 		Size:      size,
@@ -663,54 +662,54 @@ func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string
 	if sandbox.Status.PodName == "" {
 		return fmt.Errorf("sandbox pod not found")
 	}
-	
+
 	// Check if path exists
 	checkCmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("test -e %s && echo 'exists' || echo 'notfound'", req.Path),
 	}
-	
+
 	checkStdout := &bytes.Buffer{}
 	checkStderr := &bytes.Buffer{}
-	
+
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
-		Stdout: checkStdout,
-		Stderr: checkStderr,
+		Stdout:  checkStdout,
+		Stderr:  checkStderr,
 		Timeout: 5 * time.Second,
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return fmt.Errorf("failed to check file: %v (exit code: %d, stderr: %s)", 
+		return fmt.Errorf("failed to check file: %v (exit code: %d, stderr: %s)",
 			err, exitCode, checkStderr.String())
 	}
-	
+
 	fileExists := strings.TrimSpace(checkStdout.String())
 	if fileExists == "notfound" {
 		return fmt.Errorf("file not found: %s", req.Path)
 	}
-	
+
 	// Create command to delete file
 	cmd := []string{
 		"rm",
 		"-rf",
 		req.Path,
 	}
-	
+
 	// Execute the command
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
-		Stdout: stdout,
-		Stderr: stderr,
+		Stdout:  stdout,
+		Stderr:  stderr,
 		Timeout: 10 * time.Second,
 	})
-	
+
 	if err != nil || exitCode != 0 {
-		return fmt.Errorf("failed to delete file: %v (exit code: %d, stderr: %s)", 
+		return fmt.Errorf("failed to delete file: %v (exit code: %d, stderr: %s)",
 			err, exitCode, stderr.String())
 	}
-	
+
 	return nil
 }
