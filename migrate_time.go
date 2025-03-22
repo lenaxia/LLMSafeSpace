@@ -182,6 +182,27 @@ func simplifyMetav1Duration(code string) string {
     for strings.Contains(code, "metav1.Duration{Duration: metav1.Duration{") {
         code = strings.Replace(code, "metav1.Duration{Duration: metav1.Duration{", "metav1.Duration{", 1)
     }
+    
+    // Also handle cases where there's whitespace between Duration: and metav1.Duration
+    for strings.Contains(code, "metav1.Duration{Duration:") {
+        // Extract the inner duration value
+        start := strings.Index(code, "metav1.Duration{Duration:")
+        end := strings.LastIndex(code, "}")
+        if start == -1 || end == -1 {
+            break
+        }
+        
+        inner := code[start+len("metav1.Duration{Duration:"):end]
+        inner = strings.TrimSpace(inner)
+        
+        // If the inner value is already a metav1.Duration, simplify it
+        if strings.HasPrefix(inner, "metav1.Duration{") {
+            code = code[:start] + "metav1.Duration{" + inner + "}" + code[end+1:]
+        } else {
+            break
+        }
+    }
+    
     return code
 }
 
@@ -540,8 +561,12 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
                                 format.Node(&buf2, fset, x.X)
                                 multiplier := buf2.String()
 
-                                // Create the replacement code
-                                newCode := fmt.Sprintf("metav1.Duration{Duration: %s * time.%s}", multiplier, unit)
+                                // Create the replacement code, ensuring we don't nest durations
+                                durationValue := fmt.Sprintf("%s * time.%s", multiplier, unit)
+                                if strings.Contains(durationValue, "metav1.Duration{") {
+                                    durationValue = simplifyMetav1Duration(durationValue)
+                                }
+                                newCode := fmt.Sprintf("metav1.Duration{Duration: %s}", durationValue)
 
                                 // Record the time literal for replacement
                                 tracker.recordTimeLiteral(filename, x, originalCode, newCode)
@@ -674,18 +699,24 @@ func processFile(filename string, fset *token.FileSet, tracker *fileImportTracke
             if isNestedMetav1Duration(x) {
                 var buf bytes.Buffer
                 format.Node(&buf, fset, x)
-                tracker.recordRecommendation(
-                    ConversionIssue{
-                        Filename:  filename,
-                        Line:      fset.Position(x.Pos()).Line,
-                        Column:    fset.Position(x.Pos()).Column,
-                        IssueType: IssueTypeNestedMetav1,
-                        Message:   "Unnecessary nesting of metav1.Duration",
-                        Code:      buf.String(),
-                    },
-                    "This pattern creates unnecessary nesting of metav1.Duration structs",
-                    simplifyMetav1Duration(buf.String()),
-                )
+                originalCode := buf.String()
+                simplified := simplifyMetav1Duration(originalCode)
+                
+                // Only record recommendation if simplification actually changed something
+                if simplified != originalCode {
+                    tracker.recordRecommendation(
+                        ConversionIssue{
+                            Filename:  filename,
+                            Line:      fset.Position(x.Pos()).Line,
+                            Column:    fset.Position(x.Pos()).Column,
+                            IssueType: IssueTypeNestedMetav1,
+                            Message:   "Unnecessary nesting of metav1.Duration",
+                            Code:      originalCode,
+                        },
+                        "This pattern creates unnecessary nesting of metav1.Duration structs",
+                        simplified,
+                    )
+                }
             } else if sel, ok := x.Type.(*ast.SelectorExpr); ok {
                 if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
                     // Check for nested metav1.Time
