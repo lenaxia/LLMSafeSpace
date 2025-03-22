@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"go/ast"
+	"go/ast/astutil"
 	"go/format"
 	"go/parser"
-	"go/token" 
+	"go/token"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -15,13 +17,19 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+var verbose bool
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run hack/metav1_dupe_fix.go <directory>")
+	flag.BoolVar(&verbose, "v", false, "Enable verbose output")
+	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println("Usage: go run hack/metav1_dupe_fix.go [-v] <directory>")
 		os.Exit(1)
 	}
 
-	rootDir := os.Args[1]
+	rootDir := flag.Arg(0)
 	fset := token.NewFileSet()
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
@@ -29,7 +37,6 @@ func main() {
 			return err
 		}
 
-		// Skip directories, non-Go files, and hack directory
 		if info.IsDir() {
 			if info.Name() == "hack" || info.Name() == "vendor" || info.Name() == ".git" {
 				return filepath.SkipDir
@@ -62,11 +69,11 @@ func processFile(filename string, fset *token.FileSet) error {
 	}
 
 	modified := false
+	var changes []string
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
-			// Handle &metav1.Time{Time: metav1.Now()}
 			if sel, ok := x.Type.(*ast.SelectorExpr); ok {
 				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 					if sel.Sel.Name == "Time" {
@@ -76,21 +83,15 @@ func processFile(filename string, fset *token.FileSet) error {
 									if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 										if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 											if sel.Sel.Name == "Now" {
-												// Replace the parent node with just metav1.Now()
+												original := formatNode(fset, x)
 												if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-													// Handle &metav1.Time{Time: metav1.Now()} case
-													newCall := &ast.CallExpr{
-														Fun:  call.Fun,
-														Args: call.Args,
-													}
+													newCall := &ast.CallExpr{Fun: call.Fun, Args: call.Args}
 													unary.X = newCall
 													modified = true
+													changes = append(changes, fmt.Sprintf("Replaced %s with %s", 
+														original, formatNode(fset, newCall)))
 												} else if parent, ok := n.(*ast.CompositeLit); ok {
-													// Handle metav1.Time{Time: metav1.Now()} case
-													newCall := &ast.CallExpr{
-														Fun:  call.Fun,
-														Args: call.Args,
-													}
+													newCall := &ast.CallExpr{Fun: call.Fun, Args: call.Args}
 													astutil.Apply(parent, func(cr *astutil.Cursor) bool {
 														if cr.Node() == parent {
 															cr.Replace(newCall)
@@ -99,6 +100,8 @@ func processFile(filename string, fset *token.FileSet) error {
 														return true
 													}, nil)
 													modified = true
+													changes = append(changes, fmt.Sprintf("Replaced %s with %s", 
+														original, formatNode(fset, newCall)))
 												}
 											}
 										}
@@ -110,14 +113,15 @@ func processFile(filename string, fset *token.FileSet) error {
 				}
 			}
 
-			// Handle metav1.Duration{Duration: metav1.Duration{...}}
 			if isNestedMetav1Duration(x) {
+				original := formatNode(fset, x)
 				simplifyNestedDuration(x)
 				modified = true
+				changes = append(changes, fmt.Sprintf("Simplified nested duration: %s -> %s", 
+					original, formatNode(fset, x)))
 			}
 
 		case *ast.CallExpr:
-			// Handle metav1.NewTime(metav1.Now())
 			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
 				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 					if sel.Sel.Name == "NewTime" {
@@ -126,9 +130,11 @@ func processFile(filename string, fset *token.FileSet) error {
 								if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 									if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 										if sel.Sel.Name == "Now" {
-											// Replace with just metav1.Now()
+											original := formatNode(fset, x)
 											*x = *call
 											modified = true
+											changes = append(changes, fmt.Sprintf("Replaced %s with %s", 
+												original, formatNode(fset, call)))
 										}
 									}
 								}
@@ -151,10 +157,21 @@ func processFile(filename string, fset *token.FileSet) error {
 			return fmt.Errorf("error writing file %s: %v", filename, err)
 		}
 
-		fmt.Printf("Fixed metav1 references in: %s\n", filename)
+		if verbose {
+			fmt.Printf("Modified %s:\n", filename)
+			for _, change := range changes {
+				fmt.Printf("  • %s\n", change)
+			}
+		}
 	}
 
 	return nil
+}
+
+func formatNode(fset *token.FileSet, node ast.Node) string {
+	var buf bytes.Buffer
+	format.Node(&buf, fset, node)
+	return strings.TrimSpace(buf.String())
 }
 
 func isNestedMetav1Duration(node ast.Node) bool {
