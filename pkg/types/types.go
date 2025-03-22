@@ -45,6 +45,7 @@ type WSConnection interface {
 	WriteMessage(messageType int, data []byte) error
 	Close() error
 	SetWriteDeadline(t metav1.Time) error
+	DeepCopyWSConnection() WSConnection
 }
 
 // ExecutionRequest defines a request to execute code or a command
@@ -665,7 +666,7 @@ type Session struct {
 	ID        string
 	UserID    string
 	SandboxID string
-	Conn      WSConnection
+	Conn      WSConnection `json:"-"` // Exclude from serialization
 	CreatedAt metav1.Time
 }
 

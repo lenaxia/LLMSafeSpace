@@ -45,3 +45,14 @@ func (m *MockWSConnection) SetWriteDeadline(t time.Time) error {
 	args := m.Called(t)
 	return args.Error(0)
 }
+
+// DeepCopyWSConnection creates a deep copy of the MockWSConnection
+func (m *MockWSConnection) DeepCopyWSConnection() interface{} {
+	if m == nil {
+		return nil
+	}
+	// Create a new mock with the same underlying Mock object
+	return &MockWSConnection{
+		Mock: m.Mock,
+	}
+}
