@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"path/filepath"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -190,13 +191,6 @@ func (f *MockFactory) NewFileList(path string, files []types.FileInfo) *types.Fi
 		Total: len(files),
 	}
 }
-
-import (
-	"path/filepath"
-	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
 
 // MockFileInfo creates a mock FileInfo
 func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
