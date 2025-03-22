@@ -74,8 +74,12 @@ func processFile(filename string, fset *token.FileSet) error {
 									if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 										if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "metav1" {
 											if sel.Sel.Name == "Now" {
-												// Replace with just metav1.Now()
-												*x = *call
+												// Replace the parent node with just metav1.Now()
+												if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+													*unary = *call
+												} else {
+													*x = *call
+												}
 												modified = true
 											}
 										}
