@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -16,6 +17,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/config"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/logger"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // Client manages Kubernetes API interactions
@@ -205,8 +207,8 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	return client
 }
 
-// DeleteFileInSandbox implements the missing method from interfaces.KubernetesClient
-func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name, path string) error {
-	// Implement the DeleteFileInSandbox method here
+// DeleteFileInSandbox implements interfaces.KubernetesClient
+func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) error {
+	// Implement the DeleteFileInSandbox method using fileReq.Path
 	return nil
 }
