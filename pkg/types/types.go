@@ -665,7 +665,7 @@ type Session struct {
 	ID        string
 	UserID    string
 	SandboxID string
-	Conn      WSConnection `json:"-"` // Exclude from serialization
+	Conn      WSConnection `json:"-" +k8s:ignore` // Exclude from serialization and deepcopy
 	CreatedAt metav1.Time
 }
 
