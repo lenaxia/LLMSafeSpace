@@ -30,7 +30,6 @@ require (
 
 replace (
 	github.com/lenaxia/llmsafespace/mocks => ./mocks
-	github.com/lenaxia/llmsafespace/pkg => ./pkg
 )
 
 require (
