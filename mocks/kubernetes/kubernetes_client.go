@@ -13,6 +13,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockKubernetesClient implements the KubernetesClient interface for testing
@@ -123,12 +124,12 @@ func (m *MockKubernetesClient) SetupExecuteInSandboxMock(exitCode int) *mock.Cal
 		status = "completed"
 		stderr = ""
 	}
-	
+
 	result := &types.ExecutionResult{
 		ID:          "test-exec-id",
 		Status:      status,
-		StartedAt:   time.Now().Add(-5 * time.Second),
-		CompletedAt: time.Now(),
+		StartedAt:   metav1.NewTime(metav1.Now().Add(-5 * time.Second)),
+		CompletedAt: metav1.Now(),
 		ExitCode:    exitCode,
 		Stdout:      "Test stdout output",
 		Stderr:      stderr,
@@ -152,12 +153,12 @@ func (m *MockKubernetesClient) SetupExecuteStreamInSandboxMock(exitCode int) *mo
 		status = "completed"
 		stderr = ""
 	}
-	
+
 	result := &types.ExecutionResult{
 		ID:          "test-exec-id",
 		Status:      status,
-		StartedAt:   time.Now().Add(-5 * time.Second),
-		CompletedAt: time.Now(),
+		StartedAt:   metav1.NewTime(metav1.Now().Add(-5 * time.Second)),
+		CompletedAt: metav1.Now(),
 		ExitCode:    exitCode,
 		Stdout:      "Test stdout output",
 		Stderr:      stderr,
@@ -182,16 +183,16 @@ func (m *MockKubernetesClient) SetupListFilesInSandboxMock() *mock.Call {
 				Name:      "test.py",
 				Size:      1024,
 				IsDir:     false,
-				CreatedAt: time.Now().Add(-1 * time.Hour),
-				UpdatedAt: time.Now().Add(-30 * time.Minute),
+				CreatedAt: metav1.NewTime(metav1.Now().Add(-1 * time.Hour)),
+				UpdatedAt: metav1.NewTime(metav1.Now().Add(-30 * time.Minute)),
 			},
 			{
 				Path:      "/workspace/data",
 				Name:      "data",
 				Size:      4096,
 				IsDir:     true,
-				CreatedAt: time.Now().Add(-2 * time.Hour),
-				UpdatedAt: time.Now().Add(-2 * time.Hour),
+				CreatedAt: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
+				UpdatedAt: metav1.NewTime(metav1.Now().Add(-2 * time.Hour)),
 			},
 		},
 	}
@@ -228,13 +229,13 @@ func (m *MockKubernetesClient) SetupUploadFileToSandboxMock(isDir bool) *mock.Ca
 		path = "/workspace/data"
 		size = int64(4096)
 	}
-	
+
 	result := &types.FileResult{
 		Path:      path,
 		Size:      size,
 		IsDir:     isDir,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: metav1.Now(),
+		UpdatedAt: metav1.Now(),
 	}
 	return m.On("UploadFileToSandbox", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(result, nil)
 }
