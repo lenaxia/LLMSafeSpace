@@ -512,7 +512,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 			Stdout:  stdout,
 			Stderr:  stderr,
-			Timeout: 10 * time.Second,
+			Timeout: metav1.Duration{Duration: 10 * time.Second},
 		})
 
 		if err != nil || exitCode != 0 {
@@ -598,7 +598,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		Stdin:   bytes.NewReader(req.Content),
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: 30 * time.Second,
+		Timeout: metav1.Duration{Duration: 30 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
@@ -619,7 +619,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
 		Stdout:  statStdout,
 		Stderr:  statStderr,
-		Timeout: 5 * time.Second,
+		Timeout: metav1.Duration{Duration: 5 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
@@ -676,7 +676,7 @@ func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
 		Stdout:  checkStdout,
 		Stderr:  checkStderr,
-		Timeout: 5 * time.Second,
+		Timeout: metav1.Duration{Duration: 5 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
@@ -703,7 +703,7 @@ func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: 10 * time.Second,
+		Timeout: metav1.Duration{Duration: 10 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
