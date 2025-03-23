@@ -37,8 +37,13 @@ fmt:
 vet:
 	$(GOCMD) vet ./...
 
-generate:
-	$(GOCMD) generate ./...
+CONTROLLER_GEN = go run sigs.k8s.io/controller-tools/cmd/controller-gen
+
+.PHONY: generate
+generate: ## Generate code
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./pkg/types/..."
+	$(CONTROLLER_GEN) crd paths="./pkg/types/..." output:crd:artifacts:config=config/crd/bases
+	./hack/update-deepcopy.sh
 
 deepcopy:
 	chmod +x ./hack/update-deepcopy.sh

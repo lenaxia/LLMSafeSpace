@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This presents several functions for packages which want to use kubernetes
-# code-generation tools.
+# This script handles client generation (clientset, informers, listers)
+# Deepcopy generation is handled by controller-gen
 
 # These functions insist that your input IDL (commented go) files be located in
 # go packages following the pattern $input_pkg_root/$something_sans_slash/$api_version .
@@ -118,37 +118,6 @@ function kube::codegen::gen_helpers() {
     # Go installs in $GOBIN if defined, and $GOPATH/bin otherwise
     gobin="${GOBIN:-$(go env GOPATH)/bin}"
 
-    # Deepcopy
-    #
-    local input_pkgs=()
-    while read -r dir; do
-        pkg="$(cd "${dir}" && GO111MODULE=on go list -find .)"
-        input_pkgs+=("${pkg}")
-    done < <(
-        ( kube::codegen::internal::grep -l --null \
-            -e '^\s*//\s*+k8s:deepcopy-gen=' \
-            -r "${in_dir}" \
-            --include '*.go' \
-            || true \
-        ) | while read -r -d $'\0' F; do dirname "${F}"; done \
-          | LC_ALL=C sort -u
-    )
-
-    if [ "${#input_pkgs[@]}" != 0 ]; then
-        echo "Generating deepcopy code for ${#input_pkgs[@]} targets"
-
-        kube::codegen::internal::findz \
-            "${in_dir}" \
-            -type f \
-            -name zz_generated.deepcopy.go \
-            | xargs -0 rm -f
-
-        "${gobin}/deepcopy-gen" \
-            -v "${v}" \
-            --output-file zz_generated.deepcopy.go \
-            --go-header-file "${boilerplate}" \
-            "${input_pkgs[@]}"
-    fi
 
     # Defaults
     #

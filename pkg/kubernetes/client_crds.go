@@ -20,26 +20,7 @@ import (
 
 // Initialize CRD scheme
 func init() {
-	schemeBuilder := runtime.NewSchemeBuilder(
-		func(scheme *runtime.Scheme) error {
-			scheme.AddKnownTypes(
-				schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"},
-				&types.Sandbox{},
-				&types.SandboxList{},
-				&types.WarmPool{},
-				&types.WarmPoolList{},
-				&types.WarmPod{},
-				&types.WarmPodList{},
-				&types.RuntimeEnvironment{},
-				&types.RuntimeEnvironmentList{},
-				&types.SandboxProfile{},
-				&types.SandboxProfileList{},
-			)
-			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
-			return nil
-		},
-	)
-	if err := schemeBuilder.AddToScheme(scheme.Scheme); err != nil {
+	if err := types.AddToScheme(scheme.Scheme); err != nil {
 		panic(fmt.Sprintf("failed to add LLMSafeSpace types to scheme: %v", err))
 	}
 }
