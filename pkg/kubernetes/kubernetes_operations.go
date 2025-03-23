@@ -560,8 +560,8 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 			Path:      req.Path,
 			Size:      size,
 			IsDir:     true,
-			CreatedAt: changeTime,
-			UpdatedAt: modTime,
+			CreatedAt: metav1.NewTime(changeTime),
+			UpdatedAt: metav1.NewTime(modTime),
 		}, nil
 	}
 
@@ -646,8 +646,8 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		Path:      req.Path,
 		Size:      size,
 		IsDir:     false,
-		CreatedAt: changeTime,
-		UpdatedAt: modTime,
+		CreatedAt: metav1.NewTime(changeTime),
+		UpdatedAt: metav1.NewTime(modTime),
 	}, nil
 }
 
