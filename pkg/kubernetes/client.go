@@ -207,26 +207,3 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	return client
 }
 
-// ListFilesInSandbox implements interfaces.KubernetesClient
-func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileList, error) {
-	// TODO: Implement actual file listing logic
-	return nil, nil
-}
-
-// DownloadFileFromSandbox implements interfaces.KubernetesClient
-func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) ([]byte, error) {
-	// TODO: Implement actual file download logic
-	return nil, nil
-}
-
-// UploadFileToSandbox implements interfaces.KubernetesClient
-func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) (*types.FileResult, error) {
-	// TODO: Implement actual file upload logic
-	return &types.FileResult{}, nil
-}
-
-// DeleteFileInSandbox implements interfaces.KubernetesClient
-func (c *Client) DeleteFileInSandbox(ctx context.Context, namespace, name string, fileReq *types.FileRequest) error {
-	// Implement the DeleteFileInSandbox method using fileReq.Path
-	return nil
-}
