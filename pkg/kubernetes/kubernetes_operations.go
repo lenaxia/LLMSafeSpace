@@ -353,7 +353,7 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: metav1.Duration{Duration: metav1.Duration{Duration: metav1.Duration{Duration: 10 * time.Second}}},
+		Timeout: metav1.Duration{Duration: 10 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
@@ -444,7 +444,7 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	exitCode, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, checkCmd, &ExecOptions{
 		Stdout:  checkStdout,
 		Stderr:  checkStderr,
-		Timeout: metav1.Duration{Duration: metav1.Duration{Duration: metav1.Duration{Duration: metav1.Duration{Duration: metav1.Duration{Duration: 5 * time.Second}}}}},
+		Timeout: metav1.Duration{Duration: 5 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
@@ -473,7 +473,7 @@ func (c *Client) DownloadFileFromSandbox(ctx context.Context, namespace, name st
 	exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, cmd, &ExecOptions{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Timeout: metav1.Duration{Duration: metav1.Duration{Duration: 30 * time.Second}},
+		Timeout: metav1.Duration{Duration: 30 * time.Second},
 	})
 
 	if err != nil || exitCode != 0 {
