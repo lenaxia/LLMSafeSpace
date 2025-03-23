@@ -397,8 +397,8 @@ func (c *Client) ListFilesInSandbox(ctx context.Context, namespace, name string,
 			Path:      filePath,
 			Size:      size,
 			IsDir:     isDir,
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
+			CreatedAt: metav1.NewTime(createdAt),
+			UpdatedAt: metav1.NewTime(updatedAt),
 		})
 	}
 
