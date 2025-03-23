@@ -533,7 +533,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		exitCode, err = c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, statCmd, &ExecOptions{
 			Stdout:  statStdout,
 			Stderr:  statStderr,
-			Timeout: 5 * time.Second,
+			Timeout: metav1.Duration{Duration: 5 * time.Second},
 		})
 
 		if err != nil || exitCode != 0 {
@@ -575,7 +575,7 @@ func (c *Client) UploadFileToSandbox(ctx context.Context, namespace, name string
 		}
 
 		_, err := c.ExecuteCommand(ctx, namespace, sandbox.Status.PodName, mkdirCmd, &ExecOptions{
-			Timeout: 5 * time.Second,
+			Timeout: metav1.Duration{Duration: 5 * time.Second},
 		})
 
 		if err != nil {
