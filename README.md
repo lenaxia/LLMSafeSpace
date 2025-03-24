@@ -44,195 +44,93 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 ```
 .
-├── api/                     # API service for SDK interactions
-│   ├── cmd/                 # Command-line entrypoints
-│   │   └── api/             # API server entrypoint
-│   │       └── main.go
-│   ├── config/              # Configuration files
-│   │   └── config.yaml
-│   ├── internal/            # Internal implementation
-│   │   ├── app/             # Application bootstrap
-│   │   │   └── app.go
-│   │   ├── config/          # Configuration handling
-│   │   │   ├── config.go
-│   │   │   └── config_test.go
-│   │   ├── docs/            # API documentation
-│   │   │   └── swagger.go
-│   │   ├── errors/          # Error definitions
-│   │   │   └── errors.go
-│   │   ├── interfaces/      # Service interfaces
-│   │   │   └── interfaces.go
-│   │   ├── logger/          # Logging implementation
-│   │   │   ├── logger.go
-│   │   │   └── logger_test.go
-│   │   ├── middleware/      # HTTP middleware components
-│   │   │   ├── auth.go      # Authentication middleware
-│   │   │   ├── cors.go      # CORS handling
-│   │   │   ├── error_handler.go
-│   │   │   ├── logging.go   # Request logging
-│   │   │   ├── metrics.go   # Prometheus metrics
-│   │   │   ├── rate_limit.go
-│   │   │   ├── recovery.go  # Panic recovery
-│   │   │   ├── request_id.go
-│   │   │   ├── security.go  # Security headers
-│   │   │   ├── tracing.go   # Distributed tracing
-│   │   │   └── validation.go
-│   │   ├── mocks/           # Service mocks for testing
-│   │   │   ├── database.go
-│   │   │   ├── execution.go
-│   │   │   ├── file.go
-│   │   │   ├── metrics.go
-│   │   │   ├── session.go
-│   │   │   └── warmpool.go
-│   │   ├── server/          # HTTP server implementation
-│   │   │   └── router.go    # API route definitions
-│   │   ├── services/        # Core business logic
-│   │   │   ├── auth/        # Authentication service
-│   │   │   │   ├── auth.go
-│   │   │   │   └── auth_test.go
-│   │   │   ├── cache/       # Redis cache service
-│   │   │   │   ├── cache.go
-│   │   │   │   └── cache_test.go
-│   │   │   ├── database/    # Database access
-│   │   │   │   ├── database.go
-│   │   │   │   └── database_test.go
-│   │   │   ├── execution/   # Code execution service
-│   │   │   │   ├── execution.go
-│   │   │   │   └── execution_test.go
-│   │   │   ├── file/        # File operations service
-│   │   │   │   ├── file.go
-│   │   │   │   ├── file_test.go
-│   │   │   │   └── mock_kubernetes.go
-│   │   │   ├── kubernetes/  # K8s client wrapper
-│   │   │   │   └── kubernetes.go
-│   │   │   ├── metrics/     # Metrics collection
-│   │   │   │   └── metrics.go
-│   │   │   ├── sandbox/     # Sandbox management
-│   │   │   │   ├── DESIGN.md
-│   │   │   │   └── tests/
-│   │   │   │       └── sandbox_tests.go
-│   │   │   ├── services.go  # Service initialization
-│   │   │   ├── services_test.go
-│   │   │   └── warmpool/    # Warm pool integration
-│   │   │       └── warmpool_service.go
-│   │   └── validation/      # Request validation
-│   │       ├── sandbox.go
-│   │       ├── validation.go
-│   │       └── warmpool.go
-│   ├── migrations/          # Database migrations
-│   │   ├── 000001_initial_schema.down.sql
-│   │   ├── 000001_initial_schema.up.sql
-│   │   ├── 001_initial_schema_rollback.sql
-│   │   └── 001_initial_schema.sql
-│   └── scripts/             # Operational scripts
-│       ├── health-check.sh
-│       ├── init-db.sh
-│       └── migrate.sh
-├── controller/              # Kubernetes operator
-│   ├── bin/                 # Build artifacts
-│   │   └── manager
-│   ├── config/              # Operator configuration
-│   │   └── manager/
-│   │       └── manager.yaml
-│   ├── examples/            # Example CRD manifests
-│   │   ├── runtimeenvironment.yaml
-│   │   ├── sandboxprofile.yaml
-│   │   ├── sandbox.yaml
-│   │   ├── test-sandbox.yaml
-│   │   ├── test-warmpool.yaml
-│   │   └── warmpool.yaml
-│   ├── internal/            # Controller implementation
-│   │   ├── common/          # Shared utilities
-│   │   │   ├── condition_adapter.go
-│   │   │   ├── constants.go
-│   │   │   ├── leader_election.go
-│   │   │   ├── metrics.go
-│   │   │   ├── network_policy_manager.go
-│   │   │   ├── pod_manager.go
-│   │   │   ├── service_manager.go
-│   │   │   └── utils.go
-│   │   ├── controller/      # Main controller logic
-│   │   │   ├── controller.go
-│   │   │   └── setup.go
-│   │   ├── metrics/         # Controller metrics
-│   │   │   └── metrics.go
-│   │   ├── resources/       # CRD type definitions
-│   │   │   ├── register.go
-│   │   │   ├── runtimeenvironment_deepcopy.go
-│   │   │   ├── runtimeenvironment_types.go
-│   │   │   ├── runtimeenvironment_webhook.go
-│   │   │   ├── sandbox_deepcopy.go
-│   │   │   ├── sandboxprofile_deepcopy.go
-│   │   │   ├── sandboxprofile_types.go
-│   │   │   ├── sandboxprofile_webhook.go
-│   │   │   ├── sandbox_types.go
-│   │   │   ├── sandbox_webhook.go
-│   │   │   ├── warmpod_deepcopy.go
-│   │   │   ├── warmpod_types.go
-│   │   │   ├── warmpod_webhook.go
-│   │   │   ├── warmpool_deepcopy.go
-│   │   │   ├── warmpool_types.go
-│   │   │   └── warmpool_webhook.go
-│   │   ├── sandbox/         # Sandbox reconciler
-│   │   │   └── controller.go
-│   │   ├── warmpod/         # WarmPod reconciler
-│   │   │   └── controller.go
-│   │   └── warmpool/        # WarmPool reconciler
-│   │       └── controller.go
-│   ├── scripts/             # Controller scripts
-│   │   ├── install-crds.sh
-│   │   └── test-controller.sh
-│   └── main.go              # Controller entrypoint
-├── mocks/                   # Mock implementations
-│   ├── kubernetes/          # K8s client mocks
-│   │   ├── kubernetes_client.go
-│   │   ├── llmsafespace_v1.go
-│   │   ├── runtimeenvironment.go
-│   │   ├── sandbox.go
-│   │   ├── sandboxprofile.go
-│   │   ├── warmpod.go
-│   │   ├── warmpool.go
-│   │   └── watch.go
-│   ├── logger/              # Logger mocks
-│   │   └── logger.go
-│   └── types/               # Type mocks
-│       ├── session.go
-│       └── wsconnection.go
-└── pkg/                     # Shared packages
-    ├── config/              # Configuration types
-    │   └── kubernetes_config.go
-    ├── crds/                # CRD YAML definitions
-    │   ├── runtimeenvironment_crd.yaml
-    │   ├── sandbox_crd.yaml
-    │   ├── sandboxprofile_crd.yaml
-    │   ├── warmpod_crd.yaml
-    │   └── warmpool_crd.yaml
-    ├── interfaces/          # Common interfaces
-    │   ├── kubernetes.go
-    │   └── logger.go
-    ├── kubernetes/          # K8s client utilities
-    │   ├── client_crds.go
-    │   ├── client.go
-    │   ├── client_test.go
-    │   ├── informers.go
-    │   ├── kubernetes_operations.go
-    │   └── tests/           # K8s client tests
-    │       ├── client_crds_test.go
-    │       ├── client_test.go
-    │       ├── informers_test.go
-    │       ├── kubernetes_operations_test.go
-    │       ├── main_test.go
-    │       ├── mocks_test.go
-    │       ├── run_tests.sh
-    │       └── test_helpers.go
-    ├── logger/              # Logger implementation
-    │   ├── logger.go
-    │   └── mock_test.go
-    └── types/               # Domain types
-        ├── deepcopy.go
-        ├── doc.go
-        └── types.go
+├── api/                              # API Service Component
+│   ├── cmd/
+│   │   └── server/                   # Main entrypoint
+│   ├── config/                       # Configuration files
+│   ├── internal/
+│   │   ├── handler/                  # HTTP handlers
+│   │   ├── k8s/                      # Kubernetes client wrappers
+│   │   ├── middleware/               # HTTP middleware
+│   │   ├── service/                  # Business logic
+│   │   ├── store/                    # Database access
+│   │   └── version/                  # Version info
+│   └── pkg/
+│       └── client/                   # Go client library
+│
+├── controller/                       # Kubernetes Operator
+│   ├── cmd/
+│   │   └── manager/                  # Operator entrypoint
+│   ├── config/
+│   │   ├── crd/                      # CRD patches
+│   │   ├── rbac/                     # RBAC rules
+│   │   └── webhook/                  # Webhook configs
+│   ├── internal/
+│   │   ├── controller/               # Reconciliation logic
+│   │   ├── manager/                  # Manager setup
+│   │   └── webhook/                  # Webhook handlers
+│   └── pkg/
+│       └── admission/                # Admission control
+│
+├── pkg/                              # Shared Packages
+│   ├── apis/                         # API Type Definitions
+│   │   └── llmsafespace/
+│   │       ├── v1/                   # Stable API
+│   │       └── v1alpha1/             # Experimental API
+│   ├── client/                       # Generated Clients
+│   ├── crds/                         # CRD Manifests
+│   ├── kubernetes/                   # K8s Utilities
+│   └── logger/                       # Logging
+│
+├── hack/                             # Development Tools
+│   ├── boilerplate.go.txt            # License header
+│   ├── update-codegen.sh             # Types generation
+│   └── verify-codegen.sh             # CI verification
+│
+├── test/                             # Testing
+│   ├── e2e/                          # End-to-End
+│   └── integration/                  # Integration
+│
+├── Makefile                          # Build automation
+├── go.mod                            # Go modules
+└── go.sum                            # Go dependencies
 ```
+
+### Key Directories Explained:
+
+1. **API Service (`api/`)**:
+   - `cmd/server`: Main API server executable
+   - `internal/handler`: HTTP request handlers
+   - `internal/service`: Core business logic
+   - `pkg/client`: Generated client library for external consumers
+
+2. **Controller (`controller/`)**:
+   - Follows standard kubebuilder/operator-sdk layout
+   - `internal/controller`: Resource reconciliation logic
+   - `config/rbac`: Generated RBAC manifests
+   - `config/webhook`: Webhook configurations
+
+3. **Shared Packages (`pkg/`)**:
+   - `apis/`: CRD type definitions (single source of truth)
+   - `client/`: Generated Kubernetes clientsets
+   - `crds/`: Generated CRD YAML manifests
+   - `kubernetes/`: Shared Kubernetes utilities
+
+4. **Development (`hack/`)**:
+   - Code generation scripts
+   - Verification tools
+   - Maintainer utilities
+
+5. **Testing (`test/`)**:
+   - `e2e/`: Full system tests
+   - `integration/`: Component integration tests
+   - Unit tests live alongside the code they test
+
+This structure follows:
+- Kubernetes operator best practices
+- Standard Go project layout
+- Clean architecture principles
+- Production-grade organization patterns
 
 ## SDK Usage
 
