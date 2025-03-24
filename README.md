@@ -11,12 +11,21 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 ### Core Components
 
 #### `agent-api`
-- Entry point for all SDK interactions
-- Handles authentication, RBAC, and request validation
-- Manages sandbox lifecycle (create, connect, terminate)
-- Exposes REST API and WebSocket endpoints
-- Integrates with Kubernetes API for sandbox orchestration
-- Coordinates warm pool usage for faster sandbox creation
+- Entry point for all SDK interactions with layered architecture:
+  - **Handlers**: HTTP endpoint controllers
+  - **Services**: Core business logic (sandbox, metrics)
+  - **Stores**: Database access layer
+  - **Middleware**: Auth, logging, error handling
+- Implements:
+  - Structured error handling (`APIError` with codes/details)
+  - Token extraction from headers/query params
+  - Metrics collection (request counters, durations)
+  - Configurable logging with Zap integration
+- Features:
+  - Sandbox lifecycle management
+  - Warm pool coordination
+  - Kubernetes API integration
+  - WebSocket streaming support
 
 #### `controller`
 - Unified Kubernetes operator that manages all custom resources
@@ -41,6 +50,34 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 - **Redis**: Session management and caching
 
 ## Project Structure
+
+### Key Architectural Layers
+
+1. **API Layer** (`api/`):
+   - `internal/handler`: HTTP controllers
+   - `internal/service`: Business logic
+     - `sandbox`: Lifecycle management
+     - `metrics`: Instrumentation
+   - `internal/middleware`: Auth, logging
+   - `internal/errors`: Structured errors
+   - `internal/utilities`: Token handling
+
+2. **Controller** (`controller/`):
+   - `internal/resources`: CRD types
+     - `sandbox`, `warmpool`, `runtimeenvironment`
+   - `internal/common`: Shared utilities
+     - Metrics, leader election
+
+3. **Shared Packages** (`pkg/`):
+   - `types`: Core type definitions
+   - `interfaces`: Logger, services
+   - `utilities`: Masking, helpers
+   - `config`: Structured configuration
+
+4. **Testing**:
+   - `mocks/`: Generated mock implementations
+   - Component tests alongside packages
+   - Integration test suites
 
 ```
 .
@@ -135,15 +172,35 @@ This structure follows:
 ## SDK Usage
 
 ```python
-from llmsafespace import Sandbox
+from llmsafespace import Sandbox, APIError
 
-# Create a new sandbox with Python runtime
-sandbox = Sandbox(
-    runtime="python:3.10",
-    api_key="your_api_key",
-    timeout=300,  # seconds
-    use_warm_pool=True  # Use pre-initialized environments for faster startup
-)
+try:
+    # Create sandbox with full configuration
+    sandbox = Sandbox(
+        runtime="python:3.10",
+        api_key="your_api_key",
+        timeout=300,
+        security_level="high",
+        resources={
+            "cpu": "1",
+            "memory": "1Gi"
+        },
+        use_warm_pool=True
+    )
+
+    # Execute with error handling
+    result = sandbox.run_code("""
+    import os
+    print(os.environ.get('HOSTNAME'))
+    """)
+    
+    print(f"Output: {result.stdout}")
+    print(f"Metrics: {sandbox.metrics()}")
+
+except APIError as e:
+    print(f"Error {e.code}: {e.message}")
+    if e.details:
+        print("Details:", e.details)
 
 # Execute code
 result = sandbox.run_code("""
@@ -174,7 +231,51 @@ sandbox.terminate()
 
 ## Kubernetes Integration
 
-LLMSafeSpace uses custom resources to manage sandboxes and warm pools:
+LLMSafeSpace uses a comprehensive CRD system:
+
+### Core Resources
+1. **Runtime Environments**:
+   ```yaml
+   apiVersion: llmsafespace.dev/v1
+   kind: RuntimeEnvironment
+   spec:
+     image: python:3.10
+     language: python
+     version: "3.10"
+     resources:
+       minCpu: "500m"
+       minMemory: "512Mi"
+   ```
+
+2. **Sandbox Profiles** (security templates):
+   ```yaml
+   kind: SandboxProfile
+   spec:
+     language: python
+     securityLevel: high
+     networkRules:
+       - domain: "*.pypi.org"
+         ports: [{port: 443, protocol: TCP}]
+   ```
+
+3. **Sandboxes** (user instances):
+   ```yaml
+   kind: Sandbox
+   spec:
+     runtime: python:3.10
+     profileRef:
+       name: python-high-security
+     resources:
+       cpu: "1"
+       memory: "1Gi"
+   status:
+     conditions:
+     - type: Ready
+       status: "True"
+       lastTransitionTime: "2023-07-01T10:00:00Z"
+   ```
+
+4. **Warm Pool System**:
 
 ```yaml
 # Sandbox resource
@@ -267,21 +368,54 @@ status:
 
 ## Security Features
 
-1. **Pod Security**:
-   - Non-root user execution
-   - Read-only file system where possible
-   - Limited capabilities
-   - Resource quotas and limits
+1. **Application Layer Security**:
+   - Token-based authentication with extractor config:
+     ```go
+     type TokenExtractorConfig struct {
+       HeaderName      string
+       TokenType       string  
+       QueryParamName  string
+     }
+     ```
+   - Sensitive data masking for logs/output:
+     ```go
+     MaskString("secret-api-key") // Returns "secr...key"
+     ```
+   - Structured error handling without exposing internals:
+     ```go
+     type APIError struct {
+       Type    ErrorType
+       Code    string
+       Message string
+       Details map[string]interface{}
+     }
+     ```
 
-2. **Network Security**:
-   - Network policies to restrict pod communication
-   - Egress filtering for external access
-   - Internal service mesh for secure communication
+2. **Pod Security**:
+   - Non-root execution (RunAsUser: 1000)
+   - Read-only root filesystem (with writable exceptions)
+   - Seccomp profiles (RuntimeDefault or custom)
+   - Resource limits with validation:
+     ```go
+     // +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
+     Memory string `json:"memory,omitempty"`
+     ```
 
-3. **RBAC Integration**:
-   - Kubernetes RBAC for API access
-   - User-based access controls for sandboxes
-   - Namespace isolation for multi-tenancy
+3. **Network Security**:
+   - Egress rules with domain/port validation:
+     ```go
+     type EgressRule struct {
+       Domain string `json:"domain"`
+       Ports  []PortRule `json:"ports,omitempty"`
+     }
+     ```
+   - Network policy enforcement
+   - Ingress traffic control (default deny)
+
+4. **Observability**:
+   - Secure logging with field masking
+   - Metrics collection for security events
+   - Audit trails for sandbox operations
 
 ## LLM Agent Integration Scenarios
 
@@ -380,6 +514,56 @@ volumes:
   postgres-data:
   redis-data:
 ```
+
+## Development Patterns
+
+### Configuration Management
+- Layered config loading with `mapstructure` tags:
+  ```go
+  type Config struct {
+    Server struct {
+      Host string `mapstructure:"host"`
+      Port int    `mapstructure:"port"`
+    } `mapstructure:"server"`
+  }
+  ```
+- Supports multiple sources (files, env vars, flags)
+
+### Error Handling
+- Structured error types with codes and details:
+  ```go
+  return &APIError{
+    Type:    ErrInvalidInput,
+    Code:    "invalid_request",
+    Message: "Invalid sandbox parameters",
+    Details: map[string]interface{}{"field": "runtime"},
+  }
+  ```
+
+### Testing
+- Mock implementations for all core interfaces:
+  ```go
+  type MockLogger struct {
+    mock.Mock
+  }
+  func (m *MockLogger) Info(msg string, keysAndValues ...interface{}) {
+    m.Called(msg, keysAndValues)
+  }
+  ```
+- Table-driven tests for error cases
+- Integration test suites
+
+### Logging
+- Structured logging with Zap:
+  ```go
+  logger.Info("Request processed",
+    "method", r.Method,
+    "path", r.URL.Path,
+    "duration", duration,
+  )
+  ```
+- Field masking for sensitive data
+- Component-scoped loggers
 
 ## Development Workflow
 
