@@ -12,20 +12,17 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 #### `agent-api`
 - Entry point for all SDK interactions with layered architecture:
-  - **Handlers**: HTTP endpoint controllers
-  - **Services**: Core business logic (sandbox, metrics)
-  - **Stores**: Database access layer
-  - **Middleware**: Auth, logging, error handling
-- Implements:
-  - Structured error handling (`APIError` with codes/details)
-  - Token extraction from headers/query params
-  - Metrics collection (request counters, durations)
-  - Configurable logging with Zap integration
-- Features:
+  - **HTTP Handlers**: Endpoint controllers (`api/internal/handler/`)
+  - **Services**: Business logic (`api/internal/service/`)
+  - **K8s Client**: Kubernetes wrappers (`api/internal/k8s/`)
+  - **Middleware**: Auth and logging (`api/internal/middleware/`)
+  - **Store**: Database access (`api/internal/store/`)
+- Key Features:
   - Sandbox lifecycle management
   - Warm pool coordination
   - Kubernetes API integration
-  - WebSocket streaming support
+  - Versioned API endpoints (`api/internal/version/`)
+  - Generated client library (`api/pkg/client/`)
 
 #### `controller`
 - Unified Kubernetes operator that manages all custom resources
@@ -53,26 +50,36 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 ### Key Architectural Layers
 
-1. **API Layer** (`api/`):
-   - `internal/handler`: HTTP controllers
-   - `internal/service`: Business logic
-     - `sandbox`: Lifecycle management
-     - `metrics`: Instrumentation
-   - `internal/middleware`: Auth, logging
-   - `internal/errors`: Structured errors
-   - `internal/utilities`: Token handling
+1. **API Service** (`api/`):
+   - `cmd/server/`: Main entrypoint
+   - `config/`: Configuration files
+   - `internal/`:
+     - `handler/`: HTTP request handlers
+     - `k8s/`: Kubernetes client wrappers  
+     - `middleware/`: HTTP middleware
+     - `service/`: Business logic services
+     - `store/`: Database access layer
+     - `version/`: Version information
+   - `pkg/client/`: Generated Go client library
 
 2. **Controller** (`controller/`):
-   - `internal/resources`: CRD types
-     - `sandbox`, `warmpool`, `runtimeenvironment`
-   - `internal/common`: Shared utilities
-     - Metrics, leader election
+   - `cmd/manager/`: Operator entrypoint
+   - `config/`:
+     - `crd/`: Custom Resource Definitions
+     - `rbac/`: RBAC rules
+     - `webhook/`: Webhook configurations
+   - `internal/`:
+     - `controller/`: Reconciliation logic
+     - `manager/`: Manager setup  
+     - `webhook/`: Webhook handlers
+   - `pkg/admission/`: Admission control
 
 3. **Shared Packages** (`pkg/`):
-   - `types`: Core type definitions
-   - `interfaces`: Logger, services
-   - `utilities`: Masking, helpers
-   - `config`: Structured configuration
+   - `apis/llmsafespace/`: API Type Definitions (v1, v1alpha1)
+   - `client/`: Generated Kubernetes clients
+   - `crds/`: CRD manifests
+   - `kubernetes/`: K8s utilities
+   - `logger/`: Logging implementation
 
 4. **Testing**:
    - `mocks/`: Generated mock implementations
@@ -518,40 +525,67 @@ volumes:
 ## Development Patterns
 
 ### Configuration Management
-- Layered config loading with `mapstructure` tags:
+- Structured config loading matching file tree:
   ```go
+  // api/config/config.go
   type Config struct {
     Server struct {
       Host string `mapstructure:"host"`
       Port int    `mapstructure:"port"`
     } `mapstructure:"server"`
+    
+    Kubernetes k8sconfig.KubernetesConfig `mapstructure:"kubernetes"`
+  }
+  
+  // pkg/config/kubernetes_config.go 
+  type KubernetesConfig struct {
+    Kubeconfig string `mapstructure:"kubeconfig"`
+    Namespace  string `mapstructure:"namespace"`
   }
   ```
-- Supports multiple sources (files, env vars, flags)
 
 ### Error Handling
-- Structured error types with codes and details:
+- Structured errors matching `api/internal/errors/`:
   ```go
-  return &APIError{
-    Type:    ErrInvalidInput,
-    Code:    "invalid_request",
-    Message: "Invalid sandbox parameters",
-    Details: map[string]interface{}{"field": "runtime"},
+  // errors/errors.go
+  type APIError struct {
+    Type    ErrorType           `json:"-"`
+    Code    string              `json:"code"`
+    Message string              `json:"message"`
+    Details map[string]interface{} `json:"details,omitempty"`
+    Err     error               `json:"-"`
+  }
+  
+  // Usage example:
+  return &errors.APIError{
+    Code:    "invalid_input",
+    Message: "Invalid sandbox spec",
+    Details: map[string]interface{}{
+      "field":   "runtime",
+      "allowed": []string{"python:3.10", "nodejs:18"},
+    },
   }
   ```
 
 ### Testing
-- Mock implementations for all core interfaces:
+- Mock system matching `mocks/` directory:
   ```go
+  // mocks/logger/logger.go
   type MockLogger struct {
     mock.Mock
   }
+  
   func (m *MockLogger) Info(msg string, keysAndValues ...interface{}) {
     m.Called(msg, keysAndValues)
   }
+  
+  func (m *MockLogger) Error(msg string, err error, keysAndValues ...interface{}) {
+    m.Called(msg, err, keysAndValues)
+  }
   ```
-- Table-driven tests for error cases
-- Integration test suites
+- Test files live alongside implementation:
+  - `api/internal/handler/handler_test.go`
+  - `controller/internal/controller/controller_test.go`
 
 ### Logging
 - Structured logging with Zap:
