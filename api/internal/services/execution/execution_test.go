@@ -39,11 +39,11 @@ func (m *MockK8sClient) ExecuteStreamInSandbox(ctx context.Context, namespace, n
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
 	mockMetrics := new(mocks.MockMetricsService)
-	
+
 	// Test successful creation
 	service, err := New(log, mockK8sClient, mockMetrics)
 	assert.NoError(t, err)
@@ -58,7 +58,7 @@ func TestNew(t *testing.T) {
 func TestExecute(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
 	mockMetrics := new(mocks.MockMetricsService)
@@ -69,7 +69,7 @@ func TestExecute(t *testing.T) {
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-sandbox",
+			Name:      "test-sandbox",
 			Namespace: "default",
 			Labels: map[string]string{
 				"user": "test-user",
@@ -90,8 +90,8 @@ func TestExecute(t *testing.T) {
 	})).Return(&types.ExecutionResult{
 		ID:          "test-exec-1",
 		Status:      "completed",
-		StartedAt:   time.Now(),
-		CompletedAt: time.Now(),
+		StartedAt:   metav1.Now(),
+		CompletedAt: metav1.Now(),
 		ExitCode:    0,
 		Stdout:      "Hello, World!\n",
 		Stderr:      "",
@@ -114,7 +114,7 @@ func TestExecute(t *testing.T) {
 func TestExecuteStream(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
 	mockMetrics := new(mocks.MockMetricsService)
@@ -125,7 +125,7 @@ func TestExecuteStream(t *testing.T) {
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-sandbox",
+			Name:      "test-sandbox",
 			Namespace: "default",
 			Labels: map[string]string{
 				"user": "test-user",
@@ -146,8 +146,8 @@ func TestExecuteStream(t *testing.T) {
 	}), mock.AnythingOfType("func(string, string)")).Return(&types.ExecutionResult{
 		ID:          "test-exec-2",
 		Status:      "completed",
-		StartedAt:   time.Now(),
-		CompletedAt: time.Now(),
+		StartedAt:   metav1.Now(),
+		CompletedAt: metav1.Now(),
 		ExitCode:    0,
 		Stdout:      "Hello, World!\n",
 		Stderr:      "",
@@ -171,7 +171,7 @@ func TestExecuteStream(t *testing.T) {
 func TestInstallPackages(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create mock service instances
 	mockK8sClient := new(MockK8sClient)
 	mockMetrics := new(mocks.MockMetricsService)
@@ -182,7 +182,7 @@ func TestInstallPackages(t *testing.T) {
 	// Create a test sandbox
 	sandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-sandbox",
+			Name:      "test-sandbox",
 			Namespace: "default",
 			Labels: map[string]string{
 				"user": "test-user",
@@ -203,8 +203,8 @@ func TestInstallPackages(t *testing.T) {
 	})).Return(&types.ExecutionResult{
 		ID:          "test-exec-3",
 		Status:      "completed",
-		StartedAt:   time.Now(),
-		CompletedAt: time.Now(),
+		StartedAt:   metav1.Now(),
+		CompletedAt: metav1.Now(),
 		ExitCode:    0,
 		Stdout:      "Successfully installed numpy pandas\n",
 		Stderr:      "",

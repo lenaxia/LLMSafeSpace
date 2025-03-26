@@ -129,29 +129,29 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 	if pod.Status.Phase == corev1.PodRunning {
 		// Update the sandbox status to Running
 		sandbox.Status.Phase = common.SandboxPhaseRunning
-		sandbox.Status.StartTime = &metav1.Time{Time: time.Now()}
-		
+		sandbox.Status.StartTime = &metav1.Time{Time: metav1.Now()}
+
 		// Set the endpoint
 		sandbox.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", pod.Name, pod.Namespace)
-		
+
 		// Update conditions
 		conditions := []resources.SandboxCondition{}
 		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "True", common.ReasonPodRunning, "Pod is running")
 		common.SetSandboxCondition(&conditions, common.ConditionReady, "True", common.ReasonPodRunning, "Sandbox is ready")
 		sandbox.Status.Conditions = conditions
-		
+
 		if err := r.Status().Update(ctx, sandbox); err != nil {
 			logger.Error(err, "Failed to update Sandbox status to Running")
 			return ctrl.Result{}, err
 		}
-		
+
 		logger.Info("Sandbox is now running")
 		return ctrl.Result{}, nil
 	}
 
 	// Pod is not running yet, requeue
 	logger.Info("Pod is not running yet", "podPhase", pod.Status.Phase)
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 5 * time.Second}}, nil
 }
 
 // handleRunningSandbox handles a sandbox in the Running phase
@@ -167,13 +167,13 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 			// Pod doesn't exist, mark as failed
 			logger.Info("Pod not found, marking sandbox as failed")
 			sandbox.Status.Phase = common.SandboxPhaseFailed
-			
+
 			// Update conditions
 			conditions := sandbox.Status.Conditions
 			common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, "Pod not found")
 			common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
 			sandbox.Status.Conditions = conditions
-			
+
 			if err := r.Status().Update(ctx, sandbox); err != nil {
 				logger.Error(err, "Failed to update Sandbox status to Failed")
 				return ctrl.Result{}, err
@@ -190,13 +190,13 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 		// Pod is not running, mark as failed
 		logger.Info("Pod is not running", "podPhase", pod.Status.Phase)
 		sandbox.Status.Phase = common.SandboxPhaseFailed
-		
+
 		// Update conditions
 		conditions := sandbox.Status.Conditions
 		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, fmt.Sprintf("Pod is %s", pod.Status.Phase))
 		common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
 		sandbox.Status.Conditions = conditions
-		
+
 		if err := r.Status().Update(ctx, sandbox); err != nil {
 			logger.Error(err, "Failed to update Sandbox status to Failed")
 			return ctrl.Result{}, err
@@ -206,7 +206,7 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 
 	// Check if the sandbox has exceeded its timeout
 	if sandbox.Spec.Timeout > 0 && sandbox.Status.StartTime != nil {
-		timeout := time.Duration(sandbox.Spec.Timeout) * time.Second
+		timeout := metav1.Duration(sandbox.Spec.Timeout) * time.Second
 		if time.Since(sandbox.Status.StartTime.Time) > timeout {
 			// Sandbox has exceeded its timeout, terminate it
 			logger.Info("Sandbox has exceeded its timeout, terminating")
@@ -228,7 +228,7 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 		}
 		sandbox.Status.Resources.CPUUsage = "100m"
 		sandbox.Status.Resources.MemoryUsage = "256Mi"
-		
+
 		if err := r.Status().Update(ctx, sandbox); err != nil {
 			logger.Error(err, "Failed to update Sandbox resource usage")
 			return ctrl.Result{}, err
@@ -236,7 +236,7 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 	}
 
 	// Requeue to periodically check the sandbox
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 30 * time.Second}}, nil
 }
 
 // handleTerminatingSandbox handles a sandbox in the Terminating phase
@@ -303,9 +303,9 @@ func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resourc
 	// Check if the finalizer exists
 	if controllerutil.ContainsFinalizer(sandbox, common.SandboxFinalizer) {
 		// Update the sandbox status to Terminating if it's not already
-		if sandbox.Status.Phase != common.SandboxPhaseTerminating && 
-		   sandbox.Status.Phase != common.SandboxPhaseTerminated && 
-		   sandbox.Status.Phase != common.SandboxPhaseFailed {
+		if sandbox.Status.Phase != common.SandboxPhaseTerminating &&
+			sandbox.Status.Phase != common.SandboxPhaseTerminated &&
+			sandbox.Status.Phase != common.SandboxPhaseFailed {
 			sandbox.Status.Phase = common.SandboxPhaseTerminating
 			if err := r.Status().Update(ctx, sandbox); err != nil {
 				logger.Error(err, "Failed to update Sandbox status to Terminating")
@@ -394,7 +394,7 @@ func (r *SandboxReconciler) assignWarmPodToSandbox(ctx context.Context, sandbox 
 	// Update the warm pod status
 	warmPod.Status.Phase = common.WarmPodPhaseAssigned
 	warmPod.Status.AssignedTo = sandbox.Name
-	warmPod.Status.AssignedAt = &metav1.Time{Time: time.Now()}
+	warmPod.Status.AssignedAt = &metav1.Time{Time: metav1.Now()}
 	if err := r.Status().Update(ctx, warmPod); err != nil {
 		logger.Error(err, "Failed to update WarmPod status")
 		return ctrl.Result{}, err
@@ -403,14 +403,14 @@ func (r *SandboxReconciler) assignWarmPodToSandbox(ctx context.Context, sandbox 
 	// Update the sandbox status
 	sandbox.Status.PodName = warmPod.Status.PodName
 	sandbox.Status.PodNamespace = warmPod.Status.PodNamespace
-	
+
 	// Add annotations to track the warm pod
 	if sandbox.Annotations == nil {
 		sandbox.Annotations = make(map[string]string)
 	}
 	sandbox.Annotations[common.AnnotationWarmPodID] = warmPod.Name
 	sandbox.Annotations[common.AnnotationRecyclable] = "true"
-	
+
 	if err := r.Update(ctx, sandbox); err != nil {
 		logger.Error(err, "Failed to update Sandbox with warm pod information")
 		return ctrl.Result{}, err
@@ -427,33 +427,33 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 
 	// Create a new pod for the sandbox
 	pod := r.buildSandboxPod(sandbox)
-	
+
 	// Set the owner reference
 	if err := controllerutil.SetControllerReference(sandbox, pod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on Pod")
 		return ctrl.Result{}, err
 	}
-	
+
 	// Create the pod
 	if err := r.Create(ctx, pod); err != nil {
 		logger.Error(err, "Failed to create Pod")
 		return ctrl.Result{}, err
 	}
-	
+
 	// Update the sandbox status
 	sandbox.Status.PodName = pod.Name
 	sandbox.Status.PodNamespace = pod.Namespace
-	
+
 	// Update conditions
 	conditions := []resources.SandboxCondition{}
 	common.SetSandboxCondition(&conditions, common.ConditionPodCreated, "True", common.ReasonPodCreated, "Pod created successfully")
 	sandbox.Status.Conditions = conditions
-	
+
 	if err := r.Status().Update(ctx, sandbox); err != nil {
 		logger.Error(err, "Failed to update Sandbox status with pod information")
 		return ctrl.Result{}, err
 	}
-	
+
 	// Requeue to check if the pod is running
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
@@ -462,7 +462,7 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.Pod {
 	// Create a unique name for the pod
 	podName := fmt.Sprintf("%s-%s", sandbox.Name, sandbox.UID[0:8])
-	
+
 	// Define labels and annotations
 	labels := map[string]string{
 		common.LabelApp:       "llmsafespace",
@@ -470,12 +470,12 @@ func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.
 		common.LabelSandboxID: sandbox.Name,
 		common.LabelRuntime:   sandbox.Spec.Runtime,
 	}
-	
+
 	annotations := map[string]string{
 		common.AnnotationCreatedBy: common.ControllerName,
 		common.AnnotationSandboxID: sandbox.Name,
 	}
-	
+
 	// Define the pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -495,31 +495,31 @@ func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.
 			// Add more pod configuration based on sandbox spec
 		},
 	}
-	
+
 	// Configure resources if specified
 	if sandbox.Spec.Resources != nil {
 		pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{
 			// Configure resource limits and requests
 		}
 	}
-	
+
 	// Configure security context if specified
 	if sandbox.Spec.SecurityContext != nil {
 		pod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
 			// Configure security context
 		}
 	}
-	
+
 	// Configure filesystem if specified
 	if sandbox.Spec.Filesystem != nil {
 		// Configure volumes and volume mounts
 	}
-	
+
 	// Configure network if specified
 	if sandbox.Spec.NetworkAccess != nil {
 		// Configure network policies
 	}
-	
+
 	return pod
 }
 

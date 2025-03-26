@@ -2,8 +2,9 @@ package types
 
 import (
 	"time"
-	
+
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockWSConnection is a mock implementation of WSConnection
@@ -41,7 +42,7 @@ func (m *MockWSConnection) Close() error {
 }
 
 // SetWriteDeadline mocks the SetWriteDeadline method
-func (m *MockWSConnection) SetWriteDeadline(t time.Time) error {
+func (m *MockWSConnection) SetWriteDeadline(t metav1.Time) error {
 	args := m.Called(t)
 	return args.Error(0)
 }

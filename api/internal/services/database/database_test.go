@@ -11,6 +11,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Helper function to create a test config
@@ -45,7 +46,7 @@ func setupMockDB(t *testing.T) (*Service, sqlmock.Sqlmock, func()) {
 	mockConfig := &config.Config{}
 	mockConfig.Database.MaxOpenConns = 10
 	mockConfig.Database.MaxIdleConns = 5
-	mockConfig.Database.ConnMaxLifetime = 5 * time.Minute
+	mockConfig.Database.ConnMaxLifetime = metav1.Duration{Duration: 5 * time.Minute}
 
 	// Create the database service with the mock DB
 	service := &Service{
@@ -116,15 +117,15 @@ func TestGetUserByAPIKey(t *testing.T) {
 	expectedUserID := "user123"
 	expectedUsername := "testuser"
 	expectedEmail := "test@example.com"
-	expectedCreatedAt := time.Now()
-	expectedUpdatedAt := time.Now()
+	expectedCreatedAt := metav1.Now()
+	expectedUpdatedAt := metav1.Now()
 	expectedActive := true
 	expectedRole := "user"
 
 	// Set up expectations for valid API key
 	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role"}).
 		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole)
-	
+
 	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role FROM users u JOIN api_keys k").
 		WithArgs(apiKey).
 		WillReturnRows(rows)
@@ -261,8 +262,8 @@ func TestGetUser(t *testing.T) {
 	userID := "user123"
 	username := "testuser"
 	email := "test@example.com"
-	createdAt := time.Now()
-	updatedAt := time.Now()
+	createdAt := metav1.Now()
+	updatedAt := metav1.Now()
 	active := true
 	role := "user"
 
@@ -307,8 +308,8 @@ func TestCreateSandbox(t *testing.T) {
 		ID:        "sandbox123",
 		UserID:    "user456",
 		Runtime:   "python:3.10",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: metav1.Now(),
+		UpdatedAt: metav1.Now(),
 		Status:    "Running",
 		Name:      "Test Sandbox",
 		Labels: map[string]string{
@@ -319,21 +320,21 @@ func TestCreateSandbox(t *testing.T) {
 
 	// Set up expectations for transaction
 	mock.ExpectBegin()
-	
+
 	// Expect insert into sandboxes table
 	mock.ExpectExec("INSERT INTO sandboxes").
 		WithArgs(sandbox.ID, sandbox.UserID, sandbox.Runtime, sandbox.CreatedAt, sandbox.UpdatedAt, sandbox.Status, sandbox.Name).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	// Expect inserts for labels
 	mock.ExpectExec("INSERT INTO sandbox_labels").
 		WithArgs(sandbox.ID, "env", "test").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	mock.ExpectExec("INSERT INTO sandbox_labels").
 		WithArgs(sandbox.ID, "app", "demo").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	// Expect commit
 	mock.ExpectCommit()
 
@@ -347,13 +348,13 @@ func TestCreateSandbox(t *testing.T) {
 		UserID:  "user456",
 		Runtime: "python:3.10",
 	}
-	
+
 	// Set up expectations for transaction with error
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO sandboxes").
 		WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, sqlmock.AnyArg(), sqlmock.AnyArg(), errorSandbox.Status, errorSandbox.Name).
 		WillReturnError(sql.ErrConnDone)
-	
+
 	// Expect rollback
 	mock.ExpectRollback()
 
@@ -375,29 +376,29 @@ func TestListSandboxes(t *testing.T) {
 	userID := "user123"
 	limit := 10
 	offset := 0
-	
+
 	// Set up expectations for count query
 	countRows := sqlmock.NewRows([]string{"count"}).AddRow(2)
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM sandboxes WHERE user_id = \\$1").
 		WithArgs(userID).
 		WillReturnRows(countRows)
-	
+
 	// Set up expectations for sandboxes query
-	now := time.Now()
+	now := metav1.Now()
 	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name"}).
 		AddRow("sandbox1", userID, "python:3.10", now, now, "Running", "Test Sandbox 1").
 		AddRow("sandbox2", userID, "nodejs:16", now.Add(-1*time.Hour), now, "Pending", "Test Sandbox 2")
-	
+
 	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name FROM sandboxes WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs(userID, limit, offset).
 		WillReturnRows(sandboxRows)
-	
+
 	// Set up expectations for labels query - using pq.Array for the sandbox IDs
 	labelRows := sqlmock.NewRows([]string{"sandbox_id", "key", "value"}).
 		AddRow("sandbox1", "env", "test").
 		AddRow("sandbox1", "app", "demo").
 		AddRow("sandbox2", "env", "prod")
-	
+
 	// Fix: Use a proper SQL query pattern that matches what the actual code will use
 	// The issue is with how we're mocking the ANY($1) part of the query
 	mock.ExpectQuery("SELECT sandbox_id, key, value FROM sandbox_labels WHERE sandbox_id IN \\('sandbox1','sandbox2'\\)").
@@ -408,7 +409,7 @@ func TestListSandboxes(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, sandboxes)
 	assert.Len(t, sandboxes, 2)
-	
+
 	// Check first sandbox
 	assert.Equal(t, "sandbox1", sandboxes[0].ID)
 	assert.Equal(t, userID, sandboxes[0].UserID)
@@ -417,14 +418,14 @@ func TestListSandboxes(t *testing.T) {
 	assert.Equal(t, "Test Sandbox 1", sandboxes[0].Name)
 	assert.Equal(t, "test", sandboxes[0].Labels["env"])
 	assert.Equal(t, "demo", sandboxes[0].Labels["app"])
-	
+
 	// Check second sandbox
 	assert.Equal(t, "sandbox2", sandboxes[1].ID)
 	assert.Equal(t, "nodejs:16", sandboxes[1].Runtime)
 	assert.Equal(t, "Pending", sandboxes[1].Status)
 	assert.Equal(t, "Test Sandbox 2", sandboxes[1].Name)
 	assert.Equal(t, "prod", sandboxes[1].Labels["env"])
-	
+
 	// Check pagination
 	assert.NotNil(t, pagination)
 	assert.Equal(t, 2, pagination.Total)
@@ -459,23 +460,23 @@ func TestGetSandbox(t *testing.T) {
 	sandboxID := "sandbox123"
 	userID := "user456"
 	runtime := "python:3.10"
-	now := time.Now()
+	now := metav1.Now()
 	status := "Running"
 	name := "Test Sandbox"
 
 	// Set up expectations for sandbox query
 	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name"}).
 		AddRow(sandboxID, userID, runtime, now, now, status, name)
-	
+
 	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name FROM sandboxes WHERE id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnRows(sandboxRows)
-	
+
 	// Set up expectations for labels query
 	labelRows := sqlmock.NewRows([]string{"key", "value"}).
 		AddRow("env", "test").
 		AddRow("app", "demo")
-	
+
 	mock.ExpectQuery("SELECT key, value FROM sandbox_labels WHERE sandbox_id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnRows(labelRows)
@@ -516,17 +517,17 @@ func TestDeleteSandbox(t *testing.T) {
 
 	// Set up expectations for transaction
 	mock.ExpectBegin()
-	
+
 	// Expect delete from labels table
 	mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnResult(sqlmock.NewResult(0, 2))
-	
+
 	// Expect delete from sandboxes table
 	mock.ExpectExec("DELETE FROM sandboxes WHERE id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	
+
 	// Expect commit
 	mock.ExpectCommit()
 
@@ -540,7 +541,7 @@ func TestDeleteSandbox(t *testing.T) {
 	mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
 		WithArgs("error_sandbox").
 		WillReturnError(sql.ErrConnDone)
-	
+
 	// Expect rollback
 	mock.ExpectRollback()
 
@@ -571,26 +572,26 @@ func TestUpdateSandbox(t *testing.T) {
 
 	// Set up expectations for transaction
 	mock.ExpectBegin()
-	
+
 	// Expect update to sandboxes table
 	mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\), status = \\$1, name = \\$2 WHERE id = \\$3").
 		WithArgs("Completed", "Updated Sandbox", sandboxID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	
+
 	// Expect delete from labels table
 	mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnResult(sqlmock.NewResult(0, 2))
-	
+
 	// Expect inserts for new labels
 	mock.ExpectExec("INSERT INTO sandbox_labels").
 		WithArgs(sandboxID, "env", "prod").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	mock.ExpectExec("INSERT INTO sandbox_labels").
 		WithArgs(sandboxID, "app", "demo").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	// Expect commit
 	mock.ExpectCommit()
 
@@ -605,12 +606,12 @@ func TestUpdateSandbox(t *testing.T) {
 
 	// Set up expectations for transaction
 	mock.ExpectBegin()
-	
+
 	// Expect update to sandboxes table
 	mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\), status = \\$1 WHERE id = \\$2").
 		WithArgs("Running", sandboxID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	
+
 	// Expect commit
 	mock.ExpectCommit()
 

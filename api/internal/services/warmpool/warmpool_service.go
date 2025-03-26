@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultCacheTTL = 10 * time.Second
+	defaultCacheTTL = metav1.Duration{Duration: 10 * time.Second}
 )
 
 type service struct {
@@ -51,11 +51,11 @@ func (s *service) CheckAvailability(ctx context.Context, runtime, securityLevel 
 
 	// Normalize runtime for label selector
 	normalizedRuntime := strings.Replace(runtime, ":", "-", -1)
-	
+
 	// Create label selector
 	selector := labels.SelectorFromSet(labels.Set{
-		"runtime":        normalizedRuntime,
-		"securityLevel":  securityLevel,
+		"runtime":       normalizedRuntime,
+		"securityLevel": securityLevel,
 	})
 
 	// List warm pools matching the criteria
@@ -410,12 +410,12 @@ func New(
 	if dbClient == nil {
 		return nil, fmt.Errorf("database client cannot be nil")
 	}
-	
+
 	// Create a service without cache for now
 	// In a real implementation, we would inject the cache service
 	return &service{
-		logger:      logger.With("component", "warmpool-service"),
-		k8sClient:   k8sClient,
-		dbClient:    dbClient,
+		logger:    logger.With("component", "warmpool-service"),
+		k8sClient: k8sClient,
+		dbClient:  dbClient,
 	}, nil
 }

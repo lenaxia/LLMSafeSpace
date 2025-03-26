@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockMetricsService implements the MetricsService interface for testing
@@ -21,7 +22,7 @@ func (m *MockMetricsService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
+func (m *MockMetricsService) RecordRequest(method, path string, status int, duration metav1.Duration, size int) {
 	m.Called(method, path, status, duration, size)
 }
 
@@ -33,7 +34,7 @@ func (m *MockMetricsService) RecordSandboxTermination(runtime, reason string) {
 	m.Called(runtime, reason)
 }
 
-func (m *MockMetricsService) RecordExecution(execType, runtime, status, userID string, duration time.Duration) {
+func (m *MockMetricsService) RecordExecution(execType, runtime, status, userID string, duration metav1.Duration) {
 	m.Called(execType, runtime, status, userID, duration)
 }
 

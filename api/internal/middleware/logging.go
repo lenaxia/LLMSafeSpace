@@ -12,6 +12,7 @@ import (
 	httputil "github.com/lenaxia/llmsafespace/pkg/http"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -31,16 +32,16 @@ var (
 type LoggingConfig struct {
 	// LogRequestBody indicates whether to log request bodies
 	LogRequestBody bool
-	
+
 	// LogResponseBody indicates whether to log response bodies
 	LogResponseBody bool
-	
+
 	// MaxBodyLogSize is the maximum size of request/response bodies to log
 	MaxBodyLogSize int
-	
+
 	// SensitiveFields are JSON fields that should be redacted in request/response bodies
 	SensitiveFields []string
-	
+
 	// SkipPaths are paths that should not be logged
 	SkipPaths []string
 }
@@ -62,7 +63,7 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(c *gin.Context) {
 		// Skip logging for certain paths
 		path := c.Request.URL.Path
@@ -72,8 +73,8 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 				return
 			}
 		}
-		
-		start := time.Now()
+
+		start := metav1.Now()
 		requestID := generateRequestID()
 
 		// Log request details
@@ -110,7 +111,7 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 		if err == nil {
 			// Add content length
 			fields = append(fields, "request_body_size", len(body))
-			
+
 			// Try to parse as JSON first
 			var jsonBody map[string]interface{}
 			if err := json.Unmarshal(body, &jsonBody); err == nil {
@@ -137,7 +138,7 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 	log.Info("Request received", fields...)
 }
 
-func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID string, start time.Time, responseBody string, cfg LoggingConfig) {
+func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID string, start metav1.Time, responseBody string, cfg LoggingConfig) {
 	duration := time.Since(start)
 	fields := []interface{}{
 		"status", c.Writer.Status(),
@@ -174,7 +175,6 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 
 	log.Info("Request completed", fields...)
 }
-
 
 func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	body, err := io.ReadAll(c.Request.Body)

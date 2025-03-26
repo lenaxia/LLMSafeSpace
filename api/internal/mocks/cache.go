@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockCacheService implements the CacheService interface for testing
@@ -27,7 +28,7 @@ func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) 
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration metav1.Duration) error {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Error(0)
 }
@@ -42,7 +43,7 @@ func (m *MockCacheService) GetObject(ctx context.Context, key string, value inte
 	return args.Error(0)
 }
 
-func (m *MockCacheService) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+func (m *MockCacheService) SetObject(ctx context.Context, key string, value interface{}, expiration metav1.Duration) error {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Error(0)
 }
@@ -55,7 +56,7 @@ func (m *MockCacheService) GetSession(ctx context.Context, sessionID string) (ma
 	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
-func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
+func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration metav1.Duration) error {
 	args := m.Called(ctx, sessionID, session, expiration)
 	return args.Error(0)
 }

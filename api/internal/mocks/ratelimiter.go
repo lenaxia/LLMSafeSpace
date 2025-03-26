@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // MockRateLimiterService implements the RateLimiterService interface for testing
@@ -12,12 +13,12 @@ type MockRateLimiterService struct {
 	mock.Mock
 }
 
-func (m *MockRateLimiterService) Increment(ctx context.Context, key string, value int64, expiration time.Duration) (int64, error) {
+func (m *MockRateLimiterService) Increment(ctx context.Context, key string, value int64, expiration metav1.Duration) (int64, error) {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockRateLimiterService) AddToWindow(ctx context.Context, key string, timestamp int64, member string, expiration time.Duration) error {
+func (m *MockRateLimiterService) AddToWindow(ctx context.Context, key string, timestamp int64, member string, expiration metav1.Duration) error {
 	args := m.Called(ctx, key, timestamp, member, expiration)
 	return args.Error(0)
 }
@@ -37,9 +38,9 @@ func (m *MockRateLimiterService) GetWindowEntries(ctx context.Context, key strin
 	return args.Get(0).([]string), args.Error(1)
 }
 
-func (m *MockRateLimiterService) GetTTL(ctx context.Context, key string) (time.Duration, error) {
+func (m *MockRateLimiterService) GetTTL(ctx context.Context, key string) (metav1.Duration, error) {
 	args := m.Called(ctx, key)
-	return args.Get(0).(time.Duration), args.Error(1)
+	return args.Get(0).(metav1.Duration), args.Error(1)
 }
 
 func (m *MockRateLimiterService) Allow(key string, rate float64, burst int) bool {

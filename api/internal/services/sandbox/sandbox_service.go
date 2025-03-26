@@ -18,15 +18,15 @@ import (
 
 // Service implements the SandboxService interface
 type Service struct {
-	logger        pkginterfaces.LoggerInterface
-	k8sClient     pkginterfaces.KubernetesClient
-	dbService     apiinterfaces.DatabaseService
-	cacheService  apiinterfaces.CacheService
-	metricsService apiinterfaces.MetricsService
+	logger          pkginterfaces.LoggerInterface
+	k8sClient       pkginterfaces.KubernetesClient
+	dbService       apiinterfaces.DatabaseService
+	cacheService    apiinterfaces.CacheService
+	metricsService  apiinterfaces.MetricsService
 	warmPoolService apiinterfaces.WarmPoolService
-	fileService   apiinterfaces.FileService
-	execService   apiinterfaces.ExecutionService
-	config        *Config
+	fileService     apiinterfaces.FileService
+	execService     apiinterfaces.ExecutionService
+	config          *Config
 }
 
 // Config holds service configuration
@@ -66,28 +66,28 @@ func New(
 	}
 
 	return &Service{
-		logger:         logger,
-		k8sClient:      k8sClient,
-		dbService:      dbService,
-		cacheService:   cacheService,
-		metricsService: metricsService,
+		logger:          logger,
+		k8sClient:       k8sClient,
+		dbService:       dbService,
+		cacheService:    cacheService,
+		metricsService:  metricsService,
 		warmPoolService: warmPoolService,
-		fileService:    fileService,
-		execService:    execService,
-		config:         config,
+		fileService:     fileService,
+		execService:     execService,
+		config:          config,
 	}, nil
 }
 
 // CreateSandbox creates a new sandbox environment
 func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxRequest) (*types.Sandbox, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		s.metricsService.RecordRequest("CreateSandbox", "", 0, time.Since(startTime), 0)
 	}()
 
-	s.logger.Info("Creating sandbox", 
-		"runtime", req.Runtime, 
-		"securityLevel", req.SecurityLevel, 
+	s.logger.Info("Creating sandbox",
+		"runtime", req.Runtime,
+		"securityLevel", req.SecurityLevel,
 		"userID", req.UserID,
 		"useWarmPool", req.UseWarmPool)
 
@@ -106,7 +106,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			err,
 		)
 	}
-	
+
 	defer func() {
 		if err := s.dbService.Stop(); err != nil {
 			s.logger.Error("Failed to stop database service", err)
@@ -115,12 +115,12 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			s.logger.Error("Failed to stop metrics service", err)
 		}
 	}()
-	
+
 	// Validate request
 	if err := validation.ValidateCreateSandboxRequest(req); err != nil {
-		s.logger.Warn("Invalid sandbox creation request", 
-			"error", err.Error(), 
-			"runtime", req.Runtime, 
+		s.logger.Warn("Invalid sandbox creation request",
+			"error", err.Error(),
+			"runtime", req.Runtime,
 			"userID", req.UserID)
 		return nil, apierrors.NewValidationError(
 			"Invalid sandbox creation request",
@@ -138,7 +138,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			err,
 		)
 	}
-	
+
 	if user == nil {
 		s.logger.Error("User not found", nil, "userID", req.UserID)
 		return nil, apierrors.NewNotFoundError(
@@ -147,7 +147,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			fmt.Errorf("user not found"),
 		)
 	}
-	
+
 	s.logger.Debug("User found", "userID", req.UserID, "userName", user.Username)
 
 	// Check if user has permission to create sandboxes
@@ -176,7 +176,7 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	// Check for warm pod availability
 	var warmPod *types.WarmPod
 	var warmPodUsed bool
-	
+
 	// Try to get a warm pod if UseWarmPool is true or not specified
 	if req.UseWarmPool || req.UseWarmPool == false /* default behavior */ {
 		s.logger.Debug("Attempting to use warm pod", "runtime", req.Runtime)
@@ -200,14 +200,14 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	sandbox := convertToSandboxCRD(req, s.config.Namespace, warmPod)
 
 	// Create sandbox in Kubernetes
-	s.logger.Debug("Creating sandbox in Kubernetes", 
-		"namespace", sandbox.Namespace, 
+	s.logger.Debug("Creating sandbox in Kubernetes",
+		"namespace", sandbox.Namespace,
 		"generateName", sandbox.GenerateName)
-	
+
 	createdSandbox, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Create(sandbox)
 	if err != nil {
-		s.logger.Error("Failed to create sandbox in Kubernetes", err, 
-			"runtime", req.Runtime, 
+		s.logger.Error("Failed to create sandbox in Kubernetes", err,
+			"runtime", req.Runtime,
 			"userID", req.UserID,
 			"namespace", s.config.Namespace)
 		return nil, apierrors.NewInternalError(
@@ -216,39 +216,39 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		)
 	}
 
-	s.logger.Info("Sandbox created successfully", 
-		"sandboxID", createdSandbox.Name, 
-		"runtime", req.Runtime, 
+	s.logger.Info("Sandbox created successfully",
+		"sandboxID", createdSandbox.Name,
+		"runtime", req.Runtime,
 		"userID", req.UserID)
 
 	// Store metadata in database
 	s.logger.Debug("Storing sandbox metadata", "sandboxID", createdSandbox.Name, "userID", req.UserID)
-	
+
 	// Create sandbox metadata
 	sandboxMetadata := &types.SandboxMetadata{
 		ID:        createdSandbox.Name,
 		UserID:    req.UserID,
 		Runtime:   req.Runtime,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: metav1.Now(),
+		UpdatedAt: metav1.Now(),
 		Status:    string(createdSandbox.Status.Phase),
 		Labels:    createdSandbox.Labels,
 	}
-	
+
 	err = s.dbService.CreateSandbox(ctx, sandboxMetadata)
 	if err != nil {
-		s.logger.Error("Failed to store sandbox metadata", err, 
-			"sandboxID", createdSandbox.Name, 
+		s.logger.Error("Failed to store sandbox metadata", err,
+			"sandboxID", createdSandbox.Name,
 			"userID", req.UserID)
-		
+
 		// Attempt to clean up the Kubernetes resource
 		s.logger.Debug("Cleaning up sandbox after metadata error", "sandboxID", createdSandbox.Name)
 		deleteErr := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Delete(createdSandbox.Name, metav1.DeleteOptions{})
 		if deleteErr != nil {
-			s.logger.Error("Failed to clean up sandbox after metadata error", deleteErr, 
+			s.logger.Error("Failed to clean up sandbox after metadata error", deleteErr,
 				"sandboxID", createdSandbox.Name)
 		}
-		
+
 		return nil, apierrors.NewInternalError(
 			"metadata_creation_failed",
 			err,
@@ -279,7 +279,7 @@ func convertToSandboxCRD(req *types.CreateSandboxRequest, namespace string, warm
 			},
 			Annotations: map[string]string{
 				"llmsafespace.dev/created-by": req.UserID,
-				"llmsafespace.dev/created-at": time.Now().Format(time.RFC3339),
+				"llmsafespace.dev/created-at": metav1.Now().Format(time.RFC3339),
 			},
 		},
 		Spec: types.SandboxSpec{
@@ -306,7 +306,7 @@ func convertToSandboxCRD(req *types.CreateSandboxRequest, namespace string, warm
 
 // GetSandbox retrieves a sandbox by ID with namespace fallback
 func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		s.metricsService.RecordRequest("GetSandbox", "", 0, time.Since(startTime), 0)
 	}()
@@ -339,8 +339,8 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 		return nil, &types.SandboxNotFoundError{ID: sandboxID}
 	}
 
-	s.logger.Debug("Found sandbox in alternate namespace", 
-		"sandboxID", sandboxID, 
+	s.logger.Debug("Found sandbox in alternate namespace",
+		"sandboxID", sandboxID,
 		"namespace", sandboxList.Items[0].Namespace)
 
 	// Return the first matching sandbox
@@ -353,20 +353,20 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 func convertFromSandboxCRD(sandbox *types.Sandbox) *types.Sandbox {
 	// Create a deep copy to avoid modifying the original
 	result := sandbox.DeepCopy()
-	
+
 	// Add any necessary transformations here
 	// For example, we might want to:
 	// - Set default values for missing fields
 	// - Transform field formats
 	// - Add computed fields
-	
+
 	// For now, we're just returning the copy as-is
 	return result
 }
 
 // ListSandboxes lists sandboxes for a user with pagination
 func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		s.metricsService.RecordRequest("ListSandboxes", "", 0, time.Since(startTime), 0)
 	}()
@@ -375,7 +375,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	sandboxes, pagination, err := s.dbService.ListSandboxes(ctx, userID, limit, offset)
 	if err != nil {
 		s.logger.Error("Failed to list sandboxes from database", err, "userID", userID)
-		
+
 		// Improved error handling with more specific error types
 		if errors.Is(err, types.ErrNotFound) {
 			return nil, apierrors.NewNotFoundError(
@@ -390,7 +390,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 				err,
 			)
 		}
-		
+
 		return nil, apierrors.NewInternalError(
 			"sandbox_list_failed",
 			err,
@@ -399,7 +399,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 
 	// Convert to map[string]interface{} for API response
 	result := make([]map[string]interface{}, 0, len(sandboxes))
-	
+
 	// Enrich with Kubernetes status information
 	for _, sandbox := range sandboxes {
 		// Convert SandboxMetadata to map
@@ -411,11 +411,11 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 			"updatedAt": sandbox.UpdatedAt,
 			"status":    sandbox.Status,
 		}
-		
+
 		if sandbox.Name != "" {
 			sandboxMap["name"] = sandbox.Name
 		}
-		
+
 		if sandbox.Labels != nil && len(sandbox.Labels) > 0 {
 			sandboxMap["labels"] = sandbox.Labels
 		}
@@ -437,19 +437,19 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 
 		result = append(result, sandboxMap)
 	}
-	
+
 	// Sort sandboxes by creation time (newest first)
 	sort.Slice(result, func(i, j int) bool {
-		createdAtI, okI := result[i]["createdAt"].(time.Time)
-		createdAtJ, okJ := result[j]["createdAt"].(time.Time)
-		
+		createdAtI, okI := result[i]["createdAt"].(metav1.Time)
+		createdAtJ, okJ := result[j]["createdAt"].(metav1.Time)
+
 		// If either isn't a time.Time, fall back to comparing by ID
 		if !okI || !okJ {
 			idI, _ := result[i]["id"].(string)
 			idJ, _ := result[j]["id"].(string)
 			return idI > idJ
 		}
-		
+
 		return createdAtI.After(createdAtJ)
 	})
 
@@ -473,7 +473,7 @@ func getUserIDFromContext(ctx context.Context) string {
 
 // TerminateSandbox terminates a sandbox
 func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		s.metricsService.RecordRequest("TerminateSandbox", "", 0, time.Since(startTime), 0)
 	}()
@@ -507,8 +507,8 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	// First check if user owns the sandbox
 	isOwner, err := s.dbService.CheckResourceOwnership(userID, "sandbox", sandboxID)
 	if err != nil {
-		s.logger.Error("Failed to check resource ownership", err, 
-			"userID", userID, 
+		s.logger.Error("Failed to check resource ownership", err,
+			"userID", userID,
 			"sandboxID", sandboxID)
 		return apierrors.NewInternalError(
 			"ownership_check_failed",
@@ -520,8 +520,8 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	if !isOwner {
 		hasPermission, err := s.dbService.CheckPermission(userID, "sandbox", sandboxID, "delete")
 		if err != nil {
-			s.logger.Error("Failed to check permissions", err, 
-				"userID", userID, 
+			s.logger.Error("Failed to check permissions", err,
+				"userID", userID,
 				"sandboxID", sandboxID)
 			return apierrors.NewInternalError(
 				"permission_check_failed",
@@ -529,9 +529,9 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 			)
 		}
 		if !hasPermission {
-			s.logger.Warn("Permission denied", 
-				"userID", userID, 
-				"action", "delete", 
+			s.logger.Warn("Permission denied",
+				"userID", userID,
+				"action", "delete",
 				"resource", sandboxID)
 			return apierrors.NewForbiddenError(
 				"User does not have permission to terminate this sandbox",
@@ -566,8 +566,8 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	// Record metrics
 	s.metricsService.RecordSandboxTermination(sandbox.Spec.Runtime, "user_requested")
 
-	s.logger.Info("Sandbox terminated successfully", 
-		"sandboxID", sandboxID, 
+	s.logger.Info("Sandbox terminated successfully",
+		"sandboxID", sandboxID,
 		"userID", userID,
 		"runtime", sandbox.Spec.Runtime)
 
@@ -576,7 +576,7 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 
 // GetSandboxStatus gets detailed status of a sandbox
 func (s *Service) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		s.metricsService.RecordRequest("GetSandboxStatus", "", 0, time.Since(startTime), 0)
 	}()

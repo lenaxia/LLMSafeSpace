@@ -16,6 +16,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // setupTestServer creates a test server with all middleware and routes
@@ -58,8 +59,8 @@ func TestAuthenticationFlow(t *testing.T) {
 	// Step 1: Register a new user
 	t.Log("Step 1: Registering a new user")
 	registerPayload := map[string]interface{}{
-		"username": fmt.Sprintf("testuser_%d", time.Now().Unix()),
-		"email":    fmt.Sprintf("test_%d@example.com", time.Now().Unix()),
+		"username": fmt.Sprintf("testuser_%d", metav1.Now().Unix()),
+		"email":    fmt.Sprintf("test_%d@example.com", metav1.Now().Unix()),
 		"password": "Password123!",
 	}
 	registerBody, _ := json.Marshal(registerPayload)
@@ -403,7 +404,7 @@ func TestRateLimitingFlow(t *testing.T) {
 	rateLimitConfig := middleware.RateLimitConfig{
 		Enabled:       true,
 		DefaultLimit:  3,                // Very low limit for testing
-		DefaultWindow: 10 * time.Second, // Short window for testing
+		DefaultWindow: metav1.Duration{Duration: 10 * time.Second}, // Short window for testing
 		Strategy:      "token_bucket",
 		BurstSize:     3,
 	}
@@ -547,7 +548,7 @@ func TestErrorHandlingFlow(t *testing.T) {
 	err = json.NewDecoder(validationResp.Body).Decode(&validationResult)
 	require.NoError(t, err)
 	assert.Equal(t, "validation_error", validationResult["error"].(map[string]interface{})["code"])
-	
+
 	details := validationResult["error"].(map[string]interface{})["details"].(map[string]interface{})
 	errors := details["errors"].(map[string]interface{})
 	assert.Contains(t, errors, "name")

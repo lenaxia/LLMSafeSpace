@@ -18,20 +18,21 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Test successful creation
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
-	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+	cfg.Auth.TokenDuration = metav1.Duration{Duration: 24 * time.Hour}
+
 	mockDb := new(mocks.MockDatabaseService)
 	mockCache := new(mocks.MockCacheService)
-	
+
 	service, err := New(cfg, log, mockDb, mockCache)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
@@ -53,16 +54,16 @@ func TestNew(t *testing.T) {
 func TestAuthenticateAPIKey(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
@@ -108,18 +109,18 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	apiKey := "api_test_key"
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+apiKey).
 		Return("", errors.New("not found")).Once()
-	
+
 	user = &types.User{
 		ID: "api_user",
 	}
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiKey).
 		Return(user, nil).Once()
-	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }),
 		"apikey:"+apiKey, "api_user", mock.Anything).Return(nil).Once()
 
 	// Configure the service to recognize API keys
 	service.config.Auth.APIKeyPrefix = "api_"
-	
+
 	userID, err = service.ValidateToken(apiKey)
 	assert.NoError(t, err)
 	assert.Equal(t, "api_user", userID)
@@ -131,16 +132,16 @@ func TestAuthenticateAPIKey(t *testing.T) {
 func TestGenerateToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
@@ -171,16 +172,16 @@ func TestGenerateToken(t *testing.T) {
 func TestValidateToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	// Create service with mocks
 	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
@@ -192,7 +193,7 @@ func TestValidateToken(t *testing.T) {
 	// Test case: Valid token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token).Return("", errors.New("not found")).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token, userID, mock.Anything).Return(nil).Once()
-	
+
 	// Configure the service to recognize API keys
 	service.config.Auth.APIKeyPrefix = "api_"
 
@@ -203,12 +204,12 @@ func TestValidateToken(t *testing.T) {
 	// Test case: Invalid token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:invalid-token").
 		Return("", errors.New("not found")).Once()
-	
+
 	// For API key format tokens, we need to mock the database call
 	user := (*types.User)(nil)
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "invalid-token").
 		Return(user, errors.New("invalid API key")).Maybe()
-	
+
 	extractedUserID, err = service.ValidateToken("invalid-token")
 	assert.Error(t, err)
 	assert.Equal(t, "", extractedUserID)
@@ -217,14 +218,14 @@ func TestValidateToken(t *testing.T) {
 	// Create a token that's already expired
 	expiredToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": userID,
-		"exp": time.Now().Add(-1 * time.Hour).Unix(),
-		"iat": time.Now().Add(-2 * time.Hour).Unix(),
+		"exp": metav1.Now().Add(-1 * time.Hour).Unix(),
+		"iat": metav1.Now().Add(-2 * time.Hour).Unix(),
 	})
 	tokenString, _ := expiredToken.SignedString(service.jwtSecret)
 
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+tokenString).
 		Return("", errors.New("not found")).Once()
-	
+
 	// For API key format tokens, we need to mock the database call
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), tokenString).
 		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
@@ -236,7 +237,7 @@ func TestValidateToken(t *testing.T) {
 
 	// Test case: Revoked token
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "token:"+token).Return("revoked", nil).Once()
-	
+
 	// For API key format tokens, we need to mock the database call
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), token).
 		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
@@ -252,16 +253,16 @@ func TestValidateToken(t *testing.T) {
 func TestRevokeToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
 
@@ -273,28 +274,28 @@ func TestRevokeToken(t *testing.T) {
 		return service.jwtSecret, nil
 	})
 	claims := parsedToken.Claims.(jwt.MapClaims)
-	
+
 	// Get token ID (jti) or use subject as fallback
 	jti, _ := claims["jti"].(string)
 	if jti == "" {
 		jti = fmt.Sprintf("%v", claims["sub"])
 	}
-	
+
 	// Get and validate expiration time
 	expClaim, ok := claims["exp"]
 	if !ok {
 		t.Fatal("token missing expiration claim")
 	}
-	
+
 	if _, ok := expClaim.(float64); !ok {
 		t.Fatal("invalid expiration time format in token")
 	}
 
 	// Test token revocation
-	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), 
-		mock.MatchedBy(func(key string) bool { return key[:6] == "token:" }), 
+	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }),
+		mock.MatchedBy(func(key string) bool { return key[:6] == "token:" }),
 		"revoked", mock.Anything).Return(nil).Once()
-	
+
 	err = service.RevokeToken(token)
 	assert.NoError(t, err)
 
@@ -304,16 +305,16 @@ func TestRevokeToken(t *testing.T) {
 func TestCheckResourceAccess(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	// Create service with mocks
 	service, err := New(cfg, log, mockDbService, mockCacheService)
 	assert.NoError(t, err)
@@ -362,16 +363,16 @@ func TestCheckResourceAccess(t *testing.T) {
 func TestGetUserFromContext(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: User ID in context
@@ -391,35 +392,35 @@ func TestGetUserFromContext(t *testing.T) {
 func TestValidateAPIKey(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
 	cfg.Auth.APIKeyPrefix = "api_"
-	
+
 	// Create mock service instances
 	mockDbService := new(mocks.MockDatabaseService)
 	mockCacheService := new(mocks.MockCacheService)
-	
+
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
 	// Test case: Valid API key (cached)
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_valid").Return("user123", nil).Once()
-	
+
 	userID, err := service.validateAPIKey("api_valid")
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
 	// Test case: Valid API key (not cached)
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new").Return("", errors.New("not found")).Once()
-	
+
 	user := &types.User{
 		ID: "user456",
 	}
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_new").Return(user, nil).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new", "user456", mock.Anything).Return(nil).Once()
-	
+
 	userID, err = service.validateAPIKey("api_new")
 	assert.NoError(t, err)
 	assert.Equal(t, "user456", userID)
@@ -427,7 +428,7 @@ func TestValidateAPIKey(t *testing.T) {
 	// Test case: Invalid API key
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_invalid").Return("", errors.New("not found")).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_invalid").Return((*types.User)(nil), nil).Once()
-	
+
 	userID, err = service.validateAPIKey("api_invalid")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
@@ -436,7 +437,7 @@ func TestValidateAPIKey(t *testing.T) {
 	// Test case: Database error
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_error").Return("", errors.New("not found")).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_error").Return((*types.User)(nil), errors.New("database error")).Once()
-	
+
 	userID, err = service.validateAPIKey("api_error")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
@@ -462,7 +463,7 @@ func TestIsAPIKey(t *testing.T) {
 		{"Prefix with separator", "api_12345", "api_", true},
 		{"Case sensitive", "API_12345", "api_", false},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := utilities.IsAPIKey(tc.token, tc.prefix)
@@ -505,13 +506,13 @@ func TestExtractToken(t *testing.T) {
 			"",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request, _ = http.NewRequest("GET", "/", nil)
 			tc.setup(c)
-			
+
 			result := utilities.ExtractToken(c)
 			assert.Equal(t, tc.expected, result)
 		})

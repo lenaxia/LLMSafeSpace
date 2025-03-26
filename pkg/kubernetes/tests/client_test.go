@@ -8,6 +8,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/logger"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -15,22 +16,22 @@ import (
 func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-	
+
 	// Test in-cluster configuration
 	cfg := &config.KubernetesConfig{
 		InCluster: true,
 		Namespace: "test-namespace",
 		PodName:   "test-pod",
 		LeaderElection: struct {
-			Enabled       bool          `mapstructure:"enabled"`
-			LeaseDuration time.Duration `mapstructure:"leaseDuration"`
-			RenewDeadline time.Duration `mapstructure:"renewDeadline"`
-			RetryPeriod   time.Duration `mapstructure:"retryPeriod"`
+			Enabled       bool            `mapstructure:"enabled"`
+			LeaseDuration metav1.Duration `mapstructure:"leaseDuration"`
+			RenewDeadline metav1.Duration `mapstructure:"renewDeadline"`
+			RetryPeriod   metav1.Duration `mapstructure:"retryPeriod"`
 		}{
 			Enabled:       true,
-			LeaseDuration: 15 * time.Second,
-			RenewDeadline: 10 * time.Second,
-			RetryPeriod:   2 * time.Second,
+			LeaseDuration: metav1.Duration{Duration: metav1.Duration{Duration: 15 * time.Second}},
+			RenewDeadline: metav1.Duration{Duration: metav1.Duration{Duration: 10 * time.Second}},
+			RetryPeriod:   metav1.Duration{Duration: metav1.Duration{Duration: 2 * time.Second}},
 		},
 	}
 
@@ -45,7 +46,7 @@ func TestNew(t *testing.T) {
 	// Test external configuration
 	cfg.InCluster = false
 	cfg.ConfigPath = "nonexistent"
-	
+
 	// This will fail because the kubeconfig doesn't exist
 	client, err := kubernetes.New(cfg, log)
 	assert.Error(t, err)
@@ -57,11 +58,11 @@ func TestNew(t *testing.T) {
 func TestClientLifecycle(t *testing.T) {
 	// Create a mock client
 	client := kubernetes.NewForTesting(nil, nil, &rest.Config{}, nil, nil)
-	
+
 	// Test Start and Stop methods
 	err := client.Start()
 	assert.NoError(t, err)
-	
+
 	client.Stop()
 	// No assertions needed for Stop, just ensuring it doesn't panic
 }

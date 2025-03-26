@@ -13,6 +13,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Helper function to create a test config
@@ -85,7 +86,7 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, err := logger.New(true, "debug", "console")
 	require.NoError(t, err)
-	
+
 	// Create a valid config
 	cfg := createTestConfig(mr.Addr())
 
@@ -93,7 +94,7 @@ func TestNew(t *testing.T) {
 	service, err := New(cfg, log)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
-	
+
 	// Clean up
 	err = service.Stop()
 	assert.NoError(t, err)
@@ -102,7 +103,7 @@ func TestNew(t *testing.T) {
 	badCfg := &config.Config{}
 	badCfg.Redis.Host = "nonexistent"
 	badCfg.Redis.Port = 6379
-	
+
 	service, err = New(badCfg, log)
 	assert.Error(t, err)
 	assert.Nil(t, service)
@@ -194,7 +195,7 @@ func TestSessionOperations(t *testing.T) {
 	sessionID := "test_session_id"
 	sessionData := map[string]interface{}{
 		"user_id":    "user123",
-		"created_at": time.Now().Unix(),
+		"created_at": metav1.Now().Unix(),
 		"data":       "session data",
 	}
 
@@ -205,7 +206,7 @@ func TestSessionOperations(t *testing.T) {
 	// Test GetSession
 	retrievedSession, err := service.GetSession(ctx, sessionID)
 	assert.NoError(t, err, "Expected no error from GetSession")
-	assert.Equal(t, sessionData["user_id"], retrievedSession["user_id"], 
+	assert.Equal(t, sessionData["user_id"], retrievedSession["user_id"],
 		"Expected user_id %v, got %v", sessionData["user_id"], retrievedSession["user_id"])
 
 	// Test DeleteSession

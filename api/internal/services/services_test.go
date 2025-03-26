@@ -12,14 +12,15 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/execution"
 	"github.com/lenaxia/llmsafespace/api/internal/services/file"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	//"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Mock implementations
@@ -139,7 +140,7 @@ func (m *MockCacheService) Get(ctx context.Context, key string) (string, error) 
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+func (m *MockCacheService) Set(ctx context.Context, key string, value string, expiration metav1.Duration) error {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Error(0)
 }
@@ -154,7 +155,7 @@ func (m *MockCacheService) GetObject(ctx context.Context, key string, value inte
 	return args.Error(0)
 }
 
-func (m *MockCacheService) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+func (m *MockCacheService) SetObject(ctx context.Context, key string, value interface{}, expiration metav1.Duration) error {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Error(0)
 }
@@ -167,7 +168,7 @@ func (m *MockCacheService) GetSession(ctx context.Context, sessionID string) (ma
 	return args.Get(0).(map[string]interface{}), args.Error(1)
 }
 
-func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
+func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration metav1.Duration) error {
 	args := m.Called(ctx, sessionID, session, expiration)
 	return args.Error(0)
 }
@@ -419,7 +420,7 @@ type MockMetricsService struct {
 	mock.Mock
 }
 
-func (m *MockMetricsService) RecordRequest(method, path string, status int, duration time.Duration, size int) {
+func (m *MockMetricsService) RecordRequest(method, path string, status int, duration metav1.Duration, size int) {
 	m.Called(method, path, status, duration, size)
 }
 
@@ -431,7 +432,7 @@ func (m *MockMetricsService) RecordSandboxTermination(runtime string) {
 	m.Called(runtime)
 }
 
-func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration time.Duration) {
+func (m *MockMetricsService) RecordExecution(execType, runtime, status string, duration metav1.Duration) {
 	m.Called(execType, runtime, status, duration)
 }
 
@@ -522,16 +523,16 @@ func TestNew(t *testing.T) {
 func TestStartStop(t *testing.T) {
 	// Create mock services
 	mockDb := new(MockDatabaseService)
-	
+
 	// Create mock cache service
 	mockCache := new(MockCacheService)
-	
+
 	// Create services struct with mocks
 	services := &Services{
 		Database: mockDb,
-		Cache: mockCache,
+		Cache:    mockCache,
 	}
-	
+
 	// Test successful start
 	mockDb.On("Start").Return(nil).Once()
 	mockCache.On("Start").Return(nil).Once()

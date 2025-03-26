@@ -82,9 +82,14 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
    - `logger/`: Logging implementation
 
 4. **Testing**:
-   - `mocks/`: Generated mock implementations
-   - Component tests alongside packages
-   - Integration test suites
+   - `test/`:
+     - `mocks/`: Shared mock implementations
+       - `interfaces/`: Mock versions of core interfaces
+       - `resources/`: Mock CRD resources
+     - `e2e/`: End-to-end tests
+     - `integration/`: Integration tests
+   - Component tests live alongside implementations (`*_test.go`)
+   - Mock usage examples in `test/mocks/README.md`
 
 ```
 .
@@ -567,25 +572,72 @@ volumes:
   }
   ```
 
-### Testing
-- Mock system matching `mocks/` directory:
-  ```go
-  // mocks/logger/logger.go
-  type MockLogger struct {
-    mock.Mock
-  }
-  
-  func (m *MockLogger) Info(msg string, keysAndValues ...interface{}) {
-    m.Called(msg, keysAndValues)
-  }
-  
-  func (m *MockLogger) Error(msg string, err error, keysAndValues ...interface{}) {
-    m.Called(msg, err, keysAndValues)
-  }
-  ```
-- Test files live alongside implementation:
-  - `api/internal/handler/handler_test.go`
-  - `controller/internal/controller/controller_test.go`
+### Testing Patterns
+
+#### Shared Mocks
+Reusable mock implementations live in `test/mocks/`:
+
+```go
+// Example usage in api tests
+import (
+	"testing"
+	"github.com/lenaxia/llmsafespace/test/mocks/interfaces"
+)
+
+func TestHandler(t *testing.T) {
+	mockLogger := interfaces.NewMockLogger()
+	mockLogger.On("Info", "starting", []interface{}{"component", "test"}).Return()
+	
+	// Test implementation...
+}
+```
+
+#### Mock Types Available:
+1. **Core Interfaces** (`test/mocks/interfaces/`):
+   - `MockLogger` - Implements `LoggerInterface`
+   - `MockKubernetesClient` - Implements `KubernetesClient`
+   - `MockCacheService` - Implements `CacheService`
+
+2. **Resources** (`test/mocks/resources/`):
+   - `NewMockSandbox()` - Pre-configured Sandbox CRD
+   - `NewMockWarmPool()` - WarmPool with test defaults
+
+#### Best Practices:
+- Use shared mocks for cross-component testing
+- Extend mocks in local `*_test.go` files when needed
+- Never import mocks in production code
+- Keep mock behavior consistent across tests
+
+### Mocking Examples
+```go
+// Controller test using shared mocks
+func TestReconcile(t *testing.T) {
+	// Initialize shared mocks
+	mockClient := interfaces.NewMockKubernetesClient()
+	mockLogger := interfaces.NewMockLogger()
+
+	// Set expectations
+	mockClient.On("GetSandbox", mock.Anything, "test-sandbox").
+		Return(testmocks.NewMockSandbox(), nil)
+	
+	mockLogger.On("Info", "Reconciling", mock.Anything).Return()
+
+	// Run test...
+}
+
+// API test with custom mock behavior
+func TestAPIEndpoint(t *testing.T) {
+	mockCache := interfaces.NewMockCacheService().
+		WithGetBehavior(func(key string) (string, error) {
+			if key == "special" {
+				return "cached-value", nil 
+			}
+			return "", errors.New("not found")
+		})
+	
+	// Test implementation...
+}
+```
 
 ### Logging
 - Structured logging with Zap:
@@ -617,7 +669,16 @@ cd llmsafespace
 go mod download
 
 # Run tests
-make test
+make test # Runs unit, integration and e2e tests
+
+# Generate test coverage
+make cover
+
+# Update golden files in tests
+make update-golden
+
+# Run with specific mock implementations
+go test -v ./... -mock-mode=strict
 
 # Build the API service
 cd api

@@ -85,17 +85,17 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Check if we need to scale up or down
 	needsScaling := false
-	
+
 	// Scale up if we have fewer available pods than the minimum size
 	if availablePods < warmPool.Spec.MinSize {
 		logger.Info("Scaling up warm pool", "availablePods", availablePods, "minSize", warmPool.Spec.MinSize)
 		needsScaling = true
-		
+
 		// Update conditions
 		conditions := warmPool.Status.Conditions
 		common.SetWarmPoolCondition(&conditions, common.ConditionScalingUp, "True", common.ReasonScalingUp, fmt.Sprintf("Scaling up to meet minimum size of %d", warmPool.Spec.MinSize))
 		warmPool.Status.Conditions = conditions
-		
+
 		// Create new warm pods
 		podsToCreate := warmPool.Spec.MinSize - availablePods - pendingPods
 		for i := 0; i < podsToCreate; i++ {
@@ -104,21 +104,21 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				return ctrl.Result{}, err
 			}
 		}
-		
+
 		// Update the last scale time
-		warmPool.Status.LastScaleTime = &metav1.Time{Time: time.Now()}
+		warmPool.Status.LastScaleTime = &metav1.Time{Time: metav1.Now()}
 	}
-	
+
 	// Scale down if we have more available pods than the maximum size (if set)
 	if warmPool.Spec.MaxSize > 0 && availablePods > warmPool.Spec.MaxSize {
 		logger.Info("Scaling down warm pool", "availablePods", availablePods, "maxSize", warmPool.Spec.MaxSize)
 		needsScaling = true
-		
+
 		// Update conditions
 		conditions := warmPool.Status.Conditions
 		common.SetWarmPoolCondition(&conditions, common.ConditionScalingDown, "True", common.ReasonScalingDown, fmt.Sprintf("Scaling down to meet maximum size of %d", warmPool.Spec.MaxSize))
 		warmPool.Status.Conditions = conditions
-		
+
 		// Delete excess warm pods
 		podsToDelete := availablePods - warmPool.Spec.MaxSize
 		deletedCount := 0
@@ -131,17 +131,17 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				deletedCount++
 			}
 		}
-		
+
 		// Update the last scale time
-		warmPool.Status.LastScaleTime = &metav1.Time{Time: time.Now()}
+		warmPool.Status.LastScaleTime = &metav1.Time{Time: metav1.Now()}
 	}
-	
+
 	// Check if auto-scaling is enabled
 	if warmPool.Spec.AutoScaling != nil && warmPool.Spec.AutoScaling.Enabled {
 		// Implement auto-scaling logic here
 		// For now, we'll just use the min and max size
 	}
-	
+
 	// Update the pool status
 	if needsScaling {
 		if err := r.Status().Update(ctx, warmPool); err != nil {
@@ -149,7 +149,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 	}
-	
+
 	// Check if the pool is ready
 	isReady := availablePods >= warmPool.Spec.MinSize
 	conditions := warmPool.Status.Conditions
@@ -159,14 +159,14 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		common.SetWarmPoolCondition(&conditions, common.ConditionPoolReady, "False", common.ReasonPoolNotReady, "Warm pool does not have enough available pods")
 	}
 	warmPool.Status.Conditions = conditions
-	
+
 	if err := r.Status().Update(ctx, warmPool); err != nil {
 		logger.Error(err, "Failed to update WarmPool status")
 		return ctrl.Result{}, err
 	}
-	
+
 	// Requeue to periodically check the warm pool
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 30 * time.Second}}, nil
 }
 
 // handleDeletion handles the deletion of a warm pool
@@ -184,7 +184,7 @@ func (r *WarmPoolReconciler) handleDeletion(ctx context.Context, warmPool *resou
 			logger.Error(err, "Failed to list WarmPods")
 			return ctrl.Result{}, err
 		}
-		
+
 		// Delete all warm pods
 		for _, pod := range warmPodList.Items {
 			if err := r.Delete(ctx, &pod); err != nil {
@@ -194,13 +194,13 @@ func (r *WarmPoolReconciler) handleDeletion(ctx context.Context, warmPool *resou
 				}
 			}
 		}
-		
+
 		// Check if all warm pods have been deleted
 		if len(warmPodList.Items) > 0 {
 			// Requeue to check again
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 5 * time.Second}}, nil
 		}
-		
+
 		// Remove the finalizer
 		controllerutil.RemoveFinalizer(warmPool, common.WarmPoolFinalizer)
 		if err := r.Update(ctx, warmPool); err != nil {
@@ -221,7 +221,7 @@ func (r *WarmPoolReconciler) createWarmPod(ctx context.Context, warmPool *resour
 
 	// Create a unique name for the warm pod
 	warmPodName := fmt.Sprintf("%s-%s", warmPool.Name, generateRandomString(8))
-	
+
 	// Create the warm pod
 	warmPod := &resources.WarmPod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -239,25 +239,25 @@ func (r *WarmPoolReconciler) createWarmPod(ctx context.Context, warmPool *resour
 				Name:      warmPool.Name,
 				Namespace: warmPool.Namespace,
 			},
-			CreationTimestamp: &metav1.Time{Time: time.Now()},
+			CreationTimestamp: &metav1.Time{Time: metav1.Now()},
 		},
 		Status: resources.WarmPodStatus{
 			Phase: common.WarmPodPhasePending,
 		},
 	}
-	
+
 	// Set the owner reference
 	if err := controllerutil.SetControllerReference(warmPool, warmPod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on WarmPod")
 		return err
 	}
-	
+
 	// Create the warm pod
 	if err := r.Create(ctx, warmPod); err != nil {
 		logger.Error(err, "Failed to create WarmPod")
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -265,7 +265,7 @@ func (r *WarmPoolReconciler) createWarmPod(ctx context.Context, warmPool *resour
 func generateRandomString(length int) string {
 	// In a real implementation, this would generate a random string
 	// For simplicity, we'll just use the current timestamp
-	return fmt.Sprintf("%d", time.Now().UnixNano())[:length]
+	return fmt.Sprintf("%d", metav1.Now().UnixNano())[:length]
 }
 
 // SetupWithManager sets up the controller with the Manager

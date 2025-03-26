@@ -10,8 +10,9 @@ import (
 	//"k8s.io/apimachinery/pkg/watch"
 	//"k8s.io/client-go/kubernetes"
 	//"k8s.io/client-go/rest"
-	
+
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SessionManager defines the interface for managing WebSocket sessions
@@ -65,12 +66,12 @@ type DatabaseService interface {
 // CacheService defines the interface for cache services
 type CacheService interface {
 	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value string, expiration time.Duration) error
+	Set(ctx context.Context, key string, value string, expiration metav1.Duration) error
 	Delete(ctx context.Context, key string) error
 	GetObject(ctx context.Context, key string, value interface{}) error
-	SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	SetObject(ctx context.Context, key string, value interface{}, expiration metav1.Duration) error
 	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
-	SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error
+	SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration metav1.Duration) error
 	DeleteSession(ctx context.Context, sessionID string) error
 	Start() error
 	Stop() error
@@ -79,9 +80,9 @@ type CacheService interface {
 // RateLimiterService defines the interface for rate limiting operations
 type RateLimiterService interface {
 	// Increment increments a counter for the given key and sets expiration if it's a new key
-	Increment(ctx context.Context, key string, value int64, expiration time.Duration) (int64, error)
+	Increment(ctx context.Context, key string, value int64, expiration metav1.Duration) (int64, error)
 	// AddToWindow adds an entry to a time window for sliding window rate limiting
-	AddToWindow(ctx context.Context, key string, timestamp int64, member string, expiration time.Duration) error
+	AddToWindow(ctx context.Context, key string, timestamp int64, member string, expiration metav1.Duration) error
 	// RemoveFromWindow removes entries from a time window that are older than the cutoff
 	RemoveFromWindow(ctx context.Context, key string, cutoff int64) error
 	// CountInWindow counts entries in a time window between min and max scores
@@ -89,7 +90,7 @@ type RateLimiterService interface {
 	// GetWindowEntries gets entries in a time window between start and stop indices
 	GetWindowEntries(ctx context.Context, key string, start, stop int) ([]string, error)
 	// GetTTL gets the remaining TTL for a key
-	GetTTL(ctx context.Context, key string) (time.Duration, error)
+	GetTTL(ctx context.Context, key string) (metav1.Duration, error)
 	// Allow checks if a request should be allowed based on token bucket algorithm
 	Allow(key string, rate float64, burst int) bool
 	Start() error
@@ -118,10 +119,10 @@ type FileService interface {
 
 // MetricsService defines the interface for metrics services
 type MetricsService interface {
-	RecordRequest(method, path string, status int, duration time.Duration, size int)
+	RecordRequest(method, path string, status int, duration metav1.Duration, size int)
 	RecordSandboxCreation(runtime string, warmPodUsed bool, userID string)
 	RecordSandboxTermination(runtime, reason string)
-	RecordExecution(execType, runtime, status, userID string, duration time.Duration)
+	RecordExecution(execType, runtime, status, userID string, duration metav1.Duration)
 	IncrementActiveConnections(connType string, userID string)
 	DecrementActiveConnections(connType string, userID string)
 	RecordWarmPoolHit()

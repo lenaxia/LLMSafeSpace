@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Service manages application metrics
@@ -14,17 +15,17 @@ type Service struct {
 	logger              *logger.Logger
 	requestCounter      *prometheus.CounterVec
 	requestDuration     *prometheus.HistogramVec
-	responseSize       *prometheus.HistogramVec
-	activeConnections  *prometheus.GaugeVec
-	warmPoolHitRatio   *prometheus.GaugeVec
-	sandboxesCreated   *prometheus.CounterVec
+	responseSize        *prometheus.HistogramVec
+	activeConnections   *prometheus.GaugeVec
+	warmPoolHitRatio    *prometheus.GaugeVec
+	sandboxesCreated    *prometheus.CounterVec
 	sandboxesTerminated *prometheus.CounterVec
-	executionsTotal    *prometheus.CounterVec
-	executionDuration  *prometheus.HistogramVec
-	errorsTotal        *prometheus.CounterVec
-	packageInstalls    *prometheus.CounterVec
-	fileOperations     *prometheus.CounterVec
-	resourceUsage      *prometheus.GaugeVec
+	executionsTotal     *prometheus.CounterVec
+	executionDuration   *prometheus.HistogramVec
+	errorsTotal         *prometheus.CounterVec
+	packageInstalls     *prometheus.CounterVec
+	fileOperations      *prometheus.CounterVec
+	resourceUsage       *prometheus.GaugeVec
 	warmPoolUtilization *prometheus.GaugeVec
 	warmPoolScaling     *prometheus.CounterVec
 }
@@ -183,7 +184,7 @@ func (s *Service) Stop() error {
 }
 
 // RecordRequest records metrics for an API request
-func (s *Service) RecordRequest(method, path string, status int, duration time.Duration, size int) {
+func (s *Service) RecordRequest(method, path string, status int, duration metav1.Duration, size int) {
 	s.requestCounter.WithLabelValues(method, path, fmt.Sprintf("%d", status)).Inc()
 	s.requestDuration.WithLabelValues(method, path).Observe(duration.Seconds())
 	s.responseSize.WithLabelValues(method, path).Observe(float64(size))
@@ -204,7 +205,7 @@ func (s *Service) RecordSandboxTermination(runtime, reason string) {
 }
 
 // RecordExecution records metrics for code/command execution
-func (s *Service) RecordExecution(execType, runtime, status, userID string, duration time.Duration) {
+func (s *Service) RecordExecution(execType, runtime, status, userID string, duration metav1.Duration) {
 	s.executionsTotal.WithLabelValues(execType, runtime, status, userID).Inc()
 	s.executionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
 }

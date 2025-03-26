@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
@@ -97,25 +98,25 @@ func MetricsMiddleware(metricsService interfaces.MetricsService) gin.HandlerFunc
 
 		// Use normalized path to reduce cardinality
 		normalizedPath := getNormalizedPath(c.FullPath())
-		
+
 		// Start timer
-		start := time.Now()
-		
+		start := metav1.Now()
+
 		// Process request
 		c.Next()
-		
+
 		// Calculate request duration
 		duration := time.Since(start)
-		
+
 		// Record metrics
 		status := strconv.Itoa(c.Writer.Status())
 		method := c.Request.Method
-		
+
 		// Update Prometheus metrics
 		httpRequestsTotal.WithLabelValues(method, normalizedPath, status).Inc()
 		httpRequestDuration.WithLabelValues(method, normalizedPath).Observe(duration.Seconds())
 		httpResponseSize.WithLabelValues(method, normalizedPath).Observe(float64(c.Writer.Size()))
-		
+
 		// Record metrics using service
 		metricsService.RecordRequest(
 			method,
@@ -134,7 +135,7 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 		if connType == "" {
 			connType = "websocket"
 		}
-		
+
 		// Get userID from context if available
 		userID := ""
 		if id, exists := c.Get("userID"); exists {
@@ -142,19 +143,19 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 				userID = idStr
 			}
 		}
-		
+
 		// Increment active connections before processing
 		wsConnectionsActive.WithLabelValues(connType).Inc()
 		wsConnectionsTotal.WithLabelValues(connType).Inc()
-		
+
 		metricsService.IncrementActiveConnections(connType, userID)
-		
+
 		// Process request
 		c.Next()
-		
+
 		// Decrement active connections after processing
 		wsConnectionsActive.WithLabelValues(connType).Dec()
-		
+
 		metricsService.DecrementActiveConnections(connType, userID)
 	}
 }
@@ -163,11 +164,11 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Start timer
-		start := time.Now()
-		
+		start := metav1.Now()
+
 		// Process request
 		c.Next()
-		
+
 		// Get execution type and runtime from request
 		execType := c.PostForm("type")
 		if execType == "" {
@@ -176,7 +177,7 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 				execType = "unknown"
 			}
 		}
-		
+
 		runtime := c.Param("runtime")
 		if runtime == "" {
 			runtime = c.GetHeader("X-Runtime")
@@ -184,17 +185,17 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 				runtime = "unknown"
 			}
 		}
-		
+
 		// Calculate execution duration
 		duration := time.Since(start)
-		
+
 		// Record metrics
 		status := strconv.Itoa(c.Writer.Status())
-		
+
 		// Update Prometheus metrics
 		codeExecutionsTotal.WithLabelValues(execType, runtime, status).Inc()
 		codeExecutionDuration.WithLabelValues(execType, runtime).Observe(duration.Seconds())
-		
+
 		// Get userID from context if available
 		userID := ""
 		if id, exists := c.Get("userID"); exists {
@@ -202,7 +203,7 @@ func ExecutionMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 				userID = idStr
 			}
 		}
-		
+
 		metricsService.RecordExecution(execType, runtime, status, userID, duration)
 	}
 }

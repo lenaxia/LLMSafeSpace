@@ -30,7 +30,7 @@ func (r *WarmPodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	logger := log.FromContext(ctx).WithValues("warmpod", req.NamespacedName)
 	logger.Info("Reconciling WarmPod")
 
-	startTime := time.Now()
+	startTime := metav1.Now()
 	defer func() {
 		metrics.ReconciliationDurationSeconds.WithLabelValues("warmpod", "success").Observe(time.Since(startTime).Seconds())
 	}()
@@ -105,7 +105,7 @@ func (r *WarmPodReconciler) handlePendingWarmPod(ctx context.Context, warmPod *r
 		if isReady {
 			// Update the warm pod status to Ready
 			warmPod.Status.Phase = common.WarmPodPhaseReady
-			warmPod.Spec.LastHeartbeat = &metav1.Time{Time: time.Now()}
+			warmPod.Spec.LastHeartbeat = &metav1.Time{Time: metav1.Now()}
 			if err := r.Status().Update(ctx, warmPod); err != nil {
 				logger.Error(err, "Failed to update WarmPod status to Ready")
 				metrics.ReconciliationErrorsTotal.WithLabelValues("warmpod", "update_status").Inc()
@@ -118,7 +118,7 @@ func (r *WarmPodReconciler) handlePendingWarmPod(ctx context.Context, warmPod *r
 
 	// Pod is not ready yet, requeue
 	logger.Info("Pod is not ready yet", "podPhase", pod.Status.Phase)
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 5 * time.Second}}, nil
 }
 
 // handleReadyWarmPod handles a warm pod in the Ready phase
@@ -163,7 +163,7 @@ func (r *WarmPodReconciler) handleReadyWarmPod(ctx context.Context, warmPod *res
 	}
 
 	// Update the heartbeat
-	warmPod.Spec.LastHeartbeat = &metav1.Time{Time: time.Now()}
+	warmPod.Spec.LastHeartbeat = &metav1.Time{Time: metav1.Now()}
 	if err := r.Update(ctx, warmPod); err != nil {
 		logger.Error(err, "Failed to update WarmPod heartbeat")
 		metrics.ReconciliationErrorsTotal.WithLabelValues("warmpod", "update_heartbeat").Inc()
@@ -180,7 +180,7 @@ func (r *WarmPodReconciler) handleReadyWarmPod(ctx context.Context, warmPod *res
 	}
 
 	// Requeue to periodically check the warm pod
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: metav1.Duration{Duration: 30 * time.Second}}, nil
 }
 
 // handleAssignedWarmPod handles a warm pod in the Assigned phase

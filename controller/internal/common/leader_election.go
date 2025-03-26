@@ -18,13 +18,13 @@ import (
 type LeaderElectionConfig struct {
 	// LeaseDuration is the duration that non-leader candidates will
 	// wait to force acquire leadership
-	LeaseDuration time.Duration
+	LeaseDuration metav1.Duration
 	// RenewDeadline is the duration that the acting master will retry
 	// refreshing leadership before giving up
-	RenewDeadline time.Duration
+	RenewDeadline metav1.Duration
 	// RetryPeriod is the duration the LeaderElector clients should wait
 	// between tries of actions
-	RetryPeriod time.Duration
+	RetryPeriod metav1.Duration
 	// Namespace is the namespace where the lock resource exists
 	Namespace string
 	// Name is the name of the lock resource
@@ -35,11 +35,11 @@ type LeaderElectionConfig struct {
 func SetupLeaderElection(cfg *LeaderElectionConfig, kubeClient kubernetes.Interface, runFunc func(context.Context)) error {
 	if cfg == nil {
 		cfg = &LeaderElectionConfig{
-			LeaseDuration: 15 * time.Second,
-			RenewDeadline: 10 * time.Second,
-			RetryPeriod:   2 * time.Second,
+			LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
+			RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
+			RetryPeriod:   metav1.Duration{Duration: 2 * time.Second},
 			Namespace:     "llmsafespace",
-			Name:         "llmsafespace-controller",
+			Name:          "llmsafespace-controller",
 		}
 	}
 

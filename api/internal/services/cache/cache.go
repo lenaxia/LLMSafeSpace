@@ -10,6 +10,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Service handles Redis cache operations
@@ -75,7 +76,7 @@ func (s *Service) Get(ctx context.Context, key string) (string, error) {
 }
 
 // Set sets a value in the cache
-func (s *Service) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+func (s *Service) Set(ctx context.Context, key string, value string, expiration metav1.Duration) error {
 	err := s.client.Set(ctx, key, value, expiration).Err()
 	if err != nil {
 		return fmt.Errorf("failed to set value in cache: %w", err)
@@ -110,7 +111,7 @@ func (s *Service) GetObject(ctx context.Context, key string, value interface{}) 
 }
 
 // SetObject sets an object in the cache
-func (s *Service) SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+func (s *Service) SetObject(ctx context.Context, key string, value interface{}, expiration metav1.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal object for cache: %w", err)
@@ -135,7 +136,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (map[string]
 }
 
 // SetSession sets a session in the cache
-func (s *Service) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
+func (s *Service) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration metav1.Duration) error {
 	err := s.SetObject(ctx, fmt.Sprintf("session:%s", sessionID), session, expiration)
 	if err != nil {
 		return fmt.Errorf("failed to set session in cache: %w", err)

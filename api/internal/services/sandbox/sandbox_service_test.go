@@ -36,7 +36,7 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockLog.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordSandboxCreation", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-	
+
 	// Add required method implementations for the interfaces
 	mockK8s.On("Clientset").Return(fake.NewSimpleClientset())
 	mockK8s.On("DynamicClient").Return(nil)
@@ -44,7 +44,7 @@ func setupTestService() (*Service, *kmocks.MockKubernetesClient, *kmocks.MockLLM
 	mockK8s.On("InformerFactory").Return(nil)
 	mockK8s.On("Start").Return(nil)
 	mockK8s.On("Stop").Return()
-	
+
 	mockLog.On("With", mock.Anything).Return(mockLog)
 	mockLog.On("Sync").Return(nil)
 	mockLog.On("Debug", mock.Anything, mock.Anything).Return()
@@ -89,11 +89,11 @@ func TestCreateSandbox_Success(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	// The test is failing because this expectation isn't being met
 	// We need to make it optional by adding .Maybe() to the expectation
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Maybe().Return("", errors.New("no warm pod available"))
-	
+
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-12345",
@@ -105,9 +105,9 @@ func TestCreateSandbox_Success(t *testing.T) {
 			Timeout:       300,
 		},
 	}
-	
+
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
-	
+
 	mockDB.On("CreateSandbox", ctx, mock.MatchedBy(func(s *types.SandboxMetadata) bool {
 		return s.ID == "sb-12345" && s.UserID == "user123" && s.Runtime == "python:3.10"
 	})).Return(nil)
@@ -149,21 +149,21 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("warm-pod-123", nil)
-	
+
 	mockWarmPodInterface := kmocks.NewMockWarmPodInterface()
 	mockLLMSafespaceV1.On("WarmPods", "default").Return(mockWarmPodInterface)
-	
+
 	warmPod := &types.WarmPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "warm-pod-123",
 			Namespace: "default",
 		},
 	}
-	
+
 	mockWarmPodInterface.On("Get", "warm-pod-123", mock.Anything).Return(warmPod, nil)
-	
+
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-12345",
@@ -181,13 +181,13 @@ func TestCreateSandbox_WithWarmPod(t *testing.T) {
 			},
 		},
 	}
-	
+
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
-	
+
 	mockDB.On("CreateSandbox", ctx, mock.MatchedBy(func(s *types.SandboxMetadata) bool {
 		return s.ID == "sb-12345" && s.UserID == "user123" && s.Runtime == "python:3.10"
 	})).Return(nil)
-	
+
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", true, "user123").Return()
 
 	// Execute
@@ -210,9 +210,9 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	ctx := context.Background()
 
 	req := &types.CreateSandboxRequest{
-		Runtime:       "",  // Empty runtime should fail validation
+		Runtime:       "", // Empty runtime should fail validation
 		SecurityLevel: "invalid-level",
-		Timeout:       9999999,  // Exceeds max timeout
+		Timeout:       9999999, // Exceeds max timeout
 		UserID:        "user123",
 	}
 
@@ -221,7 +221,7 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	// Execute
 	result, err := service.CreateSandbox(ctx, req)
 
@@ -229,7 +229,7 @@ func TestCreateSandbox_ValidationFailure(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "validation_error")
-	
+
 	// Ensure no Kubernetes or DB calls were made
 	mockSandbox.AssertNotCalled(t, "Create")
 	mockDB.AssertNotCalled(t, "CreateSandbox")
@@ -258,7 +258,7 @@ func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(nil, errors.New("kubernetes error"))
 	mockLog.On("Error", "Failed to create sandbox in Kubernetes", mock.Anything, "runtime", "python:3.10", "userID", "user123", "namespace", "default").Return()
@@ -270,7 +270,7 @@ func TestCreateSandbox_KubernetesFailure(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "sandbox_creation_failed")
-	
+
 	// Ensure no DB calls were made
 	mockDB.AssertNotCalled(t, "CreateSandbox")
 }
@@ -298,9 +298,9 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
-	
+
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-12345",
@@ -312,15 +312,15 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 			Timeout:       300,
 		},
 	}
-	
+
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
-	
+
 	mockDB.On("CreateSandbox", ctx, mock.MatchedBy(func(s *types.SandboxMetadata) bool {
 		return s.ID == "sb-12345" && s.UserID == "user123" && s.Runtime == "python:3.10"
 	})).Return(errors.New("database error"))
-	
+
 	mockLog.On("Error", "Failed to store sandbox metadata", mock.Anything, "sandboxID", "sb-12345", "userID", "user123").Return()
-	
+
 	// Expect cleanup call
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
 
@@ -331,7 +331,7 @@ func TestCreateSandbox_DatabaseFailure(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "metadata_creation_failed")
-	
+
 	// Ensure cleanup was called
 	mockSandbox.AssertCalled(t, "Delete", "sb-12345", mock.Anything)
 }
@@ -374,7 +374,7 @@ func TestGetSandbox_NamespaceFallback(t *testing.T) {
 	// Mock expectations - first call fails, list succeeds
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(nil, errors.New("not found"))
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
-	
+
 	sandboxList := &types.SandboxList{
 		Items: []types.Sandbox{
 			{
@@ -389,7 +389,7 @@ func TestGetSandbox_NamespaceFallback(t *testing.T) {
 			},
 		},
 	}
-	
+
 	mockSandbox.On("List", mock.Anything).Return(sandboxList, nil)
 
 	// Execute
@@ -429,7 +429,7 @@ func TestListSandboxes_Success(t *testing.T) {
 	ctx := context.Background()
 
 	// Mock database response
-	now := time.Now()
+	now := metav1.Now()
 	sandboxes := []*types.SandboxMetadata{
 		{
 			ID:        "sb-12345",
@@ -446,7 +446,7 @@ func TestListSandboxes_Success(t *testing.T) {
 			Status:    "Pending",
 		},
 	}
-	
+
 	pagination := &types.PaginationMetadata{
 		Total:  2,
 		Start:  0,
@@ -454,7 +454,7 @@ func TestListSandboxes_Success(t *testing.T) {
 		Limit:  10,
 		Offset: 0,
 	}
-	
+
 	mockDB.On("ListSandboxes", ctx, "user123", 10, 0).Return(sandboxes, pagination, nil)
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 
@@ -466,14 +466,14 @@ func TestListSandboxes_Success(t *testing.T) {
 		},
 		Status: types.SandboxStatus{
 			Phase:     "Running",
-			StartTime: &metav1.Time{Time: time.Now()},
+			StartTime: &metav1.Time{Time: metav1.Now()},
 			Resources: &types.ResourceStatus{
 				CPUUsage:    "100m",
 				MemoryUsage: "256Mi",
 			},
 		},
 	}
-	
+
 	sandbox2 := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-67890",
@@ -481,10 +481,10 @@ func TestListSandboxes_Success(t *testing.T) {
 		},
 		Status: types.SandboxStatus{
 			Phase:     "Pending",
-			StartTime: &metav1.Time{Time: time.Now()},
+			StartTime: &metav1.Time{Time: metav1.Now()},
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox1, nil)
 	mockSandbox.On("Get", "sb-67890", mock.Anything).Return(sandbox2, nil)
 
@@ -501,7 +501,7 @@ func TestListSandboxes_Success(t *testing.T) {
 	// Second result should be the older sandbox (sb-67890)
 	assert.Equal(t, "sb-67890", result[1]["id"])
 	assert.Equal(t, "Pending", result[1]["phase"])
-	
+
 	// Verify pagination metadata
 	assert.NotNil(t, result[0]["pagination"])
 	paginationResult := result[0]["pagination"].(*types.PaginationMetadata)
@@ -510,7 +510,7 @@ func TestListSandboxes_Success(t *testing.T) {
 	assert.Equal(t, 2, paginationResult.End)
 	assert.Equal(t, 10, paginationResult.Limit)
 	assert.Equal(t, 0, paginationResult.Offset)
-	
+
 	mockDB.AssertExpectations(t)
 	mockSandbox.AssertExpectations(t)
 }
@@ -549,7 +549,7 @@ func TestTerminateSandbox_Success(t *testing.T) {
 			Runtime: "python:3.10",
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
@@ -601,7 +601,7 @@ func TestTerminateSandbox_PermissionDenied(t *testing.T) {
 			Runtime: "python:3.10",
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(false, nil)
 	mockDB.On("CheckPermission", "user123", "sandbox", "sb-12345", "delete").Return(false, nil)
@@ -632,7 +632,7 @@ func TestTerminateSandbox_NoUserID(t *testing.T) {
 			Runtime: "python:3.10",
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 
@@ -661,7 +661,7 @@ func TestTerminateSandbox_DeleteFailure(t *testing.T) {
 			Runtime: "python:3.10",
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(errors.New("delete error"))
@@ -692,7 +692,7 @@ func TestTerminateSandbox_MetadataDeleteFailure(t *testing.T) {
 			Runtime: "python:3.10",
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockDB.On("CheckResourceOwnership", "user123", "sandbox", "sb-12345").Return(true, nil)
 	mockSandbox.On("Delete", "sb-12345", mock.Anything).Return(nil)
@@ -723,14 +723,14 @@ func TestGetSandboxStatus_Success(t *testing.T) {
 		},
 		Status: types.SandboxStatus{
 			Phase:     "Running",
-			StartTime: &metav1.Time{Time: time.Now()},
+			StartTime: &metav1.Time{Time: metav1.Now()},
 			Resources: &types.ResourceStatus{
 				CPUUsage:    "100m",
 				MemoryUsage: "256Mi",
 			},
 		},
 	}
-	
+
 	mockSandbox.On("Get", "sb-12345", mock.Anything).Return(sandbox, nil)
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 
@@ -792,7 +792,7 @@ func TestConvertFromSandboxCRD(t *testing.T) {
 	assert.Equal(t, "standard", apiSandbox.Spec.SecurityLevel)
 	assert.Equal(t, 300, apiSandbox.Spec.Timeout)
 	assert.Equal(t, "Running", apiSandbox.Status.Phase)
-	
+
 	// Verify it's a deep copy (modifying the original shouldn't affect the copy)
 	crdSandbox.Name = "modified"
 	assert.Equal(t, "sb-12345", apiSandbox.Name)
@@ -859,9 +859,9 @@ func TestSandboxLifecycle(t *testing.T) {
 	mockDB.On("Stop").Return(nil)
 	mockMetrics.On("Start").Return(nil)
 	mockMetrics.On("Stop").Return(nil)
-	
+
 	mockWarmPool.On("GetWarmSandbox", ctx, "python:3.10").Return("", errors.New("no warm pod available"))
-	
+
 	createdSandbox := &types.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-12345",
@@ -873,13 +873,13 @@ func TestSandboxLifecycle(t *testing.T) {
 			Timeout:       300,
 		},
 	}
-	
+
 	mockSandbox.On("Create", mock.AnythingOfType("*types.Sandbox")).Return(createdSandbox, nil)
-	
+
 	mockDB.On("CreateSandbox", ctx, mock.MatchedBy(func(s *types.SandboxMetadata) bool {
 		return s.ID == "sb-12345" && s.UserID == "user123" && s.Runtime == "python:3.10"
 	})).Return(nil)
-	
+
 	mockMetrics.On("RecordSandboxCreation", "python:3.10", false, "user123").Return()
 	mockMetrics.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
 	mockMetrics.On("RecordSandboxTermination", "python:3.10", "user_requested").Return()

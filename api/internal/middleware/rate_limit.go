@@ -11,17 +11,18 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type RateLimitConfig struct {
-	Enabled        bool
-	DefaultLimit   int
-	DefaultWindow  time.Duration
-	BurstSize      int
-	Strategy       string
-	ExemptRoles    []string
-	CustomLimits   map[string]int
-	CustomBursts   map[string]int
+	Enabled       bool
+	DefaultLimit  int
+	DefaultWindow metav1.Duration
+	BurstSize     int
+	Strategy      string
+	ExemptRoles   []string
+	CustomLimits  map[string]int
+	CustomBursts  map[string]int
 }
 
 func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
@@ -79,7 +80,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeRateLimit {
 				c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 				c.Header("X-RateLimit-Remaining", "0")
-				c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(config.DefaultWindow).Unix(), 10))
+				c.Header("X-RateLimit-Reset", strconv.FormatInt(metav1.Now().Add(config.DefaultWindow).Unix(), 10))
 				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 					"error": gin.H{
 						"code":    apiErr.Code,
@@ -100,7 +101,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService, key string, limit, burst int, log pkginterfaces.LoggerInterface) error {
 	// Calculate rate from limit (requests per second)
 	rate := float64(limit)
-	
+
 	// Use the RateLimiterService.Allow method
 	if !rl.Allow(key, rate, burst) {
 		log.Warn("Rate limit exceeded",
@@ -109,7 +110,7 @@ func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 			"burst", strconv.Itoa(burst),
 			"path", c.FullPath(),
 		)
-		resetTime := time.Now().Add(time.Second).Unix() // Approximate reset time
+		resetTime := metav1.Now().Add(time.Second).Unix() // Approximate reset time
 		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
@@ -150,18 +151,18 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
 		)
-		resetTime := time.Now().Add(ttl).Unix()
+		resetTime := metav1.Now().Add(ttl).Unix()
 		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit - int(count)))
-	c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-int(count)))
+	c.Header("X-RateLimit-Reset", strconv.FormatInt(metav1.Now().Add(ttl).Unix(), 10))
 	return nil
 }
 
 func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService, config RateLimitConfig, key string, limit int, log pkginterfaces.LoggerInterface) error {
-	now := time.Now().UnixNano()
+	now := metav1.Now().UnixNano()
 	windowKey := fmt.Sprintf("ratelimit:%s:sliding_window", key)
 
 	// Add current timestamp to the window
@@ -175,7 +176,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	}
 
 	// Remove old timestamps
-	cutoff := time.Now().Add(-config.DefaultWindow).UnixNano()
+	cutoff := metav1.Now().Add(-config.DefaultWindow).UnixNano()
 	err = rl.RemoveFromWindow(c.Request.Context(), windowKey, cutoff)
 	if err != nil {
 		log.Error("Failed to clean up rate limit window", err,
@@ -201,7 +202,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 			"limit", limit,
 			"window", config.DefaultWindow.String(),
 		)
-		resetTime := time.Now().Add(config.DefaultWindow).Unix()
+		resetTime := metav1.Now().Add(config.DefaultWindow).Unix()
 		return errors.NewRateLimitError("Too many requests", limit, resetTime, nil)
 	}
 
@@ -215,7 +216,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit - count))
-	c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-count))
+	c.Header("X-RateLimit-Reset", strconv.FormatInt(metav1.Now().Add(ttl).Unix(), 10))
 	return nil
 }

@@ -115,7 +115,7 @@ func (f *MockFactory) NewWarmPod(name, namespace, poolName string) *types.WarmPo
 				Namespace: namespace,
 			},
 			CreationTimestamp: &metav1.Time{
-				Time: metav1.Now(),
+				Time: time.Now(),
 			},
 		},
 		Status: types.WarmPodStatus{
@@ -145,7 +145,7 @@ func (f *MockFactory) NewRuntimeEnvironment(name, language, version string) *typ
 		Status: types.RuntimeEnvironmentStatus{
 			Available: true,
 			LastValidated: &metav1.Time{
-				Time: metav1.Now(),
+				Time: time.Now(),
 			},
 		},
 	}
@@ -200,8 +200,8 @@ func MockFileInfo(path string, size int64, isDir bool) types.FileInfo {
 		Name:      filepath.Base(path),
 		Size:      size,
 		IsDir:     isDir,
-		CreatedAt: now.Add(-24 * time.Hour),  // Changed from metav1.NewTime()
-		UpdatedAt: now,  // Changed from metav1.NewTime()
+		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
+		UpdatedAt: metav1.NewTime(now),  // Changed from metav1.NewTime()
 		Mode:      0644,
 		Owner:     "user",
 		Group:     "group",
@@ -215,8 +215,8 @@ func (f *MockFactory) NewFileResult(path string, size int64) *types.FileResult {
 		Path:      path,
 		Size:      size,
 		IsDir:     false,
-		CreatedAt: now.Add(-24 * time.Hour),  // Changed from metav1.NewTime()
-		UpdatedAt: now,  // Changed from metav1.NewTime()
+		CreatedAt: metav1.NewTime(now.Add(-24 * time.Hour)),
+		UpdatedAt: metav1.NewTime(now),
 		Checksum:  "mock-checksum",
 	}
 }

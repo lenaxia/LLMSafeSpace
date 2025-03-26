@@ -6,31 +6,32 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	
+
 	k8sconfig "github.com/lenaxia/llmsafespace/pkg/config"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Config represents the application configuration
 type Config struct {
 	Server struct {
-		Host            string        `mapstructure:"host"`
-		Port            int           `mapstructure:"port"`
-		ShutdownTimeout time.Duration `mapstructure:"shutdownTimeout"`
+		Host            string          `mapstructure:"host"`
+		Port            int             `mapstructure:"port"`
+		ShutdownTimeout metav1.Duration `mapstructure:"shutdownTimeout"`
 	} `mapstructure:"server"`
 
 	// Use the shared Kubernetes config
 	Kubernetes k8sconfig.KubernetesConfig `mapstructure:"kubernetes"`
 
 	Database struct {
-		Host            string        `mapstructure:"host"`
-		Port            int           `mapstructure:"port"`
-		User            string        `mapstructure:"user"`
-		Password        string        `mapstructure:"password"`
-		Database        string        `mapstructure:"database"`
-		SSLMode         string        `mapstructure:"sslMode"`
-		MaxOpenConns    int           `mapstructure:"maxOpenConns"`
-		MaxIdleConns    int           `mapstructure:"maxIdleConns"`
-		ConnMaxLifetime time.Duration `mapstructure:"connMaxLifetime"`
+		Host            string          `mapstructure:"host"`
+		Port            int             `mapstructure:"port"`
+		User            string          `mapstructure:"user"`
+		Password        string          `mapstructure:"password"`
+		Database        string          `mapstructure:"database"`
+		SSLMode         string          `mapstructure:"sslMode"`
+		MaxOpenConns    int             `mapstructure:"maxOpenConns"`
+		MaxIdleConns    int             `mapstructure:"maxIdleConns"`
+		ConnMaxLifetime metav1.Duration `mapstructure:"connMaxLifetime"`
 	} `mapstructure:"database"`
 
 	Redis struct {
@@ -42,9 +43,9 @@ type Config struct {
 	} `mapstructure:"redis"`
 
 	Auth struct {
-		JWTSecret     string        `mapstructure:"jwtSecret"`
-		TokenDuration time.Duration `mapstructure:"tokenDuration"`
-		APIKeyPrefix  string        `mapstructure:"apiKeyPrefix"`
+		JWTSecret     string          `mapstructure:"jwtSecret"`
+		TokenDuration metav1.Duration `mapstructure:"tokenDuration"`
+		APIKeyPrefix  string          `mapstructure:"apiKeyPrefix"`
 	} `mapstructure:"auth"`
 
 	Logging struct {
@@ -56,8 +57,8 @@ type Config struct {
 	RateLimiting struct {
 		Enabled bool `mapstructure:"enabled"`
 		Limits  map[string]struct {
-			Requests int           `mapstructure:"requests"`
-			Window   time.Duration `mapstructure:"window"`
+			Requests int             `mapstructure:"requests"`
+			Window   metav1.Duration `mapstructure:"window"`
 		} `mapstructure:"limits"`
 	} `mapstructure:"rateLimiting"`
 }

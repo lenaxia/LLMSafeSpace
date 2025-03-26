@@ -1,14 +1,17 @@
 package config
 
-import "time"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// Config is the main configuration structure
+	// Config is the main configuration structure
+)
+
 type Config struct {
 	// Server configuration
 	Server struct {
-		Host            string        `mapstructure:"host"`
-		Port            int           `mapstructure:"port"`
-		ShutdownTimeout time.Duration `mapstructure:"shutdownTimeout"`
+		Host            string          `mapstructure:"host"`
+		Port            int             `mapstructure:"port"`
+		ShutdownTimeout metav1.Duration `mapstructure:"shutdownTimeout"`
 	} `mapstructure:"server"`
 
 	// Kubernetes configuration
@@ -48,14 +51,14 @@ type Config struct {
 
 // KubernetesConfig defines configuration for Kubernetes client
 type KubernetesConfig struct {
-	ConfigPath     string        `mapstructure:"configPath"`
-	InCluster      bool          `mapstructure:"inCluster"`
-	Namespace      string        `mapstructure:"namespace"`
-	PodName        string        `mapstructure:"podName"`
+	ConfigPath     string `mapstructure:"configPath"`
+	InCluster      bool   `mapstructure:"inCluster"`
+	Namespace      string `mapstructure:"namespace"`
+	PodName        string `mapstructure:"podName"`
 	LeaderElection struct {
-		Enabled       bool          `mapstructure:"enabled"`
-		LeaseDuration time.Duration `mapstructure:"leaseDuration"`
-		RenewDeadline time.Duration `mapstructure:"renewDeadline"`
-		RetryPeriod   time.Duration `mapstructure:"retryPeriod"`
+		Enabled       bool            `mapstructure:"enabled"`
+		LeaseDuration metav1.Duration `mapstructure:"leaseDuration"`
+		RenewDeadline metav1.Duration `mapstructure:"renewDeadline"`
+		RetryPeriod   metav1.Duration `mapstructure:"retryPeriod"`
 	} `mapstructure:"leaderElection"`
 }

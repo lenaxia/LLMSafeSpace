@@ -16,9 +16,9 @@ import (
 
 // SetCondition updates or creates a condition in the provided slice
 func SetCondition(conditions *[]metav1.Condition, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.NewTime(time.Now())
+	now := metav1.Now()
 	existingCondition := FindCondition(*conditions, conditionType)
-	
+
 	if existingCondition == nil {
 		// Create new condition
 		newCondition := metav1.Condition{
@@ -31,7 +31,7 @@ func SetCondition(conditions *[]metav1.Condition, conditionType string, status m
 		*conditions = append(*conditions, newCondition)
 		return
 	}
-	
+
 	// Update existing condition
 	if existingCondition.Status != status {
 		existingCondition.LastTransitionTime = now
@@ -80,7 +80,7 @@ func IsPodReady(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodRunning {
 		return false
 	}
-	
+
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 			return true
@@ -92,16 +92,16 @@ func IsPodReady(pod *corev1.Pod) bool {
 // FindWarmPodForSandbox finds an available warm pod for a sandbox
 func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resources.Sandbox) (*resources.WarmPod, error) {
 	warmPodList := &resources.WarmPodList{}
-	
+
 	// List all warm pods in the same namespace
 	if err := c.List(ctx, warmPodList, client.InNamespace(sandbox.Namespace), client.MatchingLabels{
 		LabelComponent: ComponentWarmPod,
-		LabelRuntime: sandbox.Spec.Runtime,
-		LabelStatus: "ready",
+		LabelRuntime:   sandbox.Spec.Runtime,
+		LabelStatus:    "ready",
 	}); err != nil {
 		return nil, err
 	}
-	
+
 	// Find a warm pod that matches the sandbox requirements and is in Ready state
 	for _, warmPod := range warmPodList.Items {
 		if warmPod.Status.Phase == WarmPodPhaseReady {
@@ -113,7 +113,7 @@ func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resour
 			}, warmPool); err != nil {
 				continue
 			}
-			
+
 			// Check if the warm pool runtime matches the sandbox runtime
 			if warmPool.Spec.Runtime == sandbox.Spec.Runtime {
 				// Check if security levels match
@@ -123,7 +123,7 @@ func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resour
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("no suitable warm pod found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 }
 
@@ -131,7 +131,7 @@ func FindWarmPodForSandbox(ctx context.Context, c client.Client, sandbox *resour
 func GenerateRandomString(length int) string {
 	// In a real implementation, this would generate a random string
 	// For simplicity, we'll just use the current timestamp
-	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
+	timestamp := fmt.Sprintf("%d", metav1.Now().UnixNano())
 	if len(timestamp) > length {
 		return timestamp[:length]
 	}

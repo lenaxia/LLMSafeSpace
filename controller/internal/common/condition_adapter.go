@@ -3,8 +3,8 @@ package common
 import (
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ConvertToMetaV1Condition converts a SandboxCondition to metav1.Condition
@@ -14,7 +14,7 @@ func ConvertToMetaV1Condition(condition resources.SandboxCondition) metav1.Condi
 		Status:             metav1.ConditionStatus(condition.Status),
 		Reason:             condition.Reason,
 		Message:            condition.Message,
-		LastTransitionTime: metav1.NewTime(time.Now()),
+		LastTransitionTime: metav1.Now(),
 	}
 }
 
@@ -53,7 +53,7 @@ func ConvertWarmPoolToMetaV1Condition(condition resources.WarmPoolCondition) met
 		Status:             metav1.ConditionStatus(condition.Status),
 		Reason:             condition.Reason,
 		Message:            condition.Message,
-		LastTransitionTime: metav1.NewTime(time.Now()),
+		LastTransitionTime: metav1.Now(),
 	}
 }
 

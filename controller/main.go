@@ -15,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/controller/internal/controller"
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
@@ -56,11 +57,11 @@ func main() {
 	// Configure leader election if enabled
 	if enableLeaderElection {
 		options.LeaderElectionConfig = &common.LeaderElectionConfig{
-			LeaseDuration: 15 * time.Second,
-			RenewDeadline: 10 * time.Second,
-			RetryPeriod:   2 * time.Second,
+			LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
+			RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
+			RetryPeriod:   metav1.Duration{Duration: 2 * time.Second},
 			Namespace:     "llmsafespace",
-			Name:         "llmsafespace-controller",
+			Name:          "llmsafespace-controller",
 		}
 	}
 
@@ -74,19 +75,19 @@ func main() {
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandbox", &webhook.Admission{
 		Handler: &resources.SandboxValidator{Client: mgr.GetClient()},
 	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandboxprofile", &webhook.Admission{
 		Handler: &resources.SandboxProfileValidator{},
 	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-warmpool", &webhook.Admission{
 		Handler: &resources.WarmPoolValidator{Client: mgr.GetClient()},
 	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-warmpod", &webhook.Admission{
 		Handler: &resources.WarmPodValidator{Client: mgr.GetClient()},
 	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &resources.RuntimeEnvironmentValidator{},
 	})

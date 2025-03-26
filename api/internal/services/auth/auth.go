@@ -12,6 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Service handles authentication and authorization
@@ -21,7 +22,7 @@ type Service struct {
 	dbService     interfaces.DatabaseService
 	cacheService  interfaces.CacheService
 	jwtSecret     []byte
-	tokenDuration time.Duration
+	tokenDuration metav1.Duration
 }
 
 // Start initializes the auth service
@@ -37,7 +38,7 @@ func (s *Service) Stop() error {
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	// Check if API key is cached
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
-	
+
 	// Try to get from cache first
 	cachedStatus, err := s.cacheService.Get(ctx, cacheKey)
 	if err == nil && cachedStatus != "" {
@@ -99,7 +100,7 @@ func (s *Service) GetUserID(c *gin.Context) string {
 func (s *Service) RevokeToken(token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	// Parse token
 	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
@@ -134,11 +135,11 @@ func (s *Service) RevokeToken(token string) error {
 	if !ok {
 		return errors.New("invalid expiration time in token")
 	}
-	
+
 	// Calculate remaining time until expiration
 	expTime := time.Unix(int64(exp), 0)
 	remainingTime := time.Until(expTime)
-	
+
 	if remainingTime <= 0 {
 		return errors.New("token has already expired")
 	}
@@ -189,8 +190,8 @@ func (s *Service) GenerateToken(userID string) (string, error) {
 	// Create token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": userID,
-		"exp": time.Now().Add(s.tokenDuration).Unix(),
-		"iat": time.Now().Unix(),
+		"exp": metav1.Now().Add(s.tokenDuration).Unix(),
+		"iat": metav1.Now().Unix(),
 	})
 
 	// Sign token
@@ -213,7 +214,7 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("token:%s", tokenString)
-	
+
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		if cachedUserID == "revoked" {
@@ -257,11 +258,11 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	if !ok {
 		return "", errors.New("invalid expiration time in token")
 	}
-	
+
 	// Calculate remaining time until expiration
 	expTime := time.Unix(int64(exp), 0)
 	remainingTime := time.Until(expTime)
-	
+
 	// Cache the token if it's valid
 	if remainingTime > 0 {
 		// Cache for the remaining time of the token, but not more than 1 hour
@@ -269,7 +270,7 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 		if cacheDuration > time.Hour {
 			cacheDuration = time.Hour
 		}
-		
+
 		err = s.cacheService.Set(ctx, cacheKey, userID, cacheDuration)
 		if err != nil {
 			s.logger.Error("Failed to cache token", err, "user_id", userID)
@@ -286,7 +287,7 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
-	
+
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		return cachedUserID, nil

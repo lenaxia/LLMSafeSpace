@@ -9,6 +9,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Common errors
@@ -26,9 +27,9 @@ var (
 
 // Service handles code and command execution
 type Service struct {
-	logger     *logger.Logger
-	k8sClient  interfaces.KubernetesClient
-	metrics    interfaces.MetricsService
+	logger    *logger.Logger
+	k8sClient interfaces.KubernetesClient
+	metrics   interfaces.MetricsService
 }
 
 // Ensure Service implements interfaces.ExecutionService
@@ -57,7 +58,7 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient, metrics i
 	if metrics == nil {
 		return nil, ErrNilMetricsService
 	}
-	
+
 	return &Service{
 		logger:    logger,
 		k8sClient: k8sClient,
@@ -67,16 +68,16 @@ func New(logger *logger.Logger, k8sClient interfaces.KubernetesClient, metrics i
 
 // Execute executes code or a command in a sandbox
 func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType, content string, timeout int) (*types.ExecutionResult, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	userID := getUserIDFromSandbox(sandbox)
-	
+
 	// Validate inputs
 	if err := s.validateExecuteParams(sandbox, execType, content); err != nil {
 		s.recordExecutionError(execType, sandbox, err, userID, startTime)
 		return nil, err
 	}
-	
-	s.logger.Debug("Executing in sandbox", 
+
+	s.logger.Debug("Executing in sandbox",
 		"namespace", sandbox.Namespace,
 		"name", sandbox.Name,
 		"type", execType,
@@ -99,11 +100,11 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 
 	// Check if context is already cancelled
 	if err := ctx.Err(); err != nil {
-		s.logger.Warn("Context already cancelled before execution", 
+		s.logger.Warn("Context already cancelled before execution",
 			"error", err,
-			"namespace", sandbox.Namespace, 
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name)
-		
+
 		wrappedErr := fmt.Errorf("%w: %v", ErrContextCancelled, err)
 		s.recordExecutionError(execType, sandbox, wrappedErr, userID, startTime)
 		return nil, wrappedErr
@@ -112,12 +113,12 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 	// Execute code via Kubernetes API
 	execResult, err := s.k8sClient.ExecuteInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq)
 	if err != nil {
-		s.logger.Error("Failed to execute in sandbox", err, 
-			"namespace", sandbox.Namespace, 
+		s.logger.Error("Failed to execute in sandbox", err,
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name,
 			"type", execType,
 			"user_id", userID)
-			
+
 		// Record metrics for failed execution
 		wrappedErr := fmt.Errorf("%w: %v", ErrExecutionFailed, err)
 		s.recordExecutionError(execType, sandbox, wrappedErr, userID, startTime)
@@ -125,14 +126,14 @@ func (s *Service) Execute(ctx context.Context, sandbox *types.Sandbox, execType,
 	}
 
 	duration := time.Since(startTime)
-	s.logger.Debug("Execution completed", 
-		"namespace", sandbox.Namespace, 
-		"name", sandbox.Name, 
-		"duration_ms", duration.Milliseconds(), 
+	s.logger.Debug("Execution completed",
+		"namespace", sandbox.Namespace,
+		"name", sandbox.Name,
+		"duration_ms", duration.Milliseconds(),
 		"exit_code", execResult.ExitCode,
 		"status", execResult.Status,
 		"user_id", userID)
-		
+
 	// Record metrics for successful execution
 	s.metrics.RecordExecution(execType, sandbox.Spec.Runtime, execResult.Status, userID, duration)
 
@@ -147,26 +148,26 @@ func (s *Service) ExecuteStream(
 	timeout int,
 	outputCallback func(stream, content string),
 ) (*types.ExecutionResult, error) {
-	startTime := time.Now()
+	startTime := metav1.Now()
 	userID := getUserIDFromSandbox(sandbox)
-	
+
 	// Validate inputs
 	if err := s.validateExecuteParams(sandbox, execType, content); err != nil {
 		s.recordExecutionError(execType, sandbox, err, userID, startTime)
 		return nil, err
 	}
-	
+
 	// Validate callback
 	if outputCallback == nil {
 		err := ErrNilCallback
 		s.recordExecutionError(execType, sandbox, err, userID, startTime)
 		return nil, err
 	}
-	
-	s.logger.Debug("Executing stream in sandbox", 
-		"namespace", sandbox.Namespace, 
-		"name", sandbox.Name, 
-		"type", execType, 
+
+	s.logger.Debug("Executing stream in sandbox",
+		"namespace", sandbox.Namespace,
+		"name", sandbox.Name,
+		"type", execType,
 		"timeout", timeout,
 		"content_length", len(content),
 		"user_id", userID)
@@ -187,12 +188,12 @@ func (s *Service) ExecuteStream(
 
 	// Check if context is already cancelled
 	if err := ctx.Err(); err != nil {
-		s.logger.Warn("Context already cancelled before stream execution", 
+		s.logger.Warn("Context already cancelled before stream execution",
 			"error", err,
-			"namespace", sandbox.Namespace, 
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name,
 			"user_id", userID)
-		
+
 		wrappedErr := fmt.Errorf("%w: %v", ErrContextCancelled, err)
 		s.recordExecutionError(execType, sandbox, wrappedErr, userID, startTime)
 		return nil, wrappedErr
@@ -201,12 +202,12 @@ func (s *Service) ExecuteStream(
 	// Execute code via Kubernetes API with streaming
 	execResult, err := s.k8sClient.ExecuteStreamInSandbox(ctx, sandbox.Namespace, sandbox.Name, execReq, outputCallback)
 	if err != nil {
-		s.logger.Error("Failed to execute stream in sandbox", err, 
-			"namespace", sandbox.Namespace, 
+		s.logger.Error("Failed to execute stream in sandbox", err,
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name,
 			"type", execType,
 			"user_id", userID)
-			
+
 		// Record metrics for failed execution
 		wrappedErr := fmt.Errorf("%w: %v", ErrExecutionFailed, err)
 		s.recordExecutionError(execType, sandbox, wrappedErr, userID, startTime)
@@ -214,14 +215,14 @@ func (s *Service) ExecuteStream(
 	}
 
 	duration := time.Since(startTime)
-	s.logger.Debug("Stream execution completed", 
-		"namespace", sandbox.Namespace, 
-		"name", sandbox.Name, 
-		"duration_ms", duration.Milliseconds(), 
+	s.logger.Debug("Stream execution completed",
+		"namespace", sandbox.Namespace,
+		"name", sandbox.Name,
+		"duration_ms", duration.Milliseconds(),
 		"exit_code", execResult.ExitCode,
 		"status", execResult.Status,
 		"user_id", userID)
-		
+
 	// Record metrics for successful execution
 	s.metrics.RecordExecution(execType, sandbox.Spec.Runtime, execResult.Status, userID, duration)
 
@@ -231,7 +232,7 @@ func (s *Service) ExecuteStream(
 // InstallPackages installs packages in a sandbox
 func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, packages []string, manager string) (*types.ExecutionResult, error) {
 	userID := getUserIDFromSandbox(sandbox)
-	
+
 	// Validate sandbox
 	if sandbox == nil || sandbox.Name == "" || sandbox.Namespace == "" {
 		err := ErrInvalidSandbox
@@ -239,21 +240,21 @@ func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, p
 		s.recordPackageInstallError(sandbox, manager, err)
 		return nil, err
 	}
-	
+
 	// Validate packages
 	if len(packages) == 0 {
 		err := ErrNoPackagesSpecified
-		s.logger.Error("No packages specified for installation", err, 
-			"namespace", sandbox.Namespace, 
+		s.logger.Error("No packages specified for installation", err,
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name)
 		s.recordPackageInstallError(sandbox, manager, err)
 		return nil, err
 	}
 
-	s.logger.Info("Installing packages in sandbox", 
-		"namespace", sandbox.Namespace, 
-		"name", sandbox.Name, 
-		"packages", packages, 
+	s.logger.Info("Installing packages in sandbox",
+		"namespace", sandbox.Namespace,
+		"name", sandbox.Name,
+		"packages", packages,
 		"manager", manager,
 		"runtime", sandbox.Spec.Runtime,
 		"user_id", userID)
@@ -273,16 +274,16 @@ func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, p
 			manager = "go"
 		} else {
 			err := fmt.Errorf("unable to determine package manager for runtime: %s", runtime)
-			s.logger.Error("Package manager detection failed", err, 
+			s.logger.Error("Package manager detection failed", err,
 				"runtime", runtime,
 				"namespace", sandbox.Namespace,
 				"name", sandbox.Name)
-			
+
 			s.recordPackageInstallError(sandbox, "unknown", err)
 			return nil, err
 		}
-		s.logger.Debug("Auto-detected package manager", 
-			"manager", manager, 
+		s.logger.Debug("Auto-detected package manager",
+			"manager", manager,
 			"runtime", sandbox.Spec.Runtime)
 	}
 
@@ -298,23 +299,23 @@ func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, p
 		cmd = fmt.Sprintf("go get %s", joinPackages(packages))
 	default:
 		err := fmt.Errorf("%w: %s", ErrUnsupportedManager, manager)
-		s.logger.Error("Unsupported package manager", err, 
+		s.logger.Error("Unsupported package manager", err,
 			"manager", manager,
 			"namespace", sandbox.Namespace,
 			"name", sandbox.Name)
-		
+
 		s.recordPackageInstallError(sandbox, manager, err)
 		return nil, err
 	}
 
 	// Check if context is already cancelled
 	if err := ctx.Err(); err != nil {
-		s.logger.Warn("Context already cancelled before package installation", 
+		s.logger.Warn("Context already cancelled before package installation",
 			"error", err,
-			"namespace", sandbox.Namespace, 
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name,
 			"manager", manager)
-		
+
 		wrappedErr := fmt.Errorf("%w: %v", ErrContextCancelled, err)
 		s.recordPackageInstallError(sandbox, manager, wrappedErr)
 		return nil, wrappedErr
@@ -322,14 +323,14 @@ func (s *Service) InstallPackages(ctx context.Context, sandbox *types.Sandbox, p
 
 	// Execute command with extended timeout for package installation
 	result, err := s.Execute(ctx, sandbox, "command", cmd, 300)
-	
+
 	// Record metrics for package installation
 	status := "completed"
 	if err != nil || (result != nil && result.ExitCode != 0) {
 		status = "failed"
 	}
 	s.metrics.RecordPackageInstallation(sandbox.Spec.Runtime, manager, status)
-	
+
 	return result, err
 }
 
@@ -340,50 +341,50 @@ func (s *Service) validateExecuteParams(sandbox *types.Sandbox, execType, conten
 		s.logger.Error("Nil sandbox provided", nil)
 		return ErrInvalidSandbox
 	}
-	
+
 	if sandbox.Name == "" {
 		s.logger.Error("Sandbox name is empty", nil, "sandbox", sandbox)
 		return ErrInvalidSandbox
 	}
-	
+
 	if sandbox.Namespace == "" {
 		s.logger.Error("Sandbox namespace is empty", nil, "sandbox", sandbox)
 		return ErrInvalidSandbox
 	}
-	
+
 	// Validate execution type
 	if execType != "code" && execType != "command" {
-		s.logger.Error("Invalid execution type", nil, 
+		s.logger.Error("Invalid execution type", nil,
 			"type", execType,
 			"namespace", sandbox.Namespace,
 			"name", sandbox.Name)
 		return ErrInvalidExecType
 	}
-	
+
 	// Validate content
 	if content == "" {
-		s.logger.Error("Empty content for execution", nil, 
-			"namespace", sandbox.Namespace, 
+		s.logger.Error("Empty content for execution", nil,
+			"namespace", sandbox.Namespace,
 			"name", sandbox.Name,
 			"type", execType)
 		return ErrInvalidContent
 	}
-	
+
 	return nil
 }
 
 // recordExecutionError records metrics for execution errors
-func (s *Service) recordExecutionError(execType string, sandbox *types.Sandbox, err error, userID string, startTime time.Time) {
+func (s *Service) recordExecutionError(execType string, sandbox *types.Sandbox, err error, userID string, startTime metav1.Time) {
 	if s.metrics == nil {
 		return
 	}
-	
+
 	duration := time.Since(startTime)
 	runtime := ""
 	if sandbox != nil && sandbox.Spec.Runtime != "" {
 		runtime = sandbox.Spec.Runtime
 	}
-	
+
 	s.metrics.RecordExecution(execType, runtime, "failed", userID, duration)
 	s.metrics.RecordError("execution", "execute", err.Error())
 }
@@ -393,12 +394,12 @@ func (s *Service) recordPackageInstallError(sandbox *types.Sandbox, manager stri
 	if s.metrics == nil {
 		return
 	}
-	
+
 	runtime := ""
 	if sandbox != nil && sandbox.Spec.Runtime != "" {
 		runtime = sandbox.Spec.Runtime
 	}
-	
+
 	s.metrics.RecordPackageInstallation(runtime, manager, "failed")
 	s.metrics.RecordError("package_install", manager, err.Error())
 }

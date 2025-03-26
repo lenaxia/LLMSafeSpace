@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/logger"
 	"github.com/lenaxia/llmsafespace/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
@@ -20,15 +21,15 @@ import (
 func SetupTestClient(t *testing.T) (*kmocks.MockKubernetesClient, *kmocks.MockLLMSafespaceV1Interface, *kmocks.MockSandboxInterface) {
 	// Create a mock client
 	client := kmocks.NewMockKubernetesClient()
-	
+
 	// Setup LlmsafespaceV1 mock
 	v1Client := kmocks.NewMockLLMSafespaceV1Interface()
 	client.On("LlmsafespaceV1").Return(v1Client)
-	
+
 	// Setup Sandboxes mock
 	sandboxClient := kmocks.NewMockSandboxInterface()
 	v1Client.On("Sandboxes", "test-namespace").Return(sandboxClient)
-	
+
 	return client, v1Client, sandboxClient
 }
 
@@ -68,18 +69,18 @@ func SetupTestLogger() *logger.Logger {
 func SetupRealTestClient(t *testing.T) *kubernetes.Client {
 	// Create fake clientset
 	clientset := fake.NewSimpleClientset()
-	
+
 	// Create REST config
 	restConfig := &rest.Config{
 		Host: "https://localhost:8443",
 	}
-	
+
 	// Create logger
 	log := SetupTestLogger()
-	
+
 	// Create client
 	client := kubernetes.NewForTesting(clientset, nil, restConfig, nil, log)
-	
+
 	return client
 }
 
@@ -123,16 +124,16 @@ func MockCommandExecution(client *kmocks.MockKubernetesClient, namespace, podNam
 }
 
 // RunTestWithTimeout runs a test function with a timeout
-func RunTestWithTimeout(t *testing.T, testFunc func(ctx context.Context), timeout time.Duration) {
+func RunTestWithTimeout(t *testing.T, testFunc func(ctx context.Context), timeout metav1.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	
+
 	done := make(chan struct{})
 	go func() {
 		testFunc(ctx)
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// Test completed successfully

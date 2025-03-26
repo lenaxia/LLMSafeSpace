@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/pkg/types"
 	mockk8s "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,8 +57,8 @@ func TestListFiles(t *testing.T) {
 				Path:      "/workspace/file.txt",
 				Size:      100,
 				IsDir:     false,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
+				CreatedAt: metav1.Now(),
+				UpdatedAt: metav1.Now(),
 			},
 		},
 	}, nil).Once()
@@ -137,8 +137,8 @@ func TestUploadFile(t *testing.T) {
 	})).Return(&types.FileResult{
 		Path:      "/workspace/file.txt",
 		Size:      12,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: metav1.Now(),
+		UpdatedAt: metav1.Now(),
 	}, nil).Once()
 
 	fileInfo, err := service.UploadFile(context.Background(), sandbox, "/workspace/file.txt", []byte("test content"))
@@ -215,8 +215,8 @@ func TestCreateDirectory(t *testing.T) {
 		Path:      "/workspace/newdir",
 		Size:      4096,
 		IsDir:     true,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: metav1.Now(),
+		UpdatedAt: metav1.Now(),
 	}, nil).Once()
 
 	fileInfo, err := service.CreateDirectory(context.Background(), sandbox, "/workspace/newdir")
