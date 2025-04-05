@@ -94,55 +94,56 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 ```
 .
 ├── api/                              # API Service Component
-│   ├── cmd/
-│   │   └── server/                   # Main entrypoint
-│   ├── config/                       # Configuration files
-│   ├── internal/
-│   │   ├── handler/                  # HTTP handlers
-│   │   ├── k8s/                      # Kubernetes client wrappers
-│   │   ├── middleware/               # HTTP middleware
-│   │   ├── service/                  # Business logic
-│   │   ├── store/                    # Database access
-│   │   └── version/                  # Version info
-│   └── pkg/
-│       └── client/                   # Go client library
+│   ├── cmd/server/                   # REST API entrypoint
+│   ├── internal/                     # Business logic
+│   └── pkg/client/                   # Generated SDK
 │
-├── controller/                       # Kubernetes Operator
-│   ├── cmd/
-│   │   └── manager/                  # Operator entrypoint
+├── controller/                       # Operator Core
+│   ├── cmd/manager/                  # Operator main
 │   ├── config/
-│   │   ├── crd/                      # CRD patches
-│   │   ├── rbac/                     # RBAC rules
-│   │   └── webhook/                  # Webhook configs
-│   ├── internal/
-│   │   ├── controller/               # Reconciliation logic
-│   │   ├── manager/                  # Manager setup
-│   │   └── webhook/                  # Webhook handlers
-│   └── pkg/
-│       └── admission/                # Admission control
+│   │   ├── crd/                      # CRD bases
+│   │   └── rbac/                     # RBAC rules  
+│   └── internal/controller/          # Reconciliation
 │
-├── pkg/                              # Shared Packages
-│   ├── apis/                         # API Type Definitions
-│   │   └── llmsafespace/
-│   │       ├── v1/                   # Stable API
-│   │       └── v1alpha1/             # Experimental API
-│   ├── client/                       # Generated Clients
-│   ├── crds/                         # CRD Manifests
-│   ├── kubernetes/                   # K8s Utilities
-│   └── logger/                       # Logging
+├── bundle/                           # OLM Bundle Artifacts
+│   ├── manifests/                    # Generated CSVs/CRDs
+│   │   ├── *.clusterserviceversion.yaml
+│   │   └── *.crd.yaml
+│   ├── metadata/annotations.yaml     # Bundle metadata
+│   └── tests/scorecard/              # OLM test configs
 │
-├── hack/                             # Development Tools
-│   ├── boilerplate.go.txt            # License header
-│   ├── update-codegen.sh             # Types generation
-│   └── verify-codegen.sh             # CI verification
+├── olm/                              # Catalog Management
+│   ├── catalog/
+│   │   ├── stable/                   # Production channel
+│   │   ├── alpha/                    # Pre-release channel  
+│   │   └── index.yaml                # Catalog index
+│   └── versioned/
+│       ├── v0.1.0/                   # Versioned bundles
+│       └── v0.2.0/
 │
-├── test/                             # Testing
-│   ├── e2e/                          # End-to-End
-│   └── integration/                  # Integration
+├── pkg/                              # Shared Libraries
+│   ├── apis/llmsafespace/            # API Types
+│   ├── client/                       # Generated clients
+│   └── kubernetes/                   # K8s utilities
 │
-├── Makefile                          # Build automation
-├── go.mod                            # Go modules
-└── go.sum                            # Go dependencies
+├── hack/
+│   ├── update-bundle.sh              # Bundle generation
+│   └── verify-olm.sh                 # OLM validation
+│
+├── test/
+│   ├── e2e/                          # End-to-end tests
+│   └── olm/                          # OLM-specific tests
+│       ├── upgrade/                  # Version upgrade tests
+│       └── bundle/                   # Bundle validation
+│
+├── Makefile                          # Now includes:
+│   ├── bundle-generate               # Generate OLM bundle
+│   ├── catalog-build                 # Build catalog index
+│   └── olm-install                   # Test installation
+│
+└── go.mod                            # Updated with:
+    ├── operator-framework/api        # OLM dependencies
+    └── operator-lib                  # Helper utilities
 ```
 
 ### Key Directories Explained:
