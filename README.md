@@ -171,8 +171,8 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
    - `internal/service`: Core business logic
    - `pkg/client`: Generated client library for external consumers
 
-2. **Controller (`controller/`)**:
-   - Follows standard kubebuilder/operator-sdk layout
+4. **Controller (`controller/`)**:
+   - (OLM Managed) Follows standard kubebuilder/operator-sdk layout
    - `internal/controller`: Resource reconciliation logic
    - `config/rbac`: Generated RBAC manifests
    - `config/webhook`: Webhook configurations
