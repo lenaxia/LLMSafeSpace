@@ -10,13 +10,6 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 ### Core Components
 
-#### `olm-operator` (New)
-- Manages operator lifecycle through OLM
-- Handles version upgrades and rollbacks
-- Provides catalog management for multiple channels
-- Implements conversion webhooks for API versions
-- Manages operator dependencies and related images
-
 #### `agent-api`
 - (Updated) Entry point for all SDK interactions with layered architecture:
   - **HTTP Handlers**: Endpoint controllers (`api/internal/handler/`)
@@ -105,11 +98,12 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 │   ├── internal/                     # Business logic
 │   └── pkg/client/                   # Generated SDK
 │
-├── controller/                       # Operator Core
+├── controller/                       # OLM-Managed Operator Core
 │   ├── cmd/manager/                  # Operator main
 │   ├── config/
 │   │   ├── crd/                      # CRD bases
-│   │   └── rbac/                     # RBAC rules  
+│   │   ├── rbac/                     # RBAC rules
+│   │   └── olm/                      # OLM bundle components
 │   └── internal/controller/          # Reconciliation
 │
 ├── bundle/                           # OLM Bundle Artifacts
@@ -144,10 +138,22 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 │       └── bundle/                   # Bundle validation
 │
 ├── Makefile                          # Now includes:
-│   ├── bundle-generate               # Generate OLM bundle
-│   ├── catalog-build                 # Build catalog index
-│   └── olm-install                   # Test installation
+│   ├── generate-bundle               # Generate OLM bundle artifacts
+│   ├── catalog-build                 # Build catalog index image
+│   ├── olm-deploy                    # Deploy via OLM
+│   ├── crd-install                   # Install CRDs directly
+│   └── operator-run                  # Run locally against cluster
 │
+└── sdk/
+    └── python/                       # Python Client SDK
+        ├── llmsafespace/
+        │   ├── client.py             # Core client implementation
+        │   └── resources.py          # API resource models
+        ├── tests/
+        │   └── test_client.py        # SDK tests
+        ├── setup.py                  # Packaging config
+        └── requirements.txt         # Dependencies
+
 └── go.mod                            # Updated with:
     ├── operator-framework/api        # OLM dependencies
     └── operator-lib                  # Helper utilities
@@ -725,26 +731,34 @@ func TestAPIEndpoint(t *testing.T) {
 - Field masking for sensitive data
 - Component-scoped loggers
 
-## Development Workflow (OLM Enhanced)
+## Development Workflow
 
-### New Prerequisites
+### Prerequisites
 - operator-sdk v1.28.0+
 - opm v1.26.2+
 - Kubernetes 1.25+ with OLM installed
+- Python 3.10+ (for SDK development)
+- Go 1.20+
 
-### OLM-Specific Commands
+### Key Commands
 ```bash
-# Generate OLM bundle
-make bundle IMG=quay.io/llmsafespace/controller:v0.1.0
+# Generate OLM bundle artifacts
+make generate-bundle VERSION=0.1.0
 
-# Build catalog index
+# Build and push catalog image
 make catalog-build CATALOG_IMG=quay.io/llmsafespace/catalog:latest
 
-# Deploy using OLM
+# Deploy using OLM to cluster
 make olm-deploy BUNDLE_IMG=quay.io/llmsafespace/bundle:v0.1.0
 
-# Run scorecard tests
-operator-sdk scorecard ./bundle
+# Run operator locally against cluster
+make operator-run
+
+# Generate Python SDK client
+(cd sdk/python && python setup.py sdist)
+
+# Run end-to-end tests
+make test-e2e OLM_ENABLED=true
 ```
 
 ### Updated Prerequisites
