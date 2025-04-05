@@ -17,8 +17,8 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 - Implements conversion webhooks for API versions
 - Manages operator dependencies and related images
 
-#### `agent-api` (Updated)
-- Entry point for all SDK interactions with layered architecture:
+#### `agent-api`
+- (Updated) Entry point for all SDK interactions with layered architecture:
   - **HTTP Handlers**: Endpoint controllers (`api/internal/handler/`)
   - **Services**: Business logic (`api/internal/service/`)
   - **K8s Client**: Kubernetes wrappers (`api/internal/k8s/`)
@@ -569,9 +569,9 @@ agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 agent_executor.run("Analyze this dataset and create a visualization")
 ```
 
-## Docker Compatibility
+## Alternative Deployment (Non-OLM)
 
-For non-Kubernetes deployments, LLMSafeSpace can run as a Docker Compose stack:
+For development/testing without Kubernetes, LLMSafeSpace can run as a Docker Compose stack:
 
 ```yaml
 version: '3'
@@ -752,9 +752,18 @@ operator-sdk scorecard ./bundle
 - Docker and Docker Compose
 - kubectl and a Kubernetes cluster with OLM
 
-### Local Development
+### Local Development (OLM Environment)
 
 ```bash
+# Ensure OLM is installed in your cluster
+operator-sdk olm install
+
+# Deploy the operator via OLM
+make olm-deploy
+
+# Verify operator installation
+kubectl get subscriptions.operators.coreos.com -n llmsafespace-system
+
 # Clone the repository
 git clone https://github.com/lenaxia/llmsafespace.git
 cd llmsafespace
@@ -782,10 +791,17 @@ make build
 ./llmsafespace
 ```
 
-### Controller Development
+### Controller Development (OLM-aware)
 
 ```bash
-# Build the controller
+# Generate updated bundle after changes
+make bundle
+
+# Deploy updated operator
+make olm-deploy
+
+# Verify new version
+kubectl get clusterserviceversions -n llmsafespace-system
 cd controller
 make build
 
@@ -840,9 +856,11 @@ spec:
       app.kubernetes.io/name: llmsafespace-operator
 ```
 
-## Code Generation (OLM Enhanced)
+## Code & Bundle Generation
 
-When modifying API types (in `pkg/types`), you must regenerate the DeepCopy implementations:
+When modifying API types or OLM configurations:
+
+1. Regenerate DeepCopy implementations:
 
 ```bash
 # Install code generator tools
@@ -851,9 +869,15 @@ go install k8s.io/code-generator/cmd/deepcopy-gen@v0.26.0
 # Run generation (from project root)
 make deepcopy
 
+2. Generate OLM bundle artifacts:
+make bundle
+
+3. Validate bundle format:
+operator-sdk bundle validate ./bundle
+
 # Verify and commit generated changes
-git add pkg/types/zz_generated.deepcopy.go
-git commit -m "Update generated code"
+git add pkg/types/zz_generated.deepcopy.go bundle/
+git commit -m "Update generated code and OLM bundle"
 ```
 
 ## Contributing
