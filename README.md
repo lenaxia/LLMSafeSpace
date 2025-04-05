@@ -6,11 +6,18 @@ This repo is located at github.com/lenaxia/llmsafespace
 
 ## Architecture Overview
 
-LLMSafeSpace provides a secure, isolated environment for executing code from LLM agents with a focus on security, simplicity, and Kubernetes integration.
+LLMSafeSpace provides a secure, isolated environment for executing code from LLM agents with a focus on security, simplicity, and Kubernetes integration. Now with full OLM (Operator Lifecycle Manager) compatibility for enterprise-grade operator management.
 
 ### Core Components
 
-#### `agent-api`
+#### `olm-operator` (New)
+- Manages operator lifecycle through OLM
+- Handles version upgrades and rollbacks
+- Provides catalog management for multiple channels
+- Implements conversion webhooks for API versions
+- Manages operator dependencies and related images
+
+#### `agent-api` (Updated)
 - Entry point for all SDK interactions with layered architecture:
   - **HTTP Handlers**: Endpoint controllers (`api/internal/handler/`)
   - **Services**: Business logic (`api/internal/service/`)
@@ -148,7 +155,17 @@ LLMSafeSpace provides a secure, isolated environment for executing code from LLM
 
 ### Key Directories Explained:
 
-1. **API Service (`api/`)**:
+1. **OLM Bundle (`bundle/`)**:
+   - `manifests/`: ClusterServiceVersion (CSV) and CRDs
+   - `metadata/`: Bundle annotations and labels
+   - `tests/scorecard/`: OLM validation tests
+
+2. **Catalog Management (`olm/`)**:
+   - `catalog/`: Channel definitions (stable/alpha)
+   - `versioned/`: Immutable release bundles
+   - `overlays/`: Environment-specific customizations
+
+3. **API Service (`api/`)** (Updated):
    - `cmd/server`: Main API server executable
    - `internal/handler`: HTTP request handlers
    - `internal/service`: Core business logic
@@ -242,9 +259,57 @@ for output in sandbox.stream_command("python long_task.py"):
 sandbox.terminate()
 ```
 
-## Kubernetes Integration
+## Kubernetes Integration (OLM Enhanced)
 
-LLMSafeSpace uses a comprehensive CRD system:
+LLMSafeSpace uses a comprehensive CRD system with OLM lifecycle management:
+
+### OLM Deployment Example
+```yaml
+# ClusterServiceVersion (CSV) excerpt
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: llmsafespace-operator.v0.1.0
+spec:
+  displayName: LLMSafeSpace Operator
+  installModes:
+    - type: OwnNamespace
+      supported: true
+  install:
+    spec:
+      deployments:
+      - name: llmsafespace-controller
+        spec:
+          template:
+            spec:
+              containers:
+              - name: manager
+                image: quay.io/llmsafespace/controller:v0.1.0
+                args:
+                - --leader-elect
+                - --operator-namespace=$(OPERATOR_NAMESPACE)
+                env:
+                - name: OPERATOR_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+```
+
+### Package Manifest
+```yaml
+apiVersion: packages.operators.coreos.com/v1
+kind: PackageManifest
+metadata:
+  name: llmsafespace-operator
+spec:
+  packageName: llmsafespace-operator
+  channels:
+  - name: stable
+    currentCSV: llmsafespace-operator.v0.1.0
+  - name: alpha
+    currentCSV: llmsafespace-operator.v0.2.0-alpha
+  defaultChannel: stable
+```
 
 ### Core Resources
 1. **Runtime Environments**:
@@ -425,10 +490,18 @@ status:
    - Network policy enforcement
    - Ingress traffic control (default deny)
 
-4. **Observability**:
-   - Secure logging with field masking
-   - Metrics collection for security events
-   - Audit trails for sandbox operations
+4. **OLM Security**:
+   - RBAC rules generated from operator needs
+   - Pod security admission compliance
+   - OpenShift Security Context Constraints (SCC)
+   - Bundle signature verification
+   - Catalog content trust policies
+
+5. **Observability** (Enhanced):
+   - OLM health status reporting
+   - Operator metrics endpoint (:8080/metrics)
+   - Bundle version tracking
+   - Catalog update notifications
 
 ## LLM Agent Integration Scenarios
 
@@ -652,12 +725,32 @@ func TestAPIEndpoint(t *testing.T) {
 - Field masking for sensitive data
 - Component-scoped loggers
 
-## Development Workflow
+## Development Workflow (OLM Enhanced)
 
-### Prerequisites
+### New Prerequisites
+- operator-sdk v1.28.0+
+- opm v1.26.2+
+- Kubernetes 1.25+ with OLM installed
+
+### OLM-Specific Commands
+```bash
+# Generate OLM bundle
+make bundle IMG=quay.io/llmsafespace/controller:v0.1.0
+
+# Build catalog index
+make catalog-build CATALOG_IMG=quay.io/llmsafespace/catalog:latest
+
+# Deploy using OLM
+make olm-deploy BUNDLE_IMG=quay.io/llmsafespace/bundle:v0.1.0
+
+# Run scorecard tests
+operator-sdk scorecard ./bundle
+```
+
+### Updated Prerequisites
 - Go 1.20+
 - Docker and Docker Compose
-- kubectl and a Kubernetes cluster (for full testing)
+- kubectl and a Kubernetes cluster with OLM
 
 ### Local Development
 
@@ -703,7 +796,51 @@ make install-crds
 ./bin/manager
 ```
 
-## Code Generation
+## OLM Lifecycle Management
+
+### Upgrade Strategy
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: llmsafespace-operator.v0.2.0
+spec:
+  replaces: llmsafespace-operator.v0.1.0
+  links:
+  - name: Upgrade Documentation
+    url: https://llmsafespace.dev/docs/upgrade-0.2
+```
+
+### Catalog Management
+```bash
+# Add bundle to catalog
+opm index add \
+  --bundles quay.io/llmsafespace/bundle:v0.1.0 \
+  --tag quay.io/llmsafespace/catalog:latest \
+  --mode semver
+
+# Prune old versions
+opm index prune \
+  --tag quay.io/llmsafespace/catalog:latest \
+  --keep-replace 3
+```
+
+### Monitoring Operator Health
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llmsafespace-operator
+spec:
+  endpoints:
+  - port: metrics
+    interval: 30s
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llmsafespace-operator
+```
+
+## Code Generation (OLM Enhanced)
 
 When modifying API types (in `pkg/types`), you must regenerate the DeepCopy implementations:
 
