@@ -382,7 +382,7 @@ func TestGetSandboxStatus_NotFound_ReturnsAPIError(t *testing.T) {
 
 func TestTerminateSandbox_HappyPath(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "user1")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "user1", "sandbox", "sb-1").Return(true, nil)
@@ -398,7 +398,7 @@ func TestTerminateSandbox_HappyPath(t *testing.T) {
 
 func TestTerminateSandbox_NotFound_ReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "user1")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
 
 	f.sb.On("Get", "missing", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("not found"))
 	allNsSb := kmocks.NewMockSandboxInterface()
@@ -424,7 +424,7 @@ func TestTerminateSandbox_NoUserInContext_ReturnsForbidden(t *testing.T) {
 
 func TestTerminateSandbox_NotOwner_NoPermission_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "intruder")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "intruder")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "intruder", "sandbox", "sb-1").Return(false, nil)
@@ -438,7 +438,7 @@ func TestTerminateSandbox_NotOwner_NoPermission_ReturnsForbidden(t *testing.T) {
 
 func TestTerminateSandbox_NotOwner_HasPermission_Succeeds(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "admin")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "admin")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "admin", "sandbox", "sb-1").Return(false, nil)
@@ -452,7 +452,7 @@ func TestTerminateSandbox_NotOwner_HasPermission_Succeeds(t *testing.T) {
 
 func TestTerminateSandbox_K8sDeleteFails_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "user1")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "user1", "sandbox", "sb-1").Return(true, nil)
@@ -466,7 +466,7 @@ func TestTerminateSandbox_K8sDeleteFails_ReturnsInternal(t *testing.T) {
 
 func TestTerminateSandbox_MetadataDeleteFails_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.WithValue(context.Background(), "userID", "user1")
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "user1", "sandbox", "sb-1").Return(true, nil)
