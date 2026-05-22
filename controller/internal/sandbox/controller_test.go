@@ -356,3 +356,329 @@ func TestReconcile_UnknownPhase_NoRequeue(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 }
+
+// ---------------------------------------------------------------------------
+// helpers for workspace tests
+// ---------------------------------------------------------------------------
+
+func makeWorkspace(name, namespace, pvcName string) *resources.Workspace {
+	return &resources.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: resources.WorkspaceSpec{
+			Owner:          resources.WorkspaceOwner{UserID: "user-1"},
+			DefaultRuntime: "python:3.11",
+			Storage:        resources.WorkspaceStorageConfig{Size: "10Gi"},
+		},
+		Status: resources.WorkspaceStatus{
+			Phase:   resources.WorkspacePhaseActive,
+			PVCName: pvcName,
+		},
+	}
+}
+
+func reconcilerForWithWorkspace(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
+	t.Helper()
+	return reconcilerFor(t, objs...)
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildPod_WorkspaceRef_MountsPVC
+// ---------------------------------------------------------------------------
+
+func TestBuildPod_WorkspaceRef_MountsPVC(t *testing.T) {
+	ws := makeWorkspace("my-ws", "default", "my-ws-pvc")
+	sb := makeSandbox("sb-ws", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "my-ws"
+
+	r := reconcilerForWithWorkspace(t, sb, ws)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	// Check PVC volume exists
+	var pvcVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "workspace" {
+			pvcVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, pvcVol, "expected 'workspace' volume")
+	require.NotNil(t, pvcVol.PersistentVolumeClaim)
+	assert.Equal(t, "my-ws-pvc", pvcVol.PersistentVolumeClaim.ClaimName)
+
+	// Check main container has /workspace mount
+	var wsMount *corev1.VolumeMount
+	for i := range pod.Spec.Containers[0].VolumeMounts {
+		if pod.Spec.Containers[0].VolumeMounts[i].Name == "workspace" {
+			wsMount = &pod.Spec.Containers[0].VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, wsMount, "expected 'workspace' volume mount in main container")
+	assert.Equal(t, "/workspace", wsMount.MountPath)
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildPod_NoWorkspaceRef_NoWorkspaceMount
+// ---------------------------------------------------------------------------
+
+func TestBuildPod_NoWorkspaceRef_NoWorkspaceMount(t *testing.T) {
+	sb := makeSandbox("sb-nows", "default", common.SandboxPhasePending)
+
+	r := reconcilerFor(t, sb)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	for _, v := range pod.Spec.Volumes {
+		assert.NotEqual(t, "workspace", v.Name, "unexpected 'workspace' volume when no workspaceRef")
+	}
+	for _, vm := range pod.Spec.Containers[0].VolumeMounts {
+		assert.NotEqual(t, "workspace", vm.Name, "unexpected 'workspace' mount when no workspaceRef")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildPod_AlwaysHasEmptyDirVolumes
+// ---------------------------------------------------------------------------
+
+func TestBuildPod_AlwaysHasEmptyDirVolumes(t *testing.T) {
+	sb := makeSandbox("sb-emptydir", "default", common.SandboxPhasePending)
+
+	r := reconcilerFor(t, sb)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	expectedVols := []string{"sandbox-cfg", "tmp", "sandbox-home"}
+	volNames := make(map[string]bool)
+	for _, v := range pod.Spec.Volumes {
+		volNames[v.Name] = true
+	}
+	for _, name := range expectedVols {
+		assert.True(t, volNames[name], "missing emptyDir volume: %s", name)
+	}
+
+	// Also verify the volume mounts on the main container
+	mountPaths := make(map[string]string) // name → mountPath
+	for _, vm := range pod.Spec.Containers[0].VolumeMounts {
+		mountPaths[vm.Name] = vm.MountPath
+	}
+	assert.Equal(t, "/sandbox-cfg", mountPaths["sandbox-cfg"])
+	assert.Equal(t, "/tmp", mountPaths["tmp"])
+	assert.Equal(t, "/home/sandbox", mountPaths["sandbox-home"])
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildPod_AlwaysHasSecurityContext
+// ---------------------------------------------------------------------------
+
+func TestBuildPod_AlwaysHasSecurityContext(t *testing.T) {
+	sb := makeSandbox("sb-sec", "default", common.SandboxPhasePending)
+
+	r := reconcilerFor(t, sb)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	sc := pod.Spec.Containers[0].SecurityContext
+	require.NotNil(t, sc, "main container must have SecurityContext")
+	require.NotNil(t, sc.ReadOnlyRootFilesystem)
+	assert.True(t, *sc.ReadOnlyRootFilesystem)
+	require.NotNil(t, sc.RunAsNonRoot)
+	assert.True(t, *sc.RunAsNonRoot)
+	require.NotNil(t, sc.AllowPrivilegeEscalation)
+	assert.False(t, *sc.AllowPrivilegeEscalation)
+	require.NotNil(t, sc.Capabilities)
+	assert.Contains(t, sc.Capabilities.Drop, corev1.Capability("ALL"))
+}
+
+// ---------------------------------------------------------------------------
+// TestReconcile_Creating_UpdatesPodIP
+// ---------------------------------------------------------------------------
+
+func TestReconcile_Creating_UpdatesPodIP(t *testing.T) {
+	sb := makeSandbox("sb-podip", "default", common.SandboxPhaseCreating)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Status.PodName = "sb-podip-12345678"
+	sb.Status.PodNamespace = "default"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-podip-12345678",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.0.0.42",
+		},
+	}
+
+	r := reconcilerFor(t, sb, pod)
+	result, err := r.Reconcile(context.Background(), reqFor("sb-podip", "default"))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-podip", Namespace: "default"}, updated))
+	assert.Equal(t, "10.0.0.42", updated.Status.PodIP)
+}
+
+// ---------------------------------------------------------------------------
+// TestReconcile_Suspending_DeletesPodAndTransitionsToSuspended
+// ---------------------------------------------------------------------------
+
+func TestReconcile_Suspending_DeletesPodAndTransitionsToSuspended(t *testing.T) {
+	sb := makeSandbox("sb-suspending", "default", common.SandboxPhaseSuspending)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Status.PodName = "sb-suspending-pod"
+	sb.Status.PodNamespace = "default"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-suspending-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	r := reconcilerFor(t, sb, pod)
+	result, err := r.Reconcile(context.Background(), reqFor("sb-suspending", "default"))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-suspending", Namespace: "default"}, updated))
+	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase)
+
+	// Pod must be gone
+	deletedPod := &corev1.Pod{}
+	err = r.Get(context.Background(), types.NamespacedName{Name: "sb-suspending-pod", Namespace: "default"}, deletedPod)
+	assert.True(t, k8serrors.IsNotFound(err), "pod should have been deleted")
+}
+
+// ---------------------------------------------------------------------------
+// TestReconcile_Resuming_CreatesNewPodAndTransitionsToRunning
+// ---------------------------------------------------------------------------
+
+func TestReconcile_Resuming_CreatesNewPodAndTransitionsToRunning(t *testing.T) {
+	sb := makeSandbox("sb-resuming", "default", common.SandboxPhaseResuming)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+
+	r := reconcilerFor(t, sb)
+	result, err := r.Reconcile(context.Background(), reqFor("sb-resuming", "default"))
+
+	// The reconciler should create a pod and requeue for Running transition.
+	// A requeue or nil error is expected.
+	require.NoError(t, err)
+	_ = result
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-resuming", Namespace: "default"}, updated))
+	// Phase should be Creating (pod created, waiting for Running)
+	assert.Equal(t, common.SandboxPhaseCreating, updated.Status.Phase)
+}
+
+// ---------------------------------------------------------------------------
+// TestReconcile_Creating_CreatesPasswordSecret
+// ---------------------------------------------------------------------------
+
+func TestReconcile_Creating_CreatesPasswordSecret(t *testing.T) {
+	sb := makeSandbox("sb-pw", "default", common.SandboxPhasePending)
+
+	r := reconcilerFor(t, sb)
+	_, _ = r.Reconcile(context.Background(), reqFor("sb-pw", "default"))
+
+	// After the first reconcile (Pending → Creating + pod creation), a password
+	// secret named sandbox-pw-{name} should exist.
+	secret := &corev1.Secret{}
+	err := r.Get(context.Background(), types.NamespacedName{
+		Name:      "sandbox-pw-sb-pw",
+		Namespace: "default",
+	}, secret)
+	require.NoError(t, err, "password secret should have been created")
+	assert.NotEmpty(t, secret.Data["password"], "password key must be non-empty")
+
+	// GAP N-3: owner reference must be set to the sandbox
+	require.Len(t, secret.OwnerReferences, 1)
+	assert.Equal(t, sb.Name, secret.OwnerReferences[0].Name)
+	assert.Equal(t, "Sandbox", secret.OwnerReferences[0].Kind)
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildPod_WorkspaceWithCredentials_MountsCredSecret (GAP M-2)
+// ---------------------------------------------------------------------------
+
+func TestBuildPod_WorkspaceWithCredentials_MountsCredSecret(t *testing.T) {
+	ws := makeWorkspace("cred-ws", "default", "cred-ws-pvc")
+	sb := makeSandbox("sb-credws", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "cred-ws"
+
+	credsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workspace-creds-cred-ws",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"provider-config": []byte(`{"apiKey":"test"}`),
+		},
+	}
+
+	r := reconcilerFor(t, sb, ws, credsSecret)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	// Pod must have a cred-secret volume
+	var credVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "cred-secret" {
+			credVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, credVol, "pod must have a 'cred-secret' volume")
+	require.NotNil(t, credVol.Secret)
+	assert.Equal(t, "workspace-creds-cred-ws", credVol.Secret.SecretName)
+
+	// credential-setup init container must have a mount named cred-secret
+	var credSetupContainer *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == "credential-setup" {
+			credSetupContainer = &pod.Spec.InitContainers[i]
+			break
+		}
+	}
+	require.NotNil(t, credSetupContainer, "credential-setup init container must be present")
+
+	var credMount *corev1.VolumeMount
+	for i := range credSetupContainer.VolumeMounts {
+		if credSetupContainer.VolumeMounts[i].Name == "cred-secret" {
+			credMount = &credSetupContainer.VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, credMount, "credential-setup must have a 'cred-secret' volume mount")
+	assert.Equal(t, "/mnt/secrets/credentials", credMount.MountPath)
+}
+
+// ---------------------------------------------------------------------------
+// TestReconcile_Creating_WorkspaceNotFound_ReturnsError (GAP M-3)
+// ---------------------------------------------------------------------------
+
+func TestReconcile_Creating_WorkspaceNotFound_ReturnsError(t *testing.T) {
+	sb := makeSandbox("sb-nowsref", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "missing-workspace"
+
+	r := reconcilerFor(t, sb) // no workspace in store
+
+	_, err := r.Reconcile(context.Background(), reqFor("sb-nowsref", "default"))
+
+	require.Error(t, err, "reconcile should return an error when workspace is not found")
+}
