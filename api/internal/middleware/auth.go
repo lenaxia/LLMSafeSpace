@@ -1,11 +1,14 @@
 package middleware
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"strings"
 )
 
@@ -13,19 +16,19 @@ import (
 type AuthConfig struct {
 	// HeaderName is the name of the header containing the authentication token
 	HeaderName string
-	
+
 	// QueryParamName is the name of the query parameter containing the authentication token
 	QueryParamName string
-	
+
 	// CookieName is the name of the cookie containing the authentication token
 	CookieName string
-	
+
 	// TokenType is the type of token (e.g., "Bearer")
 	TokenType string
-	
+
 	// SkipPaths are paths that should not be authenticated
 	SkipPaths []string
-	
+
 	// SkipPathPrefixes are path prefixes that should not be authenticated
 	SkipPathPrefixes []string
 }
@@ -49,7 +52,7 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(c *gin.Context) {
 		// Skip authentication for certain paths
 		path := c.Request.URL.Path
@@ -57,19 +60,19 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			c.Next()
 			return
 		}
-		
+
 		// Extract token from request
 		token := extractToken(c, cfg)
 		if token == "" {
 			if log != nil {
 				log.Warn("Authentication failed: no token provided",
-				"path", path,
-				"method", c.Request.Method,
-				"client_ip", c.ClientIP(),
-				"request_id", c.GetString("request_id"),
+					"path", path,
+					"method", c.Request.Method,
+					"client_ip", c.ClientIP(),
+					"request_id", c.GetString("request_id"),
 				)
 			}
-			
+
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			HandleAPIError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
@@ -77,20 +80,20 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			})
 			return
 		}
-		
+
 		// Validate token
 		userID, err := authService.ValidateToken(token)
 		if err != nil {
 			if log != nil {
 				log.Warn("Authentication failed: invalid token",
-				"path", path,
-				"method", c.Request.Method,
-				"client_ip", c.ClientIP(),
-				"request_id", c.GetString("request_id"),
-				"error", err.Error(),
+					"path", path,
+					"method", c.Request.Method,
+					"client_ip", c.ClientIP(),
+					"request_id", c.GetString("request_id"),
+					"error", err.Error(),
 				)
 			}
-			
+
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			HandleAPIError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
@@ -98,10 +101,13 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			})
 			return
 		}
-		
-		// Store authentication result in context
+
+		// Store authentication result in Gin context (for middleware/handlers)
+		// and in the request context (for service layer via ctx.Value).
 		c.Set("userID", userID)
-		
+		ctx := context.WithValue(c.Request.Context(), types.ContextKeyUserID, userID)
+		c.Request = c.Request.WithContext(ctx)
+
 		// Add user ID to logger context
 		if requestLogger, exists := c.Get("logger"); exists {
 			if typedLogger, ok := requestLogger.(pkginterfaces.LoggerInterface); ok {
@@ -109,15 +115,15 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 				c.Set("logger", newLogger)
 			}
 		}
-		
+
 		// Add user ID to span if tracing is enabled - commented out until we properly import trace packages
 		/*
-		if span := trace.SpanFromContext(c.Request.Context()); span != nil {
-			span.SetAttributes(attribute.String("user.id", authResult.UserID))
-			span.SetAttributes(attribute.String("user.role", authResult.Role))
-		}
+			if span := trace.SpanFromContext(c.Request.Context()); span != nil {
+				span.SetAttributes(attribute.String("user.id", authResult.UserID))
+				span.SetAttributes(attribute.String("user.role", authResult.Role))
+			}
 		*/
-		
+
 		c.Next()
 	}
 }
@@ -130,14 +136,14 @@ func AuthorizationMiddleware(authService apiinterfaces.AuthService, log pkginter
 			c.Next()
 			return
 		}
-		
+
 		// Get required permissions from context
 		requiredPermissions, exists := c.Get("requiredPermissions")
 		if !exists {
 			c.Next()
 			return
 		}
-		
+
 		// Get user permissions from context
 		userPermissions, exists := c.Get("permissions")
 		if !exists {
@@ -147,17 +153,17 @@ func AuthorizationMiddleware(authService apiinterfaces.AuthService, log pkginter
 				"client_ip", c.ClientIP(),
 				"request_id", c.GetString("request_id"),
 			)
-			
+
 			apiErr := errors.NewForbiddenError("Authorization required", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
-		
+
 		// Check if user has required permissions
 		hasPermission := false
 		userPerms := userPermissions.([]string)
 		requiredPerms := requiredPermissions.([]string)
-		
+
 		// Simple permission check - user must have all required permissions
 		hasAll := true
 		for _, required := range requiredPerms {
@@ -174,7 +180,7 @@ func AuthorizationMiddleware(authService apiinterfaces.AuthService, log pkginter
 			}
 		}
 		hasPermission = hasAll
-		
+
 		if !hasPermission {
 			log.Warn("Authorization failed: insufficient permissions",
 				"path", c.Request.URL.Path,
@@ -184,12 +190,12 @@ func AuthorizationMiddleware(authService apiinterfaces.AuthService, log pkginter
 				"user_id", c.GetString("userID"),
 				"required_permissions", requiredPermissions,
 			)
-			
+
 			apiErr := errors.NewForbiddenError("Insufficient permissions", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -211,7 +217,7 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 			HandleAPIError(c, apiErr)
 			return
 		}
-		
+
 		// Check if user has one of the required roles
 		hasRole := false
 		for _, role := range roles {
@@ -220,13 +226,13 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 				break
 			}
 		}
-		
+
 		if !hasRole {
 			apiErr := errors.NewForbiddenError("Insufficient permissions", nil)
 			HandleAPIError(c, apiErr)
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -239,14 +245,14 @@ func shouldSkipAuth(path string, skipPaths, skipPathPrefixes []string) bool {
 			return true
 		}
 	}
-	
+
 	// Check path prefixes
 	for _, prefix := range skipPathPrefixes {
 		if strings.HasPrefix(path, prefix) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -259,6 +265,6 @@ func extractToken(c *gin.Context, cfg AuthConfig) string {
 		QueryParamName: cfg.QueryParamName,
 		CookieName:     cfg.CookieName,
 	}
-	
+
 	return utilities.ExtractToken(c, extractorConfig)
 }

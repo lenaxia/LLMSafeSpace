@@ -18,6 +18,15 @@ var (
 	ErrAlreadyExists    = errors.New("resource already exists")
 )
 
+// contextKey is an unexported type for context keys defined in this package.
+// Using a typed key avoids collisions with string keys from other packages.
+type contextKey string
+
+// ContextKeyUserID is the context key used to store the authenticated user ID.
+// Both the auth middleware and service layer use this constant so the key is
+// always in sync.
+const ContextKeyUserID contextKey = "userID"
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Sandbox represents a sandbox environment

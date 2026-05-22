@@ -325,9 +325,10 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-// userIDFromContext extracts the userID string stored under the "userID" key.
+// userIDFromContext extracts the authenticated user ID from the request context.
+// The auth middleware stores it using types.ContextKeyUserID.
 func userIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value("userID").(string)
+	v, _ := ctx.Value(types.ContextKeyUserID).(string)
 	return v
 }
 
