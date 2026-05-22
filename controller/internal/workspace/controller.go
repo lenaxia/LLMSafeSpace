@@ -85,6 +85,40 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 
 	existingPVC := &corev1.PersistentVolumeClaim{}
 	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: workspace.Namespace}, existingPVC)
+	if err == nil {
+		// Detect cache lag after workspace re-creation. If a previous
+		// Workspace with this name was deleted, the cascading PVC delete
+		// happens asynchronously and the controller's cache may briefly
+		// return the old PVC entry. Treat the cache hit as stale (and
+		// fall through to the not-found create path) when:
+		//
+		//   * the PVC is terminating (DeletionTimestamp != 0), OR
+		//   * the PVC has at least one OwnerReference but none match the
+		//     current Workspace UID — meaning it belongs to a previous
+		//     generation.
+		//
+		// PVCs with NO OwnerReferences are treated as adopted (this is
+		// what test fixtures use) and are not considered stale.
+		stale := !existingPVC.DeletionTimestamp.IsZero()
+		if !stale && len(existingPVC.OwnerReferences) > 0 {
+			ownerMatches := false
+			for _, owner := range existingPVC.OwnerReferences {
+				if owner.UID == workspace.UID {
+					ownerMatches = true
+					break
+				}
+			}
+			if !ownerMatches {
+				stale = true
+			}
+		}
+		if stale {
+			logger.Info("Cached PVC entry is stale (different generation); treating as not-found",
+				"pvc", pvcName,
+				"deleting", !existingPVC.DeletionTimestamp.IsZero())
+			err = errors.NewNotFound(corev1.Resource("persistentvolumeclaims"), pvcName)
+		}
+	}
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to get PVC")
@@ -101,6 +135,15 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 			return ctrl.Result{}, setErr
 		}
 		if createErr := r.Create(ctx, newPVC); createErr != nil {
+			// AlreadyExists is benign and expected during the cache-lag
+			// window: the PVC still exists in the API server but is
+			// terminating. Requeue and let the next reconcile see the
+			// deletion complete.
+			if errors.IsAlreadyExists(createErr) {
+				logger.Info("PVC already exists (likely still terminating); requeueing",
+					"pvc", pvcName)
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
 			logger.Error(createErr, "Failed to create PVC")
 			return ctrl.Result{}, createErr
 		}
