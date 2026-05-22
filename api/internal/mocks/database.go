@@ -3,6 +3,7 @@ package mocks
 import (
 	"context"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
@@ -12,22 +13,8 @@ type MockDatabaseService struct {
 	mock.Mock
 }
 
-var _ interface {
-	GetUser(ctx context.Context, userID string) (*types.User, error)
-	CreateUser(ctx context.Context, user *types.User) error
-	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
-	DeleteUser(ctx context.Context, userID string) error
-	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
-	GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error)
-	CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error
-	UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error
-	DeleteSandbox(ctx context.Context, sandboxID string) error
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error)
-	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
-	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
-	Start() error
-	Stop() error
-} = (*MockDatabaseService)(nil)
+// Compile-time check against the real interface — not an anonymous copy.
+var _ interfaces.DatabaseService = (*MockDatabaseService)(nil)
 
 func (m *MockDatabaseService) GetUser(ctx context.Context, userID string) (*types.User, error) {
 	args := m.Called(ctx, userID)

@@ -142,34 +142,34 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 }
 
 // UpdateUser updates specific fields on a user record. Only non-nil fields are applied.
+// UpdateUser updates specific fields on a user record. Only non-nil fields are applied.
 func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error {
 	query := "UPDATE users SET updated_at = NOW()"
 	args := []interface{}{}
-	i := 1
+	i := 0
 
 	if updates.Username != nil {
-		query += fmt.Sprintf(", username = $%d", i+1)
-		args = append(args, *updates.Username)
 		i++
+		query += fmt.Sprintf(", username = $%d", i)
+		args = append(args, *updates.Username)
 	}
 	if updates.Email != nil {
-		query += fmt.Sprintf(", email = $%d", i+1)
-		args = append(args, *updates.Email)
 		i++
+		query += fmt.Sprintf(", email = $%d", i)
+		args = append(args, *updates.Email)
 	}
 	if updates.Active != nil {
-		query += fmt.Sprintf(", active = $%d", i+1)
-		args = append(args, *updates.Active)
 		i++
+		query += fmt.Sprintf(", active = $%d", i)
+		args = append(args, *updates.Active)
 	}
 	if updates.Role != nil {
-		query += fmt.Sprintf(", role = $%d", i+1)
-		args = append(args, *updates.Role)
 		i++
+		query += fmt.Sprintf(", role = $%d", i)
+		args = append(args, *updates.Role)
 	}
 
-	if i == 1 {
-		// Nothing to update
+	if i == 0 {
 		return nil
 	}
 

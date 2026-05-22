@@ -355,6 +355,97 @@ func TestCreateSandbox(t *testing.T) {
 	})
 }
 
+func TestUpdateUser(t *testing.T) {
+	t.Run("username_and_email", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-1"
+		username := "alice"
+		email := "alice@example.com"
+
+		// Correct query: $1=username, $2=email, $3=userID
+		mock.ExpectExec("UPDATE users SET updated_at = NOW\\(\\), username = \\$1, email = \\$2 WHERE id = \\$3").
+			WithArgs(username, email, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpdateUser(ctx, userID, types.UserUpdates{
+			Username: &username,
+			Email:    &email,
+		})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("single_field_role", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-1"
+		role := "admin"
+
+		mock.ExpectExec("UPDATE users SET updated_at = NOW\\(\\), role = \\$1 WHERE id = \\$2").
+			WithArgs(role, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpdateUser(ctx, userID, types.UserUpdates{Role: &role})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("all_fields", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-1"
+		username, email, role := "bob", "bob@example.com", "user"
+		active := true
+
+		// $1=username, $2=email, $3=active, $4=role, $5=userID
+		mock.ExpectExec("UPDATE users SET updated_at = NOW\\(\\), username = \\$1, email = \\$2, active = \\$3, role = \\$4 WHERE id = \\$5").
+			WithArgs(username, email, active, role, userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpdateUser(ctx, userID, types.UserUpdates{
+			Username: &username,
+			Email:    &email,
+			Active:   &active,
+			Role:     &role,
+		})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("no_fields_is_noop", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		// No SQL expected
+		err := service.UpdateUser(context.Background(), "user-1", types.UserUpdates{})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		role := "admin"
+		mock.ExpectExec("UPDATE users SET updated_at = NOW\\(\\), role = \\$1 WHERE id = \\$2").
+			WithArgs(role, "user-1").
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.UpdateUser(ctx, "user-1", types.UserUpdates{Role: &role})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update user")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestListSandboxes(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
