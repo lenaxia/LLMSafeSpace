@@ -682,3 +682,394 @@ func TestReconcile_Creating_WorkspaceNotFound_ReturnsError(t *testing.T) {
 
 	require.Error(t, err, "reconcile should return an error when workspace is not found")
 }
+
+// ===========================================================================
+// E2E tests: runtime-aware setup script (GAP-8 fix verification)
+// ===========================================================================
+
+func TestE2E_SetupScript_PythonRuntime_UsesPip(t *testing.T) {
+	ws := &resources.Workspace{
+		Spec: resources.WorkspaceSpec{
+			Packages: []resources.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{"numpy", "pandas"}},
+			},
+		},
+	}
+	script := buildWorkspaceSetupScript(ws)
+	assert.Contains(t, script, "pip install --target=/workspace/packages numpy pandas")
+}
+
+func TestE2E_SetupScript_NodejsRuntime_UsesNpm(t *testing.T) {
+	ws := &resources.Workspace{
+		Spec: resources.WorkspaceSpec{
+			Packages: []resources.WorkspacePackageSet{
+				{Runtime: "nodejs:18", Requirements: []string{"express", "lodash"}},
+			},
+		},
+	}
+	script := buildWorkspaceSetupScript(ws)
+	assert.Contains(t, script, "npm install express lodash")
+	assert.NotContains(t, script, "pip install")
+}
+
+func TestE2E_SetupScript_GoRuntime_UsesGoInstall(t *testing.T) {
+	ws := &resources.Workspace{
+		Spec: resources.WorkspaceSpec{
+			Packages: []resources.WorkspacePackageSet{
+				{Runtime: "go:1.21", Requirements: []string{"github.com/gin-gonic/gin@latest"}},
+			},
+		},
+	}
+	script := buildWorkspaceSetupScript(ws)
+	assert.Contains(t, script, "go install github.com/gin-gonic/gin@latest")
+	assert.NotContains(t, script, "pip install")
+}
+
+func TestE2E_SetupScript_MixedRuntimes(t *testing.T) {
+	ws := &resources.Workspace{
+		Spec: resources.WorkspaceSpec{
+			Packages: []resources.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{"requests"}},
+				{Runtime: "nodejs:18", Requirements: []string{"axios"}},
+				{Runtime: "go:1.21", Requirements: []string{"golang.org/x/tools@latest"}},
+			},
+		},
+	}
+	script := buildWorkspaceSetupScript(ws)
+	assert.Contains(t, script, "pip install --target=/workspace/packages requests")
+	assert.Contains(t, script, "npm install axios")
+	assert.Contains(t, script, "go install golang.org/x/tools@latest")
+}
+
+func TestE2E_SetupScript_EmptyRequirements_NoInstall(t *testing.T) {
+	ws := &resources.Workspace{
+		Spec: resources.WorkspaceSpec{
+			Packages: []resources.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{}},
+			},
+		},
+	}
+	script := buildWorkspaceSetupScript(ws)
+	assert.NotContains(t, script, "pip install")
+}
+
+// ===========================================================================
+// E2E tests: API CRD → Controller consumption (GAP-1/2 fix verification)
+// ===========================================================================
+
+func TestE2E_SandboxWithWorkspaceRef_LooksUpWorkspaceAndMountsPVC(t *testing.T) {
+	ws := &resources.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-ws",
+			Namespace: "default",
+		},
+		Spec: resources.WorkspaceSpec{
+			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
+			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		},
+		Status: resources.WorkspaceStatus{
+			Phase:   resources.WorkspacePhaseActive,
+			PVCName: "pvc-e2e-ws",
+		},
+	}
+
+	sb := makeSandbox("sb-e2e-wsref", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "e2e-ws"
+
+	pwSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sandbox-pw-sb-e2e-wsref",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{"password": []byte("test-pw")},
+	}
+
+	r := reconcilerFor(t, sb, ws, pwSecret)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	var pvcVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "workspace" {
+			pvcVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, pvcVol, "pod must have workspace volume when WorkspaceRef is set")
+	require.NotNil(t, pvcVol.PersistentVolumeClaim)
+	assert.Equal(t, "pvc-e2e-ws", pvcVol.PersistentVolumeClaim.ClaimName,
+		"PVC name must come from workspace CRD status")
+}
+
+func TestE2E_SandboxNoWorkspaceRef_NoPVCVolume(t *testing.T) {
+	sb := makeSandbox("sb-e2e-nows", "default", common.SandboxPhasePending)
+
+	r := reconcilerFor(t, sb)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	for _, v := range pod.Spec.Volumes {
+		assert.NotEqual(t, "workspace", v.Name)
+	}
+}
+
+func TestE2E_SandboxWithCredSecret_MountsCredVolume(t *testing.T) {
+	ws := &resources.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-cred-ws",
+			Namespace: "default",
+		},
+		Spec: resources.WorkspaceSpec{
+			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
+			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		},
+		Status: resources.WorkspaceStatus{
+			Phase:   resources.WorkspacePhaseActive,
+			PVCName: "pvc-e2e-cred-ws",
+		},
+	}
+
+	sb := makeSandbox("sb-e2e-cred", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "e2e-cred-ws"
+
+	pwSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sandbox-pw-sb-e2e-cred",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{"password": []byte("test-pw")},
+	}
+
+	credSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workspace-creds-e2e-cred-ws",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"provider-config": []byte(`{"apiKey":"sk-test"}`),
+		},
+	}
+
+	r := reconcilerFor(t, sb, ws, pwSecret, credSecret)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	var credVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "cred-secret" {
+			credVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, credVol, "pod must have cred-secret volume when workspace has credentials")
+	require.NotNil(t, credVol.Secret)
+	assert.Equal(t, "workspace-creds-e2e-cred-ws", credVol.Secret.SecretName)
+}
+
+func TestE2E_PodIP_PopulatedInStatus(t *testing.T) {
+	sb := makeSandbox("sb-e2e-ip", "default", common.SandboxPhaseCreating)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Status.PodName = "sb-e2e-ip-pod"
+	sb.Status.PodNamespace = "default"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-e2e-ip-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.1.2.3",
+		},
+	}
+
+	r := reconcilerFor(t, sb, pod)
+	_, err := r.Reconcile(context.Background(), reqFor("sb-e2e-ip", "default"))
+	require.NoError(t, err)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-ip", Namespace: "default"}, updated))
+	assert.Equal(t, "10.1.2.3", updated.Status.PodIP, "PodIP must be populated in sandbox status")
+}
+
+// ===========================================================================
+// Sandbox unhappy path tests
+// ===========================================================================
+
+func TestE2E_Unhappy_WorkspaceRefNotFound_ReturnsError(t *testing.T) {
+	sb := makeSandbox("sb-bad-ws", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "nonexistent-workspace"
+
+	r := reconcilerFor(t, sb)
+
+	_, err := r.Reconcile(context.Background(), reqFor("sb-bad-ws", "default"))
+	require.Error(t, err, "reconciling sandbox with missing workspace must return error")
+	assert.Contains(t, err.Error(), "failed to get workspace")
+}
+
+func TestE2E_Unhappy_WorkspaceRef_NoPVCName_PodBuildFails(t *testing.T) {
+	ws := &resources.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ws-no-pvc",
+			Namespace: "default",
+		},
+		Spec: resources.WorkspaceSpec{
+			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
+			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		},
+		Status: resources.WorkspaceStatus{
+			Phase:   resources.WorkspacePhaseActive,
+			PVCName: "",
+		},
+	}
+
+	sb := makeSandbox("sb-no-pvc", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "ws-no-pvc"
+
+	r := reconcilerFor(t, sb, ws)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	var pvcVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "workspace" {
+			pvcVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	if pvcVol != nil {
+		assert.Empty(t, pvcVol.PersistentVolumeClaim.ClaimName,
+			"PVC claim name should be empty when workspace has no PVCName")
+	}
+}
+
+func TestE2E_Unhappy_SandboxTimeout_ExceededWhileRunning(t *testing.T) {
+	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	sb := makeSandbox("sb-e2e-timeout", "default", common.SandboxPhaseRunning)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Spec.Timeout = 60
+	sb.Status.PodName = "sb-e2e-timeout-pod"
+	sb.Status.PodNamespace = "default"
+	sb.Status.StartTime = &longAgo
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-e2e-timeout-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	r := reconcilerFor(t, sb, pod)
+	result, err := r.Reconcile(context.Background(), reqFor("sb-e2e-timeout", "default"))
+
+	require.NoError(t, err)
+	assert.True(t, result.Requeue)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-timeout", Namespace: "default"}, updated))
+	assert.Equal(t, common.SandboxPhaseTerminating, updated.Status.Phase,
+		"sandbox exceeding timeout must transition to Terminating")
+}
+
+func TestE2E_Unhappy_RunningPod_Disappears_MarksFailed(t *testing.T) {
+	sb := makeSandbox("sb-pod-gone", "default", common.SandboxPhaseRunning)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Status.PodName = "ghost-pod"
+	sb.Status.PodNamespace = "default"
+	sb.Status.StartTime = &metav1.Time{}
+
+	r := reconcilerFor(t, sb)
+
+	result, err := r.Reconcile(context.Background(), reqFor("sb-pod-gone", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-pod-gone", Namespace: "default"}, updated))
+	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase,
+		"running sandbox with missing pod must transition to Failed")
+}
+
+func TestE2E_Unhappy_Suspending_DeletesPod_ClearsPodFields(t *testing.T) {
+	sb := makeSandbox("sb-susp-clear", "default", common.SandboxPhaseSuspending)
+	sb.Finalizers = []string{common.SandboxFinalizer}
+	sb.Status.PodName = "sb-susp-clear-pod"
+	sb.Status.PodNamespace = "default"
+	sb.Status.PodIP = "10.0.0.1"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-susp-clear-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	r := reconcilerFor(t, sb, pod)
+	result, err := r.Reconcile(context.Background(), reqFor("sb-susp-clear", "default"))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-susp-clear", Namespace: "default"}, updated))
+	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase)
+	assert.Equal(t, "", updated.Status.PodIP, "PodIP must be cleared on suspend")
+	assert.Equal(t, "", updated.Status.PodName, "PodName must be cleared on suspend")
+}
+
+// M8: Credential Secret naming convention
+func TestE2E_CredentialSecret_Naming_WiredCorrectly(t *testing.T) {
+	ws := &resources.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-workspace",
+			Namespace: "test-ns",
+		},
+		Spec: resources.WorkspaceSpec{
+			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
+			Storage: resources.WorkspaceStorageConfig{Size: "5Gi"},
+		},
+		Status: resources.WorkspaceStatus{
+			Phase:   resources.WorkspacePhaseActive,
+			PVCName: "pvc-my-workspace",
+		},
+	}
+
+	sb := makeSandbox("sb-cred-naming", "test-ns", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "my-workspace"
+
+	pwSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sandbox-pw-sb-cred-naming", Namespace: "test-ns",
+		},
+		Data: map[string][]byte{"password": []byte("pw")},
+	}
+
+	credSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "workspace-creds-my-workspace", Namespace: "test-ns",
+		},
+		Data: map[string][]byte{"provider-config": []byte(`{"key":"val"}`)},
+	}
+
+	r := reconcilerFor(t, sb, ws, pwSecret, credSecret)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	var credVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "cred-secret" {
+			credVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, credVol, "cred-secret volume must exist")
+	assert.Equal(t, "workspace-creds-my-workspace", credVol.Secret.SecretName,
+		"credential secret name must follow workspace-creds-{workspaceName} convention")
+}

@@ -25,6 +25,8 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&SandboxProfileList{},
 		&RuntimeEnvironment{},
 		&RuntimeEnvironmentList{},
+		&Workspace{},
+		&WorkspaceList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
@@ -40,6 +42,7 @@ type SandboxSpec struct {
 	Storage       *StorageConfig        `json:"storage,omitempty"`
 	SecurityCtx   *SecurityContext      `json:"securityContext,omitempty"`
 	ProfileRef    *ProfileReference     `json:"profileRef,omitempty"`
+	WorkspaceRef  string                `json:"workspaceRef,omitempty"`
 }
 
 type ResourceRequirements struct {
@@ -90,13 +93,15 @@ type ProfileReference struct {
 }
 
 type SandboxStatus struct {
-	Phase        string             `json:"phase,omitempty"`
-	Conditions   []SandboxCondition `json:"conditions,omitempty"`
-	PodName      string             `json:"podName,omitempty"`
-	PodNamespace string             `json:"podNamespace,omitempty"`
-	StartTime    *metav1.Time       `json:"startTime,omitempty"`
-	Endpoint     string             `json:"endpoint,omitempty"`
-	Resources    *ResourceStatus    `json:"resources,omitempty"`
+	Phase          string             `json:"phase,omitempty"`
+	Conditions     []SandboxCondition `json:"conditions,omitempty"`
+	PodName        string             `json:"podName,omitempty"`
+	PodNamespace   string             `json:"podNamespace,omitempty"`
+	PodIP          string             `json:"podIP,omitempty"`
+	StartTime      *metav1.Time       `json:"startTime,omitempty"`
+	Endpoint       string             `json:"endpoint,omitempty"`
+	Resources      *ResourceStatus    `json:"resources,omitempty"`
+	LastActivityAt *metav1.Time       `json:"lastActivityAt,omitempty"`
 }
 
 type SandboxCondition struct {
@@ -171,4 +176,97 @@ type RuntimeEnvironmentList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []RuntimeEnvironment `json:"items"`
+}
+
+type WorkspaceOwner struct {
+	UserID string `json:"userID"`
+}
+
+type WorkspaceStorageConfig struct {
+	Size             string `json:"size"`
+	StorageClassName string `json:"storageClassName,omitempty"`
+	AccessMode       string `json:"accessMode,omitempty"`
+}
+
+type WorkspaceAutoSuspend struct {
+	Enabled            bool  `json:"enabled,omitempty"`
+	IdleTimeoutSeconds int64 `json:"idleTimeoutSeconds,omitempty"`
+}
+
+type WorkspacePackageSet struct {
+	Runtime      string   `json:"runtime"`
+	Requirements []string `json:"requirements"`
+}
+
+type WorkspaceNetworkAccess struct {
+	Egress  []WorkspaceEgressRule `json:"egress,omitempty"`
+	Ingress bool                  `json:"ingress,omitempty"`
+}
+
+type WorkspaceEgressRule struct {
+	Domain string `json:"domain"`
+}
+
+type WorkspaceCredentialRef struct {
+	SecretName string `json:"secretName"`
+}
+
+type WorkspaceSpec struct {
+	Owner                    WorkspaceOwner          `json:"owner"`
+	DefaultRuntime           string                  `json:"defaultRuntime,omitempty"`
+	SecurityLevel            string                  `json:"securityLevel,omitempty"`
+	Storage                  WorkspaceStorageConfig  `json:"storage"`
+	NetworkAccess            *WorkspaceNetworkAccess `json:"networkAccess,omitempty"`
+	AutoSuspend              *WorkspaceAutoSuspend   `json:"autoSuspend,omitempty"`
+	TTLSecondsAfterSuspended int64                   `json:"ttlSecondsAfterSuspended,omitempty"`
+	Packages                 []WorkspacePackageSet   `json:"packages,omitempty"`
+	InitScript               string                  `json:"initScript,omitempty"`
+	MaxActiveSessions        int32                   `json:"maxActiveSessions,omitempty"`
+	Credentials              *WorkspaceCredentialRef `json:"credentials,omitempty"`
+}
+
+type WorkspacePhase string
+
+const (
+	WorkspacePhasePending     WorkspacePhase = "Pending"
+	WorkspacePhaseActive      WorkspacePhase = "Active"
+	WorkspacePhaseSuspending  WorkspacePhase = "Suspending"
+	WorkspacePhaseSuspended   WorkspacePhase = "Suspended"
+	WorkspacePhaseResuming    WorkspacePhase = "Resuming"
+	WorkspacePhaseTerminating WorkspacePhase = "Terminating"
+	WorkspacePhaseTerminated  WorkspacePhase = "Terminated"
+	WorkspacePhaseFailed      WorkspacePhase = "Failed"
+)
+
+type WorkspaceCondition struct {
+	Type               string      `json:"type"`
+	Status             string      `json:"status"`
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+	Reason             string      `json:"reason,omitempty"`
+	Message            string      `json:"message,omitempty"`
+}
+
+type WorkspaceStatus struct {
+	Phase              WorkspacePhase       `json:"phase,omitempty"`
+	PVCName            string               `json:"pvcName,omitempty"`
+	ActiveSessions     int32                `json:"activeSessions,omitempty"`
+	LastActivityAt     *metav1.Time         `json:"lastActivityAt,omitempty"`
+	SuspendedAt        *metav1.Time         `json:"suspendedAt,omitempty"`
+	Conditions         []WorkspaceCondition `json:"conditions,omitempty"`
+	Message            string               `json:"message,omitempty"`
+	ObservedGeneration int64                `json:"observedGeneration,omitempty"`
+}
+
+type Workspace struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   WorkspaceSpec   `json:"spec,omitempty"`
+	Status WorkspaceStatus `json:"status,omitempty"`
+}
+
+type WorkspaceList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Workspace `json:"items"`
 }

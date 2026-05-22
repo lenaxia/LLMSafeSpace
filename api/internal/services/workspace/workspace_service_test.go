@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
@@ -621,4 +622,117 @@ func TestGetWorkspaceStatus_K8sGetFails(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace_get_failed")
+}
+
+// ===========================================================================
+// E2E tests: Suspend/Resume phase validation (GAP-7 fix verification)
+// ===========================================================================
+
+func TestE2E_SuspendWorkspace_OnlyActiveOrResumingAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		phase   v1.WorkspacePhase
+		wantErr bool
+	}{
+		{"Active_allowed", v1.WorkspacePhaseActive, false},
+		{"Resuming_allowed", v1.WorkspacePhaseResuming, false},
+		{"Suspended_rejected", v1.WorkspacePhaseSuspended, true},
+		{"Pending_rejected", v1.WorkspacePhasePending, true},
+		{"Terminating_rejected", v1.WorkspacePhaseTerminating, true},
+		{"Terminated_rejected", v1.WorkspacePhaseTerminated, true},
+		{"Failed_rejected", v1.WorkspacePhaseFailed, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+
+			f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+			crd.Status.Phase = tt.phase
+			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+			if !tt.wantErr {
+				f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+			}
+
+			err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "validation_error")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestE2E_ResumeWorkspace_OnlySuspendedAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		phase   v1.WorkspacePhase
+		wantErr bool
+	}{
+		{"Suspended_allowed", v1.WorkspacePhaseSuspended, false},
+		{"Active_rejected", v1.WorkspacePhaseActive, true},
+		{"Resuming_rejected", v1.WorkspacePhaseResuming, true},
+		{"Pending_rejected", v1.WorkspacePhasePending, true},
+		{"Terminating_rejected", v1.WorkspacePhaseTerminating, true},
+		{"Terminated_rejected", v1.WorkspacePhaseTerminated, true},
+		{"Failed_rejected", v1.WorkspacePhaseFailed, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+
+			f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+			crd.Status.Phase = tt.phase
+			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+			if !tt.wantErr {
+				f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+			}
+
+			err := f.svc.ResumeWorkspace(ctx, "user1", "ws-1")
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "validation_error")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+		crdWorkspace("ws-new", "default", "user1", "10Gi"), nil,
+	)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{
+		Name:         "e2e-workspace",
+		Runtime:      "python:3.11",
+		StorageSize:  "10Gi",
+		StorageClass: "fast-ssd",
+	}
+
+	result, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	require.NoError(t, err)
+	assert.Equal(t, "user1", result.UserID)
+	assert.Equal(t, "10Gi", result.StorageSize)
+
+	f.ws.AssertCalled(t, "Create", mock.MatchedBy(func(crd *v1.Workspace) bool {
+		return crd.Spec.Owner.UserID == "user1" &&
+			crd.Spec.Storage.Size == "10Gi" &&
+			crd.Spec.Storage.StorageClassName == "fast-ssd" &&
+			crd.Spec.DefaultRuntime == "python:3.11"
+	}))
 }

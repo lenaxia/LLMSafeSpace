@@ -119,6 +119,10 @@ func (in *WorkspaceStatus) DeepCopyInto(out *WorkspaceStatus) {
 		in, out := &in.LastActivityAt, &out.LastActivityAt
 		*out = (*in).DeepCopy()
 	}
+	if in.SuspendedAt != nil {
+		in, out := &in.SuspendedAt, &out.SuspendedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]WorkspaceCondition, len(*in))

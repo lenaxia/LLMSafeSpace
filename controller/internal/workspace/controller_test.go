@@ -854,3 +854,483 @@ func TestReconcile_Resuming_NoSandboxes_TransitionsToActive(t *testing.T) {
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-resuming-empty", Namespace: "default"}, updated))
 	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
 }
+
+// ===========================================================================
+// E2E tests: cross-reconciler workspace ↔ sandbox interaction
+// ===========================================================================
+
+func TestE2E_SuspendWorkspace_SetsSandboxCRDsToSuspended(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-suspend", "default", resources.WorkspacePhaseSuspending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-suspend"
+	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	ws.Status.LastActivityAt = &longAgo
+
+	sb := makeSandboxForWorkspace("sb-e2e-1", "ws-e2e-suspend", "default")
+	sb.Status.Phase = "Running"
+
+	r := reconcilerFor(t, ws, sb)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-suspend", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-suspend", Namespace: "default"}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.NotNil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be set")
+
+	updatedSB := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-1", Namespace: "default"}, updatedSB))
+	assert.Equal(t, common.SandboxPhaseSuspended, updatedSB.Status.Phase)
+}
+
+func TestE2E_ResumeWorkspace_TransitionsSuspendedSandboxesToResuming(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-resume", "default", resources.WorkspacePhaseResuming)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-resume"
+
+	sb := makeSandboxForWorkspace("sb-e2e-2", "ws-e2e-resume", "default")
+	sb.Status.Phase = common.SandboxPhaseSuspended
+
+	r := reconcilerFor(t, ws, sb)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-resume", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+	updatedSB := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-2", Namespace: "default"}, updatedSB))
+	assert.Equal(t, common.SandboxPhaseResuming, updatedSB.Status.Phase,
+		"sandbox must be transitioned from Suspended to Resuming so sandbox reconciler recreates pod")
+}
+
+func TestE2E_ResumeAllRunning_TransitionsToActiveAndClearsSuspendedAt(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-active", "default", resources.WorkspacePhaseResuming)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-active"
+	suspendedAt := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	ws.Status.SuspendedAt = &suspendedAt
+
+	sb := makeSandboxForWorkspace("sb-e2e-3", "ws-e2e-active", "default")
+	sb.Status.Phase = "Running"
+
+	r := reconcilerFor(t, ws, sb)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-active", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-active", Namespace: "default"}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+	assert.Nil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be cleared on resume to Active")
+}
+
+func TestE2E_TTLAfterSuspended_UsesSuspendedAt(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-ttl", "default", resources.WorkspacePhaseSuspended)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-ttl"
+	ws.Spec.TTLSecondsAfterSuspended = 3600
+
+	suspendTime := metav1.NewTime(time.Now().Add(-30 * time.Minute))
+	ws.Status.SuspendedAt = &suspendTime
+
+	oldActivity := metav1.NewTime(time.Now().Add(-5 * time.Hour))
+	ws.Status.LastActivityAt = &oldActivity
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-ttl", "default"))
+	require.NoError(t, err)
+	assert.True(t, result.RequeueAfter > 0, "should requeue because TTL not expired (suspended 30m ago, TTL=1h)")
+	assert.True(t, result.RequeueAfter > 25*time.Minute, "should have ~30m remaining TTL")
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-ttl", Namespace: "default"}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+}
+
+func TestE2E_TTLAfterSuspended_SuspendedAtExpired_TransitionsToTerminating(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-ttl-exp", "default", resources.WorkspacePhaseSuspended)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-ttl-exp"
+	ws.Spec.TTLSecondsAfterSuspended = 60
+
+	suspendTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	ws.Status.SuspendedAt = &suspendTime
+
+	recentActivity := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	ws.Status.LastActivityAt = &recentActivity
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-ttl-exp", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-ttl-exp", Namespace: "default"}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseTerminating, updatedWS.Status.Phase,
+		"TTL must be calculated from SuspendedAt, not LastActivityAt — lastActivity was 5m ago but suspended 2h ago")
+}
+
+func TestE2E_SuspendWorkspace_SetsSuspendedAtTimestamp(t *testing.T) {
+	ws := makeWorkspace("ws-e2e-timestamp", "default", resources.WorkspacePhaseSuspending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-e2e-timestamp"
+	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	ws.Status.LastActivityAt = &longAgo
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-e2e-timestamp", "default"))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-timestamp", Namespace: "default"}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	require.NotNil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be set on transition to Suspended")
+	assert.WithinDuration(t, time.Now(), updatedWS.Status.SuspendedAt.Time, 5*time.Second,
+		"SuspendedAt should be approximately now")
+}
+
+// ===========================================================================
+// M4/M5: Full-flow tests using BOTH reconcilers against one fake client
+// ===========================================================================
+
+func TestE2E_FullFlow_SuspendResumeCycle(t *testing.T) {
+	ns := "default"
+	wsName := "ws-flow"
+
+	ws := makeWorkspace(wsName, ns, resources.WorkspacePhaseSuspending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-flow"
+	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	ws.Status.LastActivityAt = &longAgo
+
+	sb := makeSandboxForWorkspace("sb-flow", wsName, ns)
+	sb.Status.Phase = "Running"
+
+	r := reconcilerFor(t, ws, sb)
+
+	// Step 1: Suspend → sandbox goes Running → Suspended
+	result, err := r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	require.NotNil(t, updatedWS.Status.SuspendedAt)
+
+	updatedSB := &resources.Sandbox{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-flow", Namespace: ns}, updatedSB))
+	assert.Equal(t, common.SandboxPhaseSuspended, updatedSB.Status.Phase)
+
+	// Step 2: Resume → sandbox goes Suspended → Resuming
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
+	updatedWS.Status.Phase = resources.WorkspacePhaseResuming
+	require.NoError(t, r.Status().Update(context.Background(), updatedWS))
+
+	result, err = r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-flow", Namespace: ns}, updatedSB))
+	assert.Equal(t, common.SandboxPhaseResuming, updatedSB.Status.Phase)
+
+	// Step 3: Simulate sandbox reconciler marking sandbox Running
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-flow", Namespace: ns}, updatedSB))
+	updatedSB.Status.Phase = common.SandboxPhaseRunning
+	require.NoError(t, r.Status().Update(context.Background(), updatedSB))
+
+	// Step 4: Workspace sees all Running → Active, clears SuspendedAt
+	result, err = r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+	assert.Nil(t, updatedWS.Status.SuspendedAt)
+	assert.Equal(t, "workspace-ws-flow", updatedWS.Status.PVCName,
+		"PVC reference must survive suspend/resume cycle")
+}
+
+func TestE2E_FullFlow_WorkspaceCreationToActive(t *testing.T) {
+	ns := "default"
+	wsName := "ws-create"
+
+	ws := makeWorkspace(wsName, ns, "")
+	r := reconcilerFor(t, ws)
+
+	// Reconcile 1: adds finalizer + creates PVC, requeues
+	result, err := r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+	updatedWS := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
+	assert.Contains(t, updatedWS.Finalizers, WorkspaceFinalizer)
+	assert.Equal(t, "workspace-ws-create", updatedWS.Status.PVCName)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "workspace-ws-create", Namespace: ns}, pvc))
+	assert.Equal(t, "llmsafespace", pvc.Labels["app"])
+	assert.Equal(t, wsName, pvc.Labels["llmsafespace.dev/workspace"])
+
+	// Simulate PVC becoming bound
+	pvc.Status.Phase = corev1.ClaimBound
+	require.NoError(t, r.Status().Update(context.Background(), pvc))
+
+	// Reconcile 2: PVC bound → Active
+	result, err = r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
+	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+}
+
+func TestE2E_FullFlow_WorkspaceCreation_WithCustomStorageClass(t *testing.T) {
+	ns := "default"
+	wsName := "ws-sc"
+
+	ws := makeWorkspace(wsName, ns, "")
+	ws.Spec.Storage.StorageClassName = "fast-ssd"
+	ws.Spec.Storage.AccessMode = "ReadWriteMany"
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor(wsName, ns))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "workspace-ws-sc", Namespace: ns}, pvc))
+	require.NotNil(t, pvc.Spec.StorageClassName)
+	assert.Equal(t, "fast-ssd", *pvc.Spec.StorageClassName)
+	require.Len(t, pvc.Spec.AccessModes, 1)
+	assert.Equal(t, corev1.ReadWriteMany, pvc.Spec.AccessModes[0])
+}
+
+// ===========================================================================
+// Unhappy path tests
+// ===========================================================================
+
+func TestE2E_Unhappy_Pending_PVCTimeout_TransitionsToFailed(t *testing.T) {
+	ws := makeWorkspace("ws-pvc-timeout", "default", resources.WorkspacePhasePending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	pvc := makePVC("workspace-ws-pvc-timeout", "default")
+	// PVC exists but is not bound
+
+	r := reconcilerFor(t, ws, pvc)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-pvc-timeout", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pvc-timeout", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Contains(t, updated.Status.Message, "not bound")
+}
+
+func TestE2E_Unhappy_Pending_NoPVC_Timeout_TransitionsToFailed(t *testing.T) {
+	ws := makeWorkspace("ws-nopvc-timeout", "default", resources.WorkspacePhasePending)
+	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
+
+	r := reconcilerFor(t, ws)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-nopvc-timeout", "default"))
+	require.NoError(t, err)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-nopvc-timeout", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+}
+
+func TestE2E_Unhappy_Suspend_RaceCondition_RevertsToActive(t *testing.T) {
+	ws := makeWorkspace("ws-race-unhappy", "default", resources.WorkspacePhaseSuspending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-race-unhappy"
+	justNow := metav1.NewTime(time.Now().Add(-5 * time.Second))
+	ws.Status.LastActivityAt = &justNow
+	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+		Enabled:            true,
+		IdleTimeoutSeconds: 3600,
+	}
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-race-unhappy", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-race-unhappy", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase,
+		"recent activity during suspend must revert to Active")
+}
+
+func TestE2E_Unhappy_Suspending_PodDeletionFails_ReturnsError(t *testing.T) {
+	ws := makeWorkspace("ws-podfail", "default", resources.WorkspacePhaseSuspending)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-podfail"
+	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	ws.Status.LastActivityAt = &longAgo
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-podfail", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-podfail", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase,
+		"suspend with no pods should succeed")
+}
+
+func TestE2E_Unhappy_Resuming_OneSandboxFails_StaysResuming(t *testing.T) {
+	ws := makeWorkspace("ws-partial", "default", resources.WorkspacePhaseResuming)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-partial"
+
+	sb1 := makeSandboxForWorkspace("sb-ok", "ws-partial", "default")
+	sb1.Status.Phase = common.SandboxPhaseRunning
+
+	sb2 := makeSandboxForWorkspace("sb-stuck", "ws-partial", "default")
+	sb2.Status.Phase = common.SandboxPhaseResuming
+
+	r := reconcilerFor(t, ws, sb1, sb2)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-partial", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.RequeueAfter,
+		"workspace with non-running sandbox must requeue, not go Active")
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-partial", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseResuming, updated.Status.Phase,
+		"must stay Resuming until all sandboxes are Running")
+}
+
+func TestE2E_Unhappy_DeletingWorkspace_WithSandboxCRDs_DeletesAll(t *testing.T) {
+	now := metav1.Now()
+	ws := makeWorkspace("ws-del", "default", resources.WorkspacePhaseActive)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-del"
+	ws.DeletionTimestamp = &now
+
+	sb1 := makeSandboxForWorkspace("sb-del-1", "ws-del", "default")
+	sb2 := makeSandboxForWorkspace("sb-del-2", "ws-del", "default")
+	pvc := makePVC("workspace-ws-del", "default")
+
+	r := reconcilerFor(t, ws, sb1, sb2, pvc)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-del", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	for _, sbName := range []string{"sb-del-1", "sb-del-2"} {
+		sbCheck := &resources.Sandbox{}
+		err := r.Get(context.Background(), types.NamespacedName{Name: sbName, Namespace: "default"}, sbCheck)
+		assert.True(t, k8serrors.IsNotFound(err), "sandbox %s should be deleted", sbName)
+	}
+
+	pvcCheck := &corev1.PersistentVolumeClaim{}
+	err = r.Get(context.Background(), types.NamespacedName{Name: "workspace-ws-del", Namespace: "default"}, pvcCheck)
+	assert.True(t, k8serrors.IsNotFound(err), "PVC should be deleted")
+
+	updated := &resources.Workspace{}
+	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "ws-del", Namespace: "default"}, updated)
+	if fetchErr == nil {
+		assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
+	} else {
+		assert.True(t, k8serrors.IsNotFound(fetchErr))
+	}
+}
+
+func TestE2E_Unhappy_FailedPhase_StaysFailed_NoAction(t *testing.T) {
+	ws := makeWorkspace("ws-stuck", "default", resources.WorkspacePhaseFailed)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-stuck"
+	ws.Status.Message = "manual intervention required"
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-stuck", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-stuck", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, "manual intervention required", updated.Status.Message)
+}
+
+func TestE2E_Unhappy_TTLNotExpired_DoesNotTerminate(t *testing.T) {
+	ws := makeWorkspace("ws-ttl-safe", "default", resources.WorkspacePhaseSuspended)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-ttl-safe"
+	ws.Spec.TTLSecondsAfterSuspended = 3600
+
+	suspendTime := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.SuspendedAt = &suspendTime
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-ttl-safe", "default"))
+	require.NoError(t, err)
+	assert.True(t, result.RequeueAfter > 0, "should requeue, not terminate")
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-ttl-safe", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase,
+		"must stay Suspended when TTL not expired")
+}
+
+func TestE2E_Unhappy_AutoSuspend_NoActivity_SuspendsImmediately(t *testing.T) {
+	ws := makeWorkspace("ws-noactivity", "default", resources.WorkspacePhaseActive)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-noactivity"
+	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+		Enabled:            true,
+		IdleTimeoutSeconds: 3600,
+	}
+	// No LastActivityAt set — nil
+
+	r := reconcilerFor(t, ws)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-noactivity", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := &resources.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-noactivity", Namespace: "default"}, updated))
+	assert.Equal(t, resources.WorkspacePhaseSuspending, updated.Status.Phase,
+		"workspace with nil LastActivityAt and autoSuspend enabled should suspend")
+}
+
+func TestE2E_Unhappy_Terminating_PVCAlreadyGone_Succeeds(t *testing.T) {
+	ws := makeWorkspace("ws-term-nopvc", "default", resources.WorkspacePhaseTerminating)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PVCName = "workspace-ws-term-nopvc"
+
+	sb := makeSandboxForWorkspace("sb-term", "ws-term-nopvc", "default")
+	// No PVC in store
+
+	r := reconcilerFor(t, ws, sb)
+
+	result, err := r.Reconcile(context.Background(), reqFor("ws-term-nopvc", "default"))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	// Sandbox CRD should be deleted even though PVC was missing
+	sbCheck := &resources.Sandbox{}
+	err = r.Get(context.Background(), types.NamespacedName{Name: "sb-term", Namespace: "default"}, sbCheck)
+	assert.True(t, k8serrors.IsNotFound(err))
+}

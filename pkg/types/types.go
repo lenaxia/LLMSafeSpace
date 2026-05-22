@@ -312,29 +312,23 @@ type SandboxList struct {
 
 // SandboxMetadata represents metadata about a sandbox stored in the database
 type SandboxMetadata struct {
-	// Sandbox ID
 	ID string `json:"id" db:"id"`
 
-	// User ID
 	UserID string `json:"userId" db:"user_id"`
 
-	// Runtime environment
 	Runtime string `json:"runtime" db:"runtime"`
 
-	// Creation time
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 
-	// Last update time
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 
-	// Current status
 	Status string `json:"status" db:"status"`
 
-	// Optional name
 	Name string `json:"name,omitempty" db:"name"`
 
-	// Labels
 	Labels map[string]string `json:"labels,omitempty"`
+
+	WorkspaceID string `json:"workspaceId,omitempty" db:"workspace_id"`
 }
 
 // PaginationMetadata represents pagination metadata

@@ -273,6 +273,16 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		return apierrors.NewInternalError("workspace_get_failed", err)
 	}
 
+	switch crd.Status.Phase {
+	case v1.WorkspacePhaseActive, v1.WorkspacePhaseResuming:
+	default:
+		return apierrors.NewValidationError(
+			"workspace cannot be suspended in current phase",
+			map[string]interface{}{"phase": string(crd.Status.Phase)},
+			fmt.Errorf("cannot suspend workspace in phase %q", crd.Status.Phase),
+		)
+	}
+
 	crd.Status.Phase = v1.WorkspacePhaseSuspending
 	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
 		s.logger.Error("Failed to update workspace status to Suspending", err, "workspaceID", workspaceID)
@@ -299,6 +309,14 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return apierrors.NewInternalError("workspace_get_failed", err)
+	}
+
+	if crd.Status.Phase != v1.WorkspacePhaseSuspended {
+		return apierrors.NewValidationError(
+			"workspace cannot be resumed in current phase",
+			map[string]interface{}{"phase": string(crd.Status.Phase)},
+			fmt.Errorf("cannot resume workspace in phase %q (must be Suspended)", crd.Status.Phase),
+		)
 	}
 
 	crd.Status.Phase = v1.WorkspacePhaseResuming

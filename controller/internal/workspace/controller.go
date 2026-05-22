@@ -249,6 +249,8 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *r
 	}
 
 	workspace.Status.Phase = resources.WorkspacePhaseSuspended
+	now := metav1.Now()
+	workspace.Status.SuspendedAt = &now
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		logger.Error(err, "Failed to update Workspace status to Suspended")
 		return ctrl.Result{}, err
@@ -268,7 +270,9 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *re
 	ttl := time.Duration(workspace.Spec.TTLSecondsAfterSuspended) * time.Second
 
 	var referenceTime time.Time
-	if workspace.Status.LastActivityAt != nil {
+	if workspace.Status.SuspendedAt != nil {
+		referenceTime = workspace.Status.SuspendedAt.Time
+	} else if workspace.Status.LastActivityAt != nil {
 		referenceTime = workspace.Status.LastActivityAt.Time
 	} else {
 		referenceTime = workspace.CreationTimestamp.Time
@@ -299,6 +303,17 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *res
 		return ctrl.Result{}, err
 	}
 
+	for i := range sandboxes {
+		sb := &sandboxes[i]
+		if sb.Status.Phase == common.SandboxPhaseSuspended {
+			sb.Status.Phase = common.SandboxPhaseResuming
+			if updateErr := r.Status().Update(ctx, sb); updateErr != nil {
+				logger.Error(updateErr, "Failed to transition Sandbox to Resuming", "sandbox", sb.Name)
+				return ctrl.Result{}, updateErr
+			}
+		}
+	}
+
 	allRunning := true
 	for i := range sandboxes {
 		if sandboxes[i].Status.Phase != common.SandboxPhaseRunning {
@@ -309,6 +324,7 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *res
 
 	if allRunning {
 		workspace.Status.Phase = resources.WorkspacePhaseActive
+		workspace.Status.SuspendedAt = nil
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to update Workspace status to Active")
 			return ctrl.Result{}, err

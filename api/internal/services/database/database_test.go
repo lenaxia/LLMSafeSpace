@@ -317,7 +317,7 @@ func TestCreateSandbox(t *testing.T) {
 
 		mock.ExpectBegin()
 		mock.ExpectExec("INSERT INTO sandboxes").
-			WithArgs(sandbox.ID, sandbox.UserID, sandbox.Runtime, sandbox.CreatedAt, sandbox.UpdatedAt, sandbox.Status, sandbox.Name).
+			WithArgs(sandbox.ID, sandbox.UserID, sandbox.Runtime, sandbox.CreatedAt, sandbox.UpdatedAt, sandbox.Status, sandbox.Name, sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectExec("INSERT INTO sandbox_labels").
 			WithArgs(sandbox.ID, sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -344,7 +344,7 @@ func TestCreateSandbox(t *testing.T) {
 
 		mock.ExpectBegin()
 		mock.ExpectExec("INSERT INTO sandboxes").
-			WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, sqlmock.AnyArg(), sqlmock.AnyArg(), errorSandbox.Status, errorSandbox.Name).
+			WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, sqlmock.AnyArg(), sqlmock.AnyArg(), errorSandbox.Status, errorSandbox.Name, sqlmock.AnyArg()).
 			WillReturnError(sql.ErrConnDone)
 		mock.ExpectRollback()
 
@@ -882,11 +882,11 @@ func TestListSandboxes(t *testing.T) {
 
 	// Set up expectations for sandboxes query
 	now := time.Now()
-	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name"}).
-		AddRow("sandbox1", userID, "python:3.10", now, now, "Running", "Test Sandbox 1").
-		AddRow("sandbox2", userID, "nodejs:16", now.Add(-1*time.Hour), now, "Pending", "Test Sandbox 2")
+	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name", "workspace_id"}).
+		AddRow("sandbox1", userID, "python:3.10", now, now, "Running", "Test Sandbox 1", nil).
+		AddRow("sandbox2", userID, "nodejs:16", now.Add(-1*time.Hour), now, "Pending", "Test Sandbox 2", nil)
 
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name FROM sandboxes WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
+	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs(userID, limit, offset).
 		WillReturnRows(sandboxRows)
 
@@ -962,10 +962,10 @@ func TestGetSandbox(t *testing.T) {
 	name := "Test Sandbox"
 
 	// Set up expectations for sandbox query
-	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name"}).
-		AddRow(sandboxID, userID, runtime, now, now, status, name)
+	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name", "workspace_id"}).
+		AddRow(sandboxID, userID, runtime, now, now, status, name, nil)
 
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name FROM sandboxes WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE id = \\$1").
 		WithArgs(sandboxID).
 		WillReturnRows(sandboxRows)
 
@@ -991,7 +991,7 @@ func TestGetSandbox(t *testing.T) {
 	assert.Equal(t, "demo", sandbox.Labels["app"])
 
 	// Test case: Sandbox not found
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name FROM sandboxes WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE id = \\$1").
 		WithArgs("nonexistent").
 		WillReturnError(sql.ErrNoRows)
 

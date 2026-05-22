@@ -603,11 +603,22 @@ func buildWorkspaceSetupScript(ws *resources.Workspace) string {
 	script := "#!/bin/sh\nset -e\nmkdir -p /workspace/packages\n"
 
 	for _, pkgSet := range ws.Spec.Packages {
-		if len(pkgSet.Requirements) > 0 {
-			args := ""
+		if len(pkgSet.Requirements) == 0 {
+			continue
+		}
+		args := ""
+		for _, req := range pkgSet.Requirements {
+			args += " " + req
+		}
+		rt := pkgSet.Runtime
+		switch {
+		case len(rt) >= 6 && rt[:6] == "nodejs":
+			script += "cd /workspace/packages && npm install" + args + "\n"
+		case len(rt) >= 2 && rt[:2] == "go":
 			for _, req := range pkgSet.Requirements {
-				args += " " + req
+				script += "cd /workspace/packages && go install " + req + "\n"
 			}
+		default:
 			script += "pip install --target=/workspace/packages" + args + "\n"
 		}
 	}

@@ -143,25 +143,20 @@ type WorkspaceCondition struct {
 
 // WorkspaceStatus defines the observed state of a Workspace.
 type WorkspaceStatus struct {
-	// Phase is the current lifecycle phase.
 	Phase WorkspacePhase `json:"phase,omitempty"`
 
-	// PVCName is the name of the bound PersistentVolumeClaim.
 	PVCName string `json:"pvcName,omitempty"`
 
-	// ActiveSessions is the count of Sandboxes currently referencing this Workspace.
 	ActiveSessions int32 `json:"activeSessions,omitempty"`
 
-	// LastActivityAt is the timestamp of the most recent API activity.
 	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
 
-	// Conditions holds standard Kubernetes condition objects.
+	SuspendedAt *metav1.Time `json:"suspendedAt,omitempty"`
+
 	Conditions []WorkspaceCondition `json:"conditions,omitempty"`
 
-	// Message contains a human-readable description of the current state.
 	Message string `json:"message,omitempty"`
 
-	// ObservedGeneration is the most recent generation the controller acted on.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 

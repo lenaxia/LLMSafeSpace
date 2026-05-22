@@ -224,13 +224,14 @@ func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.Us
 // GetSandbox gets a sandbox by ID
 func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error) {
 	query := `
-        SELECT id, user_id, runtime, created_at, updated_at, status, name
+        SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id
         FROM sandboxes
         WHERE id = $1
     `
 
 	var sandbox types.SandboxMetadata
 	var name sql.NullString
+	var workspaceID sql.NullString
 
 	err := s.DB.QueryRowContext(ctx, query, sandboxID).Scan(
 		&sandbox.ID,
@@ -240,6 +241,7 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 		&sandbox.UpdatedAt,
 		&sandbox.Status,
 		&name,
+		&workspaceID,
 	)
 
 	if err != nil {
@@ -251,6 +253,9 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 
 	if name.Valid {
 		sandbox.Name = name.String
+	}
+	if workspaceID.Valid {
+		sandbox.WorkspaceID = workspaceID.String
 	}
 
 	// Get labels if any
@@ -299,8 +304,8 @@ func (s *Service) CreateSandbox(ctx context.Context, sandbox *types.SandboxMetad
 	}()
 
 	query := `
-        INSERT INTO sandboxes (id, user_id, runtime, created_at, updated_at, status, name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO sandboxes (id, user_id, runtime, created_at, updated_at, status, name, workspace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `
 
 	now := time.Now()
@@ -311,6 +316,11 @@ func (s *Service) CreateSandbox(ctx context.Context, sandbox *types.SandboxMetad
 		sandbox.UpdatedAt = now
 	}
 
+	var workspaceID interface{}
+	if sandbox.WorkspaceID != "" {
+		workspaceID = sandbox.WorkspaceID
+	}
+
 	_, err = tx.ExecContext(ctx, query,
 		sandbox.ID,
 		sandbox.UserID,
@@ -319,6 +329,7 @@ func (s *Service) CreateSandbox(ctx context.Context, sandbox *types.SandboxMetad
 		sandbox.UpdatedAt,
 		sandbox.Status,
 		sandbox.Name,
+		workspaceID,
 	)
 
 	if err != nil {
@@ -470,7 +481,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 
 	// Query sandboxes
 	query := `
-        SELECT id, user_id, runtime, created_at, updated_at, status, name
+        SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id
         FROM sandboxes
         WHERE user_id = $1
         ORDER BY created_at DESC
@@ -490,6 +501,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	for rows.Next() {
 		var sandbox types.SandboxMetadata
 		var name sql.NullString
+		var workspaceID sql.NullString
 
 		if err := rows.Scan(
 			&sandbox.ID,
@@ -499,12 +511,16 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 			&sandbox.UpdatedAt,
 			&sandbox.Status,
 			&name,
+			&workspaceID,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan sandbox row: %w", err)
 		}
 
 		if name.Valid {
 			sandbox.Name = name.String
+		}
+		if workspaceID.Valid {
+			sandbox.WorkspaceID = workspaceID.String
 		}
 
 		sandboxes = append(sandboxes, &sandbox)
