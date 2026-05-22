@@ -125,24 +125,30 @@ func (s *Service) SetObject(ctx context.Context, key string, value interface{}, 
 	return nil
 }
 
-// GetSession retrieves a typed session from the cache. Returns nil, nil when not found.
+// GetSession retrieves a typed session from the cache.
+// Returns nil, nil when the key does not exist.
 func (s *Service) GetSession(ctx context.Context, sessionID string) (*types.CachedSession, error) {
-	var session types.CachedSession
-	err := s.GetObject(ctx, fmt.Sprintf("session:%s", sessionID), &session)
+	data, err := s.client.Get(ctx, fmt.Sprintf("session:%s", sessionID)).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session from cache: %w", err)
 	}
-	// GetObject does nothing and leaves session zero-valued when key missing
-	if session.SessionID == "" {
-		return nil, nil
+	var session types.CachedSession
+	if err := json.Unmarshal(data, &session); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
 	return &session, nil
 }
 
 // SetSession stores a typed session in the cache.
 func (s *Service) SetSession(ctx context.Context, sessionID string, session types.CachedSession, expiration time.Duration) error {
-	err := s.SetObject(ctx, fmt.Sprintf("session:%s", sessionID), session, expiration)
+	data, err := json.Marshal(session)
 	if err != nil {
+		return fmt.Errorf("failed to marshal session: %w", err)
+	}
+	if err := s.client.Set(ctx, fmt.Sprintf("session:%s", sessionID), data, expiration).Err(); err != nil {
 		return fmt.Errorf("failed to set session in cache: %w", err)
 	}
 	return nil
