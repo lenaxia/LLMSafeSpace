@@ -145,8 +145,13 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 		return fmt.Errorf("getting password for SSE: %w", err)
 	}
 
+	idleCtx, cancelIdle := context.WithCancel(ctx)
+	defer cancelIdle()
+	idleTimer := time.AfterFunc(sseIdleTimeout, cancelIdle)
+	defer idleTimer.Stop()
+
 	targetURL := fmt.Sprintf("http://%s:%d/event", podIP, opencodePort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	req, err := http.NewRequestWithContext(idleCtx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating SSE request: %w", err)
 	}
@@ -164,24 +169,12 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 		return fmt.Errorf("SSE endpoint returned status %d", resp.StatusCode)
 	}
 
-	idleCtx, cancelIdle := context.WithCancel(ctx)
-	defer cancelIdle()
-
-	idleTimer := time.AfterFunc(sseIdleTimeout, func() {
-		cancelIdle()
-	})
-	defer idleTimer.Stop()
-
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
 	var eventData strings.Builder
 	for scanner.Scan() {
 		idleTimer.Reset(sseIdleTimeout)
-
-		if idleCtx.Err() != nil {
-			return fmt.Errorf("SSE idle timeout for sandbox %s", sandboxID)
-		}
 
 		line := scanner.Text()
 
@@ -194,6 +187,9 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 		}
 	}
 
+	if idleCtx.Err() != nil {
+		return fmt.Errorf("SSE idle timeout for sandbox %s", sandboxID)
+	}
 	return fmt.Errorf("SSE stream ended for sandbox %s", sandboxID)
 }
 
