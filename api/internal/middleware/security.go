@@ -15,40 +15,40 @@ import (
 type SecurityConfig struct {
 	// AllowedOrigins is a list of allowed origins for CORS
 	AllowedOrigins []string
-	
+
 	// AllowedMethods is a list of allowed HTTP methods for CORS
 	AllowedMethods []string
-	
+
 	// AllowedHeaders is a list of allowed HTTP headers for CORS
 	AllowedHeaders []string
-	
+
 	// ExposedHeaders is a list of headers that can be exposed to the client
 	ExposedHeaders []string
-	
+
 	// AllowCredentials indicates whether the request can include user credentials
 	AllowCredentials bool
-	
+
 	// MaxAge indicates how long the results of a preflight request can be cached
 	MaxAge int
-	
+
 	// TrustedProxies is a list of trusted proxy IP addresses
 	TrustedProxies []string
-	
+
 	// ContentSecurityPolicy is the Content-Security-Policy header value
 	ContentSecurityPolicy string
-	
+
 	// ReferrerPolicy is the Referrer-Policy header value
 	ReferrerPolicy string
-	
+
 	// PermissionsPolicy is the Permissions-Policy header value
 	PermissionsPolicy string
-	
+
 	// RequireHTTPS indicates whether to require HTTPS
 	RequireHTTPS bool
-	
+
 	// AllowHTTPSDowngrade indicates whether to allow HTTPS downgrade in development
 	AllowHTTPSDowngrade bool
-	
+
 	// Development indicates whether the application is running in development mode
 	Development bool
 }
@@ -56,19 +56,19 @@ type SecurityConfig struct {
 // DefaultSecurityConfig returns the default security configuration
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
-		AllowCredentials: true,
-		MaxAge:           86400,
-		TrustedProxies:   []string{"127.0.0.1", "::1"},
+		AllowedOrigins:        []string{"*"},
+		AllowedMethods:        []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:        []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
+		ExposedHeaders:        []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
+		AllowCredentials:      true,
+		MaxAge:                86400,
+		TrustedProxies:        []string{"127.0.0.1", "::1"},
 		ContentSecurityPolicy: "default-src 'self'; connect-src 'self' wss:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; block-all-mixed-content",
-		ReferrerPolicy:   "strict-origin-when-cross-origin",
-		PermissionsPolicy: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-		RequireHTTPS:     true,
-		AllowHTTPSDowngrade: false,
-		Development:      false,
+		ReferrerPolicy:        "strict-origin-when-cross-origin",
+		PermissionsPolicy:     "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+		RequireHTTPS:          true,
+		AllowHTTPSDowngrade:   false,
+		Development:           false,
 	}
 }
 
@@ -79,7 +79,7 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	// Create secure middleware
 	secureMiddleware := secure.New(secure.Options{
 		AllowedHosts:          []string{}, // No host restriction by default
@@ -98,14 +98,24 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 		PermissionsPolicy:     cfg.PermissionsPolicy,
 		IsDevelopment:         cfg.Development,
 	})
-	
+
 	return func(c *gin.Context) {
 		// Skip security checks for OPTIONS requests
 		if c.Request.Method == "OPTIONS" {
 			c.Next()
 			return
 		}
-		
+
+		// Skip security checks (specifically the SSLRedirect that would
+		// 301 HTTP→HTTPS) for kubelet probe and observability paths. The
+		// kubelet always uses HTTP for these and does not follow redirects;
+		// without this skip, probes fail and pods are killed in CrashLoop.
+		switch c.Request.URL.Path {
+		case "/livez", "/readyz", "/health", "/metrics":
+			c.Next()
+			return
+		}
+
 		// Apply secure middleware
 		err := secureMiddleware.Process(c.Writer, c.Request)
 		if err != nil {
@@ -115,7 +125,7 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 				c.Next()
 				return
 			}
-			
+
 			log.Warn("Security middleware blocked request",
 				"error", err.Error(),
 				"request_id", c.GetString("request_id"),
@@ -123,11 +133,11 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 				"method", c.Request.Method,
 				"client_ip", c.ClientIP(),
 			)
-			
+
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
-		
+
 		// Handle CORS
 		origin := c.Request.Header.Get("Origin")
 		if origin != "" {
@@ -139,17 +149,17 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 					break
 				}
 			}
-			
+
 			if allowed {
 				c.Header("Access-Control-Allow-Origin", origin)
 				c.Header("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
 				c.Header("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
 				c.Header("Access-Control-Expose-Headers", strings.Join(cfg.ExposedHeaders, ", "))
-				
+
 				if cfg.AllowCredentials {
 					c.Header("Access-Control-Allow-Credentials", "true")
 				}
-				
+
 				if cfg.MaxAge > 0 {
 					c.Header("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
 				}
@@ -162,7 +172,7 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 				)
 			}
 		}
-		
+
 		// Set trusted proxies - this needs to be done at the engine level, not here
 		// We'll log a warning instead of trying to set it in middleware
 		if len(cfg.TrustedProxies) > 0 {
@@ -171,12 +181,12 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 				"note", "This should be configured at the engine level, not in middleware",
 			)
 		}
-		
+
 		// Add additional security headers not covered by secure middleware
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Permitted-Cross-Domain-Policies", "none")
 		c.Header("X-Download-Options", "noopen")
-		
+
 		c.Next()
 	}
 }
@@ -185,9 +195,9 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check origin header for WebSocket connections
-		if strings.Contains(c.GetHeader("Connection"), "Upgrade") && 
-		   strings.Contains(c.GetHeader("Upgrade"), "websocket") {
-			
+		if strings.Contains(c.GetHeader("Connection"), "Upgrade") &&
+			strings.Contains(c.GetHeader("Upgrade"), "websocket") {
+
 			origin := c.GetHeader("Origin")
 			if origin == "" {
 				log.Warn("WebSocket connection attempt without Origin header",
@@ -195,7 +205,7 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 					"path", c.Request.URL.Path,
 					"remote_addr", c.ClientIP(),
 				)
-				
+
 				apiErr := errors.NewForbiddenError("Origin header is required for WebSocket connections", nil)
 				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 					"error": gin.H{
@@ -205,7 +215,7 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 				})
 				return
 			}
-			
+
 			// Check if origin is allowed
 			allowed := false
 			for _, allowedOrigin := range allowedOrigins {
@@ -214,7 +224,7 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 					break
 				}
 			}
-			
+
 			if !allowed {
 				log.Warn("WebSocket connection attempt from unauthorized origin",
 					"origin", origin,
@@ -222,7 +232,7 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 					"path", c.Request.URL.Path,
 					"remote_addr", c.ClientIP(),
 				)
-				
+
 				apiErr := errors.NewForbiddenError("Origin not allowed", nil)
 				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 					"error": gin.H{
@@ -232,10 +242,10 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 				})
 				return
 			}
-			
+
 			// Add WebSocket specific security headers
 			c.Header("Sec-WebSocket-Version", "13")
-			
+
 			// Check for WebSocket protocol
 			protocol := c.GetHeader("Sec-WebSocket-Protocol")
 			if protocol != "" {
@@ -244,7 +254,7 @@ func WebSocketSecurityMiddleware(log interfaces.LoggerInterface, allowedOrigins 
 				c.Header("Sec-WebSocket-Protocol", protocol)
 			}
 		}
-		
+
 		c.Next()
 	}
 }
@@ -265,7 +275,7 @@ func CSPReportingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
 					EffectiveDirective string `json:"effective-directive"`
 				} `json:"csp-report"`
 			}
-			
+
 			if err := c.ShouldBindJSON(&report); err == nil {
 				log.Warn("CSP violation report",
 					"document_uri", report.CSPReport.DocumentURI,
@@ -277,12 +287,12 @@ func CSPReportingMiddleware(log interfaces.LoggerInterface) gin.HandlerFunc {
 					"request_id", c.GetString("request_id"),
 				)
 			}
-			
+
 			c.Status(http.StatusNoContent)
 			c.Abort()
 			return
 		}
-		
+
 		c.Next()
 	}
 }

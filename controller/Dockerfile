@@ -8,6 +8,12 @@ FROM golang:1.23 AS builder
 
 WORKDIR /workspace
 
+# Allow operators to override the Go module proxy at build time. Useful in
+# environments where proxy.golang.org is unreachable (e.g. some corporate
+# VPNs); set --build-arg GOPROXY=direct to fetch modules directly.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+
 COPY go.mod go.sum ./
 RUN go mod download
 

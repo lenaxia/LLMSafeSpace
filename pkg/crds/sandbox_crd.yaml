@@ -29,6 +29,9 @@ spec:
                 runtime:
                   type: string
                   description: "Runtime environment (e.g., python:3.10)"
+                workspaceRef:
+                  type: string
+                  description: "Name of the Workspace this sandbox is attached to (same namespace). Empty means ephemeral storage only."
                 securityLevel:
                   type: string
                   enum: ["standard", "high", "custom"]

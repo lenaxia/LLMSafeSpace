@@ -11,17 +11,21 @@ import (
 
 // +kubebuilder:webhook:path=/validate-llmsafespace-dev-v1-sandbox,mutating=false,failurePolicy=fail,groups=llmsafespace.dev,resources=sandboxes,verbs=create;update,versions=v1,name=vsandbox.kb.io,sideEffects=None,admissionReviewVersions=v1
 
-// SandboxValidator validates Sandbox resources
+// SandboxValidator validates Sandbox resources.
+//
+// The Decoder MUST be set at construction time (controller-runtime v0.15+
+// removed the InjectDecoder dependency-injection callback). A nil Decoder
+// causes Handle to panic with a nil-pointer-deref on every admission request.
 type SandboxValidator struct {
 	Client  client.Client
-	decoder admission.Decoder
+	Decoder admission.Decoder
 }
 
 // Handle validates the Sandbox resource
 func (v *SandboxValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	sandbox := &Sandbox{}
 
-	err := v.decoder.Decode(req, sandbox)
+	err := v.Decoder.Decode(req, sandbox)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
@@ -68,8 +72,10 @@ func (v *SandboxValidator) Handle(ctx context.Context, req admission.Request) ad
 	return admission.Allowed("sandbox is valid")
 }
 
-// InjectDecoder injects the decoder
+// InjectDecoder injects the decoder. Retained as a no-op for backwards
+// compatibility with code or tests still calling it; new code should set
+// the exported Decoder field directly.
 func (v *SandboxValidator) InjectDecoder(d admission.Decoder) error {
-	v.decoder = d
+	v.Decoder = d
 	return nil
 }

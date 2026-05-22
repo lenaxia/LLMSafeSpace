@@ -9,16 +9,20 @@ import (
 
 // +kubebuilder:webhook:path=/validate-llmsafespace-dev-v1-sandboxprofile,mutating=false,failurePolicy=fail,groups=llmsafespace.dev,resources=sandboxprofiles,verbs=create;update,versions=v1,name=vsandboxprofile.kb.io,sideEffects=None,admissionReviewVersions=v1
 
-// SandboxProfileValidator validates SandboxProfile resources
+// SandboxProfileValidator validates SandboxProfile resources.
+//
+// The Decoder MUST be set at construction time (controller-runtime v0.15+
+// removed the InjectDecoder DI callback). A nil Decoder causes Handle to
+// panic with nil-pointer-deref on every admission request.
 type SandboxProfileValidator struct {
-	decoder admission.Decoder
+	Decoder admission.Decoder
 }
 
 // Handle validates the SandboxProfile resource
 func (v *SandboxProfileValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	profile := &SandboxProfile{}
 
-	err := v.decoder.Decode(req, profile)
+	err := v.Decoder.Decode(req, profile)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
@@ -38,8 +42,8 @@ func (v *SandboxProfileValidator) Handle(ctx context.Context, req admission.Requ
 	return admission.Allowed("sandbox profile is valid")
 }
 
-// InjectDecoder injects the decoder
+// InjectDecoder retained for backwards compatibility (see SandboxValidator).
 func (v *SandboxProfileValidator) InjectDecoder(d admission.Decoder) error {
-	v.decoder = d
+	v.Decoder = d
 	return nil
 }

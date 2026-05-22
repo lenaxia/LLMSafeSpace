@@ -40,6 +40,9 @@
   (dict "apiGroups" (list "")
         "resources" (list "configmaps")
         "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "storage.k8s.io")
+        "resources" (list "storageclasses")
+        "verbs" (list "get" "list" "watch"))
 }}
 {{- if $isCluster }}
 apiVersion: rbac.authorization.k8s.io/v1

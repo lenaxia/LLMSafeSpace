@@ -1,11 +1,7 @@
 package metrics
 
 import (
-	"net/http"
-
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"k8s.io/klog/v2"
 )
 
 var (
@@ -60,7 +56,14 @@ var (
 	)
 )
 
-// SetupMetrics initializes and registers all metrics
+// SetupMetrics registers all custom metrics with the default Prometheus
+// registry. The controller-runtime manager's metrics server (configured via
+// Metrics.BindAddress) automatically serves these alongside its own metrics
+// at /metrics.
+//
+// Do NOT start a separate HTTP server here: doing so would race with
+// controller-runtime's metrics server for the same port and cause "bind:
+// address already in use" panics.
 func SetupMetrics() {
 	prometheus.MustRegister(SandboxesCreatedTotal)
 	prometheus.MustRegister(SandboxesDeletedTotal)
@@ -68,13 +71,4 @@ func SetupMetrics() {
 	prometheus.MustRegister(SandboxStartupDurationSeconds)
 	prometheus.MustRegister(ReconciliationDurationSeconds)
 	prometheus.MustRegister(ReconciliationErrorsTotal)
-
-	// Start metrics server
-	http.Handle("/metrics", promhttp.Handler())
-	go func() {
-		klog.Info("Starting metrics server on :8080")
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			klog.Errorf("Failed to start metrics server: %v", err)
-		}
-	}()
 }

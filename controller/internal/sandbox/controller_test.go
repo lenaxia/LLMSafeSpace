@@ -51,6 +51,32 @@ func makeSandbox(name, namespace, phase string) *resources.Sandbox {
 func reconcilerFor(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
 	t.Helper()
 	scheme := testScheme(t)
+
+	// Seed a default RuntimeEnvironment named "python-3.11" so the runtime
+	// resolver finds a match for the default makeSandbox runtime spec
+	// ("python:3.11"). Tests that need a different runtime should pass
+	// their own RuntimeEnvironment (with the same or a different name) in
+	// objs — controller-runtime's fake client does NOT de-dupe on name,
+	// but the resolver always picks the first hit on exact name.
+	defaultRE := &resources.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python-3.11"},
+		Spec: resources.RuntimeEnvironmentSpec{
+			Language: "python",
+			Version:  "3.11",
+			Image:    "test-registry.local/runtime-base:test",
+		},
+	}
+	hasOwnRE := false
+	for _, o := range objs {
+		if _, ok := o.(*resources.RuntimeEnvironment); ok {
+			hasOwnRE = true
+			break
+		}
+	}
+	if !hasOwnRE {
+		objs = append(objs, defaultRE)
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
