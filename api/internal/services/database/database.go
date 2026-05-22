@@ -141,30 +141,40 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 	return nil
 }
 
-// UpdateUser updates a user
-func (s *Service) UpdateUser(ctx context.Context, userID string, updates map[string]interface{}) error {
-	// Build dynamic query based on updates
+// UpdateUser updates specific fields on a user record. Only non-nil fields are applied.
+func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error {
 	query := "UPDATE users SET updated_at = NOW()"
 	args := []interface{}{}
 	i := 1
 
-	for key, value := range updates {
-		// Only allow specific fields to be updated
-		switch key {
-		case "username", "email", "active", "role":
-			query += fmt.Sprintf(", %s = $%d", key, i+1)
-			args = append(args, value)
-			i++
-		}
+	if updates.Username != nil {
+		query += fmt.Sprintf(", username = $%d", i+1)
+		args = append(args, *updates.Username)
+		i++
+	}
+	if updates.Email != nil {
+		query += fmt.Sprintf(", email = $%d", i+1)
+		args = append(args, *updates.Email)
+		i++
+	}
+	if updates.Active != nil {
+		query += fmt.Sprintf(", active = $%d", i+1)
+		args = append(args, *updates.Active)
+		i++
+	}
+	if updates.Role != nil {
+		query += fmt.Sprintf(", role = $%d", i+1)
+		args = append(args, *updates.Role)
+		i++
+	}
+
+	if i == 1 {
+		// Nothing to update
+		return nil
 	}
 
 	query += fmt.Sprintf(" WHERE id = $%d", i+1)
 	args = append(args, userID)
-
-	// If no valid updates, just return
-	if i == 1 {
-		return nil
-	}
 
 	_, err := s.DB.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -343,65 +353,56 @@ func (s *Service) CreateSandbox(ctx context.Context, sandbox *types.SandboxMetad
 	return nil
 }
 
-// UpdateSandbox updates a sandbox
-func (s *Service) UpdateSandbox(ctx context.Context, sandboxID string, updates map[string]interface{}) error {
+// UpdateSandbox updates specific fields on a sandbox record. Only non-nil fields
+// are applied. If Labels is non-nil the entire label set is replaced.
+func (s *Service) UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error {
+	// Short-circuit: nothing to do, avoid unnecessary transaction overhead.
+	if updates.Status == nil && updates.Name == nil && updates.Labels == nil {
+		return nil
+	}
+
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-
 	defer func() {
 		if err != nil {
 			tx.Rollback()
 		}
 	}()
 
-	// Build dynamic query based on updates
 	query := "UPDATE sandboxes SET updated_at = NOW()"
 	args := []interface{}{}
 	i := 0
 
-	for key, value := range updates {
-		// Only allow specific fields to be updated
-		switch key {
-		case "status", "name":
-			query += fmt.Sprintf(", %s = $%d", key, i+1)
-			args = append(args, value)
-			i++
-		case "labels":
-			// Handle labels separately
-			continue
-		}
+	if updates.Status != nil {
+		i++
+		query += fmt.Sprintf(", status = $%d", i)
+		args = append(args, *updates.Status)
+	}
+	if updates.Name != nil {
+		i++
+		query += fmt.Sprintf(", name = $%d", i)
+		args = append(args, *updates.Name)
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d", i+1)
-	args = append(args, sandboxID)
-
-	// If there are updates to the main table
 	if i > 0 {
-		_, err = tx.ExecContext(ctx, query, args...)
-		if err != nil {
+		query += fmt.Sprintf(" WHERE id = $%d", i+1)
+		args = append(args, sandboxID)
+		if _, err = tx.ExecContext(ctx, query, args...); err != nil {
 			return fmt.Errorf("failed to update sandbox: %w", err)
 		}
 	}
 
-	// Handle labels update if present
-	if labels, ok := updates["labels"].(map[string]string); ok {
-		// Delete existing labels
-		_, err = tx.ExecContext(ctx, "DELETE FROM sandbox_labels WHERE sandbox_id = $1", sandboxID)
-		if err != nil {
+	if updates.Labels != nil {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM sandbox_labels WHERE sandbox_id = $1", sandboxID); err != nil {
 			return fmt.Errorf("failed to delete existing labels: %w", err)
 		}
-
-		// Insert new labels
-		labelQuery := `
-            INSERT INTO sandbox_labels (sandbox_id, key, value)
-            VALUES ($1, $2, $3)
-        `
-
-		for key, value := range labels {
-			_, err = tx.ExecContext(ctx, labelQuery, sandboxID, key, value)
-			if err != nil {
+		for k, v := range updates.Labels {
+			if _, err = tx.ExecContext(ctx,
+				"INSERT INTO sandbox_labels (sandbox_id, key, value) VALUES ($1, $2, $3)",
+				sandboxID, k, v,
+			); err != nil {
 				return fmt.Errorf("failed to insert sandbox label: %w", err)
 			}
 		}

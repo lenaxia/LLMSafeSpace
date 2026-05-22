@@ -560,6 +560,32 @@ type SandboxListItem struct {
 	MemoryUsage string       `json:"memoryUsage,omitempty"`
 }
 
+// UserUpdates carries the fields that may be changed on a User record.
+// All fields are pointers — nil means "do not update this field".
+type UserUpdates struct {
+	Username *string `json:"username,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Active   *bool   `json:"active,omitempty"`
+	Role     *string `json:"role,omitempty"`
+}
+
+// SandboxUpdates carries the fields that may be changed on a SandboxMetadata record.
+// All scalar fields are pointers — nil means "do not update this field".
+// Labels nil means "do not touch labels"; non-nil replaces the label set entirely.
+type SandboxUpdates struct {
+	Status *string           `json:"status,omitempty"`
+	Name   *string           `json:"name,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// CachedSession is the typed representation of a WebSocket session stored in
+// the cache. It replaces the previous map[string]interface{} bag.
+type CachedSession struct {
+	SessionID string `json:"sessionId"`
+	UserID    string `json:"userId"`
+	SandboxID string `json:"sandboxId"`
+}
+
 type Message struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`

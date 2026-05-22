@@ -546,19 +546,19 @@ func TestUpdateSandbox(t *testing.T) {
 	t.Run("status_and_name_with_labels", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)
 		defer cleanup()
-		// Map iteration order for both updates map and labels map is non-deterministic.
 		mock.MatchExpectationsInOrder(false)
 
 		ctx := context.Background()
 		sandboxID := "sandbox123"
-		updates := map[string]interface{}{
-			"status": "Completed",
-			"name":   "Updated Sandbox",
-			"labels": map[string]string{"env": "prod", "app": "demo"},
+		status := "Completed"
+		name := "Updated Sandbox"
+		updates := types.SandboxUpdates{
+			Status: &status,
+			Name:   &name,
+			Labels: map[string]string{"env": "prod", "app": "demo"},
 		}
 
 		mock.ExpectBegin()
-		// Column order in SET clause depends on map iteration — match any arg order
 		mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\)").
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sandboxID).
 			WillReturnResult(sqlmock.NewResult(0, 1))
@@ -583,6 +583,8 @@ func TestUpdateSandbox(t *testing.T) {
 
 		ctx := context.Background()
 		sandboxID := "sandbox123"
+		status := "Running"
+		updates := types.SandboxUpdates{Status: &status}
 
 		mock.ExpectBegin()
 		mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\), status = \\$1 WHERE id = \\$2").
@@ -590,7 +592,17 @@ func TestUpdateSandbox(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
-		assert.NoError(t, service.UpdateSandbox(ctx, sandboxID, map[string]interface{}{"status": "Running"}))
+		assert.NoError(t, service.UpdateSandbox(ctx, sandboxID, updates))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("no_fields_set_is_noop", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		// No SQL expected — empty update is a no-op
+		assert.NoError(t, service.UpdateSandbox(ctx, "sandbox123", types.SandboxUpdates{}))
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
