@@ -220,6 +220,106 @@ func TestSessionOperations(t *testing.T) {
 	assert.Nil(t, deleted)
 }
 
+// ---------------------------------------------------------------------------
+// Edge cases: Get with missing key
+// ---------------------------------------------------------------------------
+
+func TestGet_MissingKey_ReturnsEmptyStringNoError(t *testing.T) {
+	service, _, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	val, err := service.Get(context.Background(), "this_key_does_not_exist")
+	assert.NoError(t, err)
+	assert.Equal(t, "", val)
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: GetObject with corrupt JSON
+// ---------------------------------------------------------------------------
+
+func TestGetObject_CorruptJSON_ReturnsError(t *testing.T) {
+	service, mr, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	// Store invalid JSON directly into miniredis
+	require.NoError(t, mr.Set("bad_json_key", "not-valid-json"))
+
+	var result map[string]interface{}
+	err := service.GetObject(context.Background(), "bad_json_key", &result)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to unmarshal")
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: Set with zero expiration
+// ---------------------------------------------------------------------------
+
+func TestSet_ZeroExpiration_KeyPersists(t *testing.T) {
+	service, mr, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	key := "persistent_key"
+
+	err := service.Set(ctx, key, "value", 0)
+	assert.NoError(t, err)
+
+	// Key should still exist immediately
+	val, err := mr.Get(key)
+	assert.NoError(t, err)
+	assert.Equal(t, "value", val)
+
+	// Advance time significantly — key with 0 TTL should not expire
+	mr.FastForward(24 * time.Hour)
+	val, err = mr.Get(key)
+	assert.NoError(t, err)
+	assert.Equal(t, "value", val)
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: SetSession / GetSession TTL expiry
+// ---------------------------------------------------------------------------
+
+func TestSetSession_GetSession_TTLExpiry(t *testing.T) {
+	service, mr, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := "expiring-session"
+	session := types.CachedSession{
+		SessionID: sessionID,
+		UserID:    "user-ttl",
+		SandboxID: "sb-ttl",
+	}
+
+	// Store with a 1-second TTL
+	err := service.SetSession(ctx, sessionID, session, time.Second)
+	require.NoError(t, err)
+
+	// Retrievable before expiry
+	retrieved, err := service.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved)
+	assert.Equal(t, session.UserID, retrieved.UserID)
+
+	// Fast-forward past TTL
+	mr.FastForward(2 * time.Second)
+
+	// Must return nil after expiry
+	expired, err := service.GetSession(ctx, sessionID)
+	assert.NoError(t, err)
+	assert.Nil(t, expired)
+}
+
+func TestGetSession_MissingKey_ReturnsNilNoError(t *testing.T) {
+	service, _, cleanup := setupMockRedis(t)
+	defer cleanup()
+
+	result, err := service.GetSession(context.Background(), "missing-session-id")
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 func TestStartStop(t *testing.T) {
 	service, _, cleanup := setupMockRedis(t)
 	defer cleanup()
