@@ -56,3 +56,7 @@ func (m *MockCacheService) SetSession(ctx context.Context, sessionID string, ses
 func (m *MockCacheService) DeleteSession(ctx context.Context, sessionID string) error {
 	return m.Called(ctx, sessionID).Error(0)
 }
+
+func (m *MockCacheService) Ping(ctx context.Context) error {
+	return m.Called(ctx).Error(0)
+}

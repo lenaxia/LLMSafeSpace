@@ -1,0 +1,97 @@
+{{- if .Values.controller.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "llmsafespace.controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llmsafespace.controller.selectorLabels" . | nindent 8 }}
+        {{- with .Values.controller.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.controller.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "llmsafespace.controller.serviceAccountName" . }}
+      {{- with .Values.controller.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manager
+          image: {{ include "llmsafespace.controller.image" . }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.controller.containerSecurityContext | nindent 12 }}
+          args:
+            - --metrics-addr={{ .Values.controller.metricsAddr }}
+            - --health-probe-bind-address={{ .Values.controller.probeAddr }}
+            {{- if .Values.controller.leaderElection.enabled }}
+            - --enable-leader-election=true
+            {{- end }}
+            {{- with .Values.controller.watchNamespaces }}
+            - --watch-namespaces={{ . }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.controller.metricsAddr | trimPrefix ":" | atoi }}
+              protocol: TCP
+            - name: probe
+              containerPort: {{ .Values.controller.probeAddr | trimPrefix ":" | atoi }}
+              protocol: TCP
+            - name: webhook
+              containerPort: {{ .Values.controller.webhookPort }}
+              protocol: TCP
+          {{- with .Values.controller.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.controller.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.webhooks.enabled }}
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.webhooks.enabled }}
+        - name: webhook-cert
+          secret:
+            secretName: {{ include "llmsafespace.fullname" . }}-webhook-cert
+            defaultMode: 0444
+        {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

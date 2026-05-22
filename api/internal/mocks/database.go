@@ -122,3 +122,7 @@ func (m *MockDatabaseService) CheckResourceOwnership(userID, resourceType, resou
 
 func (m *MockDatabaseService) Start() error { return m.Called().Error(0) }
 func (m *MockDatabaseService) Stop() error  { return m.Called().Error(0) }
+
+func (m *MockDatabaseService) Ping(ctx context.Context) error {
+	return m.Called(ctx).Error(0)
+}

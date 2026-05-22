@@ -31,3 +31,6 @@ __pycache__
 bin/*
 
 DONOTUSE
+
+# Helm chart packages (output of `helm package` / `make helm-package`)
+dist/

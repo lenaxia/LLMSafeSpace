@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -95,9 +98,51 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Health check
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+	// Liveness probe — always returns 200 if the process is responding.
+	// Use this for Kubernetes livenessProbe.
+	livenessHandler := func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+	router.GET("/livez", livenessHandler)
+
+	// Legacy alias retained for backwards compatibility with deployments
+	// that already point at /health. Equivalent to /livez.
+	router.GET("/health", livenessHandler)
+
+	// Readiness probe — verifies that all upstream dependencies (Postgres,
+	// Redis) are reachable. Returns 503 if any dependency is down. Use this
+	// for Kubernetes readinessProbe so the pod is removed from Service
+	// endpoints when its dependencies are unavailable.
+	router.GET("/readyz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		var failures []string
+
+		db := services.GetDatabase()
+		if db == nil {
+			failures = append(failures, "database: not configured")
+		} else if err := db.Ping(ctx); err != nil {
+			failures = append(failures, "database: "+err.Error())
+		}
+
+		cache := services.GetCache()
+		if cache == nil {
+			failures = append(failures, "cache: not configured")
+		} else if err := cache.Ping(ctx); err != nil {
+			failures = append(failures, "cache: "+err.Error())
+		}
+
+		if len(failures) > 0 {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":   "unhealthy",
+				"failures": failures,
+				"detail":   strings.Join(failures, "; "),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
 	return router
