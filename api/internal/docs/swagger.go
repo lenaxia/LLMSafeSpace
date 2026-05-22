@@ -34,9 +34,6 @@ import (
 // @tag.name Sandboxes
 // @tag.description Sandbox management endpoints
 
-// @tag.name WarmPools
-// @tag.description Warm pool management endpoints
-
 // @tag.name Runtimes
 // @tag.description Runtime environment endpoints
 

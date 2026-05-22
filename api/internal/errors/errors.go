@@ -11,36 +11,36 @@ type ErrorType string
 const (
 	// ErrorTypeValidation represents validation errors
 	ErrorTypeValidation ErrorType = "validation_error"
-	
+
 	// ErrorTypeAuth represents authentication errors
 	ErrorTypeAuth ErrorType = "auth_error"
-	
+
 	// ErrorTypeNotFound represents resource not found errors
 	ErrorTypeNotFound ErrorType = "not_found"
-	
+
 	// ErrorTypeForbidden represents permission denied errors
 	ErrorTypeForbidden ErrorType = "forbidden"
-	
+
 	// ErrorTypeConflict represents resource conflict errors
 	ErrorTypeConflict ErrorType = "conflict"
-	
+
 	// ErrorTypeRateLimit represents rate limiting errors
 	ErrorTypeRateLimit ErrorType = "rate_limited"
-	
+
 	// ErrorTypeInternal represents internal server errors
 	ErrorTypeInternal ErrorType = "internal_error"
-	
+
 	// ErrorTypeBadRequest represents bad request errors
 	ErrorTypeBadRequest ErrorType = "bad_request"
 )
 
 // APIError represents an API error
 type APIError struct {
-	Type    ErrorType           `json:"-"`
-	Code    string              `json:"code"`
-	Message string              `json:"message"`
+	Type    ErrorType              `json:"-"`
+	Code    string                 `json:"code"`
+	Message string                 `json:"message"`
 	Details map[string]interface{} `json:"details,omitempty"`
-	Err     error               `json:"-"`
+	Err     error                  `json:"-"`
 }
 
 // Error implements the error interface
@@ -91,12 +91,12 @@ func NewValidationError(message string, details map[string]interface{}, err erro
 
 // NewAuthenticationError creates a new authentication error
 func NewAuthenticationError(message string, err error) *APIError {
-        return &APIError{
-                Type:    ErrorTypeAuth,
-                Code:    "unauthorized",
-                Message: message,
-                Err:     err,
-        }
+	return &APIError{
+		Type:    ErrorTypeAuth,
+		Code:    "unauthorized",
+		Message: message,
+		Err:     err,
+	}
 }
 
 // NewNotFoundError creates a new not found error
@@ -185,14 +185,6 @@ func NewNotImplementedError(code string, message string, err error) *APIError {
 func IsSandboxNotFoundError(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
 		return apiErr.Type == ErrorTypeNotFound && apiErr.Details["resourceType"] == "sandbox"
-	}
-	return false
-}
-
-// IsWarmPoolNotFoundError checks if the error is a WarmPoolNotFoundError
-func IsWarmPoolNotFoundError(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
-		return apiErr.Type == ErrorTypeNotFound && apiErr.Details["resourceType"] == "warmpool"
 	}
 	return false
 }

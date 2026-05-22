@@ -163,9 +163,6 @@ type SandboxStatus struct {
 	// Resource usage
 	Resources *ResourceStatus `json:"resources,omitempty"`
 
-	// Reference to warm pod
-	WarmPodRef *WarmPodReference `json:"warmPodRef,omitempty"`
-
 	// Pod status (from Kubernetes pod)
 	PodStatus string `json:"podStatus,omitempty"`
 
@@ -294,15 +291,6 @@ type ResourceStatus struct {
 	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
 }
 
-// WarmPodReference defines a reference to a WarmPod
-type WarmPodReference struct {
-	// Name of the WarmPod
-	Name string `json:"name"`
-
-	// Namespace of the WarmPod
-	Namespace string `json:"namespace,omitempty"`
-}
-
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // SandboxList contains a list of Sandbox
@@ -376,9 +364,6 @@ type CreateSandboxRequest struct {
 
 	// Network access configuration
 	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-
-	// Use warm pool
-	UseWarmPool bool `json:"useWarmPool,omitempty"`
 }
 
 // ExecuteRequest represents a request to execute code or a command
@@ -496,82 +481,6 @@ type User struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// WarmPod represents a warm pod
-type WarmPod struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   WarmPodSpec   `json:"spec,omitempty"`
-	Status WarmPodStatus `json:"status,omitempty"`
-}
-
-// WarmPodSpec defines the desired state of a WarmPod
-type WarmPodSpec struct {
-	// Runtime environment
-	Runtime string `json:"runtime"`
-
-	// Security level
-	SecurityLevel string `json:"securityLevel,omitempty"`
-
-	// Resource requirements
-	Resources *ResourceRequirements `json:"resources,omitempty"`
-}
-
-// WarmPodStatus defines the observed state of a WarmPod
-type WarmPodStatus struct {
-	// Current phase of the warm pod
-	Phase string `json:"phase,omitempty"`
-
-	// Pod name
-	PodName string `json:"podName,omitempty"`
-
-	// Creation time
-	CreationTime *metav1.Time `json:"creationTime,omitempty"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// WarmPool represents a warm pool
-type WarmPool struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   WarmPoolSpec   `json:"spec,omitempty"`
-	Status WarmPoolStatus `json:"status,omitempty"`
-}
-
-// WarmPoolSpec defines the desired state of a WarmPool
-type WarmPoolSpec struct {
-	// Runtime environment
-	Runtime string `json:"runtime"`
-
-	// Minimum number of warm pods
-	MinPods int `json:"minPods"`
-
-	// Maximum number of warm pods
-	MaxPods int `json:"maxPods"`
-
-	// Security level
-	SecurityLevel string `json:"securityLevel,omitempty"`
-
-	// Resource requirements
-	Resources *ResourceRequirements `json:"resources,omitempty"`
-}
-
-// WarmPoolStatus defines the observed state of a WarmPool
-type WarmPoolStatus struct {
-	// Current number of warm pods
-	CurrentPods int `json:"currentPods"`
-
-	// Available warm pods
-	AvailablePods int `json:"availablePods"`
-
-	// Warm pod names
-	WarmPods []string `json:"warmPods,omitempty"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
 // RuntimeEnvironment represents a runtime environment
 type RuntimeEnvironment struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -624,6 +533,33 @@ type SandboxProfileSpec struct {
 	SecurityContext *SecurityContext      `json:"securityContext,omitempty"`
 }
 
+// SandboxListResult is the typed return value for ListSandboxes. It bundles
+// live Kubernetes status with database metadata and pagination so callers never
+// receive untyped maps.
+type SandboxListResult struct {
+	Items      []SandboxListItem   `json:"items"`
+	Pagination *PaginationMetadata `json:"pagination,omitempty"`
+}
+
+// SandboxListItem merges database metadata with live Kubernetes status.
+type SandboxListItem struct {
+	// Database fields
+	ID        string            `json:"id"`
+	UserID    string            `json:"userId"`
+	Runtime   string            `json:"runtime"`
+	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt"`
+	Status    string            `json:"status"`
+	Name      string            `json:"name,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+
+	// Live Kubernetes status (best-effort; zero values when unavailable)
+	Phase       string       `json:"phase,omitempty"`
+	StartTime   *metav1.Time `json:"startTime,omitempty"`
+	CPUUsage    string       `json:"cpuUsage,omitempty"`
+	MemoryUsage string       `json:"memoryUsage,omitempty"`
+}
+
 type Message struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
@@ -635,18 +571,6 @@ type SandboxNotFoundError struct {
 
 func (e *SandboxNotFoundError) Error() string {
 	return fmt.Sprintf("sandbox %s not found", e.ID)
-}
-
-type WarmPoolList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []WarmPool `json:"items"`
-}
-
-type WarmPodList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []WarmPod `json:"items"`
 }
 
 type RuntimeEnvironmentList struct {

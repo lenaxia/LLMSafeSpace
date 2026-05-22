@@ -201,7 +201,7 @@ func (s *Service) GetSandbox(ctx context.Context, sandboxID string) (*types.Sand
 
 // ListSandboxes returns sandbox metadata for a user, enriched with live
 // Kubernetes status where available. Results are sorted newest-first.
-func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error) {
+func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offset int) (*types.SandboxListResult, error) {
 	start := time.Now()
 	defer func() {
 		s.metricsService.RecordRequest("ListSandboxes", "", 0, time.Since(start), 0)
@@ -219,54 +219,39 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		return nil, apierrors.NewInternalError("sandbox_list_failed", err)
 	}
 
-	rows := make([]map[string]interface{}, 0, len(sandboxes))
+	items := make([]types.SandboxListItem, 0, len(sandboxes))
 	for _, sb := range sandboxes {
-		row := map[string]interface{}{
-			"id":        sb.ID,
-			"userId":    sb.UserID,
-			"runtime":   sb.Runtime,
-			"createdAt": sb.CreatedAt,
-			"updatedAt": sb.UpdatedAt,
-			"status":    sb.Status,
-		}
-		if sb.Name != "" {
-			row["name"] = sb.Name
-		}
-		if len(sb.Labels) > 0 {
-			row["labels"] = sb.Labels
+		item := types.SandboxListItem{
+			ID:        sb.ID,
+			UserID:    sb.UserID,
+			Runtime:   sb.Runtime,
+			CreatedAt: sb.CreatedAt,
+			UpdatedAt: sb.UpdatedAt,
+			Status:    sb.Status,
+			Name:      sb.Name,
+			Labels:    sb.Labels,
 		}
 
 		crd, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sb.ID, metav1.GetOptions{})
 		if err != nil {
 			s.logger.Warn("Failed to get live sandbox status", "error", err, "sandboxID", sb.ID)
 		} else {
-			row["phase"] = crd.Status.Phase
-			row["startTime"] = crd.Status.StartTime
+			item.Phase = string(crd.Status.Phase)
+			item.StartTime = crd.Status.StartTime
 			if crd.Status.Resources != nil {
-				row["cpuUsage"] = crd.Status.Resources.CPUUsage
-				row["memoryUsage"] = crd.Status.Resources.MemoryUsage
+				item.CPUUsage = crd.Status.Resources.CPUUsage
+				item.MemoryUsage = crd.Status.Resources.MemoryUsage
 			}
 		}
 
-		rows = append(rows, row)
+		items = append(items, item)
 	}
 
-	sort.Slice(rows, func(i, j int) bool {
-		ti, oki := rows[i]["createdAt"].(time.Time)
-		tj, okj := rows[j]["createdAt"].(time.Time)
-		if !oki || !okj {
-			return fmt.Sprintf("%v", rows[i]["id"]) > fmt.Sprintf("%v", rows[j]["id"])
-		}
-		return ti.After(tj)
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
 
-	if pagination != nil {
-		for i := range rows {
-			rows[i]["pagination"] = pagination
-		}
-	}
-
-	return rows, nil
+	return &types.SandboxListResult{Items: items, Pagination: pagination}, nil
 }
 
 // TerminateSandbox deletes a sandbox and its metadata. The caller must be the
