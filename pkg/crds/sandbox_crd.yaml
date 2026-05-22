@@ -152,7 +152,7 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: ["Pending", "Creating", "Running", "Terminating", "Terminated", "Failed"]
+                  enum: ["Pending", "Creating", "Running", "Suspending", "Suspended", "Resuming", "Terminating", "Terminated", "Failed"]
                   description: "Current phase of the sandbox"
                 conditions:
                   type: array
