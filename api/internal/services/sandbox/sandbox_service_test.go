@@ -492,11 +492,11 @@ func TestListSandboxes_ReturnsSortedNewestFirst(t *testing.T) {
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.sb.On("Get", "sb-2", mock.Anything).Return(crdSandbox("sb-2", "default", "nodejs:18"), nil)
 
-	results, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
+	result, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
 	assert.NoError(t, err)
-	assert.Len(t, results, 2)
-	assert.Equal(t, "sb-1", results[0]["id"])
-	assert.Equal(t, "sb-2", results[1]["id"])
+	assert.Len(t, result.Items, 2)
+	assert.Equal(t, "sb-1", result.Items[0].ID)
+	assert.Equal(t, "sb-2", result.Items[1].ID)
 }
 
 func TestListSandboxes_K8sGetFails_StillReturnsRow(t *testing.T) {
@@ -509,10 +509,12 @@ func TestListSandboxes_K8sGetFails_StillReturnsRow(t *testing.T) {
 	f.db.On("ListSandboxes", ctx, "u1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 1}, nil)
 	f.sb.On("Get", "sb-1", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("not found"))
 
-	results, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
+	result, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
 	assert.NoError(t, err)
-	assert.Len(t, results, 1)
-	assert.Equal(t, "sb-1", results[0]["id"])
+	assert.Len(t, result.Items, 1)
+	assert.Equal(t, "sb-1", result.Items[0].ID)
+	// Live status unavailable — phase should be empty string
+	assert.Empty(t, result.Items[0].Phase)
 }
 
 func TestListSandboxes_DBFails_ReturnsInternal(t *testing.T) {
@@ -551,7 +553,7 @@ func TestListSandboxes_ErrPermissionDenied_ReturnsForbidden(t *testing.T) {
 	assert.Contains(t, err.Error(), "forbidden")
 }
 
-func TestListSandboxes_PaginationAttachedToAllRows(t *testing.T) {
+func TestListSandboxes_PaginationInResult(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -564,13 +566,11 @@ func TestListSandboxes_PaginationAttachedToAllRows(t *testing.T) {
 	f.db.On("ListSandboxes", ctx, "u1", 10, 0).Return(metas, pag, nil)
 	f.sb.On("Get", mock.Anything, mock.Anything).Return((*v1.Sandbox)(nil), errors.New("skip"))
 
-	results, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
+	result, err := f.svc.ListSandboxes(ctx, "u1", 10, 0)
 	assert.NoError(t, err)
-	for _, row := range results {
-		p, ok := row["pagination"].(*types.PaginationMetadata)
-		assert.True(t, ok, "pagination must be *types.PaginationMetadata")
-		assert.Equal(t, 2, p.Total)
-	}
+	assert.NotNil(t, result.Pagination)
+	assert.Equal(t, 2, result.Pagination.Total)
+	assert.Len(t, result.Items, 2)
 }
 
 // ===== Start / Stop =====

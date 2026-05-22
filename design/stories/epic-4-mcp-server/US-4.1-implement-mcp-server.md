@@ -45,6 +45,15 @@ As an external AI tool (Claude, Cursor), I want to connect to LLMSafeSpace via M
 3. Collect events until `session.idle` event
 4. Return complete response as tool result
 
+**Active session limit handling:**
+If `session_message` receives a 429 (active session limit reached on the workspace), the MCP tool returns a descriptive error to the caller:
+```
+Error: active session limit reached (5 active of 5 max). Wait for an active session to complete or close a session, then retry.
+```
+The MCP server does NOT retry automatically — the caller (an LLM agent) decides whether to wait and retry or inform the user.
+
+If the `session.idle` event is not received within the configured timeout (default 300s from MCP config `default_timeout`), the tool polls `GET /session/{sid}/message` as a fallback to retrieve whatever response was generated, then returns it. This handles SSE event delivery failures.
+
 **File transfer tools (sandbox_upload_file, sandbox_download_file) are deferred to V2.1.**
 
 OpenCode v1.1.48 has `GET /file/content` for downloads but no upload endpoint. Adding file transfer requires either:

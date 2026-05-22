@@ -26,10 +26,11 @@ As a controller developer, I want Workspace CRD types defined in Go, so that the
 | securityLevel | string | standard or high (default: standard) |
 | packages | string array | Packages to install on every pod start |
 | initScript | string | Script to run on every pod start |
-| storage | object `{size, storageClassName, accessMode}` | PVC configuration |
+| storage | object `{size, storageClassName, accessMode}` | PVC configuration (RWO default) |
 | networkAccess | object `{egress: [{domain, ports}]}` | Egress rules |
-| idleTimeoutSeconds | integer | Auto-suspend after idle (default: 3600) |
+| autoSuspend | object `{enabled, idleTimeoutSeconds}` | Auto-suspend after idle (default: disabled, 3600s) |
 | ttlSecondsAfterSuspended | integer | Auto-delete after suspended (default: 0 = off) |
+| maxActiveSessions | integer | Max concurrent active sessions (default: 5, min: 1, max: 20). Inactive sessions (read-only history) are unlimited. |
 
 **Status fields (from design §5.2):**
 

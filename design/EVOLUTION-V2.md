@@ -449,6 +449,12 @@ spec:
               initScript:
                 type: string
                 description: "Shell script run by init container before main container starts. Runs on every pod start (including resume). Use for anything beyond simple package lists."
+              maxActiveSessions:
+                type: integer
+                default: 5
+                minimum: 1
+                maximum: 20
+                description: "Maximum concurrent active sessions (conversations being processed or with open connections). Inactive sessions (read-only history) are unlimited. Enforced by the API proxy handler."
           status:
             type: object
             properties:
@@ -704,7 +710,30 @@ Suspend and resume are workspace-level operations:
 
 - **Suspend workspace** — Delete all sandbox pods in the workspace, retain the PVC
 - **Resume workspace** — Recreate sandbox pods mounting the same PVC
-- **Multiple sandboxes** — Sequential (RWO) or concurrent (RWX) sandboxes sharing one PVC
+- **Multiple sandboxes** — Sequential (RWO, default) sandboxes sharing one PVC
+
+#### Active vs Inactive Sessions
+
+Sessions have two states from the platform's perspective:
+
+| State | Meaning | Proxy behavior | Resource cost |
+|-------|---------|----------------|---------------|
+| **Active** | Session has an open proxy connection OR the agent is currently processing a message for it | Accepts `POST /sessions/{id}/message` and `POST /sessions/{id}/prompt` | Agent maintains context window in memory |
+| **Inactive** | Session is idle — no proxy connections, agent not processing | `GET /sessions/{id}/message` (read history) only. Message sends return 429 with `Retry-After` if active session limit reached. | Zero — just JSON files on PVC |
+
+The **active session limit** (default 5, configurable via `spec.maxActiveSessions`) controls how many concurrent conversations a workspace can have in-flight. There is no limit on total (inactive) sessions — they're just JSON files on the PVC at `/workspace/.local/opencode/storage/`.
+
+Session state transitions:
+
+```
+Created → Active (user sends first message)
+Active → Inactive (agent finishes processing, no open connections)
+Inactive → Active (user sends a new message to existing session)
+```
+
+The proxy handler enforces the active session limit by tracking which sessions currently have in-flight requests or open streaming connections. Opencode's `session.status` SSE events (`busy`|`idle`) provide the agent-side signal.
+
+**Why this matters:** A user may have 50 sessions (conversation history) but only 5 active at once. Inactive sessions cost nothing — they're persisted JSON files. Active sessions consume agent memory (context window) and proxy connections. This model keeps resource usage predictable: 1 workspace = 1 pod = bounded by `maxActiveSessions` × per-session resource cost.
 
 **Suspend/resume and environment persistence:**
 
@@ -1228,7 +1257,13 @@ The API server is stateless — no in-memory session state. All session state li
 
 **Per-sandbox rate limiting:**
 
-Each opencode instance handles one request at a time (per session). The proxy enforces a per-sandbox connection limit (10 concurrent connections) to prevent a single caller from overwhelming an instance. This is implemented in the proxy handler, not in middleware — it needs to count actual in-flight proxy connections.
+The proxy enforces two limits per sandbox:
+
+1. **Active session limit** (default 5, from `workspace.spec.maxActiveSessions`): Only this many sessions can have in-flight message requests or open streaming connections simultaneously. Additional message sends to new sessions return 429 with a `Retry-After` header. This bounds the agent's concurrent context windows and memory usage. Read-only access (GET message history) is always allowed regardless of active session count.
+
+2. **Connection limit** (10 concurrent proxy connections): Hard ceiling on total in-flight HTTP connections to a single opencode instance, regardless of session. Prevents a single caller from overwhelming the agent at the transport level.
+
+Both limits are implemented in the proxy handler and are per-API-replica (not globally coordinated across replicas). For V1, this is acceptable — active session tracking at the proxy level provides reasonable protection, and the resource model is designed so that per-replica limits don't cause problematic overallocation. If global enforcement is needed, a Redis-backed counter can be added later without changing the API.
 
 ---
 
@@ -1724,6 +1759,8 @@ type ProxyHandler struct {
     httpClient *http.Client
     pwCache    map[string]string  // sandboxID → cached password (read from Secret once, invalidated on phase change)
     pwCacheMu  sync.RWMutex
+    activeSess map[string]map[string]bool  // sandboxID → set of active sessionIDs
+    activeMu   sync.Mutex
 }
 
 func (h *ProxyHandler) ProxyToSandbox(c *gin.Context) {
@@ -1731,12 +1768,16 @@ func (h *ProxyHandler) ProxyToSandbox(c *gin.Context) {
     // 1. Get pod IP from Sandbox CRD status
     // 2. Build target URL: http://{podIP}:4096{path}
     // 3. Add Authorization header with server password
-    // 4. Proxy request (handle streaming, SSE)
-    // 5. On connection error: refresh IP, retry once
+    // 4. If write operation (message/prompt): check active session limit
+    //    - Track sessionID in activeSess set for this sandbox
+    //    - If len(activeSess[sandboxID]) >= maxActiveSessions && sessionID not already active → 429
+    //    - Remove from activeSess when streaming response completes or agent reports idle
+    // 5. Proxy request (handle streaming, SSE)
+    // 6. On connection error: refresh IP, retry once
 }
 ```
 
-Rate limiting per sandbox (max 10 concurrent proxy connections) prevents a single caller from overwhelming an opencode instance.
+Active session tracking uses opencode's `session.status` SSE events (`busy`→active, `idle`→inactive) combined with proxy connection lifecycle. When a streaming response completes or the agent reports a session as idle, the session is removed from the active set. This bounds concurrent agent memory usage to a predictable per-workspace limit.
 
 ---
 

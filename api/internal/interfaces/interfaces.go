@@ -87,7 +87,7 @@ type MetricsService interface {
 type SandboxService interface {
 	CreateSandbox(ctx context.Context, req *types.CreateSandboxRequest) (*types.Sandbox, error)
 	GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error)
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]map[string]interface{}, error)
+	ListSandboxes(ctx context.Context, userID string, limit, offset int) (*types.SandboxListResult, error)
 	TerminateSandbox(ctx context.Context, sandboxID string) error
 	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
 	Start() error
