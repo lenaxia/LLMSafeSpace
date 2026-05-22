@@ -142,7 +142,6 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 }
 
 // UpdateUser updates specific fields on a user record. Only non-nil fields are applied.
-// UpdateUser updates specific fields on a user record. Only non-nil fields are applied.
 func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error {
 	query := "UPDATE users SET updated_at = NOW()"
 	args := []interface{}{}

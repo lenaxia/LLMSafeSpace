@@ -82,23 +82,6 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 
 	s.logger.Info("Creating sandbox", "runtime", req.Runtime, "userID", req.UserID)
 
-	if err := s.dbService.Start(); err != nil {
-		s.logger.Error("Failed to start database service", err)
-		return nil, apierrors.NewInternalError("service_initialization_failed", err)
-	}
-	if err := s.metricsService.Start(); err != nil {
-		s.logger.Error("Failed to start metrics service", err)
-		return nil, apierrors.NewInternalError("service_initialization_failed", err)
-	}
-	defer func() {
-		if err := s.dbService.Stop(); err != nil {
-			s.logger.Error("Failed to stop database service", err)
-		}
-		if err := s.metricsService.Stop(); err != nil {
-			s.logger.Error("Failed to stop metrics service", err)
-		}
-	}()
-
 	if err := validation.ValidateCreateSandboxRequest(req); err != nil {
 		return nil, apierrors.NewValidationError(
 			"Invalid sandbox creation request",

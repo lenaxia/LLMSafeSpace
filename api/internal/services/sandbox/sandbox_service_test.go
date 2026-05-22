@@ -47,9 +47,6 @@ func newFixture(t *testing.T) *fixture {
 	cache := &imocks.MockCacheService{}
 	met := &imocks.MockMetricsService{}
 
-	// Metrics lifecycle always called around CreateSandbox
-	met.On("Start").Return(nil).Maybe()
-	met.On("Stop").Return(nil).Maybe()
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 	k8s.On("LlmsafespaceV1").Return(v1i)
@@ -115,8 +112,6 @@ func TestCreateSandbox_HappyPath(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
@@ -137,12 +132,36 @@ func TestCreateSandbox_HappyPath(t *testing.T) {
 	f.metrics.AssertExpectations(t)
 }
 
-func TestCreateSandbox_EmptyRuntime_FailsValidation(t *testing.T) {
+// TestCreateSandbox_ServiceIsStateless verifies that calling CreateSandbox
+// multiple times on the same Service instance succeeds. This catches any
+// per-request lifecycle calls (Start/Stop) that would close shared resources.
+func TestCreateSandbox_ServiceIsStateless(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
+	for i, id := range []string{"sb-1", "sb-2"} {
+		_ = i
+		f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil).Once()
+		f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil).Once()
+		f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
+			return m.ID == id && m.UserID == "user1"
+		})).Return(nil).Once()
+		f.sb.On("Create", mock.AnythingOfType("*v1.Sandbox")).Return(crdSandbox(id, "default", "python:3.10"), nil).Once()
+		f.metrics.On("RecordSandboxCreation", "python:3.10", "user1").Return().Once()
+
+		req := &types.CreateSandboxRequest{Runtime: "python:3.10", SecurityLevel: "standard", UserID: "user1"}
+		result, err := f.svc.CreateSandbox(ctx, req)
+		assert.NoError(t, err, "call %d should succeed", i+1)
+		assert.Equal(t, id, result.Name)
+	}
+	f.db.AssertExpectations(t)
+	f.sb.AssertExpectations(t)
+	f.metrics.AssertExpectations(t)
+}
+
+func TestCreateSandbox_EmptyRuntime_FailsValidation(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "", UserID: "user1"})
 	assert.Error(t, err)
@@ -155,9 +174,6 @@ func TestCreateSandbox_InvalidSecurityLevel_FailsValidation(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
-
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", SecurityLevel: "nuclear", UserID: "user1"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "validation_error")
@@ -167,8 +183,6 @@ func TestCreateSandbox_UserNotFound_ReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "nobody").Return((*types.User)(nil), nil)
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "nobody"})
@@ -180,8 +194,6 @@ func TestCreateSandbox_GetUserError_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return((*types.User)(nil), errors.New("db timeout"))
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"})
@@ -193,8 +205,6 @@ func TestCreateSandbox_PermissionDenied_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(false, nil)
 
@@ -207,8 +217,6 @@ func TestCreateSandbox_K8sCreateFails_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.sb.On("Create", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("k8s unavailable"))
@@ -223,8 +231,6 @@ func TestCreateSandbox_DBCreateFails_CleansUpK8s(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-x", "default", "python:3.10"), nil)
@@ -241,8 +247,6 @@ func TestCreateSandbox_ZeroTimeout_AppliesDefault(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
@@ -263,8 +267,6 @@ func TestCreateSandbox_LabelsAndAnnotationsSet(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("Start").Return(nil)
-	f.db.On("Stop").Return(nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
