@@ -20,6 +20,7 @@ type SandboxWatcher struct {
 	namespace      string
 	onPhaseChange  PhaseChangeCallback
 	stopCh         chan struct{}
+	stopOnce       sync.Once
 	knownPhases    map[string]string
 	knownPhasesMu  sync.RWMutex
 	watchRestartMu sync.Mutex
@@ -53,7 +54,9 @@ func (w *SandboxWatcher) Start() error {
 }
 
 func (w *SandboxWatcher) Stop() {
-	close(w.stopCh)
+	w.stopOnce.Do(func() {
+		close(w.stopCh)
+	})
 }
 
 func (w *SandboxWatcher) GetKnownPhase(name string) (string, bool) {

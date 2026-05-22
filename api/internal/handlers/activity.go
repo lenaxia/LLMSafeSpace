@@ -21,6 +21,7 @@ type ActivityTracker struct {
 	logger    pkginterfaces.LoggerInterface
 	namespace string
 	stopCh    chan struct{}
+	stopOnce  sync.Once
 }
 
 func NewActivityTracker(
@@ -44,7 +45,9 @@ func (t *ActivityTracker) Start() error {
 }
 
 func (t *ActivityTracker) Stop() error {
-	close(t.stopCh)
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
 	return nil
 }
 

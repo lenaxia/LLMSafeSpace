@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -299,7 +300,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	var bodyReader io.Reader
 	if len(body) > 0 {
-		bodyReader = io.NopCloser(strings.NewReader(string(body)))
+		bodyReader = bytes.NewReader(body)
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bodyReader)

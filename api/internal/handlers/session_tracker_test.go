@@ -315,13 +315,14 @@ func TestSSETracker_Subscribe_ReceivesIdleEvent(t *testing.T) {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
+		// Block until client disconnects so the scanner sees EOF
+		<-r.Context().Done()
 	}))
 	defer sseServer.Close()
 
 	tracker := NewSSETracker(
 		&http.Client{
 			Transport: &redirectTransport{server: sseServer},
-			Timeout:   5 * time.Second,
 		},
 		&testLogger{},
 		func(sandboxID, sessionID string) {
