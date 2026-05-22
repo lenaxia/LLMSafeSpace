@@ -1,0 +1,304 @@
+package handlers
+
+import (
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+)
+
+func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *ActivityTracker {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	return NewActivityTracker(k8sMock, &testLogger{}, "default")
+}
+
+func TestActivityTracker_RecordStoresTimestamp(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	before := time.Now()
+	tracker.Record("ws-1")
+	after := time.Now()
+
+	assert.Equal(t, 1, tracker.PendingCount())
+
+	tracker.mu.Lock()
+	ts, ok := tracker.activity["ws-1"]
+	tracker.mu.Unlock()
+
+	assert.True(t, ok)
+	assert.False(t, ts.IsZero())
+	assert.True(t, !ts.Before(before) && !ts.After(after))
+}
+
+func TestActivityTracker_RecordEmptyWorkspaceID(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	tracker.Record("")
+
+	assert.Equal(t, 0, tracker.PendingCount())
+}
+
+func TestActivityTracker_Flush_UpdatesWorkspaceStatus(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+
+	var captured *v1.Workspace
+	wsMock.On("UpdateStatus", mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(0).(*v1.Workspace)
+	}).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Status.LastActivityAt)
+	assert.WithinDuration(t, time.Now(), captured.Status.LastActivityAt.Time, 2*time.Second)
+}
+
+func TestActivityTracker_Flush_SkipsStaleWorkspace(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+	tracker.Flush()
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+}
+
+func TestActivityTracker_Flush_CoalescesRecords(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+
+	var captured *v1.Workspace
+	wsMock.On("UpdateStatus", mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(0).(*v1.Workspace)
+	}).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+	time.Sleep(50 * time.Millisecond)
+	cutoff := time.Now()
+	tracker.Record("ws-1")
+
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Status.LastActivityAt)
+	assert.True(t, captured.Status.LastActivityAt.After(cutoff.Add(-1*time.Second)))
+	assert.Equal(t, 1, tracker.PendingCount())
+}
+
+func TestActivityTracker_Flush_MultipleWorkspaces(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws1 := makeWorkspaceCRD("ws-1", 5)
+	ws2 := makeWorkspaceCRD("ws-2", 3)
+	ws3 := makeWorkspaceCRD("ws-3", 10)
+
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws1, nil).Once()
+	wsMock.On("Get", "ws-2", metav1.GetOptions{}).Return(ws2, nil).Once()
+	wsMock.On("Get", "ws-3", metav1.GetOptions{}).Return(ws3, nil).Once()
+
+	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+		return w.Name == "ws-1"
+	})).Return(ws1, nil).Once()
+	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+		return w.Name == "ws-2"
+	})).Return(ws2, nil).Once()
+	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+		return w.Name == "ws-3"
+	})).Return(ws3, nil).Once()
+
+	tracker.Record("ws-1")
+	tracker.Record("ws-2")
+	tracker.Record("ws-3")
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+}
+
+func TestActivityTracker_StartBeginsFlushLoop(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	err := tracker.Start()
+	require.NoError(t, err)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+
+	err = tracker.Stop()
+	assert.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return wsMock.AssertExpectations(t)
+	}, 2*time.Second, 10*time.Millisecond, "Stop should trigger final flush via stopCh")
+}
+
+func TestActivityTracker_Stop_FinalFlush(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	err := tracker.Start()
+	require.NoError(t, err)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+
+	err = tracker.Stop()
+	assert.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return wsMock.AssertExpectations(t)
+	}, 2*time.Second, 10*time.Millisecond, "final flush should have been called via stopCh")
+}
+
+func TestActivityTracker_PendingCount(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	assert.Equal(t, 0, tracker.PendingCount())
+
+	tracker.Record("ws-1")
+	assert.Equal(t, 1, tracker.PendingCount())
+
+	tracker.Record("ws-2")
+	assert.Equal(t, 2, tracker.PendingCount())
+
+	tracker.Record("ws-1")
+	assert.Equal(t, 2, tracker.PendingCount())
+}
+
+func TestActivityTracker_ConcurrentRecord(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	var wg sync.WaitGroup
+	const goroutines = 100
+	const workspaces = 10
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			tracker.Record(fmt.Sprintf("ws-%d", id%workspaces))
+		}(i)
+	}
+
+	wg.Wait()
+
+	assert.Equal(t, workspaces, tracker.PendingCount())
+}
+
+func TestActivityTracker_ConcurrentRecordAndFlush(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil)
+
+	var wg sync.WaitGroup
+	const recorders = 50
+	wg.Add(recorders + 1)
+
+	for i := 0; i < recorders; i++ {
+		go func() {
+			defer wg.Done()
+			tracker.Record("ws-1")
+		}()
+	}
+
+	go func() {
+		defer wg.Done()
+		time.Sleep(10 * time.Millisecond)
+		tracker.Flush()
+	}()
+
+	wg.Wait()
+}
+
+func TestActivityTracker_Flush_RetryOnConflict(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Twice()
+
+	conflictErr := apierrors.NewConflict(
+		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		"ws-1",
+		fmt.Errorf("object has been modified"),
+	)
+	wsMock.On("UpdateStatus", mock.Anything).Return(nil, conflictErr).Once()
+	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+
+	tracker.Record("ws-1")
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+	wsMock.AssertNumberOfCalls(t, "UpdateStatus", 2)
+	wsMock.AssertNumberOfCalls(t, "Get", 2)
+}
+
+func TestActivityTracker_Flush_GetError(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	wsMock.On("Get", "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+
+	tracker.Record("ws-missing")
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+	wsMock.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestActivityTracker_Flush_Empty(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	tracker.Flush()
+
+	wsMock.AssertNotCalled(t, "Get")
+	wsMock.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestActivityTracker_NewActivityTracker(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	assert.NotNil(t, tracker)
+	assert.Equal(t, "default", tracker.namespace)
+	assert.Equal(t, 0, tracker.PendingCount())
+}

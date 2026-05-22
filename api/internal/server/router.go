@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
@@ -46,8 +47,9 @@ func DefaultRouterConfig() RouterConfig {
 	}
 }
 
-// NewRouter creates a new Gin router with all routes configured
-func NewRouter(services interfaces.Services, logger *logger.Logger, config ...RouterConfig) *gin.Engine {
+// NewRouter creates a new Gin router with all routes configured.
+// proxyHandler may be nil — proxy routes are not registered in that case.
+func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler *handlers.ProxyHandler, config ...RouterConfig) *gin.Engine {
 	// Use default config if none provided
 	cfg := DefaultRouterConfig()
 	if len(config) > 0 {
@@ -72,17 +74,6 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, config ...Ro
 	router.Use(middleware.MetricsMiddleware(services.GetMetrics()))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
 
-	// Rate limiting is wired when a RateLimiterService is available
-	// if cfg.RateLimitConfig.Enabled {
-	// 	router.Use(middleware.RateLimitMiddleware(rateLimiter, logger, cfg.RateLimitConfig))
-	// }
-
-	// Create handlers
-	//h := handlers.New(logger, services)
-
-	// Register routes
-	//h.RegisterRoutes(router)
-
 	// Add WebSocket security middleware to WebSocket routes
 	wsGroup := router.Group("/api/v1/sandboxes/:id/stream")
 	wsGroup.Use(middleware.WebSocketSecurityMiddleware(logger, cfg.AllowedWebSocketOrigins...))
@@ -92,6 +83,14 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, config ...Ro
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
 	registerWorkspaceRoutes(workspaceGroup, services)
+
+	// Proxy routes — only registered when a ProxyHandler is provided
+	if proxyHandler != nil {
+		proxyGroup := router.Group("/api/v1/sandboxes")
+		proxyGroup.Use(services.GetAuth().AuthMiddleware())
+		proxyGroup.Use(sandboxOwnershipMiddleware(services, proxyHandler))
+		registerProxyRoutes(proxyGroup, proxyHandler)
+	}
 
 	// Metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -252,6 +251,44 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 		}
 		c.Status(http.StatusNoContent)
 	})
+}
+
+// sandboxOwnershipMiddleware verifies that the authenticated user owns the
+// sandbox identified by the :id route parameter. It reads the sandbox CRD's
+// user-id label and compares it to the authenticated user ID. Returns 404 if
+// the sandbox does not exist, 403 if the user is not the owner.
+func sandboxOwnershipMiddleware(services interfaces.Services, proxyHandler *handlers.ProxyHandler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sandboxID := c.Param("id")
+		userID := services.GetAuth().GetUserID(c)
+
+		sb, err := proxyHandler.GetSandboxCRD(sandboxID)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
+			return
+		}
+
+		ownerID, hasLabel := sb.Labels["user-id"]
+		if !hasLabel || ownerID == "" || ownerID != userID {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			return
+		}
+
+		c.Set("sandbox", sb)
+		c.Next()
+	}
+}
+
+// registerProxyRoutes adds all /api/v1/sandboxes/:id proxy routes.
+// All routes require authentication and ownership check (applied on the group).
+func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
+	rg.POST("/:id/sessions", proxyHandler.CreateSession)
+	rg.GET("/:id/sessions", proxyHandler.ListSessions)
+	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
+	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
+	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
+	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
+	rg.GET("/:id/events", proxyHandler.StreamEvents)
 }
 
 // respondWithError maps API errors to HTTP responses.
