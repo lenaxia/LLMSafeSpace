@@ -1,64 +1,48 @@
-FROM debian:bullseye-slim
+FROM golang:1.23-bookworm AS redact-builder
 
-# Set non-interactive mode for apt
+ARG TARGETARCH=amd64
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -o /out/redact ./cmd/redact
+
+FROM debian:bookworm-slim@sha256:40b107342c492725bc7aacbe93a49945f37a4143b8e1e87f2a6ff36f3f27a4ab
+
+ARG TARGETARCH=amd64
+
+# Override to use a different release: --build-arg OPENCODE_VERSION=<version>
+ARG OPENCODE_VERSION=1.0.0
+
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install core utilities and security tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    jq \
-    procps \
-    tini \
-    libseccomp2 \
-    libseccomp-dev \
-    apparmor \
-    bc \
-    iproute2 \
-    iputils-ping \
-    stress \
-    lsof \
-    strace \
-    && apt-get clean \
+    bash ca-certificates curl git jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Create sandbox user and group
-RUN groupadd -g 1000 sandbox && \
-    useradd -u 1000 -g sandbox -s /bin/bash -m -d /home/sandbox sandbox
+RUN curl -fsSL "https://github.com/opencode-ai/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${TARGETARCH}" \
+         -o /usr/local/bin/opencode \
+    && curl -fsSL "https://github.com/opencode-ai/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${TARGETARCH}.sha256" \
+         -o /tmp/opencode.sha256 \
+    && echo "$(cat /tmp/opencode.sha256)  /usr/local/bin/opencode" | sha256sum --check \
+    && chmod +x /usr/local/bin/opencode \
+    && rm /tmp/opencode.sha256
 
-# Create directory structure
-RUN mkdir -p /workspace /opt/llmsafespace/{bin,lib} /etc/llmsafespace /var/log/llmsafespace && \
-    chown -R sandbox:sandbox /workspace /var/log/llmsafespace && \
-    chmod 755 /workspace && \
-    chmod 1777 /tmp
+COPY --from=redact-builder --chmod=755 /out/redact /usr/local/bin/redact
 
-# Copy security configuration files
-COPY --chown=root:root security/seccomp-profiles/ /etc/llmsafespace/seccomp/
-COPY --chown=root:root security/apparmor-profiles/ /etc/llmsafespace/apparmor/
+COPY --chmod=755 runtimes/base/tools/entrypoints/entrypoint-common.sh  /usr/local/bin/entrypoint-common.sh
+COPY --chmod=755 runtimes/base/tools/entrypoints/entrypoint-opencode.sh /usr/local/bin/entrypoint-opencode.sh
 
-# Copy tools and scripts
-COPY --chown=root:root tools/sandbox-monitor /opt/llmsafespace/bin/
-COPY --chown=root:root tools/execution-tracker /opt/llmsafespace/bin/
-COPY --chown=root:root tools/health-check /opt/llmsafespace/bin/
-COPY --chown=root:root tools/cleanup-pod /opt/llmsafespace/bin/
+COPY --chmod=755 runtimes/base/tools/smoke-test.sh /usr/local/bin/smoke-test.sh
+RUN /usr/local/bin/smoke-test.sh
 
-# Make tools executable
-RUN chmod +x /opt/llmsafespace/bin/*
+RUN useradd -u 1000 -m -s /bin/bash sandbox
 
-# Security hardening
-RUN find / -perm /6000 -type f -exec chmod a-s {} \; || true
-
-# Add health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["/opt/llmsafespace/bin/health-check"]
-
-# Set working directory
+# /tmp and /home/sandbox require emptyDir volumes in the pod spec (readOnlyRootFilesystem: true)
+USER sandbox
 WORKDIR /workspace
 
-# Use tini as init
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/bin/bash"]
-
-# Switch to sandbox user
-USER sandbox:sandbox
+ENTRYPOINT ["/usr/local/bin/entrypoint-opencode.sh"]
