@@ -119,7 +119,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		Name:        req.Name,
 		Runtime:     req.Runtime,
 		StorageSize: req.StorageSize,
-		Phase:       string(created.Status.Phase),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -140,7 +139,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		UserID:      meta.UserID,
 		Runtime:     meta.Runtime,
 		StorageSize: meta.StorageSize,
-		Phase:       meta.Phase,
+		Phase:       string(created.Status.Phase),
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
 	}, nil
@@ -182,7 +181,6 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 		UserID:      meta.UserID,
 		Runtime:     meta.Runtime,
 		StorageSize: meta.StorageSize,
-		Phase:       meta.Phase,
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
 	}
@@ -222,7 +220,6 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			UserID:      m.UserID,
 			Runtime:     m.Runtime,
 			StorageSize: m.StorageSize,
-			Phase:       m.Phase,
 			CreatedAt:   m.CreatedAt,
 			UpdatedAt:   m.UpdatedAt,
 		})
@@ -249,10 +246,9 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		return apierrors.NewInternalError("workspace_deletion_failed", err)
 	}
 
-	phase := "terminating"
-	if err := s.dbService.UpdateWorkspace(ctx, workspaceID, types.WorkspaceUpdates{Phase: &phase}); err != nil {
-		s.logger.Error("Failed to update workspace phase after deletion", err, "workspaceID", workspaceID)
-		return apierrors.NewInternalError("metadata_update_failed", err)
+	if err := s.dbService.DeleteWorkspace(ctx, workspaceID); err != nil {
+		s.logger.Error("Failed to delete workspace DB record", err, "workspaceID", workspaceID)
+		return apierrors.NewInternalError("workspace_deletion_failed", err)
 	}
 
 	s.logger.Info("Workspace deleted", "workspaceID", workspaceID, "userID", userID)

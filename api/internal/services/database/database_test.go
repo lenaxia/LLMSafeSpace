@@ -355,6 +355,300 @@ func TestCreateSandbox(t *testing.T) {
 	})
 }
 
+func TestCreateWorkspace(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		ws := &types.WorkspaceMetadata{
+			ID:          "ws-uuid-1",
+			UserID:      "user-1",
+			Name:        "My Workspace",
+			Runtime:     "python:3.11",
+			StorageSize: "10Gi",
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		mock.ExpectExec("INSERT INTO workspaces").
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, ws.CreatedAt, ws.UpdatedAt).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+
+		err := service.CreateWorkspace(ctx, ws)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("zero_timestamps_auto_filled", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		ws := &types.WorkspaceMetadata{
+			ID:          "ws-uuid-2",
+			UserID:      "user-2",
+			Name:        "Auto TS Workspace",
+			Runtime:     "nodejs:18",
+			StorageSize: "5Gi",
+		}
+
+		mock.ExpectExec("INSERT INTO workspaces").
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+
+		err := service.CreateWorkspace(ctx, ws)
+		assert.NoError(t, err)
+		assert.False(t, ws.CreatedAt.IsZero())
+		assert.False(t, ws.UpdatedAt.IsZero())
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		ws := &types.WorkspaceMetadata{
+			ID:     "ws-err",
+			UserID: "user-err",
+			Name:   "Error Workspace",
+		}
+
+		mock.ExpectExec("INSERT INTO workspaces").
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.CreateWorkspace(ctx, ws)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create workspace")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestGetWorkspace(t *testing.T) {
+	t.Run("found", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		now := time.Now()
+		wsID := "ws-uuid-found"
+
+		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "created_at", "updated_at"}).
+			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", now, now)
+
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+			WithArgs(wsID).
+			WillReturnRows(rows)
+
+		ws, err := service.GetWorkspace(ctx, wsID)
+		assert.NoError(t, err)
+		assert.NotNil(t, ws)
+		assert.Equal(t, wsID, ws.ID)
+		assert.Equal(t, "user-1", ws.UserID)
+		assert.Equal(t, "My Workspace", ws.Name)
+		assert.Equal(t, "python:3.11", ws.Runtime)
+		assert.Equal(t, "10Gi", ws.StorageSize)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not_found_returns_nil", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+			WithArgs("nonexistent").
+			WillReturnError(sql.ErrNoRows)
+
+		ws, err := service.GetWorkspace(ctx, "nonexistent")
+		assert.NoError(t, err)
+		assert.Nil(t, ws)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+			WithArgs("ws-err").
+			WillReturnError(sql.ErrConnDone)
+
+		ws, err := service.GetWorkspace(ctx, "ws-err")
+		assert.Error(t, err)
+		assert.Nil(t, ws)
+		assert.Contains(t, err.Error(), "failed to get workspace")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestListWorkspaces(t *testing.T) {
+	t.Run("multiple_rows", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-list"
+		limit := 10
+		offset := 0
+		now := time.Now()
+
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "created_at", "updated_at"}).
+			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", now, now).
+			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", now.Add(-time.Hour), now)
+
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
+			WithArgs(userID, limit, offset).
+			WillReturnRows(wsRows)
+
+		wsList, pagination, err := service.ListWorkspaces(ctx, userID, limit, offset)
+		assert.NoError(t, err)
+		assert.Len(t, wsList, 2)
+		assert.Equal(t, 2, pagination.Total)
+		assert.Equal(t, "ws-1", wsList[0].ID)
+		assert.Equal(t, "ws-2", wsList[1].ID)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("empty_result", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-empty"
+
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+			WithArgs(userID).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+		wsList, pagination, err := service.ListWorkspaces(ctx, userID, 10, 0)
+		assert.NoError(t, err)
+		assert.Len(t, wsList, 0)
+		assert.Equal(t, 0, pagination.Total)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("count_db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+			WithArgs("user-err").
+			WillReturnError(sql.ErrConnDone)
+
+		_, _, err := service.ListWorkspaces(ctx, "user-err", 10, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to count workspaces")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestUpdateWorkspace(t *testing.T) {
+	t.Run("name_updated", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		wsID := "ws-update"
+		name := "New Name"
+
+		mock.ExpectExec("UPDATE workspaces SET updated_at = NOW\\(\\), name = \\$1 WHERE id = \\$2").
+			WithArgs(name, wsID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpdateWorkspace(ctx, wsID, types.WorkspaceUpdates{Name: &name})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("no_fields_is_noop", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		err := service.UpdateWorkspace(context.Background(), "ws-noop", types.WorkspaceUpdates{})
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		wsID := "ws-err"
+		name := "Error Update"
+
+		mock.ExpectExec("UPDATE workspaces SET updated_at = NOW\\(\\), name = \\$1 WHERE id = \\$2").
+			WithArgs(name, wsID).
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.UpdateWorkspace(ctx, wsID, types.WorkspaceUpdates{Name: &name})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update workspace")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestDeleteWorkspace(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		wsID := "ws-delete"
+
+		mock.ExpectExec("DELETE FROM workspaces WHERE id = \\$1").
+			WithArgs(wsID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.DeleteWorkspace(ctx, wsID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not_found_is_ok", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec("DELETE FROM workspaces WHERE id = \\$1").
+			WithArgs("nonexistent").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := service.DeleteWorkspace(ctx, "nonexistent")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec("DELETE FROM workspaces WHERE id = \\$1").
+			WithArgs("ws-err").
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.DeleteWorkspace(ctx, "ws-err")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete workspace")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestCreateUser(t *testing.T) {
 	t.Run("success_with_explicit_timestamps", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)

@@ -703,15 +703,13 @@ type WorkspaceMetadata struct {
 	Name        string    `json:"name" db:"name"`
 	Runtime     string    `json:"runtime" db:"runtime"`
 	StorageSize string    `json:"storageSize" db:"storage_size"`
-	Phase       string    `json:"phase" db:"phase"`
 	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
 }
 
 // WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.
 type WorkspaceUpdates struct {
-	Phase *string `json:"phase,omitempty"`
-	Name  *string `json:"name,omitempty"`
+	Name *string `json:"name,omitempty"`
 }
 
 // WorkspaceNotFoundError is returned when a workspace cannot be found.
