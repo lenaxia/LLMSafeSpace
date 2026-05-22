@@ -10,6 +10,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // Service handles Redis cache operations
@@ -124,18 +125,22 @@ func (s *Service) SetObject(ctx context.Context, key string, value interface{}, 
 	return nil
 }
 
-// GetSession gets a session from the cache
-func (s *Service) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
-	var session map[string]interface{}
+// GetSession retrieves a typed session from the cache. Returns nil, nil when not found.
+func (s *Service) GetSession(ctx context.Context, sessionID string) (*types.CachedSession, error) {
+	var session types.CachedSession
 	err := s.GetObject(ctx, fmt.Sprintf("session:%s", sessionID), &session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session from cache: %w", err)
 	}
-	return session, nil
+	// GetObject does nothing and leaves session zero-valued when key missing
+	if session.SessionID == "" {
+		return nil, nil
+	}
+	return &session, nil
 }
 
-// SetSession sets a session in the cache
-func (s *Service) SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error {
+// SetSession stores a typed session in the cache.
+func (s *Service) SetSession(ctx context.Context, sessionID string, session types.CachedSession, expiration time.Duration) error {
 	err := s.SetObject(ctx, fmt.Sprintf("session:%s", sessionID), session, expiration)
 	if err != nil {
 		return fmt.Errorf("failed to set session in cache: %w", err)

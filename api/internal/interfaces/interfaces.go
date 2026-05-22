@@ -33,12 +33,12 @@ type AuthService interface {
 type DatabaseService interface {
 	GetUser(ctx context.Context, userID string) (*types.User, error)
 	CreateUser(ctx context.Context, user *types.User) error
-	UpdateUser(ctx context.Context, userID string, updates map[string]interface{}) error
+	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
 	DeleteUser(ctx context.Context, userID string) error
 	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
 	GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error)
 	CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error
-	UpdateSandbox(ctx context.Context, sandboxID string, updates map[string]interface{}) error
+	UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error
 	DeleteSandbox(ctx context.Context, sandboxID string) error
 	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
@@ -53,8 +53,8 @@ type CacheService interface {
 	Delete(ctx context.Context, key string) error
 	GetObject(ctx context.Context, key string, value interface{}) error
 	SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error
-	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
-	SetSession(ctx context.Context, sessionID string, session map[string]interface{}, expiration time.Duration) error
+	GetSession(ctx context.Context, sessionID string) (*types.CachedSession, error)
+	SetSession(ctx context.Context, sessionID string, session types.CachedSession, expiration time.Duration) error
 	DeleteSession(ctx context.Context, sessionID string) error
 	Start() error
 	Stop() error

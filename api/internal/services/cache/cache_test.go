@@ -11,6 +11,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +86,7 @@ func TestNew(t *testing.T) {
 	// Create test dependencies
 	log, err := logger.New(true, "debug", "console")
 	require.NoError(t, err)
-	
+
 	// Create a valid config
 	cfg := createTestConfig(mr.Addr())
 
@@ -93,7 +94,7 @@ func TestNew(t *testing.T) {
 	service, err := New(cfg, log)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
-	
+
 	// Clean up
 	err = service.Stop()
 	assert.NoError(t, err)
@@ -102,7 +103,7 @@ func TestNew(t *testing.T) {
 	badCfg := &config.Config{}
 	badCfg.Redis.Host = "nonexistent"
 	badCfg.Redis.Port = 6379
-	
+
 	service, err = New(badCfg, log)
 	assert.Error(t, err)
 	assert.Nil(t, service)
@@ -192,30 +193,31 @@ func TestSessionOperations(t *testing.T) {
 
 	ctx := context.Background()
 	sessionID := "test_session_id"
-	sessionData := map[string]interface{}{
-		"user_id":    "user123",
-		"created_at": time.Now().Unix(),
-		"data":       "session data",
+	session := types.CachedSession{
+		SessionID: sessionID,
+		UserID:    "user123",
+		SandboxID: "sandbox456",
 	}
 
-	// Test SetSession
-	err := service.SetSession(ctx, sessionID, sessionData, time.Minute)
-	assert.NoError(t, err, "Expected no error from SetSession")
+	// SetSession stores the typed session
+	err := service.SetSession(ctx, sessionID, session, time.Minute)
+	assert.NoError(t, err)
 
-	// Test GetSession
-	retrievedSession, err := service.GetSession(ctx, sessionID)
-	assert.NoError(t, err, "Expected no error from GetSession")
-	assert.Equal(t, sessionData["user_id"], retrievedSession["user_id"], 
-		"Expected user_id %v, got %v", sessionData["user_id"], retrievedSession["user_id"])
+	// GetSession retrieves it back with correct fields
+	retrieved, err := service.GetSession(ctx, sessionID)
+	assert.NoError(t, err)
+	assert.Equal(t, session.SessionID, retrieved.SessionID)
+	assert.Equal(t, session.UserID, retrieved.UserID)
+	assert.Equal(t, session.SandboxID, retrieved.SandboxID)
 
-	// Test DeleteSession
+	// DeleteSession removes it
 	err = service.DeleteSession(ctx, sessionID)
-	assert.NoError(t, err, "Expected no error from DeleteSession")
+	assert.NoError(t, err)
 
-	// Verify session was deleted
-	retrievedSession, err = service.GetSession(ctx, sessionID)
-	assert.NoError(t, err, "Expected no error after DeleteSession")
-	assert.Nil(t, retrievedSession, "Expected nil after DeleteSession")
+	// GetSession after delete returns nil, no error
+	deleted, err := service.GetSession(ctx, sessionID)
+	assert.NoError(t, err)
+	assert.Nil(t, deleted)
 }
 
 func TestStartStop(t *testing.T) {
