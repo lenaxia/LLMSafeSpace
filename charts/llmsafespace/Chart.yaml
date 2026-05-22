@@ -1,0 +1,24 @@
+apiVersion: v2
+name: llmsafespace
+description: |
+  Kubernetes-first platform for running AI agents securely in isolated sandboxes.
+  Each sandbox runs `opencode serve` as a persistent HTTP server with a
+  PVC-backed workspace. The API service acts as a reverse proxy to the agent.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/lenaxia/llmsafespace
+sources:
+  - https://github.com/lenaxia/llmsafespace
+keywords:
+  - ai
+  - agent
+  - sandbox
+  - opencode
+  - mcp
+maintainers:
+  - name: lenaxia
+    url: https://github.com/lenaxia
+annotations:
+  category: AI

@@ -1,0 +1,180 @@
+{{- if .Values.rbac.create }}
+{{- $isCluster := eq .Values.rbac.scope "cluster" }}
+# ============================================================================
+# Controller RBAC.
+# When rbac.scope == "cluster" (default): ClusterRole + ClusterRoleBinding.
+# When rbac.scope == "namespace":          Role + RoleBinding scoped to the
+#                                          release namespace only.
+# ============================================================================
+{{- $controllerRules := list
+  (dict "apiGroups" (list "llmsafespace.dev")
+        "resources" (list "sandboxes" "sandboxes/status" "sandboxes/finalizers"
+                          "workspaces" "workspaces/status" "workspaces/finalizers"
+                          "sandboxprofiles" "sandboxprofiles/status"
+                          "runtimeenvironments" "runtimeenvironments/status")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "pods")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "pods/status")
+        "verbs" (list "get" "patch" "update"))
+  (dict "apiGroups" (list "")
+        "resources" (list "secrets")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "persistentvolumeclaims")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "services")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "networking.k8s.io")
+        "resources" (list "networkpolicies")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "events")
+        "verbs" (list "create" "patch"))
+  (dict "apiGroups" (list "coordination.k8s.io")
+        "resources" (list "leases")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+  (dict "apiGroups" (list "")
+        "resources" (list "configmaps")
+        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
+}}
+{{- if $isCluster }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+rules:
+  {{- toYaml $controllerRules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "llmsafespace.fullname" . }}-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+rules:
+  {{- toYaml $controllerRules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llmsafespace.fullname" . }}-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+# ============================================================================
+# API — namespaced permissions; uses the K8s API to manage CRDs and Secrets
+# in the sandbox namespace.
+# ============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api
+  namespace: {{ include "llmsafespace.sandboxNamespace" . }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["llmsafespace.dev"]
+    resources:
+      - sandboxes
+      - sandboxes/status
+      - workspaces
+      - workspaces/status
+      - sandboxprofiles
+      - runtimeenvironments
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api
+  namespace: {{ include "llmsafespace.sandboxNamespace" . }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llmsafespace.fullname" . }}-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.api.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Lease for API leader election.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llmsafespace.fullname" . }}-api-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.api.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -9,6 +9,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -33,11 +34,15 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var watchNamespaces string
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
+		"Comma-separated list of namespaces the controller should watch. "+
+			"Empty or '*' means watch all namespaces (default).")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -53,6 +58,15 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "llmsafespace-controller-leader-election",
+	}
+
+	// Restrict the cache (and thus the controllers) to a specific set of
+	// namespaces if --watch-namespaces is set. Empty or "*" means cluster-wide.
+	if nsMap := parseWatchNamespaces(watchNamespaces); nsMap != nil {
+		options.Cache = cache.Options{DefaultNamespaces: nsMap}
+		setupLog.Info("watching specific namespaces", "namespaces", watchNamespaces)
+	} else {
+		setupLog.Info("watching all namespaces")
 	}
 
 	if enableLeaderElection {

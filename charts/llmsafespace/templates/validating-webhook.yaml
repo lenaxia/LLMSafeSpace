@@ -1,0 +1,68 @@
+{{- if .Values.webhooks.enabled }}
+# ============================================================================
+# ValidatingWebhookConfiguration — kube-apiserver routes admission requests
+# for sandboxes / sandboxprofiles / runtimeenvironments to the controller
+# webhook server. The cert-manager.io/inject-ca-from annotation tells the
+# cert-manager ca-injector to populate caBundle from the webhook Certificate.
+# ============================================================================
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-validate
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "llmsafespace.fullname" . }}-webhook
+webhooks:
+  - name: vsandbox.llmsafespace.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ include "llmsafespace.fullname" . }}-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-llmsafespace-dev-v1-sandbox
+        port: 443
+    rules:
+      - apiGroups: ["llmsafespace.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxes"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+  - name: vsandboxprofile.llmsafespace.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ include "llmsafespace.fullname" . }}-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-llmsafespace-dev-v1-sandboxprofile
+        port: 443
+    rules:
+      - apiGroups: ["llmsafespace.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxprofiles"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+  - name: vruntimeenvironment.llmsafespace.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ include "llmsafespace.fullname" . }}-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-llmsafespace-dev-v1-runtimeenvironment
+        port: 443
+    rules:
+      - apiGroups: ["llmsafespace.dev"]
+        apiVersions: ["v1"]
+        resources: ["runtimeenvironments"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Cluster
+{{- end }}

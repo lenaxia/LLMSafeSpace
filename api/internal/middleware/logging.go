@@ -31,16 +31,16 @@ var (
 type LoggingConfig struct {
 	// LogRequestBody indicates whether to log request bodies
 	LogRequestBody bool
-	
+
 	// LogResponseBody indicates whether to log response bodies
 	LogResponseBody bool
-	
+
 	// MaxBodyLogSize is the maximum size of request/response bodies to log
 	MaxBodyLogSize int
-	
+
 	// SensitiveFields are JSON fields that should be redacted in request/response bodies
 	SensitiveFields []string
-	
+
 	// SkipPaths are paths that should not be logged
 	SkipPaths []string
 }
@@ -52,7 +52,7 @@ func DefaultLoggingConfig() LoggingConfig {
 		LogResponseBody: true,
 		MaxBodyLogSize:  1024, // 1KB
 		SensitiveFields: []string{"password", "token", "secret", "key", "apiKey", "credit_card"},
-		SkipPaths:       []string{"/health", "/metrics"},
+		SkipPaths:       []string{"/health", "/livez", "/readyz", "/metrics"},
 	}
 }
 
@@ -62,7 +62,7 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(c *gin.Context) {
 		// Skip logging for certain paths
 		path := c.Request.URL.Path
@@ -72,7 +72,7 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 				return
 			}
 		}
-		
+
 		start := time.Now()
 		requestID := generateRequestID()
 
@@ -110,7 +110,7 @@ func logRequest(c *gin.Context, log interfaces.LoggerInterface, requestID string
 		if err == nil {
 			// Add content length
 			fields = append(fields, "request_body_size", len(body))
-			
+
 			// Try to parse as JSON first
 			var jsonBody map[string]interface{}
 			if err := json.Unmarshal(body, &jsonBody); err == nil {
@@ -174,7 +174,6 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 
 	log.Info("Request completed", fields...)
 }
-
 
 func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	body, err := io.ReadAll(c.Request.Body)

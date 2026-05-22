@@ -40,7 +40,7 @@ func DefaultAuthConfig() AuthConfig {
 		QueryParamName:   "token",
 		CookieName:       "auth_token",
 		TokenType:        "Bearer",
-		SkipPaths:        []string{"/health", "/metrics", "/api/v1/auth/login", "/api/v1/auth/register"},
+		SkipPaths:        []string{"/health", "/livez", "/readyz", "/metrics", "/api/v1/auth/login", "/api/v1/auth/register"},
 		SkipPathPrefixes: []string{"/static/", "/docs/"},
 	}
 }

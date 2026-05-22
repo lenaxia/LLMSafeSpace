@@ -1,0 +1,87 @@
+Thanks for installing {{ .Chart.Name }}, version {{ .Chart.Version }}.
+
+The release is named: {{ .Release.Name }}
+Installed in namespace: {{ .Release.Namespace }}
+
+NEXT STEPS
+==========
+
+1. Verify the controller and API are running:
+
+     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Check that the database migration Job completed successfully:
+
+     kubectl -n {{ .Release.Namespace }} get jobs {{ include "llmsafespace.fullname" . }}-migrate
+     kubectl -n {{ .Release.Namespace }} logs job/{{ include "llmsafespace.fullname" . }}-migrate
+
+   If the Job failed, the API pod will not become Ready. Common causes:
+     - Postgres host {{ .Values.postgresql.host }}:{{ .Values.postgresql.port }} unreachable
+     - postgres-password secret value incorrect
+     - Database '{{ .Values.postgresql.database }}' does not exist (the migrate
+       tool does not CREATE DATABASE; you must do that out of band)
+
+3. Confirm the API is healthy:
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "llmsafespace.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} &
+     curl http://localhost:{{ .Values.api.service.port }}/livez
+     curl http://localhost:{{ .Values.api.service.port }}/readyz
+
+   /readyz returns 200 only when both Postgres and Redis are reachable.
+
+4. The CRDs registered:
+
+     kubectl get crd workspaces.llmsafespace.dev sandboxes.llmsafespace.dev sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev
+
+{{- if .Values.webhooks.enabled }}
+
+ADMISSION WEBHOOKS
+==================
+
+The chart deploys a ValidatingWebhookConfiguration that requires cert-manager
+to be installed in the cluster (the cert-manager.io/inject-ca-from annotation
+populates the webhook's caBundle).
+
+If kubectl create on a Sandbox / SandboxProfile / RuntimeEnvironment fails
+with a TLS or "no endpoints available" error, check:
+
+     kubectl -n {{ .Release.Namespace }} get certificate {{ include "llmsafespace.fullname" . }}-webhook
+     kubectl -n {{ .Release.Namespace }} describe certificate {{ include "llmsafespace.fullname" . }}-webhook
+
+The Certificate must be Ready=True before the webhook will function.
+{{- else }}
+
+WARNING: WEBHOOKS DISABLED
+==========================
+
+You installed with webhooks.enabled=false. Admission validation for Sandbox,
+SandboxProfile, and RuntimeEnvironment resources is NOT enforced server-side.
+Users with kubectl access can create invalid CRDs that will fail later in the
+controller. The API service still validates client-side requests, but kubectl
+bypasses that path.
+
+Re-enable with:
+     helm upgrade {{ .Release.Name }} llmsafespace/llmsafespace -n {{ .Release.Namespace }} --set webhooks.enabled=true
+{{- end }}
+
+{{- if eq .Values.rbac.scope "cluster" }}
+
+RBAC SCOPE: cluster
+===================
+
+The controller has cluster-wide permissions on llmsafespace.dev resources.
+{{- if .Values.controller.watchNamespaces }}
+However, watchNamespaces is set to: {{ .Values.controller.watchNamespaces }}
+The controller will only reconcile resources in those namespaces.
+{{- else }}
+The controller watches all namespaces. To narrow the scope, set
+controller.watchNamespaces and/or rbac.scope=namespace.
+{{- end }}
+{{- else }}
+
+RBAC SCOPE: namespace
+=====================
+
+The controller has Role-scoped permissions in {{ .Release.Namespace }} only.
+Resources in other namespaces will not be reconciled.
+{{- end }}

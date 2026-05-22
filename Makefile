@@ -9,7 +9,8 @@ BINARY_NAME=llmsafespace
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Build targets
-.PHONY: all build clean test cover lint fmt vet generate deepcopy
+.PHONY: all build clean test cover lint fmt vet generate deepcopy \
+        helm-lint helm-template helm-template-debug helm-install-dry-run helm-package
 
 all: test build
 
@@ -53,3 +54,27 @@ docker-build:
 
 docker-run:
 	docker run --rm -p 8080:8080 $(BINARY_NAME):latest
+
+# ---------------------------------------------------------------------------
+# Helm chart targets
+# ---------------------------------------------------------------------------
+HELM=helm
+CHART_DIR=charts/llmsafespace
+RELEASE_NAME?=llmsafespace
+RELEASE_NS?=llmsafespace
+
+helm-lint:
+	$(HELM) lint $(CHART_DIR)
+
+helm-template:
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS)
+
+helm-template-debug:
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) --debug
+
+# Renders against the live cluster's API server. Requires kubeconfig.
+helm-install-dry-run:
+	$(HELM) install $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) --create-namespace --dry-run
+
+helm-package:
+	$(HELM) package $(CHART_DIR) -d dist/

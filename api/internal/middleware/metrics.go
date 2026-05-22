@@ -67,9 +67,10 @@ func init() {
 // MetricsMiddleware returns a middleware that collects metrics
 func MetricsMiddleware(metricsService interfaces.MetricsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip metrics for certain paths
+		// Skip metrics for kubelet probe and observability paths.
+		// /health is retained as a legacy alias for /livez.
 		path := c.Request.URL.Path
-		if path == "/metrics" || path == "/health" {
+		if path == "/metrics" || path == "/health" || path == "/livez" || path == "/readyz" {
 			c.Next()
 			return
 		}

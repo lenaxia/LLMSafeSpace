@@ -1,0 +1,365 @@
+# Default values for llmsafespace.
+# This is a YAML-formatted file.
+
+# nameOverride / fullnameOverride follow standard Helm conventions.
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace where the platform's own components run.
+# Sandboxes are created in the same namespace by default; controller can be
+# configured to watch additional namespaces via .controller.watchNamespaces.
+namespace:
+  # If create: true, the chart will create the release namespace.
+  # If you install with --namespace and --create-namespace, set this to false.
+  create: false
+
+# ----------------------------------------------------------------------------
+# API service
+# ----------------------------------------------------------------------------
+api:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: llmsafespace/api
+    tag: ""  # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  # See api/config/config.yaml for the full schema. The chart renders a
+  # ConfigMap from these values; sensitive fields (passwords, JWT) come from
+  # the secret block below or an existing secret.
+  config:
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      shutdownTimeout: 30s
+    kubernetes:
+      configPath: ""
+      inCluster: true
+      # Defaults to the release namespace; override to deploy sandboxes
+      # into a different namespace.
+      namespace: ""
+      leaderElection:
+        enabled: true
+        leaseDuration: 15s
+        renewDeadline: 10s
+        retryPeriod: 2s
+    logging:
+      level: info
+      development: false
+      encoding: json
+    auth:
+      tokenDuration: 24h
+      apiKeyPrefix: "lsp_"
+    rateLimiting:
+      enabled: true
+      limits:
+        default:
+          requests: 1000
+          window: 1h
+        create_sandbox:
+          requests: 100
+          window: 1h
+        execute_code:
+          requests: 500
+          window: 1h
+
+  # Liveness / readiness probes hit /livez and /readyz.
+  # /livez always returns 200 if the process is responsive.
+  # /readyz pings Postgres and Redis; returns 503 if either is down.
+  # /health is preserved as a legacy alias for /livez.
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: llmsafespace.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ----------------------------------------------------------------------------
+# Controller
+# ----------------------------------------------------------------------------
+controller:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: llmsafespace/controller
+    tag: ""  # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  # Comma-separated list of namespaces the controller should watch.
+  # Wired to the controller's --watch-namespaces flag.
+  #   ""       (default) — watch all namespaces (cluster-wide)
+  #   "*"                — explicit form, equivalent to empty
+  #   "ns1"              — watch only ns1
+  #   "ns1,ns2"          — watch ns1 and ns2
+  #
+  # Combine with namespace-scoped RoleBindings (see rbac.scope below) for
+  # defense-in-depth: even if the controller is given cluster-wide RBAC,
+  # cache.DefaultNamespaces narrows what it actually reconciles.
+  watchNamespaces: ""
+
+  leaderElection:
+    enabled: true
+
+  metricsAddr: ":8080"
+  probeAddr: ":8081"
+  webhookPort: 9443
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# ----------------------------------------------------------------------------
+# CRDs
+# ----------------------------------------------------------------------------
+# CRDs are installed from the chart's crds/ directory by default.
+# Set install: false to manage CRDs out-of-band (recommended for production
+# upgrade safety, since Helm 3 does not upgrade CRDs in crds/).
+crds:
+  install: true
+  # If install is false, you MUST apply the CRDs from charts/llmsafespace/crds/
+  # before installing this chart.
+
+# ----------------------------------------------------------------------------
+# External dependencies
+# ----------------------------------------------------------------------------
+# Postgres and Redis must be provided externally. The chart does not bundle
+# either dependency. See charts/llmsafespace/README.md for examples of how
+# to install them separately (CloudNativePG, Spotahome Redis Operator, raw
+# manifests for kind, etc.).
+#
+# Connection details are passed via .api.config (host/port/db) and the
+# externalSecret reference below for credentials.
+externalSecret:
+  # If create: true, the chart creates a Secret with the credentials below.
+  # If false, the chart expects a Secret named .existingSecret to already
+  # exist with keys: postgres-password, redis-password, jwt-secret.
+  create: true
+  existingSecret: ""
+
+  # Used only when externalSecret.create is true.
+  # SECURITY: prefer --set or --values overrides over committing real values.
+  postgresPassword: "changeme"
+  redisPassword: ""
+  jwtSecret: ""  # if empty, a random 64-byte hex string is generated at install
+
+# Postgres connection (consumed by the API config).
+postgresql:
+  host: postgres
+  port: 5432
+  user: llmsafespace
+  database: llmsafespace
+  sslMode: disable
+  maxOpenConns: 25
+  maxIdleConns: 10
+  connMaxLifetime: 5m
+
+# Redis connection (consumed by the API config).
+redis:
+  host: redis-master
+  port: 6379
+  db: 0
+  poolSize: 20
+
+# ----------------------------------------------------------------------------
+# Database migrations
+# ----------------------------------------------------------------------------
+# Migrations are run as a Helm pre-install / pre-upgrade Job using the API
+# image (which carries /etc/llmsafespace/migrations).
+migrations:
+  enabled: true
+  image:
+    # Defaults to the API image. Override if you ship migrations in a separate
+    # image (e.g. a migrate-cli image).
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+# ----------------------------------------------------------------------------
+# Network policy (Section 9.7 of EVOLUTION-V2.md)
+# ----------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  # When enabled, restricts API and controller egress to:
+  #   - kube-apiserver
+  #   - postgres / redis (via .postgresql.host and .redis.host pod selectors)
+  #   - DNS
+  # Sandbox pod network policy is owned by the controller (Section 9.7) and
+  # is not part of this chart.
+
+# ----------------------------------------------------------------------------
+# Kyverno admission policies (Section 9.6 of EVOLUTION-V2.md)
+# ----------------------------------------------------------------------------
+# DEFERRED to V2.1 in EVOLUTION-V2.md, but US-5.4 acceptance criteria require
+# the chart to support them. Disabled by default; opt in by setting
+# enabled: true. Requires Kyverno to be installed in the cluster.
+kyverno:
+  enabled: false
+  # If enabled is false, the chart prints a warning in NOTES.txt that
+  # Kyverno-enforced sandbox pod security is not active.
+
+# ----------------------------------------------------------------------------
+# Service accounts
+# ----------------------------------------------------------------------------
+serviceAccount:
+  api:
+    create: true
+    annotations: {}
+    name: ""
+  controller:
+    create: true
+    annotations: {}
+    name: ""
+
+# ----------------------------------------------------------------------------
+# RBAC
+# ----------------------------------------------------------------------------
+rbac:
+  create: true
+  # scope controls how the controller's RBAC is granted:
+  #   "cluster"   (default)   ClusterRole + ClusterRoleBinding — controller
+  #                           can manage CRDs in any namespace.
+  #   "namespace"             Role + RoleBinding scoped to .Release.Namespace
+  #                           only. The controller will fail to reconcile
+  #                           resources in other namespaces. Use this with
+  #                           controller.watchNamespaces set to a single ns
+  #                           for tightest isolation.
+  scope: "cluster"
+  # If false, you must create the (Cluster)Role + (Cluster)RoleBinding
+  # out-of-band.
+
+# ----------------------------------------------------------------------------
+# Admission webhooks
+# ----------------------------------------------------------------------------
+# The controller registers ValidatingAdmissionWebhooks for Sandbox,
+# SandboxProfile, and RuntimeEnvironment resources. These provide
+# defense-in-depth: even if a user has direct kubectl access to create CRDs,
+# the webhook validates the object before persistence.
+#
+# REQUIREMENT: cert-manager must be installed in the cluster (the chart uses
+# cert-manager.io/v1 Certificate + Issuer to provision the webhook server's
+# TLS cert and inject the CA bundle into the ValidatingWebhookConfiguration).
+#
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
+#
+# If you do not have cert-manager and cannot install it, set webhooks.enabled
+# to false. The chart will not deploy the webhook configuration. Validation
+# still happens server-side in the API service (where users normally hit it),
+# but operators using kubectl directly will bypass validation.
+webhooks:
+  enabled: true
+  # cert-manager Issuer kind. "Issuer" is namespace-scoped (recommended);
+  # "ClusterIssuer" is cluster-scoped.
+  issuerKind: "Issuer"
+  # If empty, the chart creates a self-signed Issuer. If set, the chart uses
+  # an existing Issuer/ClusterIssuer and skips creating one.
+  existingIssuer: ""
+  # failurePolicy: "Fail" rejects requests if the webhook is unavailable
+  # (recommended for security); "Ignore" allows requests through.
+  failurePolicy: "Fail"
+  # timeoutSeconds for webhook calls. Max 30s.
+  timeoutSeconds: 10

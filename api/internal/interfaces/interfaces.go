@@ -48,6 +48,7 @@ type DatabaseService interface {
 	ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+	Ping(ctx context.Context) error
 	Start() error
 	Stop() error
 }
@@ -61,6 +62,7 @@ type CacheService interface {
 	GetSession(ctx context.Context, sessionID string) (*types.CachedSession, error)
 	SetSession(ctx context.Context, sessionID string, session types.CachedSession, expiration time.Duration) error
 	DeleteSession(ctx context.Context, sessionID string) error
+	Ping(ctx context.Context) error
 	Start() error
 	Stop() error
 }
