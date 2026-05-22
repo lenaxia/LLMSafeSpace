@@ -31,6 +31,8 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&SandboxProfileList{},
 		&RuntimeEnvironment{},
 		&RuntimeEnvironmentList{},
+		&Workspace{},
+		&WorkspaceList{},
 	)
 	return nil
 }
