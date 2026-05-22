@@ -166,6 +166,10 @@ func (in *SandboxStatus) DeepCopyInto(out *SandboxStatus) {
 		*out = new(ResourceStatus)
 		**out = **in
 	}
+	if in.LastActivityAt != nil {
+		in, out := &in.LastActivityAt, &out.LastActivityAt
+		*out = (*in).DeepCopy()
+	}
 }
 
 // DeepCopyInto copies all properties from this object into another object of the same type

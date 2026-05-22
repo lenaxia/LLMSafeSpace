@@ -30,26 +30,21 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	logger := log.FromContext(ctx).WithValues("sandbox", req.NamespacedName)
 	logger.Info("Reconciling Sandbox")
 
-	// Fetch the Sandbox instance
 	sandbox := &resources.Sandbox{}
 	err := r.Get(ctx, req.NamespacedName, sandbox)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Object not found, return
 			logger.Info("Sandbox resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		// Error reading the object
 		logger.Error(err, "Failed to get Sandbox")
 		return ctrl.Result{}, err
 	}
 
-	// Check if the sandbox is being deleted
 	if !sandbox.ObjectMeta.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, sandbox)
 	}
 
-	// Add finalizer if it doesn't exist
 	if common.AddFinalizer(sandbox, common.SandboxFinalizer) {
 		if err := r.Update(ctx, sandbox); err != nil {
 			logger.Error(err, "Failed to update Sandbox with finalizer")
@@ -57,7 +52,6 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Handle sandbox based on its phase
 	switch sandbox.Status.Phase {
 	case "", common.SandboxPhasePending:
 		return r.handlePendingSandbox(ctx, sandbox)
@@ -65,10 +59,13 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.handleCreatingSandbox(ctx, sandbox)
 	case common.SandboxPhaseRunning:
 		return r.handleRunningSandbox(ctx, sandbox)
+	case common.SandboxPhaseSuspending:
+		return r.handleSuspendingSandbox(ctx, sandbox)
+	case common.SandboxPhaseResuming:
+		return r.handleResumingSandbox(ctx, sandbox)
 	case common.SandboxPhaseTerminating:
 		return r.handleTerminatingSandbox(ctx, sandbox)
-	case common.SandboxPhaseTerminated, common.SandboxPhaseFailed:
-		// Nothing to do for terminated or failed sandboxes
+	case common.SandboxPhaseTerminated, common.SandboxPhaseFailed, common.SandboxPhaseSuspended:
 		return ctrl.Result{}, nil
 	default:
 		logger.Info("Unknown sandbox phase", "phase", sandbox.Status.Phase)
@@ -76,12 +73,10 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 }
 
-// handlePendingSandbox handles a sandbox in the Pending phase
 func (r *SandboxReconciler) handlePendingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling pending sandbox")
 
-	// Update the sandbox status to Creating
 	sandbox.Status.Phase = common.SandboxPhaseCreating
 	if err := r.Status().Update(ctx, sandbox); err != nil {
 		logger.Error(err, "Failed to update Sandbox status to Creating")
@@ -91,17 +86,14 @@ func (r *SandboxReconciler) handlePendingSandbox(ctx context.Context, sandbox *r
 	return r.createSandboxPod(ctx, sandbox)
 }
 
-// handleCreatingSandbox handles a sandbox in the Creating phase
 func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling creating sandbox")
 
-	// Check if the pod exists
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Pod doesn't exist, revert to pending
 			logger.Info("Pod not found, reverting to pending")
 			sandbox.Status.Phase = common.SandboxPhasePending
 			if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -110,21 +102,16 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 			}
 			return ctrl.Result{Requeue: true}, nil
 		}
-		// Error reading the pod
 		logger.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Check if the pod is running
 	if pod.Status.Phase == corev1.PodRunning {
-		// Update the sandbox status to Running
 		sandbox.Status.Phase = common.SandboxPhaseRunning
 		sandbox.Status.StartTime = &metav1.Time{Time: time.Now()}
-
-		// Set the endpoint
+		sandbox.Status.PodIP = pod.Status.PodIP
 		sandbox.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", pod.Name, pod.Namespace)
 
-		// Update conditions
 		conditions := []resources.SandboxCondition{}
 		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "True", common.ReasonPodRunning, "Pod is running")
 		common.SetSandboxCondition(&conditions, common.ConditionReady, "True", common.ReasonPodRunning, "Sandbox is ready")
@@ -139,26 +126,21 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 		return ctrl.Result{}, nil
 	}
 
-	// Pod is not running yet, requeue
 	logger.Info("Pod is not running yet", "podPhase", pod.Status.Phase)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-// handleRunningSandbox handles a sandbox in the Running phase
 func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling running sandbox")
 
-	// Check if the pod exists
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Pod doesn't exist, mark as failed
 			logger.Info("Pod not found, marking sandbox as failed")
 			sandbox.Status.Phase = common.SandboxPhaseFailed
 
-			// Update conditions
 			conditions := sandbox.Status.Conditions
 			common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, "Pod not found")
 			common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
@@ -170,18 +152,14 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 			}
 			return ctrl.Result{}, nil
 		}
-		// Error reading the pod
 		logger.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Check if the pod is still running
 	if pod.Status.Phase != corev1.PodRunning {
-		// Pod is not running, mark as failed
 		logger.Info("Pod is not running", "podPhase", pod.Status.Phase)
 		sandbox.Status.Phase = common.SandboxPhaseFailed
 
-		// Update conditions
 		conditions := sandbox.Status.Conditions
 		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, fmt.Sprintf("Pod is %s", pod.Status.Phase))
 		common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
@@ -194,11 +172,9 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 		return ctrl.Result{}, nil
 	}
 
-	// Check if the sandbox has exceeded its timeout
 	if sandbox.Spec.Timeout > 0 && sandbox.Status.StartTime != nil {
 		timeout := time.Duration(sandbox.Spec.Timeout) * time.Second
 		if time.Since(sandbox.Status.StartTime.Time) > timeout {
-			// Sandbox has exceeded its timeout, terminate it
 			logger.Info("Sandbox has exceeded its timeout, terminating")
 			sandbox.Status.Phase = common.SandboxPhaseTerminating
 			if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -209,37 +185,67 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 		}
 	}
 
-	// Update resource usage
 	if pod.Status.Phase == corev1.PodRunning {
-		// In a real implementation, we would get resource usage from metrics server
-		// For now, we'll just set placeholder values
-		if sandbox.Status.Resources == nil {
-			sandbox.Status.Resources = &resources.ResourceStatus{}
-		}
-		sandbox.Status.Resources.CPUUsage = "100m"
-		sandbox.Status.Resources.MemoryUsage = "256Mi"
-
 		if err := r.Status().Update(ctx, sandbox); err != nil {
 			logger.Error(err, "Failed to update Sandbox resource usage")
 			return ctrl.Result{}, err
 		}
 	}
 
-	// Requeue to periodically check the sandbox
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-// handleTerminatingSandbox handles a sandbox in the Terminating phase
+func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
+	logger.Info("Handling suspending sandbox")
+
+	if sandbox.Status.PodName != "" {
+		pod := &corev1.Pod{}
+		err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
+		if err == nil {
+			logger.Info("Deleting pod for suspension", "pod", pod.Name)
+			if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete Pod")
+				return ctrl.Result{}, err
+			}
+		} else if !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to get Pod")
+			return ctrl.Result{}, err
+		}
+	}
+
+	sandbox.Status.Phase = common.SandboxPhaseSuspended
+	sandbox.Status.PodIP = ""
+	sandbox.Status.PodName = ""
+	sandbox.Status.PodNamespace = ""
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to update Sandbox status to Suspended")
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *SandboxReconciler) handleResumingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
+	logger.Info("Handling resuming sandbox")
+
+	sandbox.Status.Phase = common.SandboxPhaseCreating
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to update Sandbox status to Creating")
+		return ctrl.Result{}, err
+	}
+
+	return r.createSandboxPod(ctx, sandbox)
+}
+
 func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling terminating sandbox")
 
-	// Check if the pod exists
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Pod doesn't exist, mark as terminated
 			logger.Info("Pod not found, marking sandbox as terminated")
 			sandbox.Status.Phase = common.SandboxPhaseTerminated
 			if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -248,12 +254,10 @@ func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbo
 			}
 			return ctrl.Result{}, nil
 		}
-		// Error reading the pod
 		logger.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Delete the pod
 	logger.Info("Deleting pod", "pod", pod.Name)
 	if err := r.Delete(ctx, pod); err != nil {
 		if !errors.IsNotFound(err) {
@@ -262,11 +266,9 @@ func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbo
 		}
 	}
 
-	// Check if the pod has been deleted
 	err = r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Pod has been deleted, mark as terminated
 			logger.Info("Pod deleted, marking sandbox as terminated")
 			sandbox.Status.Phase = common.SandboxPhaseTerminated
 			if err := r.Status().Update(ctx, sandbox); err != nil {
@@ -275,24 +277,19 @@ func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbo
 			}
 			return ctrl.Result{}, nil
 		}
-		// Error reading the pod
 		logger.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Pod is still being deleted, requeue
 	logger.Info("Pod is still being deleted")
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-// handleDeletion handles the deletion of a sandbox
 func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling sandbox deletion")
 
-	// Check if the finalizer exists
 	if controllerutil.ContainsFinalizer(sandbox, common.SandboxFinalizer) {
-		// Update the sandbox status to Terminating if it's not already
 		if sandbox.Status.Phase != common.SandboxPhaseTerminating &&
 			sandbox.Status.Phase != common.SandboxPhaseTerminated &&
 			sandbox.Status.Phase != common.SandboxPhaseFailed {
@@ -304,12 +301,10 @@ func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resourc
 			return ctrl.Result{Requeue: true}, nil
 		}
 
-		// Check if the pod exists
 		if sandbox.Status.PodName != "" {
 			pod := &corev1.Pod{}
 			err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 			if err == nil {
-				// Pod exists, delete it
 				logger.Info("Deleting pod", "pod", pod.Name)
 				if err := r.Delete(ctx, pod); err != nil {
 					if !errors.IsNotFound(err) {
@@ -317,10 +312,8 @@ func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resourc
 						return ctrl.Result{}, err
 					}
 				}
-				// Requeue to check if the pod has been deleted
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			} else if !errors.IsNotFound(err) {
-				// Error reading the pod
 				logger.Error(err, "Failed to get Pod")
 				return ctrl.Result{}, err
 			}
@@ -333,7 +326,6 @@ func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resourc
 		}
 	}
 
-	// Sandbox is being deleted, no need to requeue
 	logger.Info("Sandbox deletion handled successfully")
 	return ctrl.Result{}, nil
 }
@@ -342,26 +334,30 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Creating new pod for sandbox")
 
-	// Create a new pod for the sandbox
-	pod := r.buildSandboxPod(sandbox)
+	if err := r.ensurePasswordSecret(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to ensure password secret")
+		return ctrl.Result{}, err
+	}
 
-	// Set the owner reference
+	pod, err := r.buildSandboxPodWithContext(ctx, sandbox)
+	if err != nil {
+		logger.Error(err, "Failed to build sandbox pod")
+		return ctrl.Result{}, err
+	}
+
 	if err := controllerutil.SetControllerReference(sandbox, pod, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Create the pod
 	if err := r.Create(ctx, pod); err != nil {
 		logger.Error(err, "Failed to create Pod")
 		return ctrl.Result{}, err
 	}
 
-	// Update the sandbox status
 	sandbox.Status.PodName = pod.Name
 	sandbox.Status.PodNamespace = pod.Namespace
 
-	// Update conditions
 	conditions := []resources.SandboxCondition{}
 	common.SetSandboxCondition(&conditions, common.ConditionPodCreated, "True", common.ReasonPodCreated, "Pod created successfully")
 	sandbox.Status.Conditions = conditions
@@ -371,16 +367,41 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 		return ctrl.Result{}, err
 	}
 
-	// Requeue to check if the pod is running
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-// buildSandboxPod builds a pod for a sandbox
-func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.Pod {
-	// Create a unique name for the pod
+// ensurePasswordSecret creates the sandbox password secret if it does not exist.
+func (r *SandboxReconciler) ensurePasswordSecret(ctx context.Context, sandbox *resources.Sandbox) error {
+	secretName := fmt.Sprintf("sandbox-pw-%s", sandbox.Name)
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: sandbox.Namespace}, secret)
+	if err == nil {
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return err
+	}
+
+	password := common.GenerateRandomString(32)
+	newSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: sandbox.Namespace,
+		},
+		Data: map[string][]byte{
+			"password": []byte(password),
+		},
+	}
+	if err := controllerutil.SetControllerReference(sandbox, newSecret, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set owner reference on password secret: %w", err)
+	}
+	return r.Create(ctx, newSecret)
+}
+
+// buildSandboxPodWithContext builds a sandbox pod, looking up workspace details if needed.
+func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sandbox *resources.Sandbox) (*corev1.Pod, error) {
 	podName := fmt.Sprintf("%s-%s", sandbox.Name, sandbox.UID[0:8])
 
-	// Define labels and annotations
 	labels := map[string]string{
 		common.LabelApp:       "llmsafespace",
 		common.LabelComponent: common.ComponentSandbox,
@@ -393,7 +414,76 @@ func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.
 		common.AnnotationSandboxID: sandbox.Name,
 	}
 
-	// Define the pod
+	runtimeImage := sandbox.Spec.Runtime
+
+	trueVal := true
+	falseVal := false
+
+	mainContainer := corev1.Container{
+		Name:    "sandbox",
+		Image:   runtimeImage,
+		Command: []string{"/usr/local/bin/entrypoint-opencode.sh"},
+		Ports: []corev1.ContainerPort{
+			{ContainerPort: 4096, Name: "opencode", Protocol: corev1.ProtocolTCP},
+		},
+		Env: []corev1.EnvVar{
+			{Name: "SANDBOX_ID", Value: sandbox.Name},
+			{Name: "WORKSPACE_DIR", Value: "/workspace"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &trueVal,
+			RunAsNonRoot:             &trueVal,
+			AllowPrivilegeEscalation: &falseVal,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
+			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "sandbox-home", MountPath: "/home/sandbox"},
+		},
+	}
+
+	volumes := []corev1.Volume{
+		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "sandbox-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+
+	var initContainers []corev1.Container
+
+	if sandbox.Spec.WorkspaceRef != "" {
+		ws := &resources.Workspace{}
+		if err := r.Get(ctx, client.ObjectKey{Name: sandbox.Spec.WorkspaceRef, Namespace: sandbox.Namespace}, ws); err != nil {
+			return nil, fmt.Errorf("failed to get workspace %s: %w", sandbox.Spec.WorkspaceRef, err)
+		}
+
+		volumes = append(volumes, corev1.Volume{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: ws.Status.PVCName,
+				},
+			},
+		})
+		mainContainer.VolumeMounts = append(mainContainer.VolumeMounts,
+			corev1.VolumeMount{Name: "workspace", MountPath: "/workspace"})
+
+		if len(ws.Spec.Packages) > 0 || ws.Spec.InitScript != "" {
+			setupInit := r.buildWorkspaceSetupInit(ws, runtimeImage)
+			initContainers = append(initContainers, setupInit)
+		}
+	}
+
+	credInit, pwVolume, credVolume, err := r.buildCredentialSetupInit(ctx, sandbox, runtimeImage)
+	if err != nil {
+		return nil, err
+	}
+	initContainers = append(initContainers, credInit)
+	volumes = append(volumes, pwVolume)
+	if credVolume != nil {
+		volumes = append(volumes, *credVolume)
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        podName,
@@ -402,42 +492,135 @@ func (r *SandboxReconciler) buildSandboxPod(sandbox *resources.Sandbox) *corev1.
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "sandbox",
-					Image: sandbox.Spec.Runtime,
-					// Add more container configuration based on sandbox spec
-				},
-			},
-			// Add more pod configuration based on sandbox spec
+			InitContainers: initContainers,
+			Containers:     []corev1.Container{mainContainer},
+			Volumes:        volumes,
 		},
 	}
 
-	// Configure resources if specified
-	if sandbox.Spec.Resources != nil {
-		pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{
-			// Configure resource limits and requests
+	return pod, nil
+}
+
+// buildCredentialSetupInit builds the credential-setup init container and the
+// pw-secret projected volume it needs. Returns the container, the pw-secret volume,
+// and an optional cred-secret volume (non-nil only when workspace credentials exist).
+func (r *SandboxReconciler) buildCredentialSetupInit(ctx context.Context, sandbox *resources.Sandbox, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
+	credScript := `
+if [ -f /mnt/secrets/credentials/provider-config ]; then
+  cp /mnt/secrets/credentials/provider-config /sandbox-cfg/credentials
+else
+  echo '{}' > /sandbox-cfg/credentials
+fi
+cp /mnt/secrets/password/password /sandbox-cfg/password
+`
+
+	pwSecretName := fmt.Sprintf("sandbox-pw-%s", sandbox.Name)
+
+	pwVolume := corev1.Volume{
+		Name: "pw-secret",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: pwSecretName,
+			},
+		},
+	}
+
+	credInitMounts := []corev1.VolumeMount{
+		{Name: "sandbox-cfg", MountPath: "/sandbox-cfg"},
+		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
+	}
+
+	var credVolume *corev1.Volume
+
+	if sandbox.Spec.WorkspaceRef != "" {
+		credsSecretName := fmt.Sprintf("workspace-creds-%s", sandbox.Spec.WorkspaceRef)
+		credSecret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: credsSecretName, Namespace: sandbox.Namespace}, credSecret)
+		if err == nil {
+			v := corev1.Volume{
+				Name: "cred-secret",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: credsSecretName,
+					},
+				},
+			}
+			credVolume = &v
+			credInitMounts = append(credInitMounts, corev1.VolumeMount{
+				Name:      "cred-secret",
+				MountPath: "/mnt/secrets/credentials",
+				ReadOnly:  true,
+			})
+		} else if !errors.IsNotFound(err) {
+			return corev1.Container{}, corev1.Volume{}, nil, fmt.Errorf("failed to check credentials secret: %w", err)
 		}
 	}
 
-	// Configure security context if specified
-	if sandbox.Spec.SecurityContext != nil {
-		pod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
-			// Configure security context
+	trueVal := true
+	falseVal := false
+
+	credInit := corev1.Container{
+		Name:    "credential-setup",
+		Image:   runtimeImage,
+		Command: []string{"/bin/sh", "-c", credScript},
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &trueVal,
+			RunAsNonRoot:             &trueVal,
+			AllowPrivilegeEscalation: &falseVal,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: credInitMounts,
+	}
+
+	return credInit, pwVolume, credVolume, nil
+}
+
+// buildWorkspaceSetupInit builds the workspace-setup init container that installs
+// packages and/or runs the initScript before the main container starts.
+func (r *SandboxReconciler) buildWorkspaceSetupInit(ws *resources.Workspace, runtimeImage string) corev1.Container {
+	trueVal := true
+	falseVal := false
+
+	return corev1.Container{
+		Name:    "workspace-setup",
+		Image:   runtimeImage,
+		Command: []string{"/bin/sh", "-c", buildWorkspaceSetupScript(ws)},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/workspace"},
+			{Name: "tmp", MountPath: "/tmp"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &trueVal,
+			RunAsNonRoot:             &trueVal,
+			AllowPrivilegeEscalation: &falseVal,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
+// buildWorkspaceSetupScript constructs the shell script for the workspace-setup init container.
+func buildWorkspaceSetupScript(ws *resources.Workspace) string {
+	script := "#!/bin/sh\nset -e\nmkdir -p /workspace/packages\n"
+
+	for _, pkgSet := range ws.Spec.Packages {
+		if len(pkgSet.Requirements) > 0 {
+			args := ""
+			for _, req := range pkgSet.Requirements {
+				args += " " + req
+			}
+			script += "pip install --target=/workspace/packages" + args + "\n"
 		}
 	}
 
-	// Configure filesystem if specified
-	if sandbox.Spec.Filesystem != nil {
-		// Configure volumes and volume mounts
+	if ws.Spec.InitScript != "" {
+		script += "cat > /tmp/init-script.sh << 'INITSCRIPT'\n"
+		script += ws.Spec.InitScript + "\n"
+		script += "INITSCRIPT\n"
+		script += "chmod +x /tmp/init-script.sh\n"
+		script += "/tmp/init-script.sh\n"
 	}
 
-	// Configure network if specified
-	if sandbox.Spec.NetworkAccess != nil {
-		// Configure network policies
-	}
-
-	return pod
+	return script
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -445,5 +628,6 @@ func (r *SandboxReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&resources.Sandbox{}).
 		Owns(&corev1.Pod{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }

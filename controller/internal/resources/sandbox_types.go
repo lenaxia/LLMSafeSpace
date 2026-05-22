@@ -37,6 +37,9 @@ type SandboxSpec struct {
 
 	// Reference to a SandboxProfile
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
+
+	// WorkspaceRef is the name of the Workspace this sandbox is attached to.
+	WorkspaceRef string `json:"workspaceRef,omitempty"`
 }
 
 // ResourceRequirements defines compute resource requirements
@@ -172,6 +175,13 @@ type SandboxStatus struct {
 
 	// Resource usage information
 	Resources *ResourceStatus `json:"resources,omitempty"`
+
+	// PodIP is the IP address of the running sandbox pod.
+	PodIP string `json:"podIP,omitempty"`
+
+	// LastActivityAt is the timestamp of the most recent API activity.
+	// Updated by the API server (not the controller).
+	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
 }
 
 // SandboxCondition defines a condition of the sandbox
