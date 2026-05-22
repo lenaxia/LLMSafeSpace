@@ -5,6 +5,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/sandbox"
+	"github.com/lenaxia/llmsafespace/controller/internal/workspace"
 )
 
 func SetupControllers(mgr ctrl.Manager) error {
@@ -16,6 +17,14 @@ func SetupControllers(mgr ctrl.Manager) error {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Sandbox controller")
+		return err
+	}
+
+	if err := (&workspace.WorkspaceReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "unable to create Workspace controller")
 		return err
 	}
 

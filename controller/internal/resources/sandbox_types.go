@@ -8,33 +8,33 @@ import (
 type SandboxSpec struct {
 	// Runtime environment (e.g., python:3.10)
 	Runtime string `json:"runtime"`
-	
+
 	// Security level for the sandbox
 	// +kubebuilder:validation:Enum=standard;high;custom
 	// +kubebuilder:default=standard
 	SecurityLevel string `json:"securityLevel,omitempty"`
-	
+
 	// Timeout in seconds for sandbox operations
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=3600
 	// +kubebuilder:default=300
 	Timeout int `json:"timeout,omitempty"`
-	
+
 	// Resource limits for the sandbox
 	Resources *ResourceRequirements `json:"resources,omitempty"`
-	
+
 	// Network access configuration
 	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-	
+
 	// Filesystem configuration
 	Filesystem *FilesystemConfig `json:"filesystem,omitempty"`
-	
+
 	// Storage configuration
 	Storage *StorageConfig `json:"storage,omitempty"`
-	
+
 	// Security context configuration
 	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
-	
+
 	// Reference to a SandboxProfile
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 }
@@ -45,17 +45,17 @@ type ResourceRequirements struct {
 	// +kubebuilder:validation:Pattern=^([0-9]+m|[0-9]+\.[0-9]+)$
 	// +kubebuilder:default="500m"
 	CPU string `json:"cpu,omitempty"`
-	
+
 	// Memory resource limit
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
 	// +kubebuilder:default="512Mi"
 	Memory string `json:"memory,omitempty"`
-	
+
 	// Ephemeral storage limit
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
 	// +kubebuilder:default="1Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
-	
+
 	// Enable CPU pinning for sensitive workloads
 	CPUPinning bool `json:"cpuPinning,omitempty"`
 }
@@ -64,7 +64,7 @@ type ResourceRequirements struct {
 type NetworkAccess struct {
 	// Egress rules
 	Egress []EgressRule `json:"egress,omitempty"`
-	
+
 	// Allow ingress traffic to sandbox
 	// +kubebuilder:default=false
 	Ingress bool `json:"ingress,omitempty"`
@@ -74,7 +74,7 @@ type NetworkAccess struct {
 type EgressRule struct {
 	// Domain name for egress filtering
 	Domain string `json:"domain"`
-	
+
 	// Ports allowed for this domain
 	Ports []PortRule `json:"ports,omitempty"`
 }
@@ -85,7 +85,7 @@ type PortRule struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int `json:"port"`
-	
+
 	// Protocol (TCP or UDP)
 	// +kubebuilder:validation:Enum=TCP;UDP
 	// +kubebuilder:default="TCP"
@@ -97,7 +97,7 @@ type FilesystemConfig struct {
 	// Mount root filesystem as read-only
 	// +kubebuilder:default=true
 	ReadOnlyRoot bool `json:"readOnlyRoot,omitempty"`
-	
+
 	// Paths that should be writable
 	// +kubebuilder:default={"/tmp","/workspace"}
 	WritablePaths []string `json:"writablePaths,omitempty"`
@@ -108,7 +108,7 @@ type StorageConfig struct {
 	// Enable persistent storage
 	// +kubebuilder:default=false
 	Persistent bool `json:"persistent,omitempty"`
-	
+
 	// Size of persistent volume
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
 	// +kubebuilder:default="5Gi"
@@ -120,11 +120,11 @@ type SecurityContext struct {
 	// User ID to run container processes
 	// +kubebuilder:default=1000
 	RunAsUser int64 `json:"runAsUser,omitempty"`
-	
+
 	// Group ID to run container processes
 	// +kubebuilder:default=1000
 	RunAsGroup int64 `json:"runAsGroup,omitempty"`
-	
+
 	// Seccomp profile configuration
 	SeccompProfile *SeccompProfile `json:"seccompProfile,omitempty"`
 }
@@ -135,7 +135,7 @@ type SeccompProfile struct {
 	// +kubebuilder:validation:Enum=RuntimeDefault;Localhost
 	// +kubebuilder:default="RuntimeDefault"
 	Type string `json:"type"`
-	
+
 	// Path to seccomp profile on node
 	LocalhostProfile string `json:"localhostProfile,omitempty"`
 }
@@ -144,7 +144,7 @@ type SeccompProfile struct {
 type ProfileReference struct {
 	// Name of SandboxProfile to use
 	Name string `json:"name"`
-	
+
 	// Namespace of SandboxProfile
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -152,24 +152,24 @@ type ProfileReference struct {
 // SandboxStatus defines the observed state of a Sandbox
 type SandboxStatus struct {
 	// Current phase of the sandbox
-	// +kubebuilder:validation:Enum=Pending;Creating;Running;Terminating;Terminated;Failed
+	// +kubebuilder:validation:Enum=Pending;Creating;Running;Suspending;Suspended;Resuming;Terminating;Terminated;Failed
 	Phase string `json:"phase,omitempty"`
-	
+
 	// Conditions for the sandbox
 	Conditions []SandboxCondition `json:"conditions,omitempty"`
-	
+
 	// Name of the pod running the sandbox
 	PodName string `json:"podName,omitempty"`
-	
+
 	// Namespace of the pod running the sandbox
 	PodNamespace string `json:"podNamespace,omitempty"`
-	
+
 	// Time when the sandbox was started
 	StartTime *metav1.Time `json:"startTime,omitempty"`
-	
+
 	// Internal endpoint for the sandbox
 	Endpoint string `json:"endpoint,omitempty"`
-	
+
 	// Resource usage information
 	Resources *ResourceStatus `json:"resources,omitempty"`
 }
@@ -178,17 +178,17 @@ type SandboxStatus struct {
 type SandboxCondition struct {
 	// Type of condition
 	Type string `json:"type"`
-	
+
 	// Status of the condition (True, False, Unknown)
 	// +kubebuilder:validation:Enum=True;False;Unknown
 	Status string `json:"status"`
-	
+
 	// Reason for the condition
 	Reason string `json:"reason,omitempty"`
-	
+
 	// Message explaining the condition
 	Message string `json:"message,omitempty"`
-	
+
 	// Last time the condition transitioned
 	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
 }
@@ -197,7 +197,7 @@ type SandboxCondition struct {
 type ResourceStatus struct {
 	// Current CPU usage
 	CPUUsage string `json:"cpuUsage,omitempty"`
-	
+
 	// Current memory usage
 	MemoryUsage string `json:"memoryUsage,omitempty"`
 }
