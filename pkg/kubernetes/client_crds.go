@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -14,26 +15,17 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-import (
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
-)
-
-// Initialize CRD scheme
 func init() {
 	schemeBuilder := runtime.NewSchemeBuilder(
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
 				schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"},
-				&types.Sandbox{},
-				&types.SandboxList{},
-				&types.WarmPool{},
-				&types.WarmPoolList{},
-				&types.WarmPod{},
-				&types.WarmPodList{},
-				&types.RuntimeEnvironment{},
-				&types.RuntimeEnvironmentList{},
-				&types.SandboxProfile{},
-				&types.SandboxProfileList{},
+				&v1.Sandbox{},
+				&v1.SandboxList{},
+				&v1.RuntimeEnvironment{},
+				&v1.RuntimeEnvironmentList{},
+				&v1.SandboxProfile{},
+				&v1.SandboxProfileList{},
 			)
 			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
 			return nil
@@ -44,20 +36,17 @@ func init() {
 	}
 }
 
-// LLMSafespaceV1Client implements the LLMSafespaceV1Interface
 type LLMSafespaceV1Client struct {
 	restClient rest.Interface
 	client     interfaces.LLMSafespaceV1Interface
 }
 
-// NewLLMSafespaceV1Client creates a new LLMSafespaceV1Client for testing
 func NewLLMSafespaceV1Client(restClient rest.Interface) *LLMSafespaceV1Client {
 	return &LLMSafespaceV1Client{
 		restClient: restClient,
 	}
 }
 
-// WithMockClient enables injecting a mock client for testing
 func (c *LLMSafespaceV1Client) WithMockClient(mock interfaces.LLMSafespaceV1Interface) *LLMSafespaceV1Client {
 	c.client = mock
 	return c
@@ -65,29 +54,6 @@ func (c *LLMSafespaceV1Client) WithMockClient(mock interfaces.LLMSafespaceV1Inte
 
 var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
-// SandboxesGetter defines the interface for getting Sandboxes
-type SandboxesGetter interface {
-	Sandboxes(namespace string) SandboxInterface
-}
-
-// SandboxInterface defines the interface for Sandbox operations
-type SandboxInterface interface {
-	Create(*types.Sandbox) (*types.Sandbox, error)
-	Update(*types.Sandbox) (*types.Sandbox, error)
-	UpdateStatus(*types.Sandbox) (*types.Sandbox, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*types.Sandbox, error)
-	List(opts metav1.ListOptions) (*types.SandboxList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-// sandboxes implements SandboxInterface
-type sandboxes struct {
-	client rest.Interface
-	ns     string
-}
-
-// newLLMSafespaceV1Client creates a new client for the llmsafespace.dev/v1 API group
 func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	config := *c
 	config.ContentConfig.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
@@ -103,462 +69,25 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	return &LLMSafespaceV1Client{restClient: client}, nil
 }
 
-// Sandboxes returns an interfaces.SandboxInterface for the given namespace
 func (c *LLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
-	return &sandboxes{
-		client: c.restClient,
-		ns:     namespace,
-	}
+	return &sandboxes{client: c.restClient, ns: namespace}
 }
 
-// WarmPoolsGetter defines the interface for getting WarmPools
-type WarmPoolsGetter interface {
-	WarmPools(namespace string) WarmPoolInterface
-}
-
-// WarmPoolInterface defines the interface for WarmPool operations
-type WarmPoolInterface interface {
-	Create(*types.WarmPool) (*types.WarmPool, error)
-	Update(*types.WarmPool) (*types.WarmPool, error)
-	UpdateStatus(*types.WarmPool) (*types.WarmPool, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*types.WarmPool, error)
-	List(opts metav1.ListOptions) (*types.WarmPoolList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-// warmPools implements WarmPoolInterface
-type warmPools struct {
-	client rest.Interface
-	ns     string
-}
-
-// WarmPools returns an interfaces.WarmPoolInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPools(namespace string) interfaces.WarmPoolInterface {
-	return &warmPools{
-		client: c.restClient,
-		ns:     namespace,
-	}
-}
-
-// Create creates a new WarmPool
-func (w *warmPools) Create(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	result := &types.WarmPool{}
-	err := w.client.Post().
-		Namespace(w.ns).
-		Resource("warmpools").
-		Body(warmPool).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Update updates an existing WarmPool
-func (w *warmPools) Update(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	result := &types.WarmPool{}
-	err := w.client.Put().
-		Namespace(w.ns).
-		Resource("warmpools").
-		Name(warmPool.Name).
-		Body(warmPool).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// UpdateStatus updates the status of an existing WarmPool
-func (w *warmPools) UpdateStatus(warmPool *types.WarmPool) (*types.WarmPool, error) {
-	result := &types.WarmPool{}
-	err := w.client.Put().
-		Namespace(w.ns).
-		Resource("warmpools").
-		Name(warmPool.Name).
-		SubResource("status").
-		Body(warmPool).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Delete deletes a WarmPool
-func (w *warmPools) Delete(name string, options metav1.DeleteOptions) error {
-	return w.client.Delete().
-		Namespace(w.ns).
-		Resource("warmpools").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-// Get retrieves a WarmPool
-func (w *warmPools) Get(name string, options metav1.GetOptions) (*types.WarmPool, error) {
-	result := &types.WarmPool{}
-	err := w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpools").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// List lists all WarmPools in the namespace
-func (w *warmPools) List(opts metav1.ListOptions) (*types.WarmPoolList, error) {
-	result := &types.WarmPoolList{}
-	err := w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpools").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Watch returns a watch.Interface that watches the requested warmpools
-func (w *warmPools) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpools").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
-}
-
-// WarmPodsGetter defines the interface for getting WarmPods
-type WarmPodsGetter interface {
-	WarmPods(namespace string) WarmPodInterface
-}
-
-// WarmPodInterface defines the interface for WarmPod operations
-type WarmPodInterface interface {
-	Create(*types.WarmPod) (*types.WarmPod, error)
-	Update(*types.WarmPod) (*types.WarmPod, error)
-	UpdateStatus(*types.WarmPod) (*types.WarmPod, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*types.WarmPod, error)
-	List(opts metav1.ListOptions) (*types.WarmPodList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-// warmPods implements WarmPodInterface
-type warmPods struct {
-	client rest.Interface
-	ns     string
-}
-
-// WarmPods returns an interfaces.WarmPodInterface for the given namespace
-func (c *LLMSafespaceV1Client) WarmPods(namespace string) interfaces.WarmPodInterface {
-	return &warmPods{
-		client: c.restClient,
-		ns:     namespace,
-	}
-}
-
-// Create creates a new WarmPod
-func (w *warmPods) Create(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	result := &types.WarmPod{}
-	err := w.client.Post().
-		Namespace(w.ns).
-		Resource("warmpods").
-		Body(warmPod).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Update updates an existing WarmPod
-func (w *warmPods) Update(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	result := &types.WarmPod{}
-	err := w.client.Put().
-		Namespace(w.ns).
-		Resource("warmpods").
-		Name(warmPod.Name).
-		Body(warmPod).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// UpdateStatus updates the status of an existing WarmPod
-func (w *warmPods) UpdateStatus(warmPod *types.WarmPod) (*types.WarmPod, error) {
-	result := &types.WarmPod{}
-	err := w.client.Put().
-		Namespace(w.ns).
-		Resource("warmpods").
-		Name(warmPod.Name).
-		SubResource("status").
-		Body(warmPod).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Delete deletes a WarmPod
-func (w *warmPods) Delete(name string, options metav1.DeleteOptions) error {
-	return w.client.Delete().
-		Namespace(w.ns).
-		Resource("warmpods").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-// Get retrieves a WarmPod
-func (w *warmPods) Get(name string, options metav1.GetOptions) (*types.WarmPod, error) {
-	result := &types.WarmPod{}
-	err := w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpods").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// List lists all WarmPods in the namespace
-func (w *warmPods) List(opts metav1.ListOptions) (*types.WarmPodList, error) {
-	result := &types.WarmPodList{}
-	err := w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpods").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Watch returns a watch.Interface that watches the requested warmpods
-func (w *warmPods) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return w.client.Get().
-		Namespace(w.ns).
-		Resource("warmpods").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
-}
-
-// RuntimeEnvironmentsGetter defines the interface for getting RuntimeEnvironments
-type RuntimeEnvironmentsGetter interface {
-	RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface
-}
-
-// RuntimeEnvironmentInterface defines the interface for RuntimeEnvironment operations
-type RuntimeEnvironmentInterface interface {
-	Create(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
-	Update(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
-	UpdateStatus(*types.RuntimeEnvironment) (*types.RuntimeEnvironment, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error)
-	List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-// runtimeEnvironments implements RuntimeEnvironmentInterface
-type runtimeEnvironments struct {
-	client rest.Interface
-	ns     string
-}
-
-// RuntimeEnvironments returns a RuntimeEnvironmentInterface for the given namespace
 func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
-	return &runtimeEnvironments{
-		client: c.restClient,
-		ns:     namespace,
-	}
+	return &runtimeEnvironments{client: c.restClient, ns: namespace}
 }
 
-// Create creates a new RuntimeEnvironment
-func (r *runtimeEnvironments) Create(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	result := &types.RuntimeEnvironment{}
-	err := r.client.Post().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		Body(runtimeEnv).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
+func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
+	return &sandboxProfiles{client: c.restClient, ns: namespace}
 }
 
-// Update updates an existing RuntimeEnvironment
-func (r *runtimeEnvironments) Update(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	result := &types.RuntimeEnvironment{}
-	err := r.client.Put().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		Name(runtimeEnv.Name).
-		Body(runtimeEnv).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// UpdateStatus updates the status of an existing RuntimeEnvironment
-func (r *runtimeEnvironments) UpdateStatus(runtimeEnv *types.RuntimeEnvironment) (*types.RuntimeEnvironment, error) {
-	result := &types.RuntimeEnvironment{}
-	err := r.client.Put().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		Name(runtimeEnv.Name).
-		SubResource("status").
-		Body(runtimeEnv).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Delete deletes a RuntimeEnvironment
-func (r *runtimeEnvironments) Delete(name string, options metav1.DeleteOptions) error {
-	return r.client.Delete().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-// Get retrieves a RuntimeEnvironment
-func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*types.RuntimeEnvironment, error) {
-	result := &types.RuntimeEnvironment{}
-	err := r.client.Get().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// List lists all RuntimeEnvironments in the namespace
-func (r *runtimeEnvironments) List(opts metav1.ListOptions) (*types.RuntimeEnvironmentList, error) {
-	result := &types.RuntimeEnvironmentList{}
-	err := r.client.Get().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Watch returns a watch.Interface that watches the requested runtimeenvironments
-func (r *runtimeEnvironments) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return r.client.Get().
-		Namespace(r.ns).
-		Resource("runtimeenvironments").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
-}
-
-// SandboxProfilesGetter defines the interface for getting SandboxProfiles
-type SandboxProfilesGetter interface {
-	SandboxProfiles(namespace string) SandboxProfileInterface
-}
-
-// SandboxProfileInterface defines the interface for SandboxProfile operations
-type SandboxProfileInterface interface {
-	Create(*types.SandboxProfile) (*types.SandboxProfile, error)
-	Update(*types.SandboxProfile) (*types.SandboxProfile, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error)
-	List(opts metav1.ListOptions) (*types.SandboxProfileList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-// sandboxProfiles implements SandboxProfileInterface
-type sandboxProfiles struct {
+type sandboxes struct {
 	client rest.Interface
 	ns     string
 }
 
-// SandboxProfiles returns a SandboxProfileInterface for the given namespace
-func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
-	return &sandboxProfiles{
-		client: c.restClient,
-		ns:     namespace,
-	}
-}
-
-// Create creates a new SandboxProfile
-func (s *sandboxProfiles) Create(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
-	result := &types.SandboxProfile{}
-	err := s.client.Post().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Body(profile).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Update updates an existing SandboxProfile
-func (s *sandboxProfiles) Update(profile *types.SandboxProfile) (*types.SandboxProfile, error) {
-	result := &types.SandboxProfile{}
-	err := s.client.Put().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(profile.Name).
-		Body(profile).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Delete deletes a SandboxProfile
-func (s *sandboxProfiles) Delete(name string, options metav1.DeleteOptions) error {
-	return s.client.Delete().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-// Get retrieves a SandboxProfile
-func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*types.SandboxProfile, error) {
-	result := &types.SandboxProfile{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// List lists all SandboxProfiles in the namespace
-func (s *sandboxProfiles) List(opts metav1.ListOptions) (*types.SandboxProfileList, error) {
-	result := &types.SandboxProfileList{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-// Watch returns a watch.Interface that watches the requested sandboxprofiles
-func (s *sandboxProfiles) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
-}
-
-// Create creates a new Sandbox
-func (s *sandboxes) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	result := &types.Sandbox{}
+func (s *sandboxes) Create(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
+	result := &v1.Sandbox{}
 	err := s.client.Post().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -568,9 +97,8 @@ func (s *sandboxes) Create(sandbox *types.Sandbox) (*types.Sandbox, error) {
 	return result, err
 }
 
-// Update updates an existing Sandbox
-func (s *sandboxes) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	result := &types.Sandbox{}
+func (s *sandboxes) Update(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
+	result := &v1.Sandbox{}
 	err := s.client.Put().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -581,9 +109,8 @@ func (s *sandboxes) Update(sandbox *types.Sandbox) (*types.Sandbox, error) {
 	return result, err
 }
 
-// UpdateStatus updates the status of an existing Sandbox
-func (s *sandboxes) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error) {
-	result := &types.Sandbox{}
+func (s *sandboxes) UpdateStatus(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
+	result := &v1.Sandbox{}
 	err := s.client.Put().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -595,7 +122,6 @@ func (s *sandboxes) UpdateStatus(sandbox *types.Sandbox) (*types.Sandbox, error)
 	return result, err
 }
 
-// Delete deletes a Sandbox
 func (s *sandboxes) Delete(name string, options metav1.DeleteOptions) error {
 	return s.client.Delete().
 		Namespace(s.ns).
@@ -606,9 +132,8 @@ func (s *sandboxes) Delete(name string, options metav1.DeleteOptions) error {
 		Error()
 }
 
-// Get retrieves a Sandbox
-func (s *sandboxes) Get(name string, options metav1.GetOptions) (*types.Sandbox, error) {
-	result := &types.Sandbox{}
+func (s *sandboxes) Get(name string, options metav1.GetOptions) (*v1.Sandbox, error) {
+	result := &v1.Sandbox{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -619,9 +144,8 @@ func (s *sandboxes) Get(name string, options metav1.GetOptions) (*types.Sandbox,
 	return result, err
 }
 
-// List lists all Sandboxes in the namespace
-func (s *sandboxes) List(opts metav1.ListOptions) (*types.SandboxList, error) {
-	result := &types.SandboxList{}
+func (s *sandboxes) List(opts metav1.ListOptions) (*v1.SandboxList, error) {
+	result := &v1.SandboxList{}
 	err := s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxes").
@@ -631,7 +155,6 @@ func (s *sandboxes) List(opts metav1.ListOptions) (*types.SandboxList, error) {
 	return result, err
 }
 
-// Watch returns a watch.Interface that watches the requested sandboxes
 func (s *sandboxes) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	opts.Watch = true
 	return s.client.Get().
@@ -641,4 +164,155 @@ func (s *sandboxes) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 		Watch(context.TODO())
 }
 
-// Similar interfaces would be implemented for WarmPool, WarmPod, RuntimeEnvironment, and SandboxProfile
+type runtimeEnvironments struct {
+	client rest.Interface
+	ns     string
+}
+
+func (r *runtimeEnvironments) Create(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+	result := &v1.RuntimeEnvironment{}
+	err := r.client.Post().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		Body(runtimeEnv).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (r *runtimeEnvironments) Update(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+	result := &v1.RuntimeEnvironment{}
+	err := r.client.Put().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		Name(runtimeEnv.Name).
+		Body(runtimeEnv).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (r *runtimeEnvironments) UpdateStatus(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+	result := &v1.RuntimeEnvironment{}
+	err := r.client.Put().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		Name(runtimeEnv.Name).
+		SubResource("status").
+		Body(runtimeEnv).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (r *runtimeEnvironments) Delete(name string, options metav1.DeleteOptions) error {
+	return r.client.Delete().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		Name(name).
+		Body(&options).
+		Do(context.TODO()).
+		Error()
+}
+
+func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error) {
+	result := &v1.RuntimeEnvironment{}
+	err := r.client.Get().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		Name(name).
+		VersionedParams(&options, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (r *runtimeEnvironments) List(opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error) {
+	result := &v1.RuntimeEnvironmentList{}
+	err := r.client.Get().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (r *runtimeEnvironments) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	opts.Watch = true
+	return r.client.Get().
+		Namespace(r.ns).
+		Resource("runtimeenvironments").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Watch(context.TODO())
+}
+
+type sandboxProfiles struct {
+	client rest.Interface
+	ns     string
+}
+
+func (s *sandboxProfiles) Create(profile *v1.SandboxProfile) (*v1.SandboxProfile, error) {
+	result := &v1.SandboxProfile{}
+	err := s.client.Post().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		Body(profile).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (s *sandboxProfiles) Update(profile *v1.SandboxProfile) (*v1.SandboxProfile, error) {
+	result := &v1.SandboxProfile{}
+	err := s.client.Put().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		Name(profile.Name).
+		Body(profile).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (s *sandboxProfiles) Delete(name string, options metav1.DeleteOptions) error {
+	return s.client.Delete().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		Name(name).
+		Body(&options).
+		Do(context.TODO()).
+		Error()
+}
+
+func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*v1.SandboxProfile, error) {
+	result := &v1.SandboxProfile{}
+	err := s.client.Get().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		Name(name).
+		VersionedParams(&options, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (s *sandboxProfiles) List(opts metav1.ListOptions) (*v1.SandboxProfileList, error) {
+	result := &v1.SandboxProfileList{}
+	err := s.client.Get().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (s *sandboxProfiles) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	opts.Watch = true
+	return s.client.Get().
+		Namespace(s.ns).
+		Resource("sandboxprofiles").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Watch(context.TODO())
+}

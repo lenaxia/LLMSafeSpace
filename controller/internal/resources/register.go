@@ -29,10 +29,6 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&SandboxList{},
 		&SandboxProfile{},
 		&SandboxProfileList{},
-		&WarmPool{},
-		&WarmPoolList{},
-		&WarmPod{},
-		&WarmPodList{},
 		&RuntimeEnvironment{},
 		&RuntimeEnvironmentList{},
 	)

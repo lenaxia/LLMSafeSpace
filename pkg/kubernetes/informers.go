@@ -8,18 +8,16 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
-// InformerFactory creates informers for custom resources
 type InformerFactory struct {
 	client        interfaces.LLMSafespaceV1Interface
 	defaultResync time.Duration
 	namespace     string
 }
 
-// NewInformerFactory creates a new informer factory
 func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
 	return &InformerFactory{
 		client:        client,
@@ -28,7 +26,6 @@ func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync
 	}
 }
 
-// SandboxInformer returns an informer for Sandboxes
 func (f *InformerFactory) SandboxInformer() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
@@ -39,47 +36,12 @@ func (f *InformerFactory) SandboxInformer() cache.SharedIndexInformer {
 				return f.client.Sandboxes(f.namespace).Watch(options)
 			},
 		},
-		&types.Sandbox{},
+		&v1.Sandbox{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 }
 
-// WarmPoolInformer returns an informer for WarmPools
-func (f *InformerFactory) WarmPoolInformer() cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.WarmPools(f.namespace).List(options)
-			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.WarmPools(f.namespace).Watch(options)
-			},
-		},
-		&types.WarmPool{},
-		f.defaultResync,
-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
-	)
-}
-
-// WarmPodInformer returns an informer for WarmPods
-func (f *InformerFactory) WarmPodInformer() cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.WarmPods(f.namespace).List(options)
-			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.WarmPods(f.namespace).Watch(options)
-			},
-		},
-		&types.WarmPod{},
-		f.defaultResync,
-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
-	)
-}
-
-// RuntimeEnvironmentInformer returns an informer for RuntimeEnvironments
 func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
@@ -90,13 +52,12 @@ func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer
 				return f.client.RuntimeEnvironments(f.namespace).Watch(options)
 			},
 		},
-		&types.RuntimeEnvironment{},
+		&v1.RuntimeEnvironment{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 }
 
-// SandboxProfileInformer returns an informer for SandboxProfiles
 func (f *InformerFactory) SandboxProfileInformer() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
@@ -107,18 +68,15 @@ func (f *InformerFactory) SandboxProfileInformer() cache.SharedIndexInformer {
 				return f.client.SandboxProfiles(f.namespace).Watch(options)
 			},
 		},
-		&types.SandboxProfile{},
+		&v1.SandboxProfile{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 }
 
-// StartInformers starts all informers
 func (f *InformerFactory) StartInformers(stopCh <-chan struct{}) {
 	informers := []cache.SharedIndexInformer{
 		f.SandboxInformer(),
-		f.WarmPoolInformer(),
-		f.WarmPodInformer(),
 		f.RuntimeEnvironmentInformer(),
 		f.SandboxProfileInformer(),
 	}

@@ -1,7 +1,7 @@
 # LLMSafeSpace V2 Architecture Evolution
 
-**Version:** 2.2
-**Date:** 2026-05-21
+**Version:** 2.4
+**Date:** 2026-05-22
 **Status:** Draft — Authoritative Design Document
 **Supersedes:** `WARMINGPOOL.md` (entirely — warm pools removed), selected aspects of `ARCHITECTURE.md` (deployment topology)
 
@@ -26,6 +26,47 @@
 14. [Implementation Roadmap](#14-implementation-roadmap)
 15. [Migration Guide](#15-migration-guide)
 16. [Risk Assessment](#16-risk-assessment)
+
+---
+
+## Pre-Design: Codebase Reality and CRD Ownership
+
+### P.1 Existing CRD Disposition
+
+The codebase has 5 CRD types. This section specifies what happens to each:
+
+| CRD | Location | V2 Action | Rationale |
+|-----|----------|-----------|-----------|
+| **Sandbox** | `controller/internal/resources/sandbox_types.go` | **Keep, extend** | Add `workspaceRef`, `podIP`, `lastActivityAt`, suspend/resume phases |
+| **WarmPool** | `controller/internal/resources/warmpool_types.go` | **Delete** | Removed entirely (§8) |
+| **WarmPod** | `controller/internal/resources/warmpod_types.go` | **Delete** | Removed entirely (§8) |
+| **RuntimeEnvironment** | `controller/internal/resources/runtimeenvironment_types.go` | **Keep unchanged** | Defines runtime configs (image, security policies). Not affected by V2 changes. The reconciler continues to manage runtime definitions. |
+| **SandboxProfile** | `controller/internal/resources/sandboxprofile_types.go` | **Keep unchanged** | Pre-defined sandbox configurations (resource limits, security level, network rules). Not affected by V2 changes. The reconciler continues to manage profiles. |
+
+RuntimeEnvironment and SandboxProfile reconcilers must compile but are otherwise untouched by V2. Stories must include them in compile-fix scope but do not need to modify their logic.
+
+### P.2 CRD Type Ownership Model
+
+The codebase has CRD type definitions in **two locations**. This duplication must be resolved before implementation:
+
+| Location | Purpose | Current State |
+|----------|---------|---------------|
+| `controller/internal/resources/*_types.go` | **Authoritative** — kubebuilder-annotated, used by controller, generated deepcopy | Complete, up-to-date |
+| `pkg/types/types.go` + `zz_generated.deepcopy.go` | **Stale copy** — simplified versions used by API layer | Out of sync, broken deepcopy generation |
+
+**Resolution:** `pkg/types/types.go` is for the **API layer only** — it defines the REST API request/response types (e.g., `CreateSandboxRequest`, `WarmPoolSpec` as JSON shapes). The controller uses its own `resources/` types. These are **intentionally different types**: the API types are transfer objects, the controller types are CRD schemas.
+
+**Problem:** The generated `zz_generated.deepcopy.go` in `pkg/types/` is broken — it tries to deep-copy `time.Time` and interface types that don't implement `DeepCopyInto`. This blocks the entire monorepo build.
+
+**Fix (US-0.1):**
+1. Remove `zz_generated.deepcopy.go` from `pkg/types/`
+2. Remove `time.Time` embedded structs that triggered the broken generation, or add `// +k8s:deepcopy-gen=false` tags
+3. Implement manual `DeepCopy` methods only where needed (API transfer objects that are passed by pointer across goroutine boundaries)
+4. Alternatively: tag the entire `pkg/types/` package as `// +k8s:deepcopy-gen=package:skip` and remove the generated file
+
+### P.3 Web Framework
+
+The API uses **Gin** (`github.com/gin-gonic/gin`). All handler code, router setup, and middleware use Gin conventions (`gin.Context`, `c.Param()`, `c.JSON()`, etc.). The proxy handler and all new endpoints must follow Gin patterns, not Chi or other routers.
 
 ---
 
@@ -81,13 +122,13 @@ These are hard constraints. Every design decision must satisfy these.
 
 **R3: Two access modes, one infrastructure.** Interactive (WebSocket/SSE) and programmatic (REST/MCP) use the same sandbox, same agent, same workspace. The proxy architecture makes this transparent.
 
-**R4: Credentials never touch the database.** LLM API keys are stored exclusively in K8s Secrets. Never in PostgreSQL, Redis, logs, or API responses. Enforced by Kyverno admission policy at the cluster level.
+**R4: Credentials never touch the database.** LLM API keys are stored exclusively in K8s Secrets. Never in PostgreSQL, Redis, logs, or API responses. (Kyverno enforcement deferred to V2.1 — V1 relies on controller correctness and code review.)
 
 **R5: Suspend/resume for cost optimization.** Workspaces can be suspended (pod deleted, PVC retained) and resumed (pod recreated). Auto-suspend with configurable idle timeout. The PVC IS the warm state — resume is ~3s.
 
 **R6: MCP compatibility.** LLMSafeSpace must be usable as an MCP server. Any MCP-compatible client (Claude, ChatGPT, VS Code, Cursor) can connect without a custom SDK.
 
-**R7: Security hardening from k8s-mechanic.** Credential isolation via init containers, secret redaction pipeline, PATH-shadowing wrappers in high-security mode, Kyverno admission policies, network policies, exfiltration leak registry.
+**R7: Security hardening from k8s-mechanic.** Credential isolation via init containers, secret redaction pipeline, supply chain security (SHA256 verification, pinned digests). V2.1 adds: PATH-shadowing wrappers, injection detection, Kyverno admission policies, network policies, high-security mode.
 
 **R8: Horizontal scalability.** The API server is stateless. All session state lives inside sandbox pods. No sticky sessions required. Multiple API replicas behind a load balancer.
 
@@ -133,12 +174,13 @@ Additionally, the k8s-mechanic project has demonstrated a mature security harden
 
 | Area | Change | Impact |
 |------|--------|--------|
-| **Protocol** | Add MCP server alongside REST + WebSocket | New `api/internal/mcp/` package |
+| **Protocol** | Add MCP server alongside REST + SSE | New `api/internal/mcp/` package |
 | **Resource model** | New `Workspace` CRD — PVC-backed durable environment | New CRD, new reconciler, new service |
 | **Lifecycle** | Workspaces can be suspended (pod deleted, PVC retained) and resumed (pod recreated) | Sandbox CRD gains `Suspended`, `Suspending`, `Resuming` phases |
 | **Agent** | Every sandbox runs `opencode serve` as a persistent HTTP server; API acts as reverse proxy | Proxy endpoints for session/message/event operations; no separate agent lifecycle |
 | **Warm pool** | **Remove entirely** — replace with on-demand pod creation + workspace session management | Remove WarmPool/WarmPod CRDs and reconcilers |
-| **Security** | Adopt k8s-mechanic patterns: secret redaction, PATH-shadowing wrappers, Kyverno policies, injection detection | New runtime tooling, Helm chart additions |
+| **Security** | Adopt k8s-mechanic patterns: secret redaction binary, credential isolation, supply chain security | New `redact` binary, init container credential injection, SHA256-verified downloads |
+| **Security (V2.1)** | PATH-shadowing wrappers, injection detection, Kyverno policies, high-security mode, network policies | Deferred — see §9.2-9.7 |
 
 ---
 
@@ -224,9 +266,11 @@ Any MCP-compatible client (Claude, ChatGPT, VS Code Copilot, Cursor) can connect
 │   - session_create          │
 │   - session_message         │
 │   - session_history         │
+│   - sandbox_terminate       │
+│                             │
+│   V2.1 tools:               │
 │   - sandbox_upload_file     │
 │   - sandbox_download_file   │
-│   - sandbox_terminate       │
 │                             │
 │   Resources:                │
 │   - sandbox://{id}/sessions │
@@ -250,10 +294,9 @@ Any MCP-compatible client (Claude, ChatGPT, VS Code Copilot, Cursor) can connect
 **Option A (Recommended): MCP server as a standalone binary** that reuses the API service layer. This avoids coupling MCP transport concerns with the HTTP server and allows the MCP server to be deployed independently (e.g., as a sidecar, or as a stdio subprocess launched by an MCP client).
 
 ```
+cmd/
+├── mcp/main.go              # new MCP server binary (top-level cmd/)
 api/
-├── cmd/
-│   ├── api/main.go          # existing HTTP API server
-│   └── mcp/main.go          # new MCP server binary
 ├── internal/
 │   └── mcp/
 │       ├── server.go         # MCP server implementation
@@ -411,7 +454,7 @@ spec:
             properties:
               phase:
                 type: string
-                enum: [Pending, Active, Suspended, Terminating, Terminated, Failed]
+                enum: [Pending, Active, Suspending, Suspended, Resuming, Terminating, Terminated, Failed]
               pvcName:
                 type: string
               activeSessions:
@@ -434,16 +477,18 @@ spec:
 ### 5.3 Workspace Lifecycle
 
 ```
-Pending → Active → Suspended → Active (resume)
-                ↘              ↘
-                  Terminating    Terminating
-                       ↘              ↘
-                     Terminated     Terminated
+Pending → Active → Suspending → Suspended → Resuming → Active
+                 ↘               ↘           ↘
+                   Terminating     Terminating  Terminating
+                        ↘               ↘           ↘
+                      Terminated     Terminated   Terminated
 ```
 
 - **Pending** — Workspace CRD created, PVC provisioning in progress
 - **Active** — PVC bound, at least one sandbox pod may be running
+- **Suspending** — Controller deleting sandbox pods (transient)
 - **Suspended** — All sandbox pods deleted, PVC retained
+- **Resuming** — Controller recreating sandbox pods (transient)
 - **Terminating** — Finalizer cleaning up PVC and sandbox resources
 - **Terminated** — All resources cleaned up
 
@@ -532,6 +577,13 @@ Two systems store workspace/sandbox state. Their responsibilities are strictly p
 - Controller writes to all other K8s CRD status fields — never touches PostgreSQL
 - Neither system writes to the other's primary data
 
+**Conflict resolution for dual status writers:**
+
+Since both the API and controller write to Workspace CRD status, `resourceVersion` conflicts are expected. Resolution:
+- The API's activity flush uses `RetryOnConflict` (from `k8s.io/client-go/util/retry`) with a 3-attempt backoff
+- The flush patches **only** `status.lastActivityAt` using a strategic merge patch (not a full status update), minimizing conflict surface
+- If all 3 retries fail, the flush is dropped — the next 60s cycle will catch up. Worst case: a 2-minute delay in activity tracking, which may cause premature auto-suspend. This is acceptable because the reconciler's final `lastActivityAt` check before suspend (§5.6 race condition handling) reads the freshest value from the API's in-memory tracker via a shared interface call.
+
 **Read rules:**
 - API server reads from PostgreSQL for user queries (list workspaces, get details)
 - API server reads from K8s CRD status for infrastructure state (phase, pod IP)
@@ -556,14 +608,13 @@ Users provide LLM API credentials (OpenAI, Anthropic, etc.) per-workspace or per
 
 **Storage model:**
 
-Credentials provided through the API are stored as Kubernetes Secrets in the sandbox namespace. Secrets are owner-referenced to the Workspace or Sandbox CRD — they are garbage-collected automatically when the parent resource is deleted.
+Credentials provided through the API are stored as Kubernetes Secrets in the sandbox namespace. Secrets are owner-referenced to the Workspace CRD — they are garbage-collected automatically when the workspace is deleted.
 
 | Scope | Secret name | Owner reference | Lifecycle |
 |-------|-------------|-----------------|-----------|
 | Workspace | `workspace-creds-{workspace_name}` | Workspace CRD | Lives until workspace is deleted |
-| Session (sandbox) | `sandbox-creds-{sandbox_name}` | Sandbox CRD | Lives until sandbox is deleted |
 
-Session-level credentials override workspace-level credentials. If a sandbox has both, the session credential is used.
+> **V2.1:** Session-level credential override (`sandbox-creds-{sandbox_name}`, owner-referenced to Sandbox CRD) is deferred. V1 supports workspace-level credentials only. This simplifies the controller (one secret resolution path) and the API (4 fewer endpoints).
 
 **Provisioning flow:**
 
@@ -580,12 +631,11 @@ User → API: "Set my OpenAI key for workspace X"
 
 Controller:
   When creating a sandbox pod for workspace X:
-    1. Check if sandbox-creds-{sandbox_name} exists (session-level)
-    2. If not, check if workspace-creds-{workspace_name} exists (workspace-level)
-    3. Mount the secret as a volume in the credential-setup init container
-    4. Init container copies to /sandbox-cfg/credentials (emptyDir)
-    5. Main container reads /sandbox-cfg/credentials (read-only mount)
-    6. entrypoint-common.sh copies to /tmp/agent-config.json, unsets from env
+    1. Check if workspace-creds-{workspace_name} exists
+    2. Mount the secret as a volume in the credential-setup init container
+    3. Init container copies to /sandbox-cfg/credentials (emptyDir)
+    4. Main container reads /sandbox-cfg/credentials (read-only mount)
+    5. entrypoint-common.sh copies to /tmp/agent-config.json, unsets from env
 ```
 
 **API endpoints:**
@@ -594,8 +644,8 @@ Controller:
 |----------|--------|-------------|
 | `/api/v1/workspaces/{id}/credentials` | PUT | Set workspace-level credentials |
 | `/api/v1/workspaces/{id}/credentials` | DELETE | Remove workspace-level credentials |
-| `/api/v1/sandboxes/{id}/credentials` | PUT | Set session-level credentials (overrides workspace) |
-| `/api/v1/sandboxes/{id}/credentials` | DELETE | Remove session-level credentials |
+
+> **V2.1:** Session-level credential endpoints (`PUT/DELETE /api/v1/sandboxes/{id}/credentials`) are deferred.
 
 **PUT request body:**
 
@@ -623,7 +673,7 @@ The API service:
 - Owner references ensure automatic cleanup
 - The init container pattern ensures the main container never sees raw secrets in environment variables
 - The `redact` binary catches any credential that leaks through stdout/stderr
-- Kyverno policy (section 9.6) blocks main containers from directly referencing Secrets in env vars
+- Kyverno policy (section 9.6, V2.1) will block main containers from directly referencing Secrets in env vars — V1 relies on controller correctness
 - Users can only set credentials on resources they own (verified by `spec.owner.userID`)
 
 **OpenCode integration:**
@@ -676,11 +726,15 @@ User → API: POST /api/v1/workspaces/{id}/suspend
     Controller:
       1. List all Sandboxes with workspaceRef = this workspace
       2. For each Active sandbox:
-         a. Send SIGTERM to opencode process, wait for graceful shutdown
-         b. Delete the sandbox pod (not the Sandbox CRD)
-         c. Update Sandbox status.phase → Suspended
+         a. Send SIGTERM to opencode process
+         b. Wait up to 30 seconds for graceful shutdown (opencode finishes in-flight requests)
+         c. If still running after 30s → SIGKILL
+         d. Delete the sandbox pod (not the Sandbox CRD)
+         e. Update Sandbox status.phase → Suspended
       3. Update Workspace status.phase → Suspended
 ```
+
+**Graceful shutdown timeout:** 30 seconds. This accounts for in-flight LLM API calls that may take 20-30 seconds to complete. Opencode handles SIGTERM gracefully (Hono server shutdown). If the process doesn't exit, SIGKILL ensures cleanup. Session history is preserved on PVC — only the in-flight request is lost.
 
 ### 6.3 Resume Flow
 
@@ -814,15 +868,10 @@ Full API has ~80+ endpoints. OpenAPI spec available at `GET /doc`. The proxy onl
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │  Init Container: "credential-setup" (if credentials     │  │
-│  │  or server password exist for this workspace/sandbox)    │  │
+│  │  Init Container: "credential-setup" (always present)    │  │
 │  │  Read K8s Secret → write to /sandbox-cfg/credentials    │  │
 │  │  Read K8s Secret → write to /sandbox-cfg/password       │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  Init Container: "mode-gate" (if securityLevel=high)    │  │
-│  │  Write sentinel: /sandbox-cfg/high-security             │  │
+│  │  (V2.1: mode-gate init container for high-security)     │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐  │
@@ -894,7 +943,8 @@ The LLMSafeSpace API exposes opencode's session API under each sandbox:
 | `GET /api/v1/sandboxes/{id}/sessions/{sessionId}/message` | `GET /session/{sessionId}/message` | Get message history |
 | `POST /api/v1/sandboxes/{id}/sessions/{sessionId}/abort` | `POST /session/{sessionId}/abort` | Abort current processing |
 | `GET /api/v1/sandboxes/{id}/events` | `GET /event` | SSE stream of all agent events |
-| `WS /api/v1/sandboxes/{id}/stream` | SSE `GET /event` | WebSocket wrapper over SSE for browser clients |
+
+> **Note:** A `WS /api/v1/sandboxes/{id}/stream` endpoint (WebSocket wrapper over SSE for browser clients) is **deferred to V2.1**. SSE is sufficient for V1 — browsers consume SSE natively. The WebSocket bridge adds significant complexity (bidirectional protocol translation, connection lifecycle management) without being required by either persona.
 
 The proxy is transparent — request bodies and response streams pass through unchanged. OpenCode handles all session state, conversation history, and tool execution.
 
@@ -964,33 +1014,31 @@ var Tools = []mcp.Tool{
             Required: []string{"sandbox_id"},
         },
     },
-    {
-        Name: "sandbox_upload_file",
-        Description: "Upload a file to a sandbox's workspace",
-        InputSchema: mcp.Schema{
-            Type: "object",
-            Properties: map[string]mcp.Property{
-                "sandbox_id":  {Type: "string", Description: "Sandbox ID"},
-                "path":        {Type: "string", Description: "Remote path"},
-                "content_b64": {Type: "string", Description: "Base64-encoded file content"},
-            },
-            Required: []string{"sandbox_id", "path", "content_b64"},
-        },
-    },
-    {
-        Name: "sandbox_download_file",
-        Description: "Download a file from a sandbox's workspace",
-        InputSchema: mcp.Schema{
-            Type: "object",
-            Properties: map[string]mcp.Property{
-                "sandbox_id": {Type: "string", Description: "Sandbox ID"},
-                "path":       {Type: "string", Description: "Remote path"},
-            },
-            Required: []string{"sandbox_id", "path"},
-        },
-    },
 }
+
+// V2.1 tools (file transfer):
+// - sandbox_upload_file: Upload a file to a sandbox's workspace
+// - sandbox_download_file: Download a file from a sandbox's workspace
+// These are deferred because opencode v1.1.48 lacks a file upload endpoint.
+// V1 callers can instruct the agent to read/write files through its own tools.
 ```
+
+### 7.5a MCP File Transfer Implementation (DEFERRED to V2.1)
+
+> **Note:** File upload/download tools are deferred. V1 callers instruct the agent to read/write files through the agent's own tools (the agent has full filesystem access). This section is retained for V2.1 planning.
+
+**Download:** The `sandbox_download_file` tool proxies to opencode's `GET /file/content?path={path}` endpoint. No special handling needed — the proxy passes the response through.
+
+**Upload:** The `sandbox_upload_file` tool uses a two-step process:
+1. Decode `content_b64` and write to a temporary file on the API server
+2. Use the proxy to send a `POST /file/content` request to opencode with the file content
+
+If opencode does not expose a file upload endpoint (as of v1.1.48 it does not), the fallback is:
+1. The MCP tool calls the LLMSafeSpace REST API's `PUT /api/v1/sandboxes/{id}/files/{path}` endpoint
+2. This endpoint uses `kubectl cp` semantics: the API server writes the file content via the pod's exec API to `/workspace/{path}`
+3. This requires the API server's ServiceAccount to have `pods/exec` RBAC on sandbox pods
+
+**V1 decision:** Implement download via opencode proxy. For upload, add a dedicated file upload endpoint to the LLMSafeSpace API that uses pod exec (kept separate from the main proxy path). File exec methods are removed from the sandbox *service* (US-1.4) but the underlying K8s client exec capability is retained for this specific purpose.
 
 ### 7.6 Pod Spec (Controller-Side)
 
@@ -1012,8 +1060,7 @@ mainContainer := corev1.Container{
         // OPENCODE_SERVER_PASSWORD is injected via projected volume
         // in credential-setup init container → /sandbox-cfg/password
         // entrypoint-common.sh reads it from file.
-        // This complies with the Kyverno policy that blocks Secret env refs
-        // on the main container.
+        // V2.1: Kyverno will enforce no SecretKeyRef on main containers.
     },
     SecurityContext: &corev1.SecurityContext{
         ReadOnlyRootFilesystem:   ptr(true),
@@ -1063,7 +1110,7 @@ ReadinessProbe: &corev1.Probe{
 
 Note: The readiness probe must include Basic Auth headers because opencode requires authentication on all endpoints when `OPENCODE_SERVER_PASSWORD` is set. The probe uses the same password from the Secret.
 
-Init containers (workspace-setup, credential-setup, mode-gate) are described in the pod architecture diagram in §7.2.
+Init containers (workspace-setup, credential-setup) are described in the pod architecture diagram in §7.2. V2.1 adds the `mode-gate` init container for high-security mode.
 
 ### 7.7 Entrypoint Scripts
 
@@ -1149,7 +1196,7 @@ This is transparent to the caller — no client-side changes needed.
 
 **Init container security:**
 
-All init containers (workspace-setup, credential-setup, mode-gate) run with the same restricted security context as the main container:
+All init containers (workspace-setup, credential-setup) run with the same restricted security context as the main container:
 
 ```yaml
 securityContext:
@@ -1263,7 +1310,7 @@ User provides credential via REST API
   → Secret exists only in K8s, never in PostgreSQL/Redis/logs
 
 Controller creates sandbox pod:
-  → Resolves credential secret (session-level > workspace-level)
+  → Resolves workspace credential secret
   → Mounts secret in credential-setup init container only
   → Init container copies to /sandbox-cfg/credentials (shared emptyDir)
 
@@ -1296,7 +1343,9 @@ The controller auto-generates a random password for each sandbox and stores it i
 - Is garbage-collected when the Sandbox CRD is deleted
 - Is never visible to the main container's process (read from file by entrypoint, never in env)
 
-### 9.2 Sentinel-Based Mode Detection
+### 9.2 Sentinel-Based Mode Detection (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 has no high-security mode — all sandboxes run in `standard` security level.
 
 **Source:** `k8s-mechanic/docker/Dockerfile.agent` (sentinel file pattern)
 
@@ -1347,7 +1396,9 @@ User-extensible via a mounted config file (`/sandbox-cfg/redact-patterns.json`),
 2. Include in base runtime image at `/usr/local/bin/redact`
 3. PATH-shadowing wrappers (high-security mode only) pipe all tool output through `redact`
 
-### 9.4 PATH-Shadowing Wrappers
+### 9.4 PATH-Shadowing Wrappers (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 includes the `redact` binary but not the wrappers that pipe through it. Direct use of `redact` is available if needed.
 
 **Source:** `k8s-mechanic/docker/scripts/redact-wrappers/kubectl` (153 lines, two-tier blocking)
 
@@ -1382,7 +1433,9 @@ COPY --chmod=755 tools/wrappers/wget    /usr/local/bin/wget
 
 Activated when the sentinel file `/sandbox-cfg/high-security` contains `"true"` (written by `mode-gate` init container).
 
-### 9.5 Prompt Injection Detection
+### 9.5 Prompt Injection Detection (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 proxy passes responses through without injection scanning.
 
 **Source:** `k8s-mechanic/internal/domain/injection.go` (5 regex patterns)
 
@@ -1403,7 +1456,9 @@ func Detect(text string) bool { ... }
 
 Configurable action: `log` (default) or `suppress` (drops the output entirely). The proxy handler marks proxied responses with `injection_detected: true` when injection patterns are found in agent output.
 
-### 9.6 Kyverno Admission Policies
+### 9.6 Kyverno Admission Policies (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 relies on the controller generating correct pod specs with the security context defined in §7.6. Kyverno adds admission-level enforcement as defense-in-depth.
 
 **Source:** `k8s-mechanic/charts/mechanic/templates/kyverno-policy-agent.yaml`
 
@@ -1460,7 +1515,9 @@ spec:
 
 Note: `OPENCODE_SERVER_PASSWORD` is NOT set via `secretKeyRef` in the pod spec. The entrypoint script reads it from `/sandbox-cfg/password` (a file written by the credential-setup init container) and exports it as an env var at runtime. This satisfies the Kyverno policy — the pod spec has no Secret references on the main container.
 
-### 9.7 Network Policy by Security Level
+### 9.7 Network Policy by Security Level (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 has no high-security mode — all sandboxes have standard network access. The network policy for high-security mode will be implemented alongside the hardened Dockerfile.
 
 **Source:** `k8s-mechanic/charts/mechanic/templates/network-policy-agent.yaml`
 
@@ -1604,8 +1661,6 @@ The following CRDs are removed entirely:
 | `/api/v1/workspaces/{id}/status` | GET | Get workspace status |
 | `/api/v1/workspaces/{id}/credentials` | PUT | Set workspace-level LLM credentials |
 | `/api/v1/workspaces/{id}/credentials` | DELETE | Remove workspace-level credentials |
-| `/api/v1/sandboxes/{id}/credentials` | PUT | Set session-level LLM credentials (overrides workspace) |
-| `/api/v1/sandboxes/{id}/credentials` | DELETE | Remove session-level credentials |
 
 **Session proxy endpoints** (proxy to opencode inside the sandbox):
 
@@ -1618,7 +1673,6 @@ The following CRDs are removed entirely:
 | `/api/v1/sandboxes/{id}/sessions/{sessionId}/message` | GET | `GET /session/{sessionId}/message` | Get message history |
 | `/api/v1/sandboxes/{id}/sessions/{sessionId}/abort` | POST | `POST /session/{sessionId}/abort` | Abort current processing |
 | `/api/v1/sandboxes/{id}/events` | GET | `GET /event` | SSE stream of all agent events |
-| `/api/v1/sandboxes/{id}/stream` | WS | SSE `/event` | WebSocket wrapper over SSE for browser clients |
 
 These are the same endpoints defined in §7.4. The proxy is transparent — request bodies and response streams pass through unchanged.
 
@@ -1657,8 +1711,8 @@ The session proxy endpoints are handled by a lightweight proxy handler — not a
 
 1. Resolves sandbox ID → pod IP from Sandbox CRD status (cached by controller-runtime informer)
 2. Authenticates the caller
-3. Injects the server password as `Authorization: Basic base64(opencode:{password})` header
-4. Proxies the HTTP request (including WebSocket upgrades and SSE streams) to `http://{pod_ip}:4096{path}`
+3. Injects the server password as `Authorization: Basic base64(opencode:{password})` header — **password is cached** by sandbox ID in the ProxyHandler (password is generated at sandbox creation and never changes; invalidate cache on sandbox phase change to Suspending/Suspended/Terminated)
+4. Proxies the HTTP request (including HTTP streaming and SSE streams) to `http://{pod_ip}:4096{path}`
 5. On connection failure, refreshes IP from CRD status and retries once
 
 ```go
@@ -1668,14 +1722,16 @@ type ProxyHandler struct {
     k8sClient  kubernetes.KubernetesClient
     logger     logger.Logger
     httpClient *http.Client
+    pwCache    map[string]string  // sandboxID → cached password (read from Secret once, invalidated on phase change)
+    pwCacheMu  sync.RWMutex
 }
 
-func (h *ProxyHandler) ProxyToSandbox(w http.ResponseWriter, r *http.Request) {
-    sandboxID := chi.URLParam(r, "id")
+func (h *ProxyHandler) ProxyToSandbox(c *gin.Context) {
+    sandboxID := c.Param("id")
     // 1. Get pod IP from Sandbox CRD status
     // 2. Build target URL: http://{podIP}:4096{path}
     // 3. Add Authorization header with server password
-    // 4. Proxy request (handle WebSocket upgrade, SSE streaming)
+    // 4. Proxy request (handle streaming, SSE)
     // 5. On connection error: refresh IP, retry once
 }
 ```
@@ -1712,8 +1768,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 - Handle `Suspending` phase: delete pod, update status to `Suspended`
 - Handle `Resuming` phase: create new pod with workspace PVC, update status to `Running`
-- Handle `workspaceRef`: mount workspace PVC and inject init containers (workspace-setup, credential-setup, mode-gate)
+- Handle `workspaceRef`: mount workspace PVC and inject init containers (workspace-setup, credential-setup)
 - Handle server password: generate random password, create Secret, configure projected volume mount for credential-setup
+- Handle credentials: resolve workspace-level credential Secret only (V2.1 adds session-level override)
 - Remove warm pool lookup — always create pods directly
 - Remove recycling logic from deletion handler
 
@@ -1730,22 +1787,20 @@ runtimes/base/
 ├── Dockerfile
 ├── security/
 │   ├── apparmor-profiles/
-│   ├── seccomp-profiles/
-│   └── injection-patterns.json
+│   └── seccomp-profiles/
 ├── tools/
-│   ├── cleanup-pod              # existing
-│   ├── execution-tracker        # existing
-│   ├── health-check             # existing
-│   ├── sandbox-monitor          # existing — pod lifecycle monitoring
 │   ├── redact/                  # NEW — secret redaction binary (Go, built from cmd/redact/)
-│   ├── wrappers/                # NEW — PATH-shadowing wrappers
+│   ├── smoke-test.sh            # NEW — verify all binaries present
+│   └── entrypoints/             # NEW — agent entrypoint scripts
+│       ├── entrypoint-common.sh      # shared setup (credential materialization)
+│       └── entrypoint-opencode.sh    # OpenCode agent runner
+│
+│   V2.1 additions:
+│   ├── wrappers/                # PATH-shadowing wrappers (high-security mode)
 │   │   ├── curl
 │   │   ├── wget
 │   │   └── git
-│   ├── smoke-test.sh            # NEW — verify all binaries present
-│   └── entrypoints/             # NEW — agent entrypoint scripts
-│       ├── entrypoint-common.sh      # shared setup (credential materialization, sentinel check)
-│       └── entrypoint-opencode.sh    # OpenCode agent runner (additional runners added later)
+│   └── injection-patterns.json  # Prompt injection detection patterns
 ```
 
 ### 13.2 Dockerfile Pattern
@@ -1824,7 +1879,9 @@ export PYTHONPATH=/workspace/packages
 exec /usr/local/bin/entrypoint-opencode.sh
 ```
 
-### 13.4 High-Security Variant
+### 13.4 High-Security Variant (DEFERRED to V2.1)
+
+> Retained for V2.1 planning. V1 ships only the standard runtime. The controller ignores `spec.securityLevel: high` in V1.
 
 For sandboxes with `securityLevel: high`, a separate Dockerfile extends the base image:
 
@@ -1848,20 +1905,30 @@ The controller selects the hardened image when `spec.securityLevel: high` is set
 
 ## 14. Implementation Roadmap
 
-### Phase 1: Foundation (Weeks 1-2)
+### Phase 0: Unbreak (Pre-Epic 1)
 
-**Goal:** Fix existing code, drop pod recycling, add security hardening.
+**Goal:** Fix build-breaking issues so development can proceed.
 
 | Task | Files | Priority |
 |------|-------|----------|
-| Fix compile errors in router.go and app.go | `api/internal/server/router.go`, `api/internal/app/app.go` | Critical |
-| Implement missing HTTP handlers | `api/internal/handlers/` (new) | Critical |
-| Write database migrations | `api/migrations/` | Critical |
-| Remove warm pool CRDs and reconcilers | `controller/internal/warmpool/`, `controller/internal/warmpod/`, `pkg/crds/` | High |
-| Add secret redaction binary to base runtime | `runtimes/base/tools/redact/` | High |
-| Port injection detection | `pkg/injection/` | Medium |
+| Fix broken deepcopy generation in `pkg/types/` | `pkg/types/zz_generated.deepcopy.go`, `pkg/types/types.go` | Critical |
+| Fix all 5 webhook decoder pointer-to-interface bugs | `controller/internal/resources/*_webhook.go` | Critical |
 
-### Phase 2: Workspaces (Weeks 3-4)
+### Phase 1: Foundation (Weeks 1-3)
+
+**Goal:** Fix existing code, drop warm pools and exec services, add security tools.
+
+| Task | Files | Priority |
+|------|-------|----------|
+| Fix API compile errors (handler setup, services wiring) | `api/internal/server/router.go`, `api/internal/app/app.go`, `api/internal/services/services.go` | Critical |
+| Fix controller compile errors (imports, webhook decoders) | `controller/main.go`, `controller/internal/resources/*_webhook.go` | Critical |
+| Remove warm pool CRDs and reconcilers | `controller/internal/warmpool/`, `controller/internal/warmpod/`, `pkg/crds/` | High |
+| Remove exec-based execution and file services | `api/internal/services/execution/`, `api/internal/services/file/` | High |
+| Add secret redaction binary to base runtime | `pkg/redact/`, `cmd/redact/` | High |
+| Create entrypoint scripts | `runtimes/base/tools/entrypoints/` | High |
+| Rewrite base Dockerfile | `runtimes/base/Dockerfile` | High |
+
+### Phase 2: Workspaces (Weeks 3-5)
 
 **Goal:** Introduce Workspace CRD and PVC-backed persistent environments.
 
@@ -1873,9 +1940,9 @@ The controller selects the hardened image when `spec.securityLevel: high` is set
 | Implement Workspace API service | `api/internal/services/workspace/` | Critical |
 | Add workspace endpoints to router | `api/internal/server/router.go` | Critical |
 | Add suspend/resume to Sandbox reconciler | `controller/internal/sandbox/controller.go` | Critical |
-| Write integration tests | `api/internal/tests/integration/` | Critical |
+| Write V2 database migration | `api/migrations/` | Critical |
 
-### Phase 3: Proxy and Sessions (Weeks 5-6)
+### Phase 3: Proxy and Sessions (Weeks 5-7)
 
 **Goal:** Enable transparent proxy to opencode serve, supporting both interactive and programmatic usage modes.
 
@@ -1883,12 +1950,9 @@ The controller selects the hardened image when `spec.securityLevel: high` is set
 |------|-------|----------|
 | Implement proxy handler | `api/internal/handlers/proxy.go` | Critical |
 | Add session proxy endpoints to router | `api/internal/server/router.go` | Critical |
-| Implement WebSocket ↔ SSE bridging | `api/internal/handlers/proxy.go` | Critical |
-| Add per-sandbox rate limiting (max 10 concurrent connections) | `api/internal/middleware/rate_limit.go` | High |
-| Add pod IP staleness handling (retry with fresh lookup) | `api/internal/handlers/proxy.go` | High |
+| Implement activity tracking | `api/internal/handlers/activity.go` | High |
 | Configure opencode data directory for session persistence | `entrypoint-opencode.sh`, runtime config | High |
 | Write integration tests (create session → send message → get history) | `api/internal/tests/integration/` | High |
-| Add client reconnect guidance to API documentation | `docs/` | Medium |
 
 ### Phase 4: MCP Server (Weeks 7-8)
 
@@ -1906,20 +1970,29 @@ The controller selects the hardened image when `spec.securityLevel: high` is set
 | Add MCP server entrypoint | `api/cmd/mcp/main.go` | Critical |
 | Write MCP integration tests | `api/internal/mcp/tests/` | High |
 
-### Phase 5: Security Hardening (Weeks 9-10)
+### Phase 5: Helm Chart (Week 8-9)
 
-**Goal:** Apply k8s-mechanic hardening patterns comprehensively.
+**Goal:** Production-ready deployment.
 
 | Task | Files | Priority |
 |------|-------|----------|
-| Build PATH-shadowing wrappers | `runtimes/base/tools/wrappers/` | High |
-| Create high-security runtime variants | `runtimes/*/Dockerfile.hardened` | High |
-| Write Kyverno admission policies | `charts/llmsafespace/templates/kyverno/` | Medium |
-| Pin base images to digests | `runtimes/*/Dockerfile` | Medium |
-| Add SHA256 verification to Dockerfiles | `runtimes/*/Dockerfile` | Medium |
-| Add Trivy scanning to CI | `.github/workflows/` | Medium |
 | Create Helm chart | `charts/llmsafespace/` | High |
 | Write threat model document | `docs/SECURITY/THREAT_MODEL.md` | High |
+
+### Deferred to V2.1
+
+These are valuable but not required for the core value proposition:
+
+| Task | Why Deferred |
+|------|-------------|
+| PATH-shadowing wrappers (US-5.1) | Redact binary provides core protection; wrappers add incremental hardening |
+| Hardened runtime Dockerfile (US-5.2) | Only needed when high-security mode is required |
+| Kyverno admission policies (US-5.3) | Security defense-in-depth; pod security contexts already enforce the basics |
+| Injection detection (US-1.6) | Not on critical path; proxy works without it |
+| WebSocket ↔ SSE bridge | SSE is sufficient for browsers; WebSocket adds complexity without V1 requirement |
+| MCP file upload/download tools | Agent can handle files through its own tools; opencode lacks upload endpoint |
+| Session-level credential override | Workspace-level credentials sufficient for V1; simplifies controller and API |
+| High-security mode (mode-gate, sentinel, network policy) | Standard security sufficient for V1; CRD fields retained for future use |
 
 ---
 
@@ -1985,17 +2058,23 @@ Note: `phase`, `pvc_name`, `conditions`, `pod_ip`, and `lastActivityAt` are NOT 
 | Stale pod IP on proxy request | Low | Low | Proxy retries once with fresh IP from CRD status after connection failure |
 | Init script executes arbitrary code in cluster | Medium | Medium | Init container runs with same restricted security context as main container (non-root, drop ALL caps, read-only root); network policy limits egress |
 | API server becomes proxy bottleneck at scale | Low | Medium | API server is stateless — horizontally scale behind load balancer; sticky sessions not required |
-| WebSocket/SSE bridge leaks connections | Medium | Medium | Connection idle timeout (5 min); goroutine leak detection in proxy handler; per-sandbox connection limit (10) |
+| CRD status write conflicts (API + controller both write) | Medium | Low | RetryOnConflict with 3 attempts; batched activity flushes (60s); final lastActivityAt check before suspend |
+| Dual CRD type system (pkg/types vs controller/resources) drifts | Medium | Medium | Explicit ownership model (§P.2); API types are transfer objects, controller types are CRD schemas; no deepcopy generation for API types |
 
 ---
 
 ## Appendix A: New Package Structure
 
+**Note:** The codebase uses **Gin** (`github.com/gin-gonic/gin`) as the HTTP framework. All handler code uses `gin.Context`. There is no top-level `cmd/` directory — new binaries are created under `cmd/` at the repository root.
+
 ```
+cmd/                             # NEW — top-level binaries
+├── redact/                      # NEW — standalone redact binary for runtime images
+│   └── main.go                  # Imports pkg/redact
+└── mcp/                         # NEW — MCP server entrypoint
+    └── main.go                  # Imports api/internal/mcp
+
 api/
-├── cmd/
-│   ├── api/main.go              # existing
-│   └── mcp/main.go              # NEW — MCP server entrypoint
 ├── internal/
 │   ├── mcp/                     # NEW — MCP server implementation
 │   │   ├── server.go
@@ -2003,7 +2082,7 @@ api/
 │   │   ├── resources.go
 │   │   ├── prompts.go
 │   │   └── transport.go
-│   ├── handlers/                # NEW — HTTP route handlers
+│   ├── handlers/                # NEW — Gin HTTP route handlers
 │   │   ├── sandbox.go
 │   │   ├── workspace.go         # NEW
 │   │   ├── proxy.go             # NEW — reverse proxy to opencode
@@ -2020,24 +2099,21 @@ controller/
 
 pkg/
 ├── redact/                      # NEW — secret redaction engine (ported from k8s-mechanic)
-│   ├── redact.go                # Library AND cmd/redact/main.go uses this package
+│   ├── redact.go                # Library used by cmd/redact/main.go
 │   └── redact_test.go
-├── injection/                   # NEW — prompt injection detection (ported from k8s-mechanic)
-│   ├── detect.go
-│   └── detect_test.go
 └── (existing packages unchanged)
 
-cmd/
-├── redact/                      # NEW — standalone redact binary for runtime images
-│   └── main.go                  # Imports pkg/redact. This is the canonical source.
-│       ├── wrappers/            # NEW — PATH-shadowing wrappers (mirrors k8s-mechanic)
-│       │   ├── curl
-│       │   ├── wget
-│       │   └── git
-│       ├── entrypoints/         # NEW — agent entrypoint scripts
-│       │   ├── entrypoint-common.sh
-│       │   └── entrypoint-opencode.sh
-│       └── smoke-test.sh        # NEW
+runtimes/
+├── base/
+│   ├── Dockerfile               # REWRITTEN for V2
+│   ├── tools/
+│   │   ├── redact/              # DELETED — binary now built from cmd/redact/
+│   │   ├── wrappers/            # DEFERRED to V2.1
+│   │   ├── entrypoints/         # NEW — agent entrypoint scripts
+│   │   │   ├── entrypoint-common.sh
+│   │   │   └── entrypoint-opencode.sh
+│   │   └── smoke-test.sh        # NEW
+│   └── (existing tools cleaned up: cleanup-pod, execution-tracker, health-check, sandbox-monitor removed)
 ├── python/
 │   └── Dockerfile               # Extends base, adds Python toolchain
 ├── nodejs/

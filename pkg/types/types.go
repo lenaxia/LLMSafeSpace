@@ -63,13 +63,13 @@ type SandboxSpec struct {
 type ResourceRequirements struct {
 	// CPU resource limit
 	CPU string `json:"cpu,omitempty"`
-	
+
 	// Memory resource limit
 	Memory string `json:"memory,omitempty"`
-	
+
 	// Ephemeral storage limit
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
-	
+
 	// GPU resource limit
 	GPU string `json:"gpu,omitempty"`
 }
@@ -78,7 +78,7 @@ type ResourceRequirements struct {
 type NetworkAccess struct {
 	// Egress rules
 	Egress []EgressRule `json:"egress,omitempty"`
-	
+
 	// Allow ingress traffic to sandbox
 	Ingress bool `json:"ingress,omitempty"`
 }
@@ -87,7 +87,7 @@ type NetworkAccess struct {
 type EgressRule struct {
 	// Domain name for egress filtering
 	Domain string `json:"domain"`
-	
+
 	// Ports allowed for this domain
 	Ports []PortRule `json:"ports,omitempty"`
 }
@@ -96,7 +96,7 @@ type EgressRule struct {
 type PortRule struct {
 	// Port number
 	Port int `json:"port"`
-	
+
 	// Protocol (TCP or UDP)
 	Protocol string `json:"protocol,omitempty"`
 }
@@ -105,7 +105,7 @@ type PortRule struct {
 type FilesystemConfig struct {
 	// Mount root filesystem as read-only
 	ReadOnlyRoot bool `json:"readOnlyRoot,omitempty"`
-	
+
 	// Paths that should be writable
 	WritablePaths []string `json:"writablePaths,omitempty"`
 }
@@ -114,7 +114,7 @@ type FilesystemConfig struct {
 type StorageConfig struct {
 	// Enable persistent storage
 	Persistent bool `json:"persistent,omitempty"`
-	
+
 	// Size of persistent volume
 	VolumeSize string `json:"volumeSize,omitempty"`
 }
@@ -123,16 +123,16 @@ type StorageConfig struct {
 type SecurityContext struct {
 	// User ID to run container processes
 	RunAsUser int64 `json:"runAsUser,omitempty"`
-	
+
 	// Group ID to run container processes
 	RunAsGroup int64 `json:"runAsGroup,omitempty"`
-	
+
 	// Seccomp profile
 	SeccompProfile string `json:"seccompProfile,omitempty"`
-	
+
 	// AppArmor profile
 	AppArmorProfile string `json:"appArmorProfile,omitempty"`
-	
+
 	// Allow privilege escalation
 	AllowPrivilegeEscalation bool `json:"allowPrivilegeEscalation,omitempty"`
 }
@@ -141,7 +141,7 @@ type SecurityContext struct {
 type ProfileReference struct {
 	// Name of SandboxProfile to use
 	Name string `json:"name"`
-	
+
 	// Namespace of SandboxProfile
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -150,40 +150,40 @@ type ProfileReference struct {
 type SandboxStatus struct {
 	// Current phase of the sandbox
 	Phase string `json:"phase,omitempty"`
-	
+
 	// Conditions for the sandbox
 	Conditions []SandboxCondition `json:"conditions,omitempty"`
-	
+
 	// Name of the pod running the sandbox
 	PodName string `json:"podName,omitempty"`
-	
+
 	// Start time of the sandbox
 	StartTime *metav1.Time `json:"startTime,omitempty"`
-	
+
 	// Resource usage
 	Resources *ResourceStatus `json:"resources,omitempty"`
-	
+
 	// Reference to warm pod
 	WarmPodRef *WarmPodReference `json:"warmPodRef,omitempty"`
-	
+
 	// Pod status (from Kubernetes pod)
 	PodStatus string `json:"podStatus,omitempty"`
-	
+
 	// Pod IP address
 	PodIP string `json:"podIP,omitempty"`
-	
+
 	// Pod start time
 	PodStartTime *metav1.Time `json:"podStartTime,omitempty"`
-	
+
 	// Node name where pod is running
 	NodeName string `json:"nodeName,omitempty"`
-	
+
 	// Container statuses
 	ContainerStatuses []ContainerStatus `json:"containerStatuses,omitempty"`
-	
+
 	// Network information
 	NetworkInfo *NetworkInfo `json:"networkInfo,omitempty"`
-	
+
 	// Events related to this sandbox
 	Events []Event `json:"events,omitempty"`
 }
@@ -202,28 +202,28 @@ const (
 type ContainerStatus struct {
 	// Container name
 	Name string `json:"name"`
-	
+
 	// Whether the container is ready
 	Ready bool `json:"ready"`
-	
+
 	// Number of times the container has been restarted
 	RestartCount int32 `json:"restartCount"`
-	
+
 	// Container state
 	State ContainerStateValue `json:"state"`
-	
+
 	// Time when the container started
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
-	
+
 	// Time when the container finished
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
-	
+
 	// Exit code if terminated
 	ExitCode int32 `json:"exitCode,omitempty"`
-	
+
 	// Reason for current state
 	Reason string `json:"reason,omitempty"`
-	
+
 	// Message regarding current state
 	Message string `json:"message,omitempty"`
 }
@@ -232,13 +232,13 @@ type ContainerStatus struct {
 type NetworkInfo struct {
 	// Pod IP address
 	PodIP string `json:"podIP,omitempty"`
-	
+
 	// Host IP address
 	HostIP string `json:"hostIP,omitempty"`
-	
+
 	// Whether ingress is allowed
 	Ingress bool `json:"ingress"`
-	
+
 	// Allowed egress domains
 	EgressDomains []string `json:"egressDomains,omitempty"`
 }
@@ -247,19 +247,19 @@ type NetworkInfo struct {
 type Event struct {
 	// Event type (Normal, Warning)
 	Type string `json:"type"`
-	
+
 	// Event reason
 	Reason string `json:"reason"`
-	
+
 	// Event message
 	Message string `json:"message"`
-	
+
 	// Event count
 	Count int32 `json:"count"`
-	
+
 	// Event time
 	Time *metav1.Time `json:"time,omitempty"`
-	
+
 	// Event source (Pod, Sandbox, etc.)
 	Source string `json:"source,omitempty"`
 }
@@ -268,16 +268,16 @@ type Event struct {
 type SandboxCondition struct {
 	// Type of condition
 	Type string `json:"type"`
-	
+
 	// Status of the condition (True, False, Unknown)
 	Status string `json:"status"`
-	
+
 	// Reason for the condition
 	Reason string `json:"reason,omitempty"`
-	
+
 	// Message regarding the condition
 	Message string `json:"message,omitempty"`
-	
+
 	// Last transition time
 	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
 }
@@ -286,10 +286,10 @@ type SandboxCondition struct {
 type ResourceStatus struct {
 	// Current CPU usage
 	CPUUsage string `json:"cpuUsage,omitempty"`
-	
+
 	// Current memory usage
 	MemoryUsage string `json:"memoryUsage,omitempty"`
-	
+
 	// Current ephemeral storage usage
 	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
 }
@@ -298,7 +298,7 @@ type ResourceStatus struct {
 type WarmPodReference struct {
 	// Name of the WarmPod
 	Name string `json:"name"`
-	
+
 	// Namespace of the WarmPod
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -316,25 +316,25 @@ type SandboxList struct {
 type SandboxMetadata struct {
 	// Sandbox ID
 	ID string `json:"id" db:"id"`
-	
+
 	// User ID
 	UserID string `json:"userId" db:"user_id"`
-	
+
 	// Runtime environment
 	Runtime string `json:"runtime" db:"runtime"`
-	
+
 	// Creation time
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
-	
+
 	// Last update time
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
-	
+
 	// Current status
 	Status string `json:"status" db:"status"`
-	
+
 	// Optional name
 	Name string `json:"name,omitempty" db:"name"`
-	
+
 	// Labels
 	Labels map[string]string `json:"labels,omitempty"`
 }
@@ -343,16 +343,16 @@ type SandboxMetadata struct {
 type PaginationMetadata struct {
 	// Total number of items
 	Total int `json:"total"`
-	
+
 	// Start index
 	Start int `json:"start"`
-	
+
 	// End index
 	End int `json:"end"`
-	
+
 	// Limit per page
 	Limit int `json:"limit"`
-	
+
 	// Offset
 	Offset int `json:"offset"`
 }
@@ -361,22 +361,22 @@ type PaginationMetadata struct {
 type CreateSandboxRequest struct {
 	// Runtime environment (e.g., python:3.10)
 	Runtime string `json:"runtime"`
-	
+
 	// Security level for the sandbox
 	SecurityLevel string `json:"securityLevel,omitempty"`
-	
+
 	// Timeout in seconds for sandbox operations
 	Timeout int `json:"timeout,omitempty"`
-	
+
 	// User ID
 	UserID string `json:"userId"`
-	
+
 	// Resource requirements
 	Resources *ResourceRequirements `json:"resources,omitempty"`
-	
+
 	// Network access configuration
 	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-	
+
 	// Use warm pool
 	UseWarmPool bool `json:"useWarmPool,omitempty"`
 }
@@ -385,19 +385,19 @@ type CreateSandboxRequest struct {
 type ExecuteRequest struct {
 	// Sandbox ID
 	SandboxID string `json:"sandboxId"`
-	
+
 	// Type of execution (code or command)
 	Type string `json:"type"`
-	
+
 	// Content to execute
 	Content string `json:"content"`
-	
+
 	// Timeout in seconds
 	Timeout int `json:"timeout,omitempty"`
-	
+
 	// Environment variables
 	Env map[string]string `json:"env,omitempty"`
-	
+
 	// Working directory
 	WorkingDir string `json:"workingDir,omitempty"`
 }
@@ -406,16 +406,16 @@ type ExecuteRequest struct {
 type ExecutionResult struct {
 	// Stdout output
 	Stdout string `json:"stdout"`
-	
+
 	// Stderr output
 	Stderr string `json:"stderr"`
-	
+
 	// Exit code
 	ExitCode int `json:"exitCode"`
-	
+
 	// Execution time in milliseconds
 	ExecutionTime int64 `json:"executionTime"`
-	
+
 	// Error message if any
 	Error string `json:"error,omitempty"`
 }
@@ -424,19 +424,19 @@ type ExecutionResult struct {
 type FileInfo struct {
 	// File name
 	Name string `json:"name"`
-	
+
 	// File path
 	Path string `json:"path"`
-	
+
 	// File size in bytes
 	Size int64 `json:"size"`
-	
+
 	// File mode
 	Mode string `json:"mode"`
-	
+
 	// Last modified time
 	ModTime time.Time `json:"modTime"`
-	
+
 	// Whether it's a directory
 	IsDir bool `json:"isDir"`
 }
@@ -445,10 +445,10 @@ type FileInfo struct {
 type InstallPackagesRequest struct {
 	// Sandbox ID
 	SandboxID string `json:"sandboxId"`
-	
+
 	// Packages to install
 	Packages []string `json:"packages"`
-	
+
 	// Package manager to use
 	PackageManager string `json:"packageManager,omitempty"`
 }
@@ -457,10 +457,10 @@ type InstallPackagesRequest struct {
 type WSConnection interface {
 	// ReadMessage reads a message from the connection
 	ReadMessage() (messageType int, p []byte, err error)
-	
+
 	// WriteMessage writes a message to the connection
 	WriteMessage(messageType int, data []byte) error
-	
+
 	// Close closes the connection
 	Close() error
 }
@@ -469,33 +469,29 @@ type WSConnection interface {
 type Session struct {
 	// Session ID
 	ID string
-	
+
 	// User ID
 	UserID string
-	
+
 	// Sandbox ID
 	SandboxID string
-	
+
 	// WebSocket connection
 	Conn WSConnection
-	
+
 	// Creation time
 	CreatedAt time.Time
 }
 
 // User represents a user
 type User struct {
-	// User ID
-	ID string `json:"id" db:"id"`
-	
-	// Username
-	Username string `json:"username" db:"username"`
-	
-	// Email
-	Email string `json:"email" db:"email"`
-	
-	// Creation time
+	ID        string    `json:"id" db:"id"`
+	Username  string    `json:"username" db:"username"`
+	Email     string    `json:"email" db:"email"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
+	Active    bool      `json:"active" db:"active"`
+	Role      string    `json:"role" db:"role"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -513,10 +509,10 @@ type WarmPod struct {
 type WarmPodSpec struct {
 	// Runtime environment
 	Runtime string `json:"runtime"`
-	
+
 	// Security level
 	SecurityLevel string `json:"securityLevel,omitempty"`
-	
+
 	// Resource requirements
 	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
@@ -525,10 +521,10 @@ type WarmPodSpec struct {
 type WarmPodStatus struct {
 	// Current phase of the warm pod
 	Phase string `json:"phase,omitempty"`
-	
+
 	// Pod name
 	PodName string `json:"podName,omitempty"`
-	
+
 	// Creation time
 	CreationTime *metav1.Time `json:"creationTime,omitempty"`
 }
@@ -548,16 +544,16 @@ type WarmPool struct {
 type WarmPoolSpec struct {
 	// Runtime environment
 	Runtime string `json:"runtime"`
-	
+
 	// Minimum number of warm pods
 	MinPods int `json:"minPods"`
-	
+
 	// Maximum number of warm pods
 	MaxPods int `json:"maxPods"`
-	
+
 	// Security level
 	SecurityLevel string `json:"securityLevel,omitempty"`
-	
+
 	// Resource requirements
 	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
@@ -566,10 +562,10 @@ type WarmPoolSpec struct {
 type WarmPoolStatus struct {
 	// Current number of warm pods
 	CurrentPods int `json:"currentPods"`
-	
+
 	// Available warm pods
 	AvailablePods int `json:"availablePods"`
-	
+
 	// Warm pod names
 	WarmPods []string `json:"warmPods,omitempty"`
 }
@@ -589,13 +585,13 @@ type RuntimeEnvironment struct {
 type RuntimeEnvironmentSpec struct {
 	// Base image
 	BaseImage string `json:"baseImage"`
-	
+
 	// Language
 	Language string `json:"language"`
-	
+
 	// Version
 	Version string `json:"version"`
-	
+
 	// Pre-installed packages
 	Packages []string `json:"packages,omitempty"`
 }
@@ -604,7 +600,7 @@ type RuntimeEnvironmentSpec struct {
 type RuntimeEnvironmentStatus struct {
 	// Whether the runtime environment is ready
 	Ready bool `json:"ready"`
-	
+
 	// Last update time
 	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
 }
@@ -621,28 +617,46 @@ type SandboxProfile struct {
 
 // SandboxProfileSpec defines the desired state of a SandboxProfile
 type SandboxProfileSpec struct {
-	// Resource requirements
-	Resources *ResourceRequirements `json:"resources,omitempty"`
-	
-	// Network access configuration
-	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-	
-	// Filesystem configuration
-	Filesystem *FilesystemConfig `json:"filesystem,omitempty"`
-	
-	// Storage configuration
-	Storage *StorageConfig `json:"storage,omitempty"`
-	
-	// Security context
-	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
+	Resources       *ResourceRequirements `json:"resources,omitempty"`
+	NetworkAccess   *NetworkAccess        `json:"networkAccess,omitempty"`
+	Filesystem      *FilesystemConfig     `json:"filesystem,omitempty"`
+	Storage         *StorageConfig        `json:"storage,omitempty"`
+	SecurityContext *SecurityContext      `json:"securityContext,omitempty"`
 }
 
-// SandboxNotFoundError represents a sandbox not found error
+type Message struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
 type SandboxNotFoundError struct {
 	ID string
 }
 
-// Error implements the error interface
 func (e *SandboxNotFoundError) Error() string {
 	return fmt.Sprintf("sandbox %s not found", e.ID)
+}
+
+type WarmPoolList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []WarmPool `json:"items"`
+}
+
+type WarmPodList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []WarmPod `json:"items"`
+}
+
+type RuntimeEnvironmentList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []RuntimeEnvironment `json:"items"`
+}
+
+type SandboxProfileList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SandboxProfile `json:"items"`
 }

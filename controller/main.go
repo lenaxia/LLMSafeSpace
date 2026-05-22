@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -10,6 +11,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/controller"
@@ -46,22 +48,20 @@ func main() {
 	// Create manager options
 	options := ctrl.Options{
 		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
+		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		WebhookServer:          webhook.NewServer(webhook.Options{Port: 9443}),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "llmsafespace-controller-leader-election",
 	}
 
-	// Configure leader election if enabled
 	if enableLeaderElection {
-		options.LeaderElectionConfig = &common.LeaderElectionConfig{
-			LeaseDuration: 15 * time.Second,
-			RenewDeadline: 10 * time.Second,
-			RetryPeriod:   2 * time.Second,
-			Namespace:     "llmsafespace",
-			Name:         "llmsafespace-controller",
-		}
+		leaseDuration := 15 * time.Second
+		renewDeadline := 10 * time.Second
+		retryPeriod := 2 * time.Second
+		options.LeaseDuration = &leaseDuration
+		options.RenewDeadline = &renewDeadline
+		options.RetryPeriod = &retryPeriod
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
@@ -74,19 +74,11 @@ func main() {
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandbox", &webhook.Admission{
 		Handler: &resources.SandboxValidator{Client: mgr.GetClient()},
 	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandboxprofile", &webhook.Admission{
 		Handler: &resources.SandboxProfileValidator{},
 	})
-	
-	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-warmpool", &webhook.Admission{
-		Handler: &resources.WarmPoolValidator{Client: mgr.GetClient()},
-	})
-	
-	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-warmpod", &webhook.Admission{
-		Handler: &resources.WarmPodValidator{Client: mgr.GetClient()},
-	})
-	
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &resources.RuntimeEnvironmentValidator{},
 	})

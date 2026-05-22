@@ -5,18 +5,18 @@ import (
 	"fmt"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/informers"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	
+
 	"github.com/lenaxia/llmsafespace/pkg/config"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/logger"
+	pkglogger "github.com/lenaxia/llmsafespace/pkg/logger"
 )
 
 // Client manages Kubernetes API interactions
@@ -34,7 +34,7 @@ type Client struct {
 var _ interfaces.KubernetesClient = (*Client)(nil)
 
 // New creates a new Kubernetes client
-func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
+func New(cfg *config.KubernetesConfig, log interfaces.LoggerInterface) (*Client, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -44,14 +44,14 @@ func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create in-cluster config: %w", err)
 		}
-		logger.Info("Using in-cluster Kubernetes configuration")
+		log.Info("Using in-cluster Kubernetes configuration")
 	} else {
 		// Use kubeconfig file
 		restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.ConfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
 		}
-		logger.Info("Using external Kubernetes configuration", "path", cfg.ConfigPath)
+		log.Info("Using external Kubernetes configuration", "path", cfg.ConfigPath)
 	}
 
 	// Configure connection pooling
@@ -79,9 +79,9 @@ func New(cfg *config.KubernetesConfig, logger *logger.Logger) (*Client, error) {
 		dynamicClient:   dynamicClient,
 		restConfig:      restConfig,
 		informerFactory: informerFactory,
-		logger:         logger,
-		config:         cfg,
-		stopCh:         make(chan struct{}),
+		logger:          log,
+		config:          cfg,
+		stopCh:          make(chan struct{}),
 	}, nil
 }
 
@@ -94,17 +94,15 @@ func NewForTesting(
 	log interfaces.LoggerInterface,
 ) *Client {
 	if log == nil {
-		var err error
-		loggerImpl, err := logger.New(true, "debug", "console")
+		loggerImpl, err := pkglogger.New(true, "debug", "console")
 		if err != nil {
-			// Use a simple default logger if creation fails
-			defaultLogger, _ := logger.New(true, "debug", "console")
+			defaultLogger, _ := pkglogger.New(true, "debug", "console")
 			log = defaultLogger
 		} else {
 			log = loggerImpl
 		}
 	}
-	
+
 	return &Client{
 		clientset:       clientset,
 		dynamicClient:   dynamicClient,
@@ -205,4 +203,3 @@ func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	var _ interfaces.LLMSafespaceV1Interface = client
 	return client
 }
-
