@@ -30,12 +30,6 @@ type App struct {
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if cfg.Logging.Development {
-		gin.SetMode(gin.DebugMode)
-	} else {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
 	k8sClient, err := kubernetes.New(&cfg.Kubernetes, log)
 	if err != nil {
 		cancel()
@@ -54,7 +48,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
 	}
 
-	router := server.NewRouter(svc, log, proxyHandler)
+	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
+		Debug:                   cfg.Logging.Development,
+		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
+		RateLimitConfig:         server.DefaultRouterConfig().RateLimitConfig,
+		SecurityConfig:          server.DefaultRouterConfig().SecurityConfig,
+		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
+		AllowedWebSocketOrigins: server.DefaultRouterConfig().AllowedWebSocketOrigins,
+	})
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

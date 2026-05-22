@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -57,7 +57,8 @@ type ProxyHandler struct {
 	watcher         *SandboxWatcher
 	sseTracker      *SSETracker
 
-	stopCh chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
 }
 
 func NewProxyHandler(
@@ -76,7 +77,13 @@ func NewProxyHandler(
 		namespace = "default"
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		}
 	}
 	return &ProxyHandler{
 		k8sClient:  k8sClient,
@@ -87,45 +94,51 @@ func NewProxyHandler(
 		wsConfig:   make(map[string]workspaceConfig),
 		activeSess: make(map[string]map[string]bool),
 		connCount:  make(map[string]int),
-		stopCh:     make(chan struct{}),
 	}, nil
 }
 
 func (h *ProxyHandler) Start() error {
-	h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
-	if err := h.activityTracker.Start(); err != nil {
-		return fmt.Errorf("starting activity tracker: %w", err)
-	}
+	var startErr error
+	h.startOnce.Do(func() {
+		h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
+		if err := h.activityTracker.Start(); err != nil {
+			startErr = fmt.Errorf("starting activity tracker: %w", err)
+			return
+		}
 
-	h.sseTracker = NewSSETracker(h.httpClient, h.logger, h.onSessionIdle)
-	h.sseTracker.SetPasswordGetter(h.getPassword)
-	h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
-	h.sseTracker.SetOnSessionActive(h.onSessionActive)
+		h.sseTracker = NewSSETracker(h.httpClient, h.logger, h.onSessionIdle)
+		h.sseTracker.SetPasswordGetter(h.getPassword)
+		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
+		h.sseTracker.SetOnSessionActive(h.onSessionActive)
 
-	var err error
-	h.watcher, err = NewSandboxWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
-	if err != nil {
-		h.activityTracker.Stop()
-		return fmt.Errorf("creating CRD watcher: %w", err)
-	}
-	if err := h.watcher.Start(); err != nil {
-		h.activityTracker.Stop()
-		return fmt.Errorf("starting CRD watcher: %w", err)
-	}
-	return nil
+		watcher, err := NewSandboxWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
+		if err != nil {
+			h.activityTracker.Stop()
+			startErr = fmt.Errorf("creating CRD watcher: %w", err)
+			return
+		}
+		if err := watcher.Start(); err != nil {
+			h.activityTracker.Stop()
+			startErr = fmt.Errorf("starting CRD watcher: %w", err)
+			return
+		}
+		h.watcher = watcher
+	})
+	return startErr
 }
 
 func (h *ProxyHandler) Stop() error {
-	close(h.stopCh)
-	if h.sseTracker != nil {
-		h.sseTracker.Stop()
-	}
-	if h.watcher != nil {
-		h.watcher.Stop()
-	}
-	if h.activityTracker != nil {
-		h.activityTracker.Stop()
-	}
+	h.stopOnce.Do(func() {
+		if h.sseTracker != nil {
+			h.sseTracker.Stop()
+		}
+		if h.watcher != nil {
+			h.watcher.Stop()
+		}
+		if h.activityTracker != nil {
+			h.activityTracker.Stop()
+		}
+	})
 	return nil
 }
 
@@ -485,6 +498,12 @@ func (h *ProxyHandler) onPhaseChange(sandbox *v1.Sandbox) {
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(sandbox.Name)
 		}
+		return
+	}
+	if phase == phaseRunning {
+		h.wsConfigMu.Lock()
+		delete(h.wsConfig, sandbox.Name)
+		h.wsConfigMu.Unlock()
 	}
 }
 
@@ -539,49 +558,4 @@ func isConnectionError(err error) bool {
 		strings.Contains(msg, "i/o timeout") ||
 		strings.Contains(msg, "EOF") ||
 		strings.Contains(msg, "network is unreachable")
-}
-
-func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Sandbox {
-	return &v1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			Labels: map[string]string{
-				"user-id":                    "test-user",
-				"llmsafespace.dev/workspace": workspaceRef,
-			},
-		},
-		Spec: v1.SandboxSpec{
-			Runtime:      "python",
-			WorkspaceRef: workspaceRef,
-		},
-		Status: v1.SandboxStatus{
-			Phase: phase,
-			PodIP: podIP,
-		},
-	}
-}
-
-func makePasswordSecret(sandboxID, password string) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("sandbox-pw-%s", sandboxID),
-			Namespace: "default",
-		},
-		Data: map[string][]byte{
-			"password": []byte(password),
-		},
-	}
-}
-
-func makeWorkspaceCRD(name string, maxActiveSessions int) *v1.Workspace {
-	return &v1.Workspace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: v1.WorkspaceSpec{
-			MaxActiveSessions: int32(maxActiveSessions),
-		},
-	}
 }

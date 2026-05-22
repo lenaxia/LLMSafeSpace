@@ -149,39 +149,11 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	}
 }
 
-func (e *testEnv) setupSandbox(sandboxID, podIP, phase, workspaceRef string) {
-	sb := makeSandboxCRD(sandboxID, podIP, phase, workspaceRef)
-	e.sbMock.On("Get", sandboxID, metav1.GetOptions{}).Return(sb, nil).Once()
-}
-
 func (e *testEnv) setupSandboxMulti(sandboxID string, crds ...*v1.Sandbox) {
 	for _, crd := range crds {
 		e.sbMock.On("Get", sandboxID, metav1.GetOptions{}).Return(crd, nil).Once()
 	}
 }
-
-func (e *testEnv) setupPassword(sandboxID, password string) {
-	secret := makePasswordSecret(sandboxID, password)
-	_, err := e.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
-	require.NoError(nil, err)
-}
-
-func (e *testEnv) setupWorkspace(name string, maxSessions int) {
-	ws := makeWorkspaceCRD(name, maxSessions)
-	e.wsMock.On("Get", name, metav1.GetOptions{}).Return(ws, nil).Once()
-}
-
-func (e *testEnv) doRequest(method, path string, body io.Reader) *httptest.ResponseRecorder {
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(method, path, body)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	e.router.ServeHTTP(w, req)
-	return w
-}
-
-var handlerT *testing.T
 
 func (e *testEnv) setupSandboxWithT(t *testing.T, sandboxID, podIP, phase, workspaceRef string) {
 	sb := makeSandboxCRD(sandboxID, podIP, phase, workspaceRef)
@@ -1420,4 +1392,49 @@ func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
 		"activity should not be recorded when wsConfig cache is absent (sandbox evicted)")
 	assert.Equal(t, 0, handler.activeSessionCount("sb-1"),
 		"session should still be removed from active set even when cache is absent")
+}
+
+func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Sandbox {
+	return &v1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				"user-id":                    "test-user",
+				"llmsafespace.dev/workspace": workspaceRef,
+			},
+		},
+		Spec: v1.SandboxSpec{
+			Runtime:      "python",
+			WorkspaceRef: workspaceRef,
+		},
+		Status: v1.SandboxStatus{
+			Phase: phase,
+			PodIP: podIP,
+		},
+	}
+}
+
+func makePasswordSecret(sandboxID, password string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("sandbox-pw-%s", sandboxID),
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"password": []byte(password),
+		},
+	}
+}
+
+func makeWorkspaceCRD(name string, maxActiveSessions int) *v1.Workspace {
+	return &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: v1.WorkspaceSpec{
+			MaxActiveSessions: int32(maxActiveSessions),
+		},
+	}
 }

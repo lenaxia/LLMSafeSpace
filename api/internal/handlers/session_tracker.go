@@ -164,7 +164,12 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 		return fmt.Errorf("SSE endpoint returned status %d", resp.StatusCode)
 	}
 
-	idleTimer := time.NewTimer(sseIdleTimeout)
+	idleCtx, cancelIdle := context.WithCancel(ctx)
+	defer cancelIdle()
+
+	idleTimer := time.AfterFunc(sseIdleTimeout, func() {
+		cancelIdle()
+	})
 	defer idleTimer.Stop()
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -174,12 +179,8 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 	for scanner.Scan() {
 		idleTimer.Reset(sseIdleTimeout)
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-idleTimer.C:
+		if idleCtx.Err() != nil {
 			return fmt.Errorf("SSE idle timeout for sandbox %s", sandboxID)
-		default:
 		}
 
 		line := scanner.Text()
