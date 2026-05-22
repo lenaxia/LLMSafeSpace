@@ -61,7 +61,7 @@ func newRouterFixture(t *testing.T) (*gin.Engine, *mockServices) {
 	auth.On("GetUserID", mock.Anything).Return("test-user")
 
 	svc := &mockServices{auth: auth, metrics: met, workspace: ws}
-	router := NewRouter(svc, log, RouterConfig{Debug: false})
+	router := NewRouter(svc, log, nil, RouterConfig{Debug: false})
 	return router, svc
 }
 
