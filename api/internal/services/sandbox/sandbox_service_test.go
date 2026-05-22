@@ -19,14 +19,15 @@ import (
 
 // fixture wires up all centralized mocks and a real Service under test.
 type fixture struct {
-	svc     *Service
-	k8s     *kmocks.MockKubernetesClient
-	v1iface *kmocks.MockLLMSafespaceV1Interface
-	sb      *kmocks.MockSandboxInterface
-	db      *imocks.MockDatabaseService
-	cache   *imocks.MockCacheService
-	metrics *imocks.MockMetricsService
-	log     *lmocks.MockLogger
+	svc       *Service
+	k8s       *kmocks.MockKubernetesClient
+	v1iface   *kmocks.MockLLMSafespaceV1Interface
+	sb        *kmocks.MockSandboxInterface
+	db        *imocks.MockDatabaseService
+	cache     *imocks.MockCacheService
+	metrics   *imocks.MockMetricsService
+	log       *lmocks.MockLogger
+	workspace *imocks.MockWorkspaceService
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -46,13 +47,14 @@ func newFixture(t *testing.T) *fixture {
 	db := &imocks.MockDatabaseService{}
 	cache := &imocks.MockCacheService{}
 	met := &imocks.MockMetricsService{}
+	wsSvc := &imocks.MockWorkspaceService{}
 
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 	k8s.On("LlmsafespaceV1").Return(v1i)
 	v1i.On("Sandboxes", "default").Return(sb)
 
-	svc, err := New(log, k8s, db, cache, met, &Config{
+	svc, err := New(log, k8s, db, cache, met, wsSvc, &Config{
 		Namespace:      "default",
 		DefaultTimeout: 300,
 		MaxSandboxes:   100,
@@ -60,7 +62,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
-	return &fixture{svc: svc, k8s: k8s, v1iface: v1i, sb: sb, db: db, cache: cache, metrics: met, log: log}
+	return &fixture{svc: svc, k8s: k8s, v1iface: v1i, sb: sb, db: db, cache: cache, metrics: met, log: log, workspace: wsSvc}
 }
 
 func crdSandbox(name, ns, runtime string) *v1.Sandbox {
@@ -75,7 +77,8 @@ func crdSandbox(name, ns, runtime string) *v1.Sandbox {
 // ===== New() =====
 
 func TestNew_NilLogger_ReturnsError(t *testing.T) {
-	_, err := New(nil, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, nil)
+	wsSvc := &imocks.MockWorkspaceService{}
+	_, err := New(nil, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, wsSvc, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "logger")
 }
@@ -83,7 +86,8 @@ func TestNew_NilLogger_ReturnsError(t *testing.T) {
 func TestNew_NilK8s_ReturnsError(t *testing.T) {
 	log := lmocks.NewMockLogger()
 	log.On("With", mock.Anything).Return(log).Maybe()
-	_, err := New(log, nil, &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, nil)
+	wsSvc := &imocks.MockWorkspaceService{}
+	_, err := New(log, nil, &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, wsSvc, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "kubernetes")
 }
@@ -91,15 +95,25 @@ func TestNew_NilK8s_ReturnsError(t *testing.T) {
 func TestNew_NilDB_ReturnsError(t *testing.T) {
 	log := lmocks.NewMockLogger()
 	log.On("With", mock.Anything).Return(log).Maybe()
-	_, err := New(log, kmocks.NewMockKubernetesClient(), nil, nil, &imocks.MockMetricsService{}, nil)
+	wsSvc := &imocks.MockWorkspaceService{}
+	_, err := New(log, kmocks.NewMockKubernetesClient(), nil, nil, &imocks.MockMetricsService{}, wsSvc, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "database")
+}
+
+func TestNew_NilWorkspaceService_ReturnsError(t *testing.T) {
+	log := lmocks.NewMockLogger()
+	log.On("With", mock.Anything).Return(log).Maybe()
+	_, err := New(log, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace")
 }
 
 func TestNew_NilConfig_UsesDefaults(t *testing.T) {
 	log := lmocks.NewMockLogger()
 	log.On("With", mock.Anything).Return(log).Maybe()
-	svc, err := New(log, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, nil)
+	wsSvc := &imocks.MockWorkspaceService{}
+	svc, err := New(log, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, wsSvc, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, "default", svc.config.Namespace)
 	assert.Equal(t, 300, svc.config.DefaultTimeout)
@@ -112,6 +126,9 @@ func TestCreateSandbox_HappyPath(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.MatchedBy(func(r types.CreateWorkspaceRequest) bool {
+		return r.Runtime == "python:3.10" && r.StorageSize == "10Gi"
+	})).Return(&types.Workspace{ID: "ws-auto-1"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
@@ -141,6 +158,7 @@ func TestCreateSandbox_ServiceIsStateless(t *testing.T) {
 
 	for i, id := range []string{"sb-1", "sb-2"} {
 		_ = i
+		f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil).Once()
 		f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil).Once()
 		f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil).Once()
 		f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
@@ -183,6 +201,7 @@ func TestCreateSandbox_UserNotFound_ReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "nobody", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "nobody").Return((*types.User)(nil), nil)
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "nobody"})
@@ -194,6 +213,7 @@ func TestCreateSandbox_GetUserError_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return((*types.User)(nil), errors.New("db timeout"))
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"})
@@ -205,6 +225,7 @@ func TestCreateSandbox_PermissionDenied_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(false, nil)
 
@@ -217,6 +238,7 @@ func TestCreateSandbox_K8sCreateFails_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.sb.On("Create", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("k8s unavailable"))
@@ -231,6 +253,7 @@ func TestCreateSandbox_DBCreateFails_CleansUpK8s(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-x", "default", "python:3.10"), nil)
@@ -247,6 +270,7 @@ func TestCreateSandbox_ZeroTimeout_AppliesDefault(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
@@ -267,6 +291,7 @@ func TestCreateSandbox_LabelsAndAnnotationsSet(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
 	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
@@ -284,6 +309,80 @@ func TestCreateSandbox_LabelsAndAnnotationsSet(t *testing.T) {
 	assert.Equal(t, "user1", captured.Labels["user-id"])
 	assert.Equal(t, "python:3.10", captured.Labels["runtime"])
 	assert.NotEmpty(t, captured.Annotations["llmsafespace.dev/created-at"])
+}
+
+// TestCreateSandbox_NoWorkspaceRef_AutoCreatesWorkspace verifies that when
+// WorkspaceRef is empty, CreateWorkspace is called and the returned workspace ID
+// is set as the "llmsafespace.dev/workspace" label on the Sandbox CRD.
+func TestCreateSandbox_NoWorkspaceRef_AutoCreatesWorkspace(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.MatchedBy(func(r types.CreateWorkspaceRequest) bool {
+		return r.Runtime == "python:3.10" && r.StorageSize == "10Gi"
+	})).Return(&types.Workspace{ID: "ws-auto-42"}, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
+	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
+	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
+
+	var captured *v1.Sandbox
+	f.sb.On("Create", mock.MatchedBy(func(s *v1.Sandbox) bool {
+		captured = s
+		return true
+	})).Return(crdSandbox("sb-new", "default", "python:3.10"), nil)
+
+	req := &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"}
+	result, err := f.svc.CreateSandbox(ctx, req)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "ws-auto-42", captured.Labels["llmsafespace.dev/workspace"])
+	f.workspace.AssertExpectations(t)
+}
+
+// TestCreateSandbox_WithWorkspaceRef_UsesExisting verifies that when WorkspaceRef
+// is set, CreateWorkspace is NOT called and the provided workspaceID is used.
+func TestCreateSandbox_WithWorkspaceRef_UsesExisting(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
+	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
+	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
+
+	var captured *v1.Sandbox
+	f.sb.On("Create", mock.MatchedBy(func(s *v1.Sandbox) bool {
+		captured = s
+		return true
+	})).Return(crdSandbox("sb-ref", "default", "python:3.10"), nil)
+
+	req := &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1", WorkspaceRef: "ws-existing-99"}
+	result, err := f.svc.CreateSandbox(ctx, req)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "ws-existing-99", captured.Labels["llmsafespace.dev/workspace"])
+	f.workspace.AssertNotCalled(t, "CreateWorkspace")
+}
+
+// TestCreateSandbox_AutoWorkspaceCreateFails_ReturnsError verifies that when
+// workspace auto-creation fails, CreateSandbox returns an error.
+func TestCreateSandbox_AutoWorkspaceCreateFails_ReturnsError(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
+	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return((*types.Workspace)(nil), errors.New("workspace create failed"))
+
+	req := &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"}
+	_, err := f.svc.CreateSandbox(ctx, req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "auto-creating workspace")
+	f.sb.AssertNotCalled(t, "Create")
 }
 
 // ===== GetSandbox =====
@@ -663,13 +762,14 @@ func TestBuildCRDFromRequest_SetsAllFields(t *testing.T) {
 		},
 	}
 
-	crd := buildCRDFromRequest(req, "testns")
+	crd := buildCRDFromRequest(req, "ws-123", "testns")
 
 	assert.Equal(t, "sb-", crd.GenerateName)
 	assert.Equal(t, "testns", crd.Namespace)
 	assert.Equal(t, "user42", crd.Labels["user-id"])
 	assert.Equal(t, "python:3.10", crd.Labels["runtime"])
 	assert.Equal(t, "llmsafespace", crd.Labels["app"])
+	assert.Equal(t, "ws-123", crd.Labels["llmsafespace.dev/workspace"])
 	assert.Equal(t, "user42", crd.Annotations["llmsafespace.dev/created-by"])
 	assert.NotEmpty(t, crd.Annotations["llmsafespace.dev/created-at"])
 	assert.Equal(t, "python:3.10", crd.Spec.Runtime)
@@ -683,7 +783,7 @@ func TestBuildCRDFromRequest_SetsAllFields(t *testing.T) {
 
 func TestBuildCRDFromRequest_NilResources_NoNilPanic(t *testing.T) {
 	req := &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "u1"}
-	crd := buildCRDFromRequest(req, "ns")
+	crd := buildCRDFromRequest(req, "ws-0", "ns")
 	assert.Nil(t, crd.Spec.Resources)
 	assert.Nil(t, crd.Spec.NetworkAccess)
 }

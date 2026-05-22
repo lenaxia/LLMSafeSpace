@@ -19,12 +19,13 @@ import (
 
 // Service implements apiinterfaces.SandboxService.
 type Service struct {
-	logger         pkginterfaces.LoggerInterface
-	k8sClient      pkginterfaces.KubernetesClient
-	dbService      apiinterfaces.DatabaseService
-	cacheService   apiinterfaces.CacheService
-	metricsService apiinterfaces.MetricsService
-	config         *Config
+	logger           pkginterfaces.LoggerInterface
+	k8sClient        pkginterfaces.KubernetesClient
+	dbService        apiinterfaces.DatabaseService
+	cacheService     apiinterfaces.CacheService
+	metricsService   apiinterfaces.MetricsService
+	workspaceService apiinterfaces.WorkspaceService
+	config           *Config
 }
 
 // Config holds sandbox service configuration.
@@ -43,6 +44,7 @@ func New(
 	dbService apiinterfaces.DatabaseService,
 	cacheService apiinterfaces.CacheService,
 	metricsService apiinterfaces.MetricsService,
+	workspaceService apiinterfaces.WorkspaceService,
 	config *Config,
 ) (*Service, error) {
 	if logger == nil {
@@ -54,6 +56,9 @@ func New(
 	if dbService == nil {
 		return nil, fmt.Errorf("database service cannot be nil")
 	}
+	if workspaceService == nil {
+		return nil, fmt.Errorf("workspace service cannot be nil")
+	}
 	if config == nil {
 		config = &Config{
 			Namespace:      "default",
@@ -62,12 +67,13 @@ func New(
 		}
 	}
 	return &Service{
-		logger:         logger,
-		k8sClient:      k8sClient,
-		dbService:      dbService,
-		cacheService:   cacheService,
-		metricsService: metricsService,
-		config:         config,
+		logger:           logger,
+		k8sClient:        k8sClient,
+		dbService:        dbService,
+		cacheService:     cacheService,
+		metricsService:   metricsService,
+		workspaceService: workspaceService,
+		config:           config,
 	}, nil
 }
 
@@ -115,7 +121,20 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		req.Timeout = s.config.DefaultTimeout
 	}
 
-	crd := buildCRDFromRequest(req, s.config.Namespace)
+	workspaceID := req.WorkspaceRef
+	if workspaceID == "" {
+		ws, err := s.workspaceService.CreateWorkspace(ctx, req.UserID, types.CreateWorkspaceRequest{
+			Name:        fmt.Sprintf("workspace-for-%s", req.UserID),
+			Runtime:     req.Runtime,
+			StorageSize: "10Gi",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("auto-creating workspace: %w", err)
+		}
+		workspaceID = ws.ID
+	}
+
+	crd := buildCRDFromRequest(req, workspaceID, s.config.Namespace)
 
 	s.logger.Debug("Creating sandbox in Kubernetes", "namespace", crd.Namespace, "generateName", crd.GenerateName)
 
@@ -333,16 +352,17 @@ func userIDFromContext(ctx context.Context) string {
 }
 
 // buildCRDFromRequest constructs a v1.Sandbox CRD from an API request.
-func buildCRDFromRequest(req *types.CreateSandboxRequest, namespace string) *v1.Sandbox {
+func buildCRDFromRequest(req *types.CreateSandboxRequest, workspaceID, namespace string) *v1.Sandbox {
 	return &v1.Sandbox{
 		TypeMeta: metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "Sandbox"},
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sb-",
 			Namespace:    namespace,
 			Labels: map[string]string{
-				"app":     "llmsafespace",
-				"user-id": req.UserID,
-				"runtime": req.Runtime,
+				"app":                        "llmsafespace",
+				"user-id":                    req.UserID,
+				"runtime":                    req.Runtime,
+				"llmsafespace.dev/workspace": workspaceID,
 			},
 			Annotations: map[string]string{
 				"llmsafespace.dev/created-by": req.UserID,

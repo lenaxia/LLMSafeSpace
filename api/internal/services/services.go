@@ -11,14 +11,16 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 )
 
 type Services struct {
-	Auth     interfaces.AuthService
-	Database interfaces.DatabaseService
-	Cache    interfaces.CacheService
-	Metrics  interfaces.MetricsService
-	Sandbox  interfaces.SandboxService
+	Auth      interfaces.AuthService
+	Database  interfaces.DatabaseService
+	Cache     interfaces.CacheService
+	Metrics   interfaces.MetricsService
+	Sandbox   interfaces.SandboxService
+	Workspace interfaces.WorkspaceService
 }
 
 var _ interfaces.Services = &Services{}
@@ -41,6 +43,10 @@ func (s *Services) GetMetrics() interfaces.MetricsService {
 
 func (s *Services) GetSandbox() interfaces.SandboxService {
 	return s.Sandbox
+}
+
+func (s *Services) GetWorkspace() interfaces.WorkspaceService {
+	return s.Workspace
 }
 
 func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
@@ -67,12 +73,29 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		MaxSandboxes:   100,
 	}
 
+	workspaceConfig := &workspace.Config{
+		Namespace: cfg.Kubernetes.Namespace,
+	}
+
+	workspaceService, err := workspace.New(
+		log,
+		k8sClient,
+		dbService,
+		cacheService,
+		metricsService,
+		workspaceConfig,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize workspace service: %w", err)
+	}
+
 	sandboxService, err := sandbox.New(
 		log,
 		k8sClient,
 		dbService,
 		cacheService,
 		metricsService,
+		workspaceService,
 		sandboxConfig,
 	)
 	if err != nil {
@@ -80,11 +103,12 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 	}
 
 	return &Services{
-		Auth:     authService,
-		Database: dbService,
-		Cache:    cacheService,
-		Metrics:  metricsService,
-		Sandbox:  sandboxService,
+		Auth:      authService,
+		Database:  dbService,
+		Cache:     cacheService,
+		Metrics:   metricsService,
+		Sandbox:   sandboxService,
+		Workspace: workspaceService,
 	}, nil
 }
 
@@ -119,11 +143,24 @@ func (s *Services) Start() error {
 		return fmt.Errorf("failed to start sandbox service: %w", err)
 	}
 
+	if err := s.Workspace.Start(); err != nil {
+		s.Sandbox.Stop()
+		s.Auth.Stop()
+		s.Cache.Stop()
+		s.Database.Stop()
+		s.Metrics.Stop()
+		return fmt.Errorf("failed to start workspace service: %w", err)
+	}
+
 	return nil
 }
 
 func (s *Services) Stop() error {
 	var errs []error
+
+	if err := s.Workspace.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop workspace service: %w", err))
+	}
 
 	if err := s.Sandbox.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to stop sandbox service: %w", err))
