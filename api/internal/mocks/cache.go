@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
@@ -12,6 +13,9 @@ import (
 type MockCacheService struct {
 	mock.Mock
 }
+
+// Compile-time check against the real interface.
+var _ interfaces.CacheService = (*MockCacheService)(nil)
 
 func (m *MockCacheService) Start() error { return m.Called().Error(0) }
 func (m *MockCacheService) Stop() error  { return m.Called().Error(0) }
