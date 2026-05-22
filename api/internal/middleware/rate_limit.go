@@ -14,14 +14,24 @@ import (
 )
 
 type RateLimitConfig struct {
-	Enabled        bool
-	DefaultLimit   int
-	DefaultWindow  time.Duration
-	BurstSize      int
-	Strategy       string
-	ExemptRoles    []string
-	CustomLimits   map[string]int
-	CustomBursts   map[string]int
+	Enabled       bool
+	DefaultLimit  int
+	DefaultWindow time.Duration
+	BurstSize     int
+	Strategy      string
+	ExemptRoles   []string
+	CustomLimits  map[string]int
+	CustomBursts  map[string]int
+}
+
+func DefaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		Enabled:       false,
+		DefaultLimit:  100,
+		DefaultWindow: time.Minute,
+		BurstSize:     20,
+		Strategy:      "token_bucket",
+	}
 }
 
 func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
@@ -100,7 +110,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 func applyTokenBucketRateLimit(c *gin.Context, rl interfaces.RateLimiterService, key string, limit, burst int, log pkginterfaces.LoggerInterface) error {
 	// Calculate rate from limit (requests per second)
 	rate := float64(limit)
-	
+
 	// Use the RateLimiterService.Allow method
 	if !rl.Allow(key, rate, burst) {
 		log.Warn("Rate limit exceeded",
@@ -155,7 +165,7 @@ func applyFixedWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterService,
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit - int(count)))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-int(count)))
 	c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
 	return nil
 }
@@ -215,7 +225,7 @@ func applySlidingWindowRateLimit(c *gin.Context, rl interfaces.RateLimiterServic
 	}
 
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit - count))
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(limit-count))
 	c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
 	return nil
 }

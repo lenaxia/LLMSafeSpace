@@ -8,20 +8,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	//"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // App represents the main application
 type App struct {
-	config     *config.Config
-	logger     *logger.Logger
-	router     *gin.Engine
-	server     *http.Server
-	k8sClient  *kubernetes.Client
-	services   *services.Services
+	config    *config.Config
+	logger    *logger.Logger
+	router    *gin.Engine
+	server    *http.Server
+	k8sClient *kubernetes.Client
+	services  *services.Services
 	//handlers   *handlers.Handlers
 	shutdownCh chan struct{}
 	ctx        context.Context
@@ -32,7 +32,7 @@ type App struct {
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Set Gin mode
 	if cfg.Logging.Development {
 		gin.SetMode(gin.DebugMode)
@@ -41,7 +41,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	// Initialize Kubernetes client
-	k8sClient, err := kubernetes.New(cfg, log)
+	k8sClient, err := kubernetes.New(&cfg.Kubernetes, log)
 	if err != nil {
 		cancel() // Clean up context
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
@@ -57,20 +57,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create router
 	router := gin.New()
 	router.Use(gin.Recovery())
-	
-	// Add middleware
-	//router.Use(handlers.LoggerMiddleware(log))
-	//router.Use(handlers.MetricsMiddleware(svc.Metrics))
-	
-	// Initialize handlers
-	//h := handlers.New(log, svc)
-	
-	// Register routes
-	h.RegisterRoutes(router)
-	
+
 	// Add metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	
+
 	// Add health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -83,12 +73,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	return &App{
-		config:     cfg,
-		logger:     log,
-		router:     router,
-		server:     server,
-		k8sClient:  k8sClient,
-		services:   svc,
+		config:    cfg,
+		logger:    log,
+		router:    router,
+		server:    server,
+		k8sClient: k8sClient,
+		services:  svc,
 		//handlers:   h,
 		shutdownCh: make(chan struct{}),
 		ctx:        ctx,
@@ -123,7 +113,7 @@ func (a *App) Run() error {
 // Shutdown gracefully shuts down the application
 func (a *App) Shutdown() error {
 	a.logger.Info("Shutting down application")
-	
+
 	// Trigger context cancellation
 	a.cancel()
 

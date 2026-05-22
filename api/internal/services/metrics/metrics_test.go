@@ -14,76 +14,52 @@ import (
 var metricsService *Service
 
 func TestMain(m *testing.M) {
-	// Initialize logger and metrics service
-	logger, _ := logger.New(true, "debug", "console")
-	metricsService = New(logger)
-
-	// Run tests
-	exitCode := m.Run()
-
-	// Clean up
-	metricsService.Stop()
-
-	os.Exit(exitCode)
+	log, _ := logger.New(true, "debug", "console")
+	metricsService = New(log)
+	os.Exit(m.Run())
 }
 
-func TestNew(t *testing.T) {
+func TestNew_AllCountersInitialised(t *testing.T) {
 	assert.NotNil(t, metricsService.requestCounter)
 	assert.NotNil(t, metricsService.requestDuration)
 	assert.NotNil(t, metricsService.responseSize)
 	assert.NotNil(t, metricsService.activeConnections)
 	assert.NotNil(t, metricsService.sandboxesCreated)
 	assert.NotNil(t, metricsService.sandboxesTerminated)
-	assert.NotNil(t, metricsService.executionsTotal)
-	assert.NotNil(t, metricsService.executionDuration)
 	assert.NotNil(t, metricsService.errorsTotal)
-	assert.NotNil(t, metricsService.packageInstalls)
-	assert.NotNil(t, metricsService.fileOperations)
 	assert.NotNil(t, metricsService.resourceUsage)
-	assert.NotNil(t, metricsService.warmPoolHitRatio)
-	assert.NotNil(t, metricsService.warmPoolUtilization)
-	assert.NotNil(t, metricsService.warmPoolScaling)
 }
 
 func TestStart(t *testing.T) {
-	err := metricsService.Start()
-	assert.NoError(t, err)
+	assert.NoError(t, metricsService.Start())
 }
 
 func TestStop(t *testing.T) {
-	err := metricsService.Stop()
-	assert.NoError(t, err)
+	assert.NoError(t, metricsService.Stop())
 }
 
 func TestRecordRequest(t *testing.T) {
 	metricsService.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
 
-	// Test request counter
 	metric, err := metricsService.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
+	assert.Equal(t, 1.0, counterValue(metric))
 
-	// Test request duration histogram
-	observer, err := metricsService.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	obs, err := metricsService.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	histogram, ok := observer.(prometheus.Histogram)
-	assert.True(t, ok, "Expected Histogram type")
-	assert.InDelta(t, 0.1, promHistogramValue(histogram), 0.01)
+	assert.InDelta(t, 0.1, histogramSum(obs.(prometheus.Histogram)), 0.01)
 
-	// Test response size histogram
-	observer, err = metricsService.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	obs, err = metricsService.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
 	assert.NoError(t, err)
-	histogram, ok = observer.(prometheus.Histogram)
-	assert.True(t, ok, "Expected Histogram type")
-	assert.InDelta(t, 1024.0, promHistogramValue(histogram), 0.1)
+	assert.InDelta(t, 1024.0, histogramSum(obs.(prometheus.Histogram)), 0.1)
 }
 
 func TestRecordSandboxCreation(t *testing.T) {
-	metricsService.RecordSandboxCreation("python:3.10", true, "user-123")
+	metricsService.RecordSandboxCreation("python:3.10", "user-123")
 
-	metric, err := metricsService.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "true", "user-123")
+	metric, err := metricsService.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "user-123")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
+	assert.Equal(t, 1.0, counterValue(metric))
 }
 
 func TestRecordSandboxTermination(t *testing.T) {
@@ -91,23 +67,7 @@ func TestRecordSandboxTermination(t *testing.T) {
 
 	metric, err := metricsService.sandboxesTerminated.GetMetricWithLabelValues("python:3.10", "timeout")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
-}
-
-func TestRecordExecution(t *testing.T) {
-	metricsService.RecordExecution("code", "python:3.10", "success", "user-123", 500*time.Millisecond)
-
-	// Test executions counter
-	metric, err := metricsService.executionsTotal.GetMetricWithLabelValues("code", "python:3.10", "success", "user-123")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
-
-	// Test execution duration histogram
-	observer, err := metricsService.executionDuration.GetMetricWithLabelValues("code", "python:3.10")
-	assert.NoError(t, err)
-	histogram, ok := observer.(prometheus.Histogram)
-	assert.True(t, ok, "Expected Histogram type")
-	assert.InDelta(t, 0.5, promHistogramValue(histogram), 0.01)
+	assert.Equal(t, 1.0, counterValue(metric))
 }
 
 func TestRecordError(t *testing.T) {
@@ -115,123 +75,65 @@ func TestRecordError(t *testing.T) {
 
 	metric, err := metricsService.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/sandboxes", "404")
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
-}
-
-func TestRecordPackageInstallation(t *testing.T) {
-	metricsService.RecordPackageInstallation("python:3.10", "pip", "success")
-
-	metric, err := metricsService.packageInstalls.GetMetricWithLabelValues("python:3.10", "pip", "success")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
-}
-
-func TestRecordFileOperation(t *testing.T) {
-	metricsService.RecordFileOperation("upload", "success")
-
-	metric, err := metricsService.fileOperations.GetMetricWithLabelValues("upload", "success")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
+	assert.Equal(t, 1.0, counterValue(metric))
 }
 
 func TestRecordResourceUsage(t *testing.T) {
 	metricsService.RecordResourceUsage("sandbox-123", 0.5, 1024*1024*1024)
 
-	metric, err := metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "cpu")
+	cpu, err := metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "cpu")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.5, promGaugeValue(metric))
+	assert.Equal(t, 0.5, gaugeValue(cpu))
 
-	metric, err = metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "memory")
+	mem, err := metricsService.resourceUsage.GetMetricWithLabelValues("sandbox-123", "memory")
 	assert.NoError(t, err)
-	assert.Equal(t, float64(1024*1024*1024), promGaugeValue(metric))
+	assert.Equal(t, float64(1024*1024*1024), gaugeValue(mem))
 }
 
-func TestRecordWarmPoolMetrics(t *testing.T) {
-	metricsService.RecordWarmPoolMetrics("python:3.10", "pool-1", 0.8)
-
-	metric, err := metricsService.warmPoolUtilization.GetMetricWithLabelValues("python:3.10", "pool-1")
-	assert.NoError(t, err)
-	assert.Equal(t, 0.8, promGaugeValue(metric))
-}
-
-func TestRecordWarmPoolScaling(t *testing.T) {
-	metricsService.RecordWarmPoolScaling("python:3.10", "scale_up", "high_demand")
-
-	metric, err := metricsService.warmPoolScaling.GetMetricWithLabelValues("python:3.10", "scale_up", "high_demand")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promCounterValue(metric))
-}
-
-func TestIncrementActiveConnections(t *testing.T) {
-	metricsService.IncrementActiveConnections("websocket", "user-123")
-
-	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, promGaugeValue(metric))
-}
-
-func TestDecrementActiveConnections(t *testing.T) {
-	// Reset the metric to ensure we start from a clean state
+func TestIncrementDecrementActiveConnections(t *testing.T) {
 	metricsService.activeConnections.Reset()
-	
-	// Get initial value for debugging
-	initialMetric, _ := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
-	initialValue := promGaugeValue(initialMetric)
-	t.Logf("Initial value: %f", initialValue)
-	
-	metricsService.IncrementActiveConnections("websocket", "user-123")
-	
-	// Get value after increment for debugging
-	afterIncMetric, _ := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
-	afterIncValue := promGaugeValue(afterIncMetric)
-	t.Logf("After increment: %f", afterIncValue)
-	
-	metricsService.DecrementActiveConnections("websocket", "user-123")
-	
-	// Get final value
-	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-123")
-	finalValue := promGaugeValue(metric)
-	t.Logf("Final value: %f", finalValue)
-	
+	metricsService.IncrementActiveConnections("websocket", "user-99")
+	metricsService.IncrementActiveConnections("websocket", "user-99")
+	metricsService.DecrementActiveConnections("websocket", "user-99")
+
+	metric, err := metricsService.activeConnections.GetMetricWithLabelValues("websocket", "user-99")
 	assert.NoError(t, err)
-	assert.Equal(t, 0.0, finalValue)
+	assert.Equal(t, 1.0, gaugeValue(metric))
 }
 
-func TestUpdateWarmPoolHitRatio(t *testing.T) {
-	metricsService.UpdateWarmPoolHitRatio("python:3.10", 0.75)
-
-	metric, err := metricsService.warmPoolHitRatio.GetMetricWithLabelValues("python:3.10")
-	assert.NoError(t, err)
-	assert.Equal(t, 0.75, promGaugeValue(metric))
+func TestRecordRequest_DifferentStatuses(t *testing.T) {
+	for _, status := range []int{200, 400, 500} {
+		metricsService.RecordRequest("POST", "/api/v1/sandboxes", status, time.Millisecond, 0)
+	}
+	for _, status := range []string{"200", "400", "500"} {
+		m, err := metricsService.requestCounter.GetMetricWithLabelValues("POST", "/api/v1/sandboxes", status)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, counterValue(m), 1.0)
+	}
 }
 
-// Helper functions to extract values from different Prometheus metric types
-func promCounterValue(metric prometheus.Metric) float64 {
-	var m dto.Metric
-	err := metric.Write(&m)
-	if err != nil {
+// helpers
+
+func counterValue(m prometheus.Metric) float64 {
+	var d dto.Metric
+	if err := m.Write(&d); err != nil {
 		return 0
 	}
-	return m.Counter.GetValue()
+	return d.Counter.GetValue()
 }
 
-func promGaugeValue(metric prometheus.Metric) float64 {
-	var m dto.Metric
-	err := metric.Write(&m)
-	if err != nil {
+func gaugeValue(m prometheus.Metric) float64 {
+	var d dto.Metric
+	if err := m.Write(&d); err != nil {
 		return 0
 	}
-	return m.Gauge.GetValue()
+	return d.Gauge.GetValue()
 }
 
-func promHistogramValue(metric prometheus.Metric) float64 {
-	var m dto.Metric
-	err := metric.Write(&m)
-	if err != nil {
+func histogramSum(h prometheus.Histogram) float64 {
+	var d dto.Metric
+	if err := h.Write(&d); err != nil {
 		return 0
 	}
-	
-	// For histograms, we return the sum of observations
-	// This is a simplification for testing purposes
-	return m.Histogram.GetSampleSum()
+	return d.Histogram.GetSampleSum()
 }

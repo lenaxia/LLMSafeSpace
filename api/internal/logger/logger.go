@@ -5,6 +5,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // Logger provides structured logging
@@ -89,7 +91,7 @@ func (l *Logger) Fatal(msg string, err error, keysAndValues ...interface{}) {
 }
 
 // With returns a logger with additional fields
-func (l *Logger) With(keysAndValues ...interface{}) *Logger {
+func (l *Logger) With(keysAndValues ...interface{}) pkginterfaces.LoggerInterface {
 	return &Logger{
 		logger: l.logger.With(fieldsFromKeysAndValues(keysAndValues)...),
 	}
