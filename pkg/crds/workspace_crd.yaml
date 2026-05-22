@@ -1,0 +1,194 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workspaces.llmsafespace.dev
+spec:
+  group: llmsafespace.dev
+  names:
+    kind: Workspace
+    plural: workspaces
+    singular: workspace
+    shortNames:
+      - ws
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - owner
+                - storage
+              properties:
+                owner:
+                  type: object
+                  required:
+                    - userID
+                  properties:
+                    userID:
+                      type: string
+                      description: "User ID of the workspace owner"
+                storage:
+                  type: object
+                  required:
+                    - size
+                  properties:
+                    size:
+                      type: string
+                      pattern: "^[0-9]+(Gi|Mi)$"
+                      description: "PVC storage request (e.g. 10Gi)"
+                    storageClassName:
+                      type: string
+                      description: "StorageClass name; empty uses the cluster default"
+                    accessMode:
+                      type: string
+                      enum: ["ReadWriteOnce", "ReadWriteMany"]
+                      default: "ReadWriteOnce"
+                      description: "ReadWriteOnce = one sandbox at a time (default). ReadWriteMany = concurrent sandboxes."
+                defaultRuntime:
+                  type: string
+                  description: "Default runtime environment (e.g. python:3.11)"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high"]
+                  default: "standard"
+                  description: "Security level for sandbox pods"
+                networkAccess:
+                  type: object
+                  properties:
+                    egress:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - domain
+                        properties:
+                          domain:
+                            type: string
+                            description: "Domain allowed for egress"
+                    ingress:
+                      type: boolean
+                      default: false
+                      description: "Allow ingress traffic to sandbox pods"
+                autoSuspend:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: "Enable auto-suspension after idle"
+                    idleTimeoutSeconds:
+                      type: integer
+                      minimum: 1
+                      default: 3600
+                      description: "Idle period in seconds before auto-suspension"
+                ttlSecondsAfterSuspended:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                  description: "Seconds after suspension before auto-deletion; 0 = never"
+                packages:
+                  type: array
+                  description: "Runtime-specific packages installed on every pod start"
+                  items:
+                    type: object
+                    required:
+                      - runtime
+                      - requirements
+                    properties:
+                      runtime:
+                        type: string
+                        description: "Runtime selector (e.g. python:3.11)"
+                      requirements:
+                        type: array
+                        items:
+                          type: string
+                        description: "Package identifiers (e.g. pip package names)"
+                initScript:
+                  type: string
+                  description: "Shell script run by init container on every pod start"
+                maxActiveSessions:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 5
+                  description: "Maximum concurrent active sessions"
+                credentials:
+                  type: object
+                  properties:
+                    secretName:
+                      type: string
+                      description: "Name of the Secret holding agent credentials"
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum:
+                    - "Pending"
+                    - "Active"
+                    - "Suspending"
+                    - "Suspended"
+                    - "Resuming"
+                    - "Terminating"
+                    - "Terminated"
+                    - "Failed"
+                  description: "Current lifecycle phase of the workspace"
+                pvcName:
+                  type: string
+                  description: "Name of the bound PersistentVolumeClaim"
+                activeSessions:
+                  type: integer
+                  description: "Number of Sandbox resources currently referencing this Workspace"
+                lastActivityAt:
+                  type: string
+                  format: date-time
+                  description: "Timestamp of the most recent API activity"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: "Type of condition"
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                        description: "Status of the condition"
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: "Last time the condition transitioned"
+                      reason:
+                        type: string
+                        description: "Reason for the condition"
+                      message:
+                        type: string
+                        description: "Human-readable message explaining the condition"
+                message:
+                  type: string
+                  description: "Human-readable description of the current state"
+                observedGeneration:
+                  type: integer
+                  description: "Most recent generation the controller acted on"
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Storage
+          type: string
+          jsonPath: .spec.storage.size
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
