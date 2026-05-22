@@ -79,7 +79,6 @@ func dbWorkspace(id, userID, name, storageSize string) *types.WorkspaceMetadata 
 		Name:        name,
 		Runtime:     "python:3.10",
 		StorageSize: storageSize,
-		Phase:       "Pending",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -306,9 +305,7 @@ func TestDeleteWorkspace_HappyPath(t *testing.T) {
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	f.ws.On("Delete", "ws-1", mock.Anything).Return(nil)
-	f.db.On("UpdateWorkspace", ctx, "ws-1", mock.MatchedBy(func(u types.WorkspaceUpdates) bool {
-		return u.Phase != nil && *u.Phase == "terminating"
-	})).Return(nil)
+	f.db.On("DeleteWorkspace", ctx, "ws-1").Return(nil)
 
 	err := f.svc.DeleteWorkspace(ctx, "user1", "ws-1")
 

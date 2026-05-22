@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS idx_permissions_resource;
+DROP INDEX IF EXISTS idx_permissions_user_id;
+DROP INDEX IF EXISTS idx_sandboxes_user_id;
+DROP INDEX IF EXISTS idx_api_keys_user_id;
+DROP TABLE IF EXISTS sandbox_labels;
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS sandboxes;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS users;

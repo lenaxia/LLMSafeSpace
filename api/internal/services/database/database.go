@@ -21,9 +21,7 @@ type Service struct {
 	DB     *sql.DB
 }
 
-// New creates a new database service
 func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
-	// Create connection string
 	connString := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Database.Host,
@@ -34,18 +32,15 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 		cfg.Database.SSLMode,
 	)
 
-	// Connect to database
 	db, err := sql.Open("pgx", connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Configure connection pool
 	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
 	db.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
 
-	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
@@ -525,8 +520,6 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 		// Create a map to store labels by sandbox ID
 		sandboxLabels := make(map[string]map[string]string)
 
-		// Build query with IN clause for sandbox IDs
-		// Fix: Use a proper IN clause instead of ANY($1)
 		placeholders := make([]string, len(sandboxIDs))
 		for i := range sandboxIDs {
 			placeholders[i] = fmt.Sprintf("'%s'", sandboxIDs[i])
@@ -583,6 +576,8 @@ func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string
 	switch resourceType {
 	case "sandbox":
 		query = "SELECT COUNT(*) FROM sandboxes WHERE id = $1 AND user_id = $2"
+	case "workspace":
+		query = "SELECT COUNT(*) FROM workspaces WHERE id = $1 AND user_id = $2"
 	default:
 		return false, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}
@@ -612,4 +607,136 @@ func (s *Service) CheckPermission(userID, resourceType, resourceID, action strin
 	}
 
 	return count > 0, nil
+}
+
+// GetWorkspace gets a workspace by ID.
+func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	query := `
+        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        FROM workspaces
+        WHERE id = $1
+    `
+	var ws types.WorkspaceMetadata
+	err := s.DB.QueryRowContext(ctx, query, workspaceID).Scan(
+		&ws.ID,
+		&ws.UserID,
+		&ws.Name,
+		&ws.Runtime,
+		&ws.StorageSize,
+		&ws.CreatedAt,
+		&ws.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get workspace: %w", err)
+	}
+	return &ws, nil
+}
+
+// CreateWorkspace inserts a new workspace record.
+func (s *Service) CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error {
+	query := `
+        INSERT INTO workspaces (id, user_id, name, runtime, storage_size, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `
+	now := time.Now()
+	if workspace.CreatedAt.IsZero() {
+		workspace.CreatedAt = now
+	}
+	if workspace.UpdatedAt.IsZero() {
+		workspace.UpdatedAt = now
+	}
+	_, err := s.DB.ExecContext(ctx, query,
+		workspace.ID,
+		workspace.UserID,
+		workspace.Name,
+		workspace.Runtime,
+		workspace.StorageSize,
+		workspace.CreatedAt,
+		workspace.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create workspace: %w", err)
+	}
+	return nil
+}
+
+// UpdateWorkspace updates specific fields on a workspace record.
+func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error {
+	query := "UPDATE workspaces SET updated_at = NOW()"
+	args := []interface{}{}
+	i := 0
+	if updates.Name != nil {
+		i++
+		query += fmt.Sprintf(", name = $%d", i)
+		args = append(args, *updates.Name)
+	}
+	if i == 0 {
+		return nil
+	}
+	query += fmt.Sprintf(" WHERE id = $%d", i+1)
+	args = append(args, workspaceID)
+	_, err := s.DB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update workspace: %w", err)
+	}
+	return nil
+}
+
+// DeleteWorkspace removes a workspace record.
+func (s *Service) DeleteWorkspace(ctx context.Context, workspaceID string) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM workspaces WHERE id = $1", workspaceID)
+	if err != nil {
+		return fmt.Errorf("failed to delete workspace: %w", err)
+	}
+	return nil
+}
+
+// ListWorkspaces lists workspaces for a user with pagination.
+func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
+	var total int
+	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM workspaces WHERE user_id = $1", userID).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
+	}
+	pagination := &types.PaginationMetadata{
+		Total:  total,
+		Start:  offset,
+		End:    offset + limit,
+		Limit:  limit,
+		Offset: offset,
+	}
+	if pagination.End > total {
+		pagination.End = total
+	}
+	if total == 0 {
+		return []*types.WorkspaceMetadata{}, pagination, nil
+	}
+	rows, err := s.DB.QueryContext(ctx, `
+        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        FROM workspaces
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+    `, userID, limit, offset)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list workspaces: %w", err)
+	}
+	defer rows.Close()
+	workspaces := make([]*types.WorkspaceMetadata, 0)
+	for rows.Next() {
+		var ws types.WorkspaceMetadata
+		if err := rows.Scan(
+			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
+			&ws.StorageSize, &ws.CreatedAt, &ws.UpdatedAt,
+		); err != nil {
+			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
+		}
+		workspaces = append(workspaces, &ws)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error iterating workspace rows: %w", err)
+	}
+	return workspaces, pagination, nil
 }
