@@ -355,6 +355,130 @@ func TestCreateSandbox(t *testing.T) {
 	})
 }
 
+func TestCreateUser(t *testing.T) {
+	t.Run("success_with_explicit_timestamps", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		now := time.Now()
+		user := &types.User{
+			ID:        "user-abc",
+			Username:  "alice",
+			Email:     "alice@example.com",
+			CreatedAt: now,
+			UpdatedAt: now,
+			Active:    true,
+			Role:      "user",
+		}
+
+		mock.ExpectExec("INSERT INTO users").
+			WithArgs(user.ID, user.Username, user.Email, user.CreatedAt, user.UpdatedAt, user.Active, user.Role).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+
+		err := service.CreateUser(ctx, user)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("success_zero_timestamps_auto_filled", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		user := &types.User{
+			ID:       "user-xyz",
+			Username: "bob",
+			Email:    "bob@example.com",
+			Active:   false,
+			Role:     "admin",
+			// CreatedAt and UpdatedAt intentionally zero
+		}
+
+		mock.ExpectExec("INSERT INTO users").
+			WithArgs(user.ID, user.Username, user.Email, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+
+		err := service.CreateUser(ctx, user)
+		assert.NoError(t, err)
+		// Timestamps must have been filled in
+		assert.False(t, user.CreatedAt.IsZero())
+		assert.False(t, user.UpdatedAt.IsZero())
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		user := &types.User{
+			ID:       "user-dup",
+			Username: "dup",
+			Email:    "dup@example.com",
+		}
+
+		mock.ExpectExec("INSERT INTO users").
+			WithArgs(user.ID, user.Username, user.Email, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.CreateUser(ctx, user)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create user")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestDeleteUser(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		userID := "user-to-delete"
+
+		mock.ExpectExec("DELETE FROM users WHERE id = \\$1").
+			WithArgs(userID).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.DeleteUser(ctx, userID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("user_not_found_is_not_an_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// DELETE affecting 0 rows is not an error in the current implementation
+		mock.ExpectExec("DELETE FROM users WHERE id = \\$1").
+			WithArgs("nonexistent").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := service.DeleteUser(ctx, "nonexistent")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec("DELETE FROM users WHERE id = \\$1").
+			WithArgs("user-err").
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.DeleteUser(ctx, "user-err")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete user")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestUpdateUser(t *testing.T) {
 	t.Run("username_and_email", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)
