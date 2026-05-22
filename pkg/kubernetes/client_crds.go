@@ -26,6 +26,8 @@ func init() {
 				&v1.RuntimeEnvironmentList{},
 				&v1.SandboxProfile{},
 				&v1.SandboxProfileList{},
+				&v1.Workspace{},
+				&v1.WorkspaceList{},
 			)
 			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
 			return nil
@@ -79,6 +81,10 @@ func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.
 
 func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
 	return &sandboxProfiles{client: c.restClient, ns: namespace}
+}
+
+func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
+	return &workspaces{client: c.restClient, ns: namespace}
 }
 
 type sandboxes struct {
@@ -313,6 +319,89 @@ func (s *sandboxProfiles) Watch(opts metav1.ListOptions) (watch.Interface, error
 	return s.client.Get().
 		Namespace(s.ns).
 		Resource("sandboxprofiles").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Watch(context.TODO())
+}
+
+type workspaces struct {
+	client rest.Interface
+	ns     string
+}
+
+func (w *workspaces) Create(workspace *v1.Workspace) (*v1.Workspace, error) {
+	result := &v1.Workspace{}
+	err := w.client.Post().
+		Namespace(w.ns).
+		Resource("workspaces").
+		Body(workspace).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (w *workspaces) Update(workspace *v1.Workspace) (*v1.Workspace, error) {
+	result := &v1.Workspace{}
+	err := w.client.Put().
+		Namespace(w.ns).
+		Resource("workspaces").
+		Name(workspace.Name).
+		Body(workspace).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (w *workspaces) UpdateStatus(workspace *v1.Workspace) (*v1.Workspace, error) {
+	result := &v1.Workspace{}
+	err := w.client.Put().
+		Namespace(w.ns).
+		Resource("workspaces").
+		Name(workspace.Name).
+		SubResource("status").
+		Body(workspace).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (w *workspaces) Delete(name string, options metav1.DeleteOptions) error {
+	return w.client.Delete().
+		Namespace(w.ns).
+		Resource("workspaces").
+		Name(name).
+		Body(&options).
+		Do(context.TODO()).
+		Error()
+}
+
+func (w *workspaces) Get(name string, options metav1.GetOptions) (*v1.Workspace, error) {
+	result := &v1.Workspace{}
+	err := w.client.Get().
+		Namespace(w.ns).
+		Resource("workspaces").
+		Name(name).
+		VersionedParams(&options, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (w *workspaces) List(opts metav1.ListOptions) (*v1.WorkspaceList, error) {
+	result := &v1.WorkspaceList{}
+	err := w.client.Get().
+		Namespace(w.ns).
+		Resource("workspaces").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Do(context.TODO()).
+		Into(result)
+	return result, err
+}
+
+func (w *workspaces) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	opts.Watch = true
+	return w.client.Get().
+		Namespace(w.ns).
+		Resource("workspaces").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Watch(context.TODO())
 }

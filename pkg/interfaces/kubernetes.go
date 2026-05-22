@@ -25,6 +25,7 @@ type LLMSafespaceV1Interface interface {
 	Sandboxes(namespace string) SandboxInterface
 	RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface
 	SandboxProfiles(namespace string) SandboxProfileInterface
+	Workspaces(namespace string) WorkspaceInterface
 }
 
 type SandboxInterface interface {
@@ -53,5 +54,15 @@ type SandboxProfileInterface interface {
 	Delete(name string, options metav1.DeleteOptions) error
 	Get(name string, options metav1.GetOptions) (*v1.SandboxProfile, error)
 	List(opts metav1.ListOptions) (*v1.SandboxProfileList, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
+}
+
+type WorkspaceInterface interface {
+	Create(*v1.Workspace) (*v1.Workspace, error)
+	Update(*v1.Workspace) (*v1.Workspace, error)
+	UpdateStatus(*v1.Workspace) (*v1.Workspace, error)
+	Delete(name string, options metav1.DeleteOptions) error
+	Get(name string, options metav1.GetOptions) (*v1.Workspace, error)
+	List(opts metav1.ListOptions) (*v1.WorkspaceList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }

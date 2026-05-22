@@ -147,13 +147,14 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	s.logger.Info("Sandbox created", "sandboxID", created.Name, "runtime", req.Runtime)
 
 	meta := &types.SandboxMetadata{
-		ID:        created.Name,
-		UserID:    req.UserID,
-		Runtime:   req.Runtime,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Status:    string(created.Status.Phase),
-		Labels:    created.Labels,
+		ID:          created.Name,
+		UserID:      req.UserID,
+		Runtime:     req.Runtime,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Status:      string(created.Status.Phase),
+		Labels:      created.Labels,
+		WorkspaceID: workspaceID,
 	}
 
 	if err := s.dbService.CreateSandbox(ctx, meta); err != nil {
@@ -375,6 +376,7 @@ func buildCRDFromRequest(req *types.CreateSandboxRequest, workspaceID, namespace
 			Timeout:       req.Timeout,
 			Resources:     apiResourcesToCRD(req.Resources),
 			NetworkAccess: apiNetworkToCRD(req.NetworkAccess),
+			WorkspaceRef:  workspaceID,
 		},
 	}
 }
@@ -404,6 +406,7 @@ func convertCRDToAPI(crd *v1.Sandbox) *types.Sandbox {
 			PodName:    crd.Status.PodName,
 			StartTime:  crd.Status.StartTime,
 			Resources:  crdResourceStatusToAPI(crd.Status.Resources),
+			PodIP:      crd.Status.PodIP,
 		},
 	}
 }

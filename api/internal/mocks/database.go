@@ -77,6 +77,39 @@ func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, 
 	return sandboxes, pagination, args.Error(2)
 }
 
+func (m *MockDatabaseService) GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WorkspaceMetadata), args.Error(1)
+}
+
+func (m *MockDatabaseService) CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error {
+	return m.Called(ctx, workspace).Error(0)
+}
+
+func (m *MockDatabaseService) UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error {
+	return m.Called(ctx, workspaceID, updates).Error(0)
+}
+
+func (m *MockDatabaseService) DeleteWorkspace(ctx context.Context, workspaceID string) error {
+	return m.Called(ctx, workspaceID).Error(0)
+}
+
+func (m *MockDatabaseService) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	var workspaces []*types.WorkspaceMetadata
+	if args.Get(0) != nil {
+		workspaces = args.Get(0).([]*types.WorkspaceMetadata)
+	}
+	var pagination *types.PaginationMetadata
+	if args.Get(1) != nil {
+		pagination = args.Get(1).(*types.PaginationMetadata)
+	}
+	return workspaces, pagination, args.Error(2)
+}
+
 func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
 	args := m.Called(userID, resourceType, resourceID, action)
 	return args.Bool(0), args.Error(1)

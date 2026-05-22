@@ -63,6 +63,9 @@ func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(ns string) interfaces.
 func (m *MockLLMSafespaceV1Interface) SandboxProfiles(ns string) interfaces.SandboxProfileInterface {
 	return m.Called(ns).Get(0).(interfaces.SandboxProfileInterface)
 }
+func (m *MockLLMSafespaceV1Interface) Workspaces(ns string) interfaces.WorkspaceInterface {
+	return m.Called(ns).Get(0).(interfaces.WorkspaceInterface)
+}
 
 // MockSandboxInterface mocks interfaces.SandboxInterface.
 type MockSandboxInterface struct{ mock.Mock }
@@ -213,6 +216,59 @@ func (m *MockSandboxProfileInterface) List(opts metav1.ListOptions) (*v1.Sandbox
 	return args.Get(0).(*v1.SandboxProfileList), args.Error(1)
 }
 func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(watch.Interface), args.Error(1)
+}
+
+// MockWorkspaceInterface mocks interfaces.WorkspaceInterface.
+type MockWorkspaceInterface struct{ mock.Mock }
+
+var _ interfaces.WorkspaceInterface = (*MockWorkspaceInterface)(nil)
+
+func NewMockWorkspaceInterface() *MockWorkspaceInterface { return &MockWorkspaceInterface{} }
+
+func (m *MockWorkspaceInterface) Create(w *v1.Workspace) (*v1.Workspace, error) {
+	args := m.Called(w)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.Workspace), args.Error(1)
+}
+func (m *MockWorkspaceInterface) Update(w *v1.Workspace) (*v1.Workspace, error) {
+	args := m.Called(w)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.Workspace), args.Error(1)
+}
+func (m *MockWorkspaceInterface) UpdateStatus(w *v1.Workspace) (*v1.Workspace, error) {
+	args := m.Called(w)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.Workspace), args.Error(1)
+}
+func (m *MockWorkspaceInterface) Delete(name string, opts metav1.DeleteOptions) error {
+	return m.Called(name, opts).Error(0)
+}
+func (m *MockWorkspaceInterface) Get(name string, opts metav1.GetOptions) (*v1.Workspace, error) {
+	args := m.Called(name, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.Workspace), args.Error(1)
+}
+func (m *MockWorkspaceInterface) List(opts metav1.ListOptions) (*v1.WorkspaceList, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.WorkspaceList), args.Error(1)
+}
+func (m *MockWorkspaceInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	args := m.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
@@ -786,4 +787,111 @@ func TestBuildCRDFromRequest_NilResources_NoNilPanic(t *testing.T) {
 	crd := buildCRDFromRequest(req, "ws-0", "ns")
 	assert.Nil(t, crd.Spec.Resources)
 	assert.Nil(t, crd.Spec.NetworkAccess)
+}
+
+// ===========================================================================
+// E2E tests: API CRD → Controller consumption (GAP-1/4 fix verification)
+// ===========================================================================
+
+func TestE2E_BuildCRDFromRequest_SetsWorkspaceRefInSpec(t *testing.T) {
+	req := &types.CreateSandboxRequest{
+		Runtime: "python:3.11",
+		UserID:  "user-1",
+	}
+	crd := buildCRDFromRequest(req, "ws-e2e-123", "default")
+
+	assert.Equal(t, "ws-e2e-123", crd.Spec.WorkspaceRef,
+		"WorkspaceRef must be set in spec so controller can mount PVC")
+	assert.Equal(t, "ws-e2e-123", crd.Labels["llmsafespace.dev/workspace"],
+		"workspace label must also be set for workspace reconciler label queries")
+}
+
+func TestE2E_BuildCRDFromRequest_EmptyWorkspaceRef_NoRef(t *testing.T) {
+	req := &types.CreateSandboxRequest{
+		Runtime: "python:3.11",
+		UserID:  "user-1",
+	}
+	crd := buildCRDFromRequest(req, "", "default")
+
+	assert.Equal(t, "", crd.Spec.WorkspaceRef)
+	assert.Equal(t, "", crd.Labels["llmsafespace.dev/workspace"])
+}
+
+func TestE2E_BuildCRDFromRequest_SetsAllSpecFields(t *testing.T) {
+	req := &types.CreateSandboxRequest{
+		Runtime:       "nodejs:18",
+		SecurityLevel: "high",
+		Timeout:       600,
+		UserID:        "user-1",
+	}
+	crd := buildCRDFromRequest(req, "ws-abc", "test-ns")
+
+	assert.Equal(t, "nodejs:18", crd.Spec.Runtime)
+	assert.Equal(t, "high", crd.Spec.SecurityLevel)
+	assert.Equal(t, 600, crd.Spec.Timeout)
+	assert.Equal(t, "ws-abc", crd.Spec.WorkspaceRef)
+	assert.Equal(t, "test-ns", crd.Namespace)
+	assert.Equal(t, "llmsafespace.dev/v1", crd.APIVersion)
+	assert.Equal(t, "Sandbox", crd.Kind)
+}
+
+// ===========================================================================
+// M6: convertCRDToAPI maps all controller-set status fields
+// ===========================================================================
+
+func TestE2E_ConvertCRDToAPI_MapsAllStatusFields(t *testing.T) {
+	now := metav1.Now()
+	crd := &v1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sb-convert",
+			Namespace: "default",
+		},
+		Spec: v1.SandboxSpec{
+			Runtime:       "python:3.11",
+			SecurityLevel: "standard",
+			Timeout:       300,
+			WorkspaceRef:  "ws-convert",
+			Resources: &v1.ResourceRequirements{
+				CPU:    "500m",
+				Memory: "512Mi",
+			},
+		},
+		Status: v1.SandboxStatus{
+			Phase:        "Running",
+			PodName:      "sb-convert-pod",
+			PodNamespace: "default",
+			PodIP:        "10.0.1.99",
+			StartTime:    &now,
+			Endpoint:     "sb-convert-pod.default.svc.cluster.local",
+		},
+	}
+
+	result := convertCRDToAPI(crd)
+
+	require.NotNil(t, result)
+	assert.Equal(t, "Running", result.Status.Phase)
+	assert.Equal(t, "sb-convert-pod", result.Status.PodName)
+	assert.Equal(t, "10.0.1.99", result.Status.PodIP,
+		"PodIP from controller must be mapped to API DTO")
+	require.NotNil(t, result.Status.StartTime)
+	assert.True(t, now.Equal(result.Status.StartTime))
+
+	assert.Equal(t, "python:3.11", result.Spec.Runtime)
+	assert.Equal(t, "standard", result.Spec.SecurityLevel)
+	assert.Equal(t, 300, result.Spec.Timeout)
+}
+
+func TestE2E_ConvertCRDToAPI_NilInput_ReturnsNil(t *testing.T) {
+	assert.Nil(t, convertCRDToAPI(nil))
+}
+
+func TestE2E_ConvertCRDToAPI_EmptyStatus_NoPanic(t *testing.T) {
+	crd := &v1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: "sb-empty"},
+	}
+	result := convertCRDToAPI(crd)
+	require.NotNil(t, result)
+	assert.Equal(t, "", result.Status.Phase)
+	assert.Equal(t, "", result.Status.PodIP)
+	assert.Nil(t, result.Status.StartTime)
 }

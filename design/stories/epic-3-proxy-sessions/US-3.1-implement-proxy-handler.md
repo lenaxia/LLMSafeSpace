@@ -28,7 +28,22 @@ As a user, I want the API to transparently proxy my requests to the opencode ser
 
 **WebSocket ↔ SSE bridge is deferred to V2.1.** SSE is sufficient for V1 browsers.
 
-**New file:** `api/internal/handlers/proxy.go`
+**New directory + file:** `api/internal/handlers/proxy.go` (directory must be created — it does not currently exist)
+
+### Relationship: Workspace → Sandbox → Session
+
+```
+Workspace (persistent PVC + config)
+  └── Sandbox (running pod with opencode serve, 1:1 while alive)
+        └── Sessions (1:N conversation threads inside opencode)
+              └── Messages (1:N turns within a session)
+```
+
+- **Workspace** = PVC + config (credentials, packages, init script). Suspended = pod deleted, PVC retained.
+- **Sandbox** = a running pod. One at a time per workspace (RWO PVC). Ephemeral.
+- **Session** = a conversation thread in opencode. Stored as JSON on PVC at `/workspace/.local/opencode/storage/`. Survives suspend/resume. Managed entirely by opencode.
+
+The proxy resolves: sandbox ID → Sandbox CRD (pod IP + workspaceRef) → Workspace CRD (maxActiveSessions).
 
 ### Active vs Inactive Sessions
 
@@ -37,11 +52,21 @@ Sessions have two states from the proxy's perspective:
 | State | Trigger | Allowed operations |
 |-------|---------|-------------------|
 | **Active** | User sends message/prompt to session, or agent reports `busy` | All operations |
-| **Inactive** | Streaming response completes + agent reports `idle`, no open connections | Read-only (GET history, GET sessions) |
+| **Inactive** | Agent reports `idle` via SSE event | Read-only (GET history, GET sessions) |
 
 The proxy tracks which sessions are active per sandbox. When a write operation (message/prompt) targets a session that isn't already active and the active session count has reached `maxActiveSessions` (from the Workspace CRD's `spec.maxActiveSessions`, default 5), the proxy returns 429 with a `Retry-After` header.
 
 There is no limit on total/inactive sessions — they're just JSON files on the PVC. Only concurrent active sessions are bounded.
+
+### Why SSE-based session tracking (not request-level)
+
+Request-level tracking ("active = in-flight HTTP request") is **insufficient** for V1 because:
+
+- `prompt_async` returns 204 immediately — the agent continues processing behind the scenes
+- Under request-level tracking, all `prompt_async` calls show 0 active sessions and bypass the limit
+- Six rapid `prompt_async` calls would all pass unimpeded — `maxActiveSessions` becomes a no-op for the MCP/programmatic persona
+
+SSE tracking is the only mechanism that correctly enforces `maxActiveSessions` for both personas (interactive streaming + async prompt). The SSE subscription infrastructure is also reusable: the MCP server (Epic 4) needs the same `GET /event` stream to collect `prompt_async` results.
 
 ### ProxyHandler struct
 
@@ -55,6 +80,10 @@ type ProxyHandler struct {
     pwCache    map[string]string
     pwCacheMu  sync.RWMutex
 
+    // Workspace config cache: sandboxID → {workspaceID, maxActiveSessions}
+    wsConfig   map[string]workspaceConfig
+    wsConfigMu sync.RWMutex
+
     // Active session tracking: sandboxID → set of active sessionIDs
     activeSess map[string]map[string]bool
     activeMu   sync.Mutex
@@ -62,6 +91,19 @@ type ProxyHandler struct {
     // Connection counting: sandboxID → in-flight connection count
     connCount  map[string]int
     connMu     sync.Mutex
+
+    // CRD watcher: watches Sandbox CRDs for phase changes
+    // Invalidates password cache and workspace config on phase transitions
+    // Also feeds future MCP/notify needs (shared infrastructure)
+    watcher    *SandboxWatcher
+
+    // Activity tracker (see US-3.3)
+    activityTracker *ActivityTracker
+}
+
+type workspaceConfig struct {
+    workspaceID       string
+    maxActiveSessions int
 }
 ```
 
@@ -79,6 +121,18 @@ type ProxyHandler struct {
    - Exceeded → 429 with `Retry-After`
 
 Both limits are per-API-replica (not globally coordinated). For V1 this is acceptable.
+
+### maxActiveSessions resolution
+
+The proxy must read `maxActiveSessions` from the Workspace CRD. Resolution path:
+
+```
+Sandbox CRD Get() → spec.workspaceRef → Workspace CRD Get() → spec.maxActiveSessions
+```
+
+This is 2 REST calls on first access per sandbox. The result is cached in `wsConfig[sandboxID]` and invalidated on:
+- Sandbox phase change to Suspending/Suspended/Terminated (via CRD watcher)
+- Sandbox phase change to Running after resume (workspace may have been reconfigured)
 
 ### Active session lifecycle
 
@@ -102,7 +156,36 @@ The proxy subscribes to opencode's `GET /event` SSE stream for each sandbox that
 
 ### Password caching
 
-The server password is generated at sandbox creation and never changes. The proxy reads it from the K8s Secret once, caches it by sandbox ID, and reuses it for all subsequent requests to that sandbox. Cache is invalidated when the sandbox transitions to Suspending/Suspended/Terminated phases (watch CRD status changes via informer event handler).
+The server password is generated at sandbox creation and never changes. The proxy reads it from the K8s Secret (`sandbox-pw-{sandboxID}` in the `password` key) once, caches it by sandbox ID, and reuses it for all subsequent requests to that sandbox. Cache is invalidated when the sandbox transitions to Suspending/Suspended/Terminated phases via the shared CRD watcher.
+
+### CRD watcher (shared infrastructure)
+
+A single watcher monitors Sandbox CRDs for phase changes. It serves multiple consumers:
+
+1. **Password cache invalidation** — clear cached password when sandbox is destroyed
+2. **Workspace config invalidation** — clear cached maxActiveSessions on phase transitions
+3. **Future: MCP/notify** — Epic 4 can subscribe to phase change events for sandbox status updates
+
+Implementation: use `k8sClient.LlmsafespaceV1().Sandboxes(ns).Watch()` in a long-running goroutine. On phase change events, invoke registered callbacks (cache invalidation functions). The watcher is started in `ProxyHandler.Start()` and stopped in `ProxyHandler.Stop()`.
+
+Note: the K8s client (`pkg/kubernetes/client.go`) uses REST calls for CRD reads, not informer-cached reads. For V1, REST calls are acceptable — the proxy reads CRD status per-request and caches the results. If informer-backed reads become necessary at scale, the client interface supports `InformerFactory()` for future use.
+
+### ProxyHandler lifecycle
+
+```go
+func (h *ProxyHandler) Start() error {
+    // 1. Start CRD watcher goroutine
+    // 2. Start SSE health check for active sandboxes
+    return nil
+}
+
+func (h *ProxyHandler) Stop() error {
+    // 1. Stop CRD watcher
+    // 2. Close all SSE connections
+    // 3. Stop activity tracker
+    return nil
+}
+```
 
 ### Core method
 
@@ -110,19 +193,20 @@ The server password is generated at sandbox creation and never changes. The prox
 func (h *ProxyHandler) ProxyToSandbox(c *gin.Context) {
     sandboxID := c.Param("id")
     // 1. Extract sandbox ID from URL param (c.Param("id"))
-    // 2. Get pod IP from Sandbox CRD status (informer-cached)
-    // 3. Get password from cache (or read from K8s Secret on first access)
-    // 4. If write operation (message/prompt):
+    // 2. Get pod IP from Sandbox CRD status (REST call)
+    // 3. Get workspace config (maxActiveSessions) from cache or resolve via CRD chain
+    // 4. Get password from cache (or read from K8s Secret on first access)
+    // 5. If write operation (message/prompt):
     //    a. Extract sessionID from URL
     //    b. Check active session limit (skip if session already active)
     //    c. If limit reached → 429 with Retry-After
-    //    d. Add sessionID to active set
-    // 5. Check hard connection ceiling → 429 if exceeded
-    // 6. Build target: http://{podIP}:4096{path}
-    // 7. Clone request, set Authorization: Basic header
-    // 8. Proxy request (handle streaming responses and SSE)
-    // 9. On connection error: refresh IP, retry once
-    // 10. On streaming completion: keep session in active set until SSE idle event
+    //    d. Add sessionID to active set, ensure SSE subscription for this sandbox
+    // 6. Check hard connection ceiling → 429 if exceeded
+    // 7. Build target: http://{podIP}:4096{path}
+    // 8. Clone request, set Authorization: Basic header
+    // 9. Proxy request (handle streaming responses and SSE)
+    // 10. On connection error: refresh IP, retry once
+    // 11. Record activity (see US-3.3)
 }
 ```
 
@@ -144,4 +228,4 @@ Section 6.1 (Active vs Inactive Sessions), 7.1a (Verified Contract), 7.3-7.4, 7.
 
 ## Effort
 
-Large (8-10 hours — the core of V2, active session tracking adds complexity beyond simple proxy)
+Large (10-12 hours — SSE session tracking + CRD watcher + proxy core)
