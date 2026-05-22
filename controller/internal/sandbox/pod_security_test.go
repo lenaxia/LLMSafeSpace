@@ -62,3 +62,38 @@ func TestBuildSandboxPod_AppliesPodSecurityContext(t *testing.T) {
 	require.NotNil(t, pod.Spec.SecurityContext.RunAsUser)
 	assert.Equal(t, int64(1000), *pod.Spec.SecurityContext.RunAsUser)
 }
+
+// Sandbox pods that belong to a Workspace must carry the
+// llmsafespace.dev/workspace label so the workspace controller's
+// deleteWorkspacePods (which selects by that label) can find them on
+// workspace suspend. Without this label, suspending a workspace is silent
+// no-op for its sandbox pods, leaving them running.
+func TestBuildSandboxPod_TagsWorkspaceLabelWhenWorkspaceRefSet(t *testing.T) {
+	ws := makeWorkspace("my-ws", "default", "pvc-my-ws")
+	sb := makeSandbox("sb-with-ws", "default", common.SandboxPhasePending)
+	sb.Spec.WorkspaceRef = "my-ws"
+
+	r := reconcilerFor(t, sb, ws)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	got, ok := pod.Labels[common.LabelWorkspace]
+	require.True(t, ok, "pod must have the %s label", common.LabelWorkspace)
+	assert.Equal(t, "my-ws", got)
+}
+
+// Sandbox pods without a WorkspaceRef must NOT have the workspace label
+// (it would match nothing and is misleading in monitoring).
+func TestBuildSandboxPod_OmitsWorkspaceLabelWhenNoWorkspaceRef(t *testing.T) {
+	sb := makeSandbox("sb-standalone", "default", common.SandboxPhasePending)
+	// Spec.WorkspaceRef left empty.
+
+	r := reconcilerFor(t, sb)
+
+	pod, err := r.buildSandboxPodWithContext(context.Background(), sb)
+	require.NoError(t, err)
+
+	_, hasLabel := pod.Labels[common.LabelWorkspace]
+	assert.False(t, hasLabel, "pod must not have the workspace label without WorkspaceRef")
+}

@@ -83,6 +83,37 @@ kubectl --context "kind-${CLUSTER_NAME}" cluster-info >/dev/null
 ok "kubectl context kind-${CLUSTER_NAME} reachable"
 
 # -----------------------------------------------------------------------------
+# Disk hygiene: prune buildx + image cache before building, and trim the
+# kind node's containerd image store of our own previous tags. Without this,
+# repeated bootstrap runs progressively fill the disk and `kind load` fails
+# with "no space left on device" once the buildx activity dir or /tmp
+# overflow.
+#
+# Set DISABLE_DISK_PRUNE=1 to skip.
+# -----------------------------------------------------------------------------
+if [[ "${DISABLE_DISK_PRUNE:-0}" == "1" ]]; then
+    warn "DISABLE_DISK_PRUNE=1 — skipping cleanup"
+else
+    log "  pruning docker buildx + dangling images (DISABLE_DISK_PRUNE=1 to skip)"
+    docker buildx prune -af >/dev/null 2>&1 || true
+    docker image prune -af >/dev/null 2>&1 || true
+    # Drop our own prior image tags from the kind node so kind load can
+    # re-import without first fighting deduplication on a full disk.
+    if docker ps --format '{{.Names}}' | grep -qx "${CLUSTER_NAME}-control-plane"; then
+        for img in "${API_IMAGE}" "${CONTROLLER_IMAGE}" "${RUNTIME_IMAGE}"; do
+            docker exec "${CLUSTER_NAME}-control-plane" \
+                crictl rmi "docker.io/${img}" >/dev/null 2>&1 || true
+        done
+    fi
+    AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2 { gsub("G","",$4); print $4 }')
+    if [[ -n "${AVAIL_GB}" ]] && (( AVAIL_GB < 5 )); then
+        warn "only ${AVAIL_GB}G free on /; build may fail. Free up space and retry."
+    else
+        ok "disk hygiene done (${AVAIL_GB:-?}G free on /)"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Phase 3: build + load images
 # -----------------------------------------------------------------------------
 if [[ "${SKIP_BUILD:-0}" == "1" ]]; then
@@ -111,9 +142,10 @@ else
             -f runtimes/base/Dockerfile -t "${RUNTIME_IMAGE}" .
     fi
 
-    log "  loading images into kind"
-    kind load docker-image "${API_IMAGE}" "${CONTROLLER_IMAGE}" "${RUNTIME_IMAGE}" \
-        --name "${CLUSTER_NAME}"
+    log "  loading images into kind (one at a time to keep /tmp use small)"
+    for img in "${API_IMAGE}" "${CONTROLLER_IMAGE}" "${RUNTIME_IMAGE}"; do
+        kind load docker-image "${img}" --name "${CLUSTER_NAME}"
+    done
     ok "images loaded"
 fi
 

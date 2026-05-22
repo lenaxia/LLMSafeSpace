@@ -23,6 +23,11 @@ const (
 	LabelSandboxID = "sandbox-id"
 	LabelRuntime   = "runtime"
 	LabelStatus    = "status"
+	// LabelWorkspace tags a sandbox pod with its parent Workspace's name
+	// so that the workspace controller (which selects by this label in
+	// deleteWorkspacePods) can find and delete the pod on suspend.
+	// Matches the selector hardcoded in workspace controller.go.
+	LabelWorkspace = "llmsafespace.dev/workspace"
 
 	// Component values
 	ComponentSandbox = "sandbox"

@@ -433,6 +433,13 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 		// (see below) for round-tripping back to the spec.
 		common.LabelRuntime: sanitizeLabelValue(sandbox.Spec.Runtime),
 	}
+	// Tag pods with their parent workspace so the workspace controller's
+	// deleteWorkspacePods (which selects by `llmsafespace.dev/workspace`)
+	// can find them on suspend. Without this label, suspending a workspace
+	// is a no-op for its sandboxes' pods.
+	if sandbox.Spec.WorkspaceRef != "" {
+		labels[common.LabelWorkspace] = sandbox.Spec.WorkspaceRef
+	}
 
 	annotations := map[string]string{
 		common.AnnotationCreatedBy: common.ControllerName,
