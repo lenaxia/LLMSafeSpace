@@ -3,6 +3,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -373,6 +374,10 @@ type CreateSandboxRequest struct {
 
 	// Network access configuration
 	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
+
+	// WorkspaceRef is an optional workspace ID to associate with the sandbox.
+	// When empty, a workspace is automatically created with defaults.
+	WorkspaceRef string `json:"workspaceRef,omitempty"`
 }
 
 // ExecuteRequest represents a request to execute code or a command
@@ -618,4 +623,102 @@ type SandboxProfileList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SandboxProfile `json:"items"`
+}
+
+// Workspace is the API transfer object for a workspace resource.
+type Workspace struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	UserID      string            `json:"userId"`
+	Runtime     string            `json:"runtime"`
+	StorageSize string            `json:"storageSize"`
+	Phase       string            `json:"phase"`
+	PVCName     string            `json:"pvcName,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
+}
+
+// CreateWorkspaceRequest is the request body for creating a workspace.
+type CreateWorkspaceRequest struct {
+	Name         string            `json:"name"`
+	Runtime      string            `json:"runtime"`
+	StorageSize  string            `json:"storageSize"`
+	StorageClass string            `json:"storageClass,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+}
+
+// ListOptions carries pagination and filtering parameters.
+type ListOptions struct {
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+// WorkspaceListResult bundles workspace list items with pagination.
+type WorkspaceListResult struct {
+	Items      []WorkspaceListItem `json:"items"`
+	Pagination *PaginationMetadata `json:"pagination,omitempty"`
+}
+
+// WorkspaceListItem is a lightweight workspace representation for list responses.
+type WorkspaceListItem struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	UserID      string    `json:"userId"`
+	Runtime     string    `json:"runtime"`
+	StorageSize string    `json:"storageSize"`
+	Phase       string    `json:"phase,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// WorkspaceStatusResult carries the status fields read from the Workspace CRD.
+type WorkspaceStatusResult struct {
+	Phase          string                     `json:"phase"`
+	PVCName        string                     `json:"pvcName,omitempty"`
+	ActiveSessions int                        `json:"activeSessions"`
+	LastActivityAt *time.Time                 `json:"lastActivityAt,omitempty"`
+	Message        string                     `json:"message,omitempty"`
+	Conditions     []WorkspaceConditionResult `json:"conditions,omitempty"`
+}
+
+// WorkspaceConditionResult carries a single workspace condition.
+type WorkspaceConditionResult struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// SetCredentialsRequest is the request body for setting workspace credentials.
+type SetCredentialsRequest struct {
+	Provider string          `json:"provider"`
+	Config   json.RawMessage `json:"config"`
+}
+
+// WorkspaceMetadata is the database record for a workspace.
+type WorkspaceMetadata struct {
+	ID          string    `json:"id" db:"id"`
+	UserID      string    `json:"userId" db:"user_id"`
+	Name        string    `json:"name" db:"name"`
+	Runtime     string    `json:"runtime" db:"runtime"`
+	StorageSize string    `json:"storageSize" db:"storage_size"`
+	Phase       string    `json:"phase" db:"phase"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
+}
+
+// WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.
+type WorkspaceUpdates struct {
+	Phase *string `json:"phase,omitempty"`
+	Name  *string `json:"name,omitempty"`
+}
+
+// WorkspaceNotFoundError is returned when a workspace cannot be found.
+type WorkspaceNotFoundError struct {
+	ID string
+}
+
+func (e *WorkspaceNotFoundError) Error() string {
+	return fmt.Sprintf("workspace %s not found", e.ID)
 }

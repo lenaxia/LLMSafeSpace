@@ -41,6 +41,11 @@ type DatabaseService interface {
 	UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error
 	DeleteSandbox(ctx context.Context, sandboxID string) error
 	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error)
+	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
+	CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error
+	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
+	DeleteWorkspace(ctx context.Context, workspaceID string) error
+	ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
 	Start() error
@@ -94,6 +99,20 @@ type SandboxService interface {
 	Stop() error
 }
 
+type WorkspaceService interface {
+	CreateWorkspace(ctx context.Context, userID string, req types.CreateWorkspaceRequest) (*types.Workspace, error)
+	GetWorkspace(ctx context.Context, userID, workspaceID string) (*types.Workspace, error)
+	ListWorkspaces(ctx context.Context, userID string, opts types.ListOptions) (*types.WorkspaceListResult, error)
+	DeleteWorkspace(ctx context.Context, userID, workspaceID string) error
+	SuspendWorkspace(ctx context.Context, userID, workspaceID string) error
+	ResumeWorkspace(ctx context.Context, userID, workspaceID string) error
+	GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error)
+	SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error
+	DeleteCredentials(ctx context.Context, userID, workspaceID string) error
+	Start() error
+	Stop() error
+}
+
 type SandboxHandler interface {
 	RegisterRoutes(router *gin.RouterGroup)
 	HandleWebSocket(c *gin.Context)
@@ -105,6 +124,7 @@ type Services interface {
 	GetCache() CacheService
 	GetMetrics() MetricsService
 	GetSandbox() SandboxService
+	GetWorkspace() WorkspaceService
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient
@@ -112,3 +132,4 @@ type LLMSafespaceV1Interface = k8sinterfaces.LLMSafespaceV1Interface
 type SandboxInterface = k8sinterfaces.SandboxInterface
 type RuntimeEnvironmentInterface = k8sinterfaces.RuntimeEnvironmentInterface
 type SandboxProfileInterface = k8sinterfaces.SandboxProfileInterface
+type WorkspaceInterface = k8sinterfaces.WorkspaceInterface
