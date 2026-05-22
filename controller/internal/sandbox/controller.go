@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,25 @@ import (
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
 	"github.com/lenaxia/llmsafespace/controller/internal/resources"
 )
+
+// sanitizeLabelValue replaces characters that Kubernetes does not accept in
+// label values. Per K8s validation:
+//
+//	regex: (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
+//
+// Image-style runtime identifiers like "python:3.11" contain ':' which is
+// not in the allowed set. Replace with '_'. Truncate to 63 chars (the K8s
+// label-value max length).
+//
+// This function is intentionally minimal: it only handles the cases we
+// expect (':'). If we need broader sanitization later, extend the regex.
+func sanitizeLabelValue(v string) string {
+	v = strings.ReplaceAll(v, ":", "_")
+	if len(v) > 63 {
+		v = v[:63]
+	}
+	return v
+}
 
 // SandboxReconciler reconciles a Sandbox object
 type SandboxReconciler struct {
@@ -406,7 +426,12 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 		common.LabelApp:       "llmsafespace",
 		common.LabelComponent: common.ComponentSandbox,
 		common.LabelSandboxID: sandbox.Name,
-		common.LabelRuntime:   sandbox.Spec.Runtime,
+		// Kubernetes label values cannot contain ':' (used by image-style
+		// runtime identifiers like "python:3.11"). Sanitize ':' → '_' so the
+		// runtime is preserved in label form for selectors and metrics.
+		// The full unsanitized runtime string is also kept in annotations
+		// (see below) for round-tripping back to the spec.
+		common.LabelRuntime: sanitizeLabelValue(sandbox.Spec.Runtime),
 	}
 
 	annotations := map[string]string{
@@ -414,7 +439,18 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 		common.AnnotationSandboxID: sandbox.Name,
 	}
 
-	runtimeImage := sandbox.Spec.Runtime
+	// Resolve sandbox.Spec.Runtime → concrete container image via
+	// RuntimeEnvironment lookup. The Sandbox spec deliberately does NOT
+	// take an image directly: the platform constrains which images can be
+	// used to runtime-environments registered cluster-wide. See
+	// resolveRuntimeImage for the lookup strategy and escape hatches.
+	runtimeImage, runtimeEnvName, err := resolveRuntimeImage(ctx, r.Client, sandbox.Spec.Runtime)
+	if err != nil {
+		return nil, fmt.Errorf("resolving runtime image: %w", err)
+	}
+	if runtimeEnvName != "" {
+		annotations[common.AnnotationRuntimeEnv] = runtimeEnvName
+	}
 
 	trueVal := true
 	falseVal := false
@@ -492,13 +528,50 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			InitContainers: initContainers,
-			Containers:     []corev1.Container{mainContainer},
-			Volumes:        volumes,
+			InitContainers:  initContainers,
+			Containers:      []corev1.Container{mainContainer},
+			Volumes:         volumes,
+			SecurityContext: buildPodSecurityContext(sandbox),
 		},
 	}
 
 	return pod, nil
+}
+
+// buildPodSecurityContext returns the pod-level SecurityContext applied to
+// every sandbox pod. Pod-level settings are inherited by all containers
+// that don't set their own RunAsUser/RunAsGroup.
+//
+// We set RunAsUser/RunAsGroup explicitly (defaulting to 1000) because every
+// container in the pod is built with RunAsNonRoot=true. Without an explicit
+// numeric uid, kubelet's runAsNonRoot check fails with:
+//
+//	container has runAsNonRoot and image has non-numeric user (sandbox),
+//	cannot verify user is non-root
+//
+// This is because the runtime-base Dockerfile uses `USER sandbox` (a name,
+// not a uid). Kubelet only resolves names to uids inside the container at
+// runtime; for the runAsNonRoot pre-check it requires a numeric value at
+// the API level.
+//
+// Defaults match the runtime-base Dockerfile's `useradd -u 1000 sandbox`.
+// The Sandbox CRD's securityContext.runAsUser/runAsGroup override these.
+func buildPodSecurityContext(sandbox *resources.Sandbox) *corev1.PodSecurityContext {
+	runAsUser := int64(1000)
+	runAsGroup := int64(1000)
+	if sc := sandbox.Spec.SecurityContext; sc != nil {
+		if sc.RunAsUser != 0 {
+			runAsUser = sc.RunAsUser
+		}
+		if sc.RunAsGroup != 0 {
+			runAsGroup = sc.RunAsGroup
+		}
+	}
+	return &corev1.PodSecurityContext{
+		RunAsUser:  &runAsUser,
+		RunAsGroup: &runAsGroup,
+		FSGroup:    &runAsGroup,
+	}
 }
 
 // buildCredentialSetupInit builds the credential-setup init container and the

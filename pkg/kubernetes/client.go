@@ -191,15 +191,20 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 	return c.informerFactory
 }
 
-// LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group
+// LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group.
+//
+// Constructs a typed REST client by deriving a copy of the base rest.Config
+// with the LLMSafeSpace GroupVersion, /apis path, and a serializer from the
+// scheme that has our types registered (via the init() in client_crds.go).
+//
+// Without these ContentConfig fields rest.RESTClientFor returns an error
+// (or returns a partially-initialized client that nil-panics on Watch),
+// which silently breaks the SandboxWatcher and the proxy ownership middleware.
 func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
-	restClient, err := rest.RESTClientFor(c.restConfig)
+	client, err := newLLMSafespaceV1Client(c.restConfig)
 	if err != nil {
-		// Handle error
+		c.logger.Error("failed to construct LlmsafespaceV1 REST client", err)
+		return nil
 	}
-	client := &LLMSafespaceV1Client{
-		restClient: restClient,
-	}
-	var _ interfaces.LLMSafespaceV1Interface = client
 	return client
 }

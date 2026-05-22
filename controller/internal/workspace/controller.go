@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -113,6 +114,21 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 	}
 
 	if existingPVC.Status.Phase != corev1.ClaimBound {
+		// Check if the StorageClass uses WaitForFirstConsumer binding mode.
+		// In that case, the PVC will stay Pending until a Pod actually
+		// mounts it — which never happens until a Sandbox is created
+		// referencing this Workspace. Treat the workspace as Active so
+		// downstream sandboxes can be scheduled and trigger PVC binding.
+		if r.pvcUsesWaitForFirstConsumer(ctx, existingPVC) {
+			workspace.Status.PVCName = pvcName
+			workspace.Status.Phase = resources.WorkspacePhaseActive
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				logger.Error(err, "Failed to update Workspace status to Active (WaitForFirstConsumer)")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+
 		if !workspace.CreationTimestamp.IsZero() && time.Since(workspace.CreationTimestamp.Time) > pendingPhaseTimeout {
 			workspace.Status.Phase = resources.WorkspacePhaseFailed
 			workspace.Status.Message = "PVC not bound after 5 minutes"
@@ -129,6 +145,34 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// pvcUsesWaitForFirstConsumer reports whether the given PVC's StorageClass
+// uses VolumeBindingMode=WaitForFirstConsumer. PVCs in this mode stay
+// Pending until a Pod schedules them, which is normal: the workspace
+// reconciler should treat them as ready so downstream sandboxes can mount.
+//
+// Returns false on any lookup error or when the binding mode cannot be
+// determined — degrades to the original "wait for binding" behavior.
+func (r *WorkspaceReconciler) pvcUsesWaitForFirstConsumer(ctx context.Context, pvc *corev1.PersistentVolumeClaim) bool {
+	scName := ""
+	if pvc.Spec.StorageClassName != nil {
+		scName = *pvc.Spec.StorageClassName
+	}
+	if scName == "" {
+		// No explicit class on the PVC; we'd have to look up the cluster
+		// default. Skip — fall through to wait-for-bound semantics.
+		return false
+	}
+
+	sc := &storagev1.StorageClass{}
+	if err := r.Get(ctx, types.NamespacedName{Name: scName}, sc); err != nil {
+		return false
+	}
+	if sc.VolumeBindingMode == nil {
+		return false
+	}
+	return *sc.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
 }
 
 func (r *WorkspaceReconciler) buildPVC(workspace *resources.Workspace, pvcName string) *corev1.PersistentVolumeClaim {

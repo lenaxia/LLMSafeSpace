@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	
+
 	k8sconfig "github.com/lenaxia/llmsafespace/pkg/config"
 )
 
@@ -105,6 +105,22 @@ func Load(path string) (*Config, error) {
 
 	if envJWTSecret := os.Getenv("LLMSAFESPACE_AUTH_JWTSECRET"); envJWTSecret != "" {
 		config.Auth.JWTSecret = envJWTSecret
+	}
+
+	// Pod identity for leader election. Set via the Downward API in the
+	// chart (metadata.name → LLMSAFESPACE_KUBERNETES_PODNAME). Without
+	// this, leader election panics with "Lock identity is empty".
+	if envPodName := os.Getenv("LLMSAFESPACE_KUBERNETES_PODNAME"); envPodName != "" {
+		config.Kubernetes.PodName = envPodName
+	}
+
+	// Defensive fallback: if PodName is still empty but leader election is
+	// enabled, fall back to os.Hostname() (the pod's hostname matches its
+	// name in Kubernetes by default). Better than panicking.
+	if config.Kubernetes.LeaderElection.Enabled && config.Kubernetes.PodName == "" {
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			config.Kubernetes.PodName = hn
+		}
 	}
 
 	return &config, nil

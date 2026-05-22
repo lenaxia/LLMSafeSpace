@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/controller"
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
@@ -84,17 +85,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register webhooks
+	// Register webhooks. We construct the decoder explicitly because
+	// controller-runtime v0.15+ removed the InjectDecoder dependency-injection
+	// pattern; webhooks now require their decoder to be set at construction.
+	// Without this, all admission requests panic with nil-pointer-deref on
+	// the nil decoder.
+	webhookDecoder := admission.NewDecoder(mgr.GetScheme())
+
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandbox", &webhook.Admission{
-		Handler: &resources.SandboxValidator{Client: mgr.GetClient()},
+		Handler: &resources.SandboxValidator{Client: mgr.GetClient(), Decoder: webhookDecoder},
 	})
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandboxprofile", &webhook.Admission{
-		Handler: &resources.SandboxProfileValidator{},
+		Handler: &resources.SandboxProfileValidator{Decoder: webhookDecoder},
 	})
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
-		Handler: &resources.RuntimeEnvironmentValidator{},
+		Handler: &resources.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
 	})
 
 	// Set up controllers

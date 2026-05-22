@@ -11,6 +11,11 @@ const (
 	// Annotation keys
 	AnnotationCreatedBy = "llmsafespace.dev/created-by"
 	AnnotationSandboxID = "llmsafespace.dev/sandbox-id"
+	// AnnotationRuntimeEnv records which RuntimeEnvironment was matched
+	// when resolving sandbox.spec.runtime → container image. Useful for
+	// debugging mis-routed sandboxes (e.g. when multiple RuntimeEnvs share
+	// the same language+version and the resolver picked an unexpected one).
+	AnnotationRuntimeEnv = "llmsafespace.dev/runtime-env"
 
 	// Label keys
 	LabelApp       = "app"
