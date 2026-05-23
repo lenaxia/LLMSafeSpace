@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // When a Workspace is deleted then re-created with the same name, the
@@ -22,7 +22,7 @@ import (
 //
 // This test exercises the "PVC has DeletionTimestamp" branch.
 func TestReconcile_Pending_StalePVC_Terminating_TriggersRecreate(t *testing.T) {
-	ws := makeWorkspace("ws-stale", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-stale", "default", v1.WorkspacePhasePending)
 	ws.UID = "ws-uid-NEW"
 	ws.Finalizers = []string{WorkspaceFinalizer}
 
@@ -49,7 +49,7 @@ func TestReconcile_Pending_StalePVC_Terminating_TriggersRecreate(t *testing.T) {
 	// The reconciler should have either created a new PVC or hit
 	// AlreadyExists and requeued. In the AlreadyExists case status.PVCName
 	// may not yet be set; in the create case it should be.
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "ws-stale", Namespace: "default"}, updated))
 	// Either the create succeeded (status.pvcName set) or we requeued for
@@ -62,7 +62,7 @@ func TestReconcile_Pending_StalePVC_Terminating_TriggersRecreate(t *testing.T) {
 // Owner-reference UID mismatch (stale PVC from a deleted previous-gen
 // Workspace) is also treated as not-found and triggers re-create.
 func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_TriggersRecreate(t *testing.T) {
-	ws := makeWorkspace("ws-mismatch", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-mismatch", "default", v1.WorkspacePhasePending)
 	ws.UID = "ws-uid-NEW"
 	ws.Finalizers = []string{WorkspaceFinalizer}
 
@@ -89,7 +89,7 @@ func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_TriggersRecreate(t *testing
 // be treated as stale. This is the regression test for the previous
 // implementation that broke existing PVC-timeout tests.
 func TestReconcile_Pending_PVCWithoutOwnerRef_NotTreatedAsStale(t *testing.T) {
-	ws := makeWorkspace("ws-adopted", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-adopted", "default", v1.WorkspacePhasePending)
 	ws.UID = "ws-uid-1"
 	ws.Finalizers = []string{WorkspaceFinalizer}
 
@@ -102,10 +102,10 @@ func TestReconcile_Pending_PVCWithoutOwnerRef_NotTreatedAsStale(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("ws-adopted", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "ws-adopted", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase,
 		"PVC without owner-ref must be treated as legitimate, not stale")
 	_ = corev1.ClaimBound // assert kept import alive
 }

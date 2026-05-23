@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // Pod must have a numeric RunAsUser at the pod level. Without this, kubelet
@@ -34,7 +34,7 @@ func TestBuildPodSecurityContext_DefaultsToUid1000(t *testing.T) {
 // this to support runtime images built with a different uid.
 func TestBuildPodSecurityContext_SpecOverridesDefault(t *testing.T) {
 	sb := makeSandbox("sb", "ns", common.SandboxPhasePending)
-	sb.Spec.SecurityContext = &resources.SecurityContext{
+	sb.Spec.SecurityContext = &v1.SecurityContext{
 		RunAsUser:  2000,
 		RunAsGroup: 2001,
 	}

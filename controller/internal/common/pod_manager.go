@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // PodManager handles pod creation and management
@@ -30,7 +30,7 @@ func NewPodManager(client client.Client, scheme *runtime.Scheme) *PodManager {
 }
 
 // CreateSandboxPod creates a new pod for a sandbox
-func (p *PodManager) CreateSandboxPod(ctx context.Context, sandbox *resources.Sandbox) (*corev1.Pod, error) {
+func (p *PodManager) CreateSandboxPod(ctx context.Context, sandbox *v1.Sandbox) (*corev1.Pod, error) {
 	// Create a unique name for the pod
 	podName := fmt.Sprintf("sandbox-%s", sandbox.Name)
 
