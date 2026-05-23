@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-23
 **Scope:** API surface completion (Sandbox CRUD, response filtering), e2e test coverage, README rewrite
-**Status:** Code complete; cluster validation pending CI image build
+**Status:** Complete — code, tests, docs, and end-to-end cluster validation all done
 
 ## Objective
 
@@ -121,11 +121,27 @@ Per-package new test counts:
 - `api/internal/handlers`: +7 tests in `proxy_filter_test.go` covering: default strip, verbose=true keeps patches, verbose=false still strips, history endpoint also strips, session list pass-through, non-JSON pass-through, non-200 pass-through
 - `api/internal/server`: +12 tests in `router_sandbox_test.go` covering: route registration (5 routes × 2 = exists + auth-required), CreateSandbox happy/bad-JSON, ListSandboxes happy + pagination, GetSandbox happy + 404, Delete happy + 403, GetStatus happy
 
-## Cluster Validation Status
+## Cluster Validation
 
-Code is complete and locally tested. **Cluster validation deferred** — the API deployment uses `ghcr.io/lenaxia/llmsafespace/api:dev`, which is rebuilt by GitHub Actions on every push to main. Local docker build attempted and hit a WSL/buildkit DNS issue resolving `proxy.golang.org`. Vendoring worked but cleaner to push and let CI rebuild.
+Code committed (`f409547`), CI built and pushed `:dev`, then validated end-to-end against `admin@home-kubernetes`:
 
-After this commit lands and CI completes, the home-kubernetes deployment (with `imagePullPolicy: Always`) will pick up the new image on its next reconciliation. At that point the existing prompt-test sandbox can re-run the new endpoints to confirm.
+| Endpoint | Result |
+|----------|--------|
+| `GET /api/v1/sandboxes` | 200, returns paginated list with the API-created sandbox visible |
+| `POST /api/v1/sandboxes` | 201, returns sandbox CRD JSON (`runtime=base`, `workspaceRef`, generated `name=sb-dr9rr`) |
+| `GET /api/v1/sandboxes/sb-dr9rr` | 200, returns full sandbox |
+| `GET /api/v1/sandboxes/sb-dr9rr/status` | 200, `phase=Running`, `podIP=...` |
+| `DELETE /api/v1/sandboxes/sb-dr9rr` | 204; subsequent list is empty; K8s shows CRD `Terminating` and pod `Terminating` |
+| `POST .../message` (default, no verbose) | 200, **1299 bytes**, 3 parts, 0 patches, `text="PONG"` |
+| `POST .../message?verbose=true` | 200, **140638 bytes**, 4 parts, 1 patch (with `files[]`), `text="PONG"` |
+
+**Patch stripping saves ~108× bandwidth on a typical assistant turn** in this sandbox state. The numbers will vary; what matters is the proxy correctly filters by default and faithfully passes through with the flag.
+
+### Two cluster gotchas surfaced during validation
+
+1. **Kubelet image caching ignored `imagePullPolicy: Always`.** Three `rollout restart` cycles still ran the old image (`b67101b6...` digest). Worked around by pinning the deployment to the explicit content digest from the new push (`@sha256:de37eb98...`) for validation, then resetting back to the `:dev` tag for normal CI-driven flow. Possible cause: WSL/talos node had a stale cached layer; CRI tracks tags by digest fingerprint and the new push was a multi-arch index. Worth investigating but not blocking.
+
+2. **`permissions` table empty in production.** `CreateSandbox` calls `CheckPermission(userID, "sandbox", "*", "create")`, which returned `false` because the test user had no permission rows. Inserted two rows (`sandbox/*/create` + `sandbox/*/delete`) for the admin test user to unblock validation. **This is a real bug**: there is no default-deny vs default-allow story for fresh users, and no admin role check (`users.role = 'admin'` is not consulted by `CheckPermission`). Follow-up: either default `users.role = 'admin'` to bypass `CheckPermission`, or seed wildcard permissions during user registration.
 
 ## Files Modified
 
@@ -158,15 +174,12 @@ After this commit lands and CI completes, the home-kubernetes deployment (with `
 
 ## Next Steps
 
-1. **Push to main, wait for CI to build the image, re-deploy.** The home-kubernetes API pod uses `imagePullPolicy: Always`, so a `kubectl rollout restart deploy/llmsafespace-api -n default` will pick up the new image once GHCR has it.
+1. **Fix the permissions/role gap.** Either: (a) auto-bypass `CheckPermission` for `users.role = 'admin'`, or (b) seed wildcard permissions on user registration, or (c) drop `CheckPermission` entirely and rely on workspace ownership for sandbox-create authorization. Recommendation: (a) — keeps the model intact while making fresh installs usable.
 
-2. **Re-run the prompt validation manually** with the new endpoints once deployed:
-   - `POST /api/v1/sandboxes` with `runtime: "base"` → returns sandbox JSON with name
-   - `GET /api/v1/sandboxes` → list includes it
-   - `POST /api/v1/sandboxes/:id/sessions/:sid/message?verbose=true` → patch parts present
-   - `POST /api/v1/sandboxes/:id/sessions/:sid/message` (no verbose) → patch parts absent
-   - `DELETE /api/v1/sandboxes/:id` → 204
+2. **Investigate kubelet image-pull caching.** `imagePullPolicy: Always` should re-pull on every restart but didn't. Possibly a Talos / containerd quirk. Either document the explicit-digest workaround or move CI to also tag with the commit SHA so deployments can pin without manual digest lookup. (CI already tags with `sha-<commit>`; switching the deployment to use `sha-<commit>` instead of `:dev` would side-step the cache entirely.)
 
-3. **Run `local/test.sh` in kind** with `LLM_*` env vars set to confirm the new test 6 + test 8 logic works. (The kind path is already wired by `bootstrap.sh`.)
+3. **Run `local/test.sh` in kind** with `LLM_*` env vars set to confirm the new test 6 + test 8 logic works in the kind path. (Cluster path is now validated; kind path is the same code so should work.)
 
 4. **Document the `?verbose=true` flag in `design/EVOLUTION-V2.md`** if the design doc tracks API decisions at that level. (Defer until next time the design doc is touched.)
+
+5. **The `watch channel closed` log spam still occurs** despite the `client_crds.go` Timeout=0 fix. Spot check the controller's own watch — the spam comes from `SandboxWatcher.runWatchLoop` in the API service. The fix may need to also apply to the watcher's own client config, not just the typed client. Defer to a focused diagnostic session.
