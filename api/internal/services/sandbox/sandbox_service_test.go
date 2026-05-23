@@ -142,7 +142,7 @@ func TestCreateSandbox_HappyPath(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "sb-1", result.Name)
+	assert.Equal(t, "sb-1", result.ID)
 	assert.Equal(t, "python:3.10", result.Spec.Runtime)
 	f.sb.AssertExpectations(t)
 	f.db.AssertExpectations(t)
@@ -169,7 +169,7 @@ func TestCreateSandbox_ServiceIsStateless(t *testing.T) {
 		req := &types.CreateSandboxRequest{Runtime: "python:3.10", SecurityLevel: "standard", UserID: "user1"}
 		result, err := f.svc.CreateSandbox(ctx, req)
 		assert.NoError(t, err, "call %d should succeed", i+1)
-		assert.Equal(t, id, result.Name)
+		assert.Equal(t, id, result.ID)
 	}
 	f.db.AssertExpectations(t)
 	f.sb.AssertExpectations(t)
@@ -430,7 +430,7 @@ func TestGetSandbox_FoundInDefaultNamespace(t *testing.T) {
 
 	result, err := f.svc.GetSandbox(ctx, "sb-1")
 	assert.NoError(t, err)
-	assert.Equal(t, "sb-1", result.Name)
+	assert.Equal(t, "sb-1", result.ID)
 	assert.Equal(t, "python:3.10", result.Spec.Runtime)
 }
 
@@ -447,7 +447,7 @@ func TestGetSandbox_FallbackToAllNamespaces(t *testing.T) {
 
 	result, err := f.svc.GetSandbox(ctx, "sb-2")
 	assert.NoError(t, err)
-	assert.Equal(t, "sb-2", result.Name)
+	assert.Equal(t, "sb-2", result.ID)
 	assert.Equal(t, "other-ns", result.Namespace)
 }
 
@@ -761,7 +761,7 @@ func TestConvertCRDToAPI_MapsAllFields(t *testing.T) {
 
 	api := convertCRDToAPI(crd)
 
-	assert.Equal(t, "sb-1", api.Name)
+	assert.Equal(t, "sb-1", api.ID)
 	assert.Equal(t, "ns1", api.Namespace)
 	assert.Equal(t, "python:3.10", api.Spec.Runtime)
 	assert.Equal(t, "standard", api.Spec.SecurityLevel)
@@ -925,7 +925,7 @@ func TestE2E_ConvertCRDToAPI_MapsAllStatusFields(t *testing.T) {
 	assert.Equal(t, "10.0.1.99", result.Status.PodIP,
 		"PodIP from controller must be mapped to API DTO")
 	require.NotNil(t, result.Status.StartTime)
-	assert.True(t, now.Equal(result.Status.StartTime))
+	assert.True(t, now.Time.Equal(*result.Status.StartTime))
 
 	assert.Equal(t, "python:3.11", result.Spec.Runtime)
 	assert.Equal(t, "standard", result.Spec.SecurityLevel)
