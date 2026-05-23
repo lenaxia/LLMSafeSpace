@@ -39,6 +39,33 @@ func sanitizeLabelValue(v string) string {
 	return v
 }
 
+// parentWorkspaceIsSuspending returns true if the sandbox's referenced
+// Workspace exists and is currently in a Suspending or Suspended phase.
+// Used to disambiguate "pod was deleted because the workspace asked us to"
+// from "pod failed unexpectedly". In the former case, the sandbox should
+// land in Suspended; in the latter, Failed.
+//
+// Returns false on lookup error or if WorkspaceRef is empty — degrades to
+// the original Failed-on-pod-loss behavior, which is the conservative
+// choice for unparented sandboxes.
+func (r *SandboxReconciler) parentWorkspaceIsSuspending(ctx context.Context, sandbox *resources.Sandbox) bool {
+	if sandbox.Spec.WorkspaceRef == "" {
+		return false
+	}
+	ws := &resources.Workspace{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      sandbox.Spec.WorkspaceRef,
+		Namespace: sandbox.Namespace,
+	}, ws); err != nil {
+		return false
+	}
+	switch ws.Status.Phase {
+	case resources.WorkspacePhaseSuspending, resources.WorkspacePhaseSuspended:
+		return true
+	}
+	return false
+}
+
 // SandboxReconciler reconciles a Sandbox object
 type SandboxReconciler struct {
 	client.Client
@@ -63,6 +90,25 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	if !sandbox.ObjectMeta.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, sandbox)
+	}
+
+	// Tag the Sandbox CRD itself with its WorkspaceRef so the workspace
+	// controller's listSandboxesForWorkspace selector finds it. Without
+	// this, Workspace suspend/resume cannot enumerate dependent sandboxes
+	// and updateSandboxesToSuspended is a silent no-op.
+	if sandbox.Spec.WorkspaceRef != "" {
+		if sandbox.Labels == nil {
+			sandbox.Labels = map[string]string{}
+		}
+		if existing, ok := sandbox.Labels[common.LabelWorkspace]; !ok || existing != sandbox.Spec.WorkspaceRef {
+			sandbox.Labels[common.LabelWorkspace] = sandbox.Spec.WorkspaceRef
+			if err := r.Update(ctx, sandbox); err != nil {
+				logger.Error(err, "Failed to add workspace label to Sandbox")
+				return ctrl.Result{}, err
+			}
+			// Requeue so the next reconcile sees the updated object.
+			return ctrl.Result{Requeue: true}, nil
+		}
 	}
 
 	if common.AddFinalizer(sandbox, common.SandboxFinalizer) {
@@ -158,6 +204,20 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 	err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
 		if errors.IsNotFound(err) {
+			// If the parent workspace is suspending or suspended, the
+			// pod was deleted intentionally by the workspace controller.
+			// Mark the sandbox Suspended so it can be resumed cleanly,
+			// rather than Failed (which would require manual recovery).
+			if r.parentWorkspaceIsSuspending(ctx, sandbox) {
+				logger.Info("Pod not found and parent workspace is suspending; marking Sandbox Suspended")
+				sandbox.Status.Phase = common.SandboxPhaseSuspended
+				if err := r.Status().Update(ctx, sandbox); err != nil {
+					logger.Error(err, "Failed to update Sandbox status to Suspended")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
+			}
+
 			logger.Info("Pod not found, marking sandbox as failed")
 			sandbox.Status.Phase = common.SandboxPhaseFailed
 
@@ -177,6 +237,20 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
+		// Same race-protection as the not-found branch above: a pod
+		// transitioning through Failed during workspace suspend should
+		// land the sandbox in Suspended, not Failed.
+		if r.parentWorkspaceIsSuspending(ctx, sandbox) {
+			logger.Info("Pod not running and parent workspace is suspending; marking Sandbox Suspended",
+				"podPhase", pod.Status.Phase)
+			sandbox.Status.Phase = common.SandboxPhaseSuspended
+			if err := r.Status().Update(ctx, sandbox); err != nil {
+				logger.Error(err, "Failed to update Sandbox status to Suspended")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+
 		logger.Info("Pod is not running", "podPhase", pod.Status.Phase)
 		sandbox.Status.Phase = common.SandboxPhaseFailed
 

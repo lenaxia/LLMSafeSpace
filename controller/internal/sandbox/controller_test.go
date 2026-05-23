@@ -704,6 +704,9 @@ func TestReconcile_Creating_WorkspaceNotFound_ReturnsError(t *testing.T) {
 
 	r := reconcilerFor(t, sb) // no workspace in store
 
+	// First reconcile adds the workspace label and requeues. Second
+	// reconcile is the one that does the workspace lookup and must error.
+	_, _ = r.Reconcile(context.Background(), reqFor("sb-nowsref", "default"))
 	_, err := r.Reconcile(context.Background(), reqFor("sb-nowsref", "default"))
 
 	require.Error(t, err, "reconcile should return an error when workspace is not found")
@@ -931,6 +934,10 @@ func TestE2E_Unhappy_WorkspaceRefNotFound_ReturnsError(t *testing.T) {
 
 	r := reconcilerFor(t, sb)
 
+	// First reconcile adds the workspace label and requeues. Second
+	// reconcile is the one that actually tries to look up the workspace
+	// and must return the error.
+	_, _ = r.Reconcile(context.Background(), reqFor("sb-bad-ws", "default"))
 	_, err := r.Reconcile(context.Background(), reqFor("sb-bad-ws", "default"))
 	require.Error(t, err, "reconciling sandbox with missing workspace must return error")
 	assert.Contains(t, err.Error(), "failed to get workspace")

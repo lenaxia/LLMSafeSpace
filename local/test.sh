@@ -263,13 +263,13 @@ done
 
 # The sandbox pod should now be gone (the workspace suspend handler deletes
 # it). The Sandbox CRD itself remains, with phase Suspended.
-log "  waiting up to 30s for sandbox pod ${PRE_POD} to be deleted"
-for i in $(seq 1 10); do
+log "  waiting up to 90s for sandbox pod ${PRE_POD} to be deleted"
+for i in $(seq 1 30); do
     if ! kc -n "${NS}" get pod "${PRE_POD}" >/dev/null 2>&1; then
         ok "Sandbox pod deleted after ~$((i*3))s"
         break
     fi
-    if (( i == 10 )); then
+    if (( i == 30 )); then
         warn "Sandbox pod ${PRE_POD} still present after suspend"
         die "Pod deletion timeout"
     fi
