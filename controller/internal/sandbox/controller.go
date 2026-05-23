@@ -546,20 +546,6 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 		Env: []corev1.EnvVar{
 			{Name: "SANDBOX_ID", Value: sandbox.Name},
 			{Name: "WORKSPACE_DIR", Value: "/workspace"},
-			{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "llm-config"},
-					Key:                  "OPENAI_API_KEY",
-					Optional:             &[]bool{true}[0],
-				},
-			}},
-			{Name: "OPENAI_BASE_URL", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "llm-config"},
-					Key:                  "OPENAI_BASE_URL",
-					Optional:             &[]bool{true}[0],
-				},
-			}},
 		},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
