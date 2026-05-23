@@ -50,7 +50,7 @@ kc() { kubectl --context "${CTX}" "$@"; }
 # -----------------------------------------------------------------------------
 # Test 1: probes
 # -----------------------------------------------------------------------------
-log "Test 1/7 — API probes via port-forward"
+log "Test 1/8 — API probes via port-forward"
 
 kc -n "${NS}" port-forward svc/llmsafespace-api "${PORTFWD_PORT}:8080" >/dev/null 2>&1 &
 PF_PID=$!
@@ -74,7 +74,7 @@ ok "/readyz returns 200 (Postgres + Redis reachable)"
 # -----------------------------------------------------------------------------
 # Test 2: CRDs installed
 # -----------------------------------------------------------------------------
-log "Test 2/7 — CRDs registered"
+log "Test 2/8 — CRDs registered"
 for crd in workspaces.llmsafespace.dev sandboxes.llmsafespace.dev \
            sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev; do
     kc get crd "${crd}" >/dev/null \
@@ -89,7 +89,7 @@ ok "all 4 CRDs installed"
 # cluster-scoped RuntimeEnvironment lookup. For the e2e we ensure a
 # RuntimeEnvironment named "python-3.11" maps to the runtime-base image we
 # loaded into kind. Idempotent: re-runs apply.
-log "Test 3/7 — RuntimeEnvironment for python:3.11"
+log "Test 3/8 — RuntimeEnvironment for python:3.11"
 RUNTIME_IMAGE_REF="${RUNTIME_IMAGE_REF:-llmsafespace/runtime-base:dev}"
 cat <<EOF | kc apply -f -
 apiVersion: llmsafespace.dev/v1
@@ -106,7 +106,7 @@ ok "RuntimeEnvironment python-3.11 → ${RUNTIME_IMAGE_REF}"
 # -----------------------------------------------------------------------------
 # Test 3: Workspace creation reaches Active
 # -----------------------------------------------------------------------------
-log "Test 4/7 — Workspace lifecycle (create → Active)"
+log "Test 4/8 — Workspace lifecycle (create → Active)"
 
 # Clean slate
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
@@ -154,7 +154,7 @@ ok "Workspace PVC ${PVC_NAME} bound"
 # -----------------------------------------------------------------------------
 # Test 4: Sandbox creation reaches Running, opencode serve responds
 # -----------------------------------------------------------------------------
-log "Test 5/7 — Sandbox lifecycle (create → Running → opencode responds)"
+log "Test 5/8 — Sandbox lifecycle (create → Running → opencode responds)"
 
 kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
@@ -226,7 +226,86 @@ case "${HEALTH}" in
 esac
 
 # -----------------------------------------------------------------------------
-# Test 6: Workspace suspend → sandbox pod cleanup
+# Test 6: API proxy → opencode session lifecycle
+# -----------------------------------------------------------------------------
+# Drive the LLMSafeSpace API service end-to-end: insert a user + API key
+# directly into Postgres (no signup endpoint exists in V1), authenticate
+# against /api/v1/sandboxes/<id>/sessions, and verify the proxy correctly
+# forwards to the in-pod opencode server.
+#
+# The session-ownership middleware checks Sandbox.metadata.labels["user-id"]
+# against the authenticated user, so the user-id and the label must match.
+# (test.sh creates the Sandbox with `labels: { user-id: e2e-user }`.)
+log "Test 6/8 — API proxy → opencode session lifecycle"
+
+API_KEY="lsp_e2etestkey1234567890abcdef"
+
+# Insert (or refresh) the user + api_key in postgres. ON CONFLICT keeps the
+# script idempotent across re-runs.
+PGPOD=$(kc -n "${NS}" get pod -l app.kubernetes.io/name=postgres -o jsonpath='{.items[0].metadata.name}')
+[[ -n "${PGPOD}" ]] || die "postgres pod not found"
+
+kc -n "${NS}" exec "${PGPOD}" -- env PGPASSWORD=changeme \
+    psql -U llmsafespace -d llmsafespace -v ON_ERROR_STOP=1 -c "
+INSERT INTO users (id, username, email, password_hash, role)
+VALUES ('${USER_ID}', '${USER_ID}', '${USER_ID}@example.test', 'unused-by-api-key-auth', 'user')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO api_keys (id, user_id, key, name, active)
+VALUES ('${USER_ID}-key', '${USER_ID}', '${API_KEY}', 'e2e-test-key', true)
+ON CONFLICT (id) DO UPDATE SET key=EXCLUDED.key, active=true;
+" >/dev/null
+ok "user ${USER_ID} + API key seeded in postgres"
+
+# CreateSession via the LLMSafeSpace API. The API uses port_forward'd 18080.
+# (PF_PID was started in Test 1 and remains alive.)
+CREATE_RESP=$(curl -sfm 10 -X POST \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d '{}' \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+    -o /tmp/llmsafespace-create-session.json -w "%{http_code}" || true)
+case "${CREATE_RESP}" in
+    200|201)
+        SESSION_ID=$(python3 -c "import json,sys;d=json.load(open('/tmp/llmsafespace-create-session.json'));print(d.get('id') or d.get('info',{}).get('id') or '')" 2>/dev/null || true)
+        if [[ -z "${SESSION_ID}" ]]; then
+            warn "session create returned ${CREATE_RESP} but couldn't extract id from response:"
+            cat /tmp/llmsafespace-create-session.json | head -10
+            die "could not extract session id"
+        fi
+        ok "created session via API proxy: ${SESSION_ID}"
+        ;;
+    *)
+        warn "session create returned HTTP ${CREATE_RESP}"
+        cat /tmp/llmsafespace-create-session.json | head -10
+        die "session create failed"
+        ;;
+esac
+
+# ListSessions via the API. Should include the session we just created.
+LIST_RESP=$(curl -sfm 10 \
+    -H "Authorization: Bearer ${API_KEY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+    -o /tmp/llmsafespace-list-sessions.json -w "%{http_code}" || true)
+case "${LIST_RESP}" in
+    200)
+        if grep -q "${SESSION_ID}" /tmp/llmsafespace-list-sessions.json; then
+            ok "listed sessions via API proxy includes ${SESSION_ID}"
+        else
+            warn "session list returned 200 but didn't contain ${SESSION_ID}:"
+            cat /tmp/llmsafespace-list-sessions.json | head -10
+            die "session not in list"
+        fi
+        ;;
+    *)
+        warn "session list returned HTTP ${LIST_RESP}"
+        cat /tmp/llmsafespace-list-sessions.json | head -10
+        die "session list failed"
+        ;;
+esac
+
+# -----------------------------------------------------------------------------
+# Test 7: Workspace suspend → sandbox pod cleanup
 # -----------------------------------------------------------------------------
 # In V1, suspend is a Workspace-level operation, not a Sandbox-level one.
 # Suspending the workspace deletes all of its sandbox pods (the controller's
@@ -237,7 +316,7 @@ esac
 # Workspace, which is exactly what the API service does via
 # Workspace.UpdateStatus. This requires the status subresource, which the
 # Workspace CRD declares.
-log "Test 6/7 — Workspace suspend deletes sandbox pod"
+log "Test 7/8 — Workspace suspend deletes sandbox pod"
 
 PRE_POD=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
 [[ -n "${PRE_POD}" ]] || die "sandbox.status.podName missing before suspend"
@@ -303,7 +382,7 @@ done
 # -----------------------------------------------------------------------------
 # Test 6: cleanup
 # -----------------------------------------------------------------------------
-log "Test 7/7 — cleanup"
+log "Test 8/8 — cleanup"
 kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --wait=false >/dev/null
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --wait=false >/dev/null
 ok "delete requested"

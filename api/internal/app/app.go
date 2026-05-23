@@ -48,11 +48,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
 	}
 
+	// In development mode, disable RequireHTTPS so the API works over plain
+	// HTTP via port-forward / local tooling. In production, set
+	// logging.development=false and front the API with an Ingress that
+	// terminates TLS and sets X-Forwarded-Proto=https.
+	securityCfg := server.DefaultRouterConfig().SecurityConfig
+	if cfg.Logging.Development {
+		securityCfg.Development = true
+		securityCfg.RequireHTTPS = false
+		securityCfg.AllowHTTPSDowngrade = true
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
 		RateLimitConfig:         server.DefaultRouterConfig().RateLimitConfig,
-		SecurityConfig:          server.DefaultRouterConfig().SecurityConfig,
+		SecurityConfig:          securityCfg,
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: server.DefaultRouterConfig().AllowedWebSocketOrigins,
 	})

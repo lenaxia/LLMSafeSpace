@@ -187,6 +187,9 @@ spec:
                 podNamespace:
                   type: string
                   description: "Namespace of the pod running the sandbox"
+                podIP:
+                  type: string
+                  description: "Pod IP address (used by the API service to proxy requests to opencode)"
                 startTime:
                   type: string
                   format: date-time
