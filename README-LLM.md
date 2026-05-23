@@ -2,7 +2,7 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.7
+**Version:** 1.8
 **Last Updated:** 2026-05-23
 **Project Status:** Active Development
 
@@ -73,13 +73,18 @@ Correct workflow:
 5. Refactor if needed
 ```
 
-**Test requirements:**
+**Test requirements (all are mandatory — none are optional):**
 
 - Multiple happy path tests
-- Multiple unhappy path tests
+- Multiple unhappy path tests (errors, invalid inputs, boundary failures, dependency failures)
 - Edge case coverage
+- End-to-end integration tests that exercise the real wiring (router → service → K8s/DB/Redis or fakes thereof) — unit tests alone are not sufficient
 - Always use `-timeout` when running tests
 - Tests must pass before marking work complete
+
+**Definition of done:**
+
+A task is **not** done until it has been demonstrated to be integrated properly via passing e2e/integration tests. "It compiles", "unit tests pass", or "it works in isolation" do not satisfy this requirement. Code that is built but never wired into the live request path is incomplete work.
 
 ### 1. Type Safety First
 
@@ -113,6 +118,22 @@ Maps are acceptable only when parsing external JSON/YAML with unknown structure 
 
 ### 4. Code Quality
 
+**Engineering principles — every change must be:**
+
+- **SOLID** — single responsibility, open/closed, Liskov-substitutable, interface-segregated, dependency-inverted
+- **Robust** — handles failures, partial states, and adversarial inputs without corruption
+- **Reliable** — deterministic, repeatable, no flaky behaviour
+- **Maintainable** — clear naming, small functions, obvious data flow; the next reader should not need a map
+- **Scalable** — no hidden O(n²) loops, no per-request allocations of expensive resources, no global locks on hot paths
+- **Performant** — measure before optimising; do not pessimise (e.g. unnecessary copies, N+1 queries, synchronous I/O on hot paths)
+- **Secure** — input validated, outputs sanitised, secrets never logged, least-privilege by default
+- **Not over-engineered** — no speculative abstractions, no premature generalisation, no frameworks-for-the-sake-of-frameworks
+- **Not overly complex** — prefer the simplest design that satisfies the requirement; if a junior engineer cannot read it, simplify
+- **Idiomatic** — follow the conventions of the language and the surrounding codebase (Go idioms here; see Rule 2)
+- **Faithful to the ask** — meet the spirit AND the letter of the requirement; do not solve a different problem because it is easier
+
+**Comments and self-documentation:**
+
 - No comments unless strictly necessary and timeless
 - Incorrect or outdated comments must be removed or corrected
 - Code is self-documenting through clear naming
@@ -128,7 +149,25 @@ Maps are acceptable only when parsing external JSON/YAML with unknown structure 
 
 If uncertain about correct behaviour: **ask the user**. Do not guess, assume, or implement workarounds.
 
-### 7. Understand the Architecture First
+### 7. Assumptions: State, Then Validate
+
+Every non-trivial change rests on assumptions about the system (data shape, caller behaviour, library semantics, deployment environment, ordering, concurrency, error modes, etc.). These assumptions cause most production bugs when they go unstated and unchecked.
+
+**Mandatory protocol:**
+
+1. **State assumptions up front.** Before writing code, list every assumption the change relies on. Write them in the worklog, the PR description, or a comment block at the top of the design discussion. "It is obvious" is not an excuse — write it down.
+2. **Validate every assumption.** For each one, identify how you will prove it true:
+   - Read the relevant source/spec/doc
+   - Run a query, probe the running cluster, or write a quick test
+   - Check git history or existing tests
+   - Ask the user if it cannot be validated mechanically
+3. **If you cannot validate it, do not rely on it.** Either find a way to validate it, redesign so the assumption is unnecessary, or ask the user. Never proceed on an unvalidated assumption.
+4. **Record the validation result.** In the worklog, next to each assumption, record what proved it (e.g. "verified via `pkg/kubernetes/client_test.go:142`" or "confirmed by `kubectl get sandbox -o yaml` on cluster X").
+5. **Treat failed validations as findings.** A disproved assumption is a bug or design flaw. Surface it; do not work around it silently.
+
+This rule is non-negotiable. The most common failure mode in this codebase has been silent assumption drift — code that "should work" because someone assumed a behaviour that was never true (see worklogs 0030 and 0033 for examples).
+
+### 8. Understand the Architecture First
 
 Before making any change, read the relevant design document(s). Understand how the change fits the overall data flow. Never modify code without knowing why.
 
@@ -146,7 +185,7 @@ Key documents by area:
 | Runtime environments (V1) | `design/RUNTIMEENV.md` |
 | Error handling (V1) | `design/CONTROLLER-ERROR.md` |
 
-### 8. Communication Tone
+### 9. Communication Tone
 
 - Neutral, factual, objective
 - Not sensational or sycophantic
@@ -787,7 +826,7 @@ List every file created or modified in this session.
 ### Before starting work
 
 1. Read `README-LLM.md` (this file)
-2. Read the relevant design document(s) from `design/` — see the table in [Rule 7](#7-understand-the-architecture-first)
+2. Read the relevant design document(s) from `design/` — see the table in [Rule 8](#8-understand-the-architecture-first)
 3. Read `pkg/README.md` for shared package conventions
 4. Check recent git history to understand current state of the area you're modifying
 
@@ -838,34 +877,51 @@ This section defines two agent roles and their workflows for collaborative or mu
 
 #### Orchestrator workflow (11-step process)
 
-Follow this workflow for all epic/story implementation tasks:
+Follow this workflow for all epic/story implementation tasks. Steps 2–5 form the **Validator Loop** — they are MANDATORY and must run until the validator returns zero findings. There is no "good enough" exit.
 
 ```
 1. Context Setup
    └─> Delegate: "Read README-LLM.md, relevant design docs"
    └─> Include: Design constraints, architectural patterns, integration points
    └─> Define: Clear scope, ownership boundaries, expected deliverables
+   └─> Require: Implementer states all assumptions up front and validates each
+       (see Critical Guidelines Rule 7 — Assumptions: State, Then Validate)
 
 2. Implementation Delegation
    └─> Delegate: User story implementation with TDD requirements
    └─> Prompt detail level: "Fresh developer seeing codebase for first time"
    └─> Include: Specific file references, pattern examples, testing requirements
+   └─> Require: Happy-path tests + unhappy-path tests + e2e integration tests
+   └─> Require: Stated assumptions list with validation evidence per assumption
 
-3. Code Review Delegation
-   └─> Delegate: Skeptical code reviewer to validate implementation
-   └─> Focus: Integration points, test coverage, gap detection, code quality
-   └─> Requirement: Only code + tests count as proof of work (NOT status updates)
-   └─> Output: Detailed gap report with code references and fix recommendations
+3. Skeptical Validator Delegation (MANDATORY)
+   └─> Delegate to a SEPARATE sub-agent acting as a skeptical validator
+   └─> Validator's job: assume nothing works; prove every claim
+   └─> Validator must check:
+       - Every stated assumption — is it actually true? (re-validate independently)
+       - Every integration point — is the code wired into the live request path?
+       - Test coverage — happy + unhappy + e2e/integration all present and meaningful?
+       - Engineering principles (Rule 4) — SOLID, robust, secure, not over-engineered, idiomatic?
+       - Spirit AND letter of the ask — does the implementation actually solve what was asked?
+       - Tech debt — any TODOs, hacks, workarounds, commented-out code, dead code?
+   └─> Output: Detailed findings report with code references and severity
+   └─> Validator MUST NOT also be the implementer (independence is the point)
 
-4. Gap Remediation
-   └─> Delegate: Fix ALL gaps identified in review (no matter how minor)
-   └─> Include: Specific gap descriptions, code locations, fix strategies
-   └─> Validate: Each fix with targeted tests
+4. Findings Triage and Remediation Delegation
+   └─> Before fixing: validate each finding is REAL and not a false alarm
+       (re-read the code, re-run the test, confirm the failure mode)
+   └─> Document false alarms with rationale; do NOT silently dismiss findings
+   └─> Delegate fixes for ALL real findings to a remediation sub-agent
+       (no matter how minor — zero tech debt tolerance)
+   └─> Each fix must include a regression test
+   └─> Remediation agent must NOT introduce new assumptions without validating them
 
-5. Iterative Validation
-   └─> Repeat Steps 2–4 until ZERO gaps remain
-   └─> Acceptance Criteria: "Story complete in spirit AND letter"
-   └─> No compromises: All integration points validated, all tests passing
+5. Re-Validate (LOOP)
+   └─> Send the remediated code BACK to a skeptical validator
+   └─> If new findings: return to Step 4
+   └─> If zero findings: exit the loop
+   └─> NO compromises: the loop continues until validator returns zero real findings
+   └─> Acceptance Criteria: "Story complete in spirit AND letter, zero tech debt"
 
 6. Build and Test Validation
    └─> Run ALL builds and tests, fix ANY failures
@@ -883,7 +939,9 @@ Follow this workflow for all epic/story implementation tasks:
 
 8. Worklog Creation
    └─> Create worklog (see Worklog Requirements section)
-   └─> Content: Summary, implementation details, test results, next steps
+   └─> Content: Summary, stated assumptions + validation evidence,
+       implementation details, validator findings + resolutions,
+       test results, next steps
    └─> Commit worklog with code changes
 
 9. Move to Next Story
@@ -1251,9 +1309,10 @@ make docker-run
 ### Coverage requirements
 
 - Multiple happy path cases
-- Multiple unhappy path cases
+- Multiple unhappy path cases (errors, invalid inputs, dependency failures)
 - Edge cases (empty fields, nil slices, very long strings, invalid inputs)
 - Error conditions
+- **End-to-end integration tests** that exercise the real wiring (router → service → store/cluster). A task is not complete until an e2e/integration test demonstrates the change works as part of the system, not just in isolation.
 
 ### Table-driven tests
 
@@ -1503,6 +1562,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.8 | 2026-05-23 | Engineering principles (SOLID/robust/secure/idiomatic/not over-engineered) added to Rule 4; new Rule 7 mandates stating and validating assumptions; TDD now requires happy + unhappy + e2e integration tests with explicit definition of done; orchestrator workflow restructured around a mandatory skeptical-validator → fix → re-validate loop with false-alarm triage |
 | 1.5 | 2026-05-23 | Sandbox CRUD via API (`/api/v1/sandboxes`), `?verbose=true` flag (strips opencode `patch` parts by default), README.md rewritten for V2 |
 | 1.4 | 2026-05-23 | Rate limiting wired, CORS hardened (no wildcard+credentials), account lockout, all configurable via env vars |
 | 1.3 | 2026-05-23 | Auth endpoints (register, login, API key CRUD) with security hardening and e2e tests |
