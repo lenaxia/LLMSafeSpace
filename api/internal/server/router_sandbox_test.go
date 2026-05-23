@@ -118,7 +118,7 @@ func TestSandboxRoutes_CreateSandbox_Success(t *testing.T) {
 	router, sb := newSandboxRouterFixture(t)
 
 	expected := &types.Sandbox{}
-	expected.Name = "sb-abc"
+	expected.ID = "sb-abc"
 	expected.Spec.Runtime = "python:3.11"
 
 	sb.On("CreateSandbox", mock.Anything, mock.MatchedBy(func(req *types.CreateSandboxRequest) bool {
@@ -137,7 +137,7 @@ func TestSandboxRoutes_CreateSandbox_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 	var got types.Sandbox
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err == nil {
-		assert.Equal(t, "sb-abc", got.Name)
+		assert.Equal(t, "sb-abc", got.ID)
 	}
 }
 
@@ -195,7 +195,7 @@ func TestSandboxRoutes_ListSandboxes_Pagination(t *testing.T) {
 func TestSandboxRoutes_GetSandbox_Success(t *testing.T) {
 	router, sb := newSandboxRouterFixture(t)
 	expected := &types.Sandbox{}
-	expected.Name = "sb-1"
+	expected.ID = "sb-1"
 	sb.On("GetSandbox", mock.Anything, "sb-1").Return(expected, nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/sandboxes/sb-1", nil)

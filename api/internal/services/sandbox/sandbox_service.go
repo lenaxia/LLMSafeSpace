@@ -245,7 +245,7 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 			s.logger.Warn("Failed to get live sandbox status", "error", err, "sandboxID", sb.ID)
 		} else {
 			item.Phase = string(crd.Status.Phase)
-			item.StartTime = crd.Status.StartTime
+			item.StartTime = metav1TimeToStdLib(crd.Status.StartTime)
 			if crd.Status.Resources != nil {
 				item.CPUUsage = crd.Status.Resources.CPUUsage
 				item.MemoryUsage = crd.Status.Resources.MemoryUsage
@@ -393,8 +393,11 @@ func convertCRDToAPI(crd *v1.Sandbox) *types.Sandbox {
 		return nil
 	}
 	return &types.Sandbox{
-		TypeMeta:   crd.TypeMeta,
-		ObjectMeta: crd.ObjectMeta,
+		ID:                crd.Name,
+		Namespace:         crd.Namespace,
+		Labels:            crd.Labels,
+		Annotations:       crd.Annotations,
+		CreationTimestamp: crd.CreationTimestamp.Time,
 		Spec: types.SandboxSpec{
 			Runtime:         crd.Spec.Runtime,
 			SecurityLevel:   crd.Spec.SecurityLevel,
@@ -410,11 +413,22 @@ func convertCRDToAPI(crd *v1.Sandbox) *types.Sandbox {
 			Phase:      crd.Status.Phase,
 			Conditions: crdConditionsToAPI(crd.Status.Conditions),
 			PodName:    crd.Status.PodName,
-			StartTime:  crd.Status.StartTime,
+			StartTime:  metav1TimeToStdLib(crd.Status.StartTime),
 			Resources:  crdResourceStatusToAPI(crd.Status.Resources),
 			PodIP:      crd.Status.PodIP,
 		},
 	}
+}
+
+// metav1TimeToStdLib converts a *metav1.Time (CRD-side) to a *time.Time
+// (DTO-side). Returns nil for nil input. The .Time field of metav1.Time is
+// the underlying time.Time value.
+func metav1TimeToStdLib(t *metav1.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	out := t.Time
+	return &out
 }
 
 func apiResourcesToCRD(r *types.ResourceRequirements) *v1.ResourceRequirements {
@@ -495,7 +509,7 @@ func crdConditionsToAPI(conditions []v1.SandboxCondition) []types.SandboxConditi
 	}
 	out := make([]types.SandboxCondition, 0, len(conditions))
 	for _, c := range conditions {
-		t := c.LastTransitionTime
+		t := c.LastTransitionTime.Time
 		out = append(out, types.SandboxCondition{
 			Type:               c.Type,
 			Status:             c.Status,

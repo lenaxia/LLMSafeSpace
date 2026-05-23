@@ -1,5 +1,11 @@
-// +k8s:deepcopy-gen=package
-
+// Package types contains API DTOs (data transfer objects) used by the API
+// service to receive requests and return responses to clients.
+//
+// These types are intentionally NOT Kubernetes CRD types. CRD types live in
+// pkg/apis/llmsafespace/v1; this package converts to/from them at the
+// service boundary. Types here use plain Go types (e.g. *time.Time, not
+// *metav1.Time) so the JSON contract returned to clients is free of
+// Kubernetes-isms (kind, apiVersion, metadata).
 package types
 
 import (
@@ -7,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Common errors
@@ -28,15 +32,19 @@ type contextKey string
 // always in sync.
 const ContextKeyUserID contextKey = "userID"
 
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// Sandbox represents a sandbox environment
+// Sandbox is the API transfer object for a sandbox resource. It is NOT a
+// Kubernetes object — there is no TypeMeta or ObjectMeta embedding. The
+// service layer converts a v1.Sandbox CRD into one of these for client
+// responses.
 type Sandbox struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	ID                string            `json:"id"`
+	Namespace         string            `json:"namespace,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
+	CreationTimestamp time.Time         `json:"creationTimestamp,omitempty"`
 
-	Spec   SandboxSpec   `json:"spec,omitempty"`
-	Status SandboxStatus `json:"status,omitempty"`
+	Spec   SandboxSpec   `json:"spec"`
+	Status SandboxStatus `json:"status"`
 }
 
 // SandboxSpec defines the desired state of a Sandbox
@@ -168,7 +176,7 @@ type SandboxStatus struct {
 	PodName string `json:"podName,omitempty"`
 
 	// Start time of the sandbox
-	StartTime *metav1.Time `json:"startTime,omitempty"`
+	StartTime *time.Time `json:"startTime,omitempty"`
 
 	// Resource usage
 	Resources *ResourceStatus `json:"resources,omitempty"`
@@ -180,7 +188,7 @@ type SandboxStatus struct {
 	PodIP string `json:"podIP,omitempty"`
 
 	// Pod start time
-	PodStartTime *metav1.Time `json:"podStartTime,omitempty"`
+	PodStartTime *time.Time `json:"podStartTime,omitempty"`
 
 	// Node name where pod is running
 	NodeName string `json:"nodeName,omitempty"`
@@ -220,10 +228,10 @@ type ContainerStatus struct {
 	State ContainerStateValue `json:"state"`
 
 	// Time when the container started
-	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
 
 	// Time when the container finished
-	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 
 	// Exit code if terminated
 	ExitCode int32 `json:"exitCode,omitempty"`
@@ -265,7 +273,7 @@ type Event struct {
 	Count int32 `json:"count"`
 
 	// Event time
-	Time *metav1.Time `json:"time,omitempty"`
+	Time *time.Time `json:"time,omitempty"`
 
 	// Event source (Pod, Sandbox, etc.)
 	Source string `json:"source,omitempty"`
@@ -286,7 +294,7 @@ type SandboxCondition struct {
 	Message string `json:"message,omitempty"`
 
 	// Last transition time
-	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+	LastTransitionTime *time.Time `json:"lastTransitionTime,omitempty"`
 }
 
 // ResourceStatus defines resource usage
@@ -299,15 +307,6 @@ type ResourceStatus struct {
 
 	// Current ephemeral storage usage
 	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// SandboxList contains a list of Sandbox
-type SandboxList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Sandbox `json:"items"`
 }
 
 // SandboxMetadata represents metadata about a sandbox stored in the database
@@ -524,60 +523,6 @@ type APIKey struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// RuntimeEnvironment represents a runtime environment
-type RuntimeEnvironment struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   RuntimeEnvironmentSpec   `json:"spec,omitempty"`
-	Status RuntimeEnvironmentStatus `json:"status,omitempty"`
-}
-
-// RuntimeEnvironmentSpec defines the desired state of a RuntimeEnvironment
-type RuntimeEnvironmentSpec struct {
-	// Base image
-	BaseImage string `json:"baseImage"`
-
-	// Language
-	Language string `json:"language"`
-
-	// Version
-	Version string `json:"version"`
-
-	// Pre-installed packages
-	Packages []string `json:"packages,omitempty"`
-}
-
-// RuntimeEnvironmentStatus defines the observed state of a RuntimeEnvironment
-type RuntimeEnvironmentStatus struct {
-	// Whether the runtime environment is ready
-	Ready bool `json:"ready"`
-
-	// Last update time
-	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// SandboxProfile represents a sandbox profile
-type SandboxProfile struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec SandboxProfileSpec `json:"spec,omitempty"`
-}
-
-// SandboxProfileSpec defines the desired state of a SandboxProfile
-type SandboxProfileSpec struct {
-	Resources       *ResourceRequirements `json:"resources,omitempty"`
-	NetworkAccess   *NetworkAccess        `json:"networkAccess,omitempty"`
-	Filesystem      *FilesystemConfig     `json:"filesystem,omitempty"`
-	Storage         *StorageConfig        `json:"storage,omitempty"`
-	SecurityContext *SecurityContext      `json:"securityContext,omitempty"`
-}
-
 // SandboxListResult is the typed return value for ListSandboxes. It bundles
 // live Kubernetes status with database metadata and pagination so callers never
 // receive untyped maps.
@@ -599,10 +544,10 @@ type SandboxListItem struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 
 	// Live Kubernetes status (best-effort; zero values when unavailable)
-	Phase       string       `json:"phase,omitempty"`
-	StartTime   *metav1.Time `json:"startTime,omitempty"`
-	CPUUsage    string       `json:"cpuUsage,omitempty"`
-	MemoryUsage string       `json:"memoryUsage,omitempty"`
+	Phase       string     `json:"phase,omitempty"`
+	StartTime   *time.Time `json:"startTime,omitempty"`
+	CPUUsage    string     `json:"cpuUsage,omitempty"`
+	MemoryUsage string     `json:"memoryUsage,omitempty"`
 }
 
 // UserUpdates carries the fields that may be changed on a User record.
@@ -642,18 +587,6 @@ type SandboxNotFoundError struct {
 
 func (e *SandboxNotFoundError) Error() string {
 	return fmt.Sprintf("sandbox %s not found", e.ID)
-}
-
-type RuntimeEnvironmentList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []RuntimeEnvironment `json:"items"`
-}
-
-type SandboxProfileList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SandboxProfile `json:"items"`
 }
 
 // Workspace is the API transfer object for a workspace resource.
