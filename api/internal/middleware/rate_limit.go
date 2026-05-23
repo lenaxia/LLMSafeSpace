@@ -52,12 +52,12 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		}
 
 		apiKey, exists := c.Get("apiKey")
-		if !exists {
-			c.Next()
-			return
+		var keyStr string
+		if exists {
+			keyStr = apiKey.(string)
+		} else {
+			keyStr = c.ClientIP()
 		}
-
-		keyStr := apiKey.(string)
 		hashedKey := utilities.HashString(keyStr)
 		limit := config.DefaultLimit
 		burst := config.BurstSize

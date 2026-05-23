@@ -75,12 +75,17 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	router.Use(middleware.SecurityMiddleware(logger, cfg.SecurityConfig))
 	router.Use(middleware.LoggingMiddleware(logger, cfg.LoggingConfig))
 	router.Use(middleware.MetricsMiddleware(services.GetMetrics()))
+	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
 
 	// Add WebSocket security middleware to WebSocket routes
 	wsGroup := router.Group("/api/v1/sandboxes/:id/stream")
 	wsGroup.Use(middleware.WebSocketSecurityMiddleware(logger, cfg.AllowedWebSocketOrigins...))
 	wsGroup.Use(middleware.WebSocketMetricsMiddleware(services.GetMetrics()))
+
+	// Auth routes (public — no auth middleware)
+	authGroup := router.Group("/api/v1/auth")
+	registerAuthRoutes(authGroup, services)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -146,6 +151,103 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	})
 
 	return router
+}
+
+const (
+	maxAuthBodyBytes  = 1 << 20 // 1 MiB max for auth request bodies
+	authRatePerMinute = 20
+	authRateBurst     = 5
+)
+
+// sanitizeBindError returns a user-safe error message for binding failures
+// without leaking internal struct details.
+func sanitizeBindError(err error) string {
+	return "invalid request body"
+}
+
+// API key management routes.
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
+	authSvc := services.GetAuth()
+
+	rg.POST("/register", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
+		var req types.RegisterRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": sanitizeBindError(err)})
+			return
+		}
+		resp, err := authSvc.Register(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, resp)
+	})
+
+	rg.POST("/login", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
+		var req types.LoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": sanitizeBindError(err)})
+			return
+		}
+		resp, err := authSvc.Login(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+
+	apiKeyGroup := rg.Group("")
+	apiKeyGroup.Use(authSvc.AuthMiddleware())
+	apiKeyGroup.POST("/api-keys", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		var req types.CreateAPIKeyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": sanitizeBindError(err)})
+			return
+		}
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, apiKey)
+	})
+	apiKeyGroup.GET("/api-keys", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		keys, err := authSvc.ListAPIKeys(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if keys == nil {
+			keys = []*types.APIKey{}
+		}
+		c.JSON(http.StatusOK, keys)
+	})
+	apiKeyGroup.DELETE("/api-keys/:id", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		if err := authSvc.DeleteAPIKey(c.Request.Context(), userID, c.Param("id")); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 }
 
 // registerWorkspaceRoutes adds all /api/v1/workspaces routes to the given group.

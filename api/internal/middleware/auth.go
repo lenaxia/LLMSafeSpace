@@ -37,8 +37,8 @@ type AuthConfig struct {
 func DefaultAuthConfig() AuthConfig {
 	return AuthConfig{
 		HeaderName:       "Authorization",
-		QueryParamName:   "token",
-		CookieName:       "auth_token",
+		QueryParamName:   "",
+		CookieName:       "",
 		TokenType:        "Bearer",
 		SkipPaths:        []string{"/health", "/livez", "/readyz", "/metrics", "/api/v1/auth/login", "/api/v1/auth/register"},
 		SkipPathPrefixes: []string{"/static/", "/docs/"},
@@ -74,7 +74,6 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			}
 
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
-			HandleAPIError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,
 			})
@@ -95,7 +94,6 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			}
 
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
-			HandleAPIError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,
 			})

@@ -42,15 +42,15 @@ func TestExtractToken(t *testing.T) {
 			"token123",
 		},
 		{
-			"Query parameter",
+			"Query parameter disabled by default",
 			func(c *gin.Context) {
 				c.Request.URL.RawQuery = "token=token123"
 			},
 			DefaultTokenExtractorConfig(),
-			"token123",
+			"",
 		},
 		{
-			"Custom query parameter",
+			"Custom query parameter when explicitly enabled",
 			func(c *gin.Context) {
 				c.Request.URL.RawQuery = "api_key=token123"
 			},
@@ -58,15 +58,15 @@ func TestExtractToken(t *testing.T) {
 			"token123",
 		},
 		{
-			"Cookie",
+			"Cookie disabled by default",
 			func(c *gin.Context) {
 				c.Request.AddCookie(&http.Cookie{Name: "auth_token", Value: "token123"})
 			},
 			DefaultTokenExtractorConfig(),
-			"token123",
+			"",
 		},
 		{
-			"Custom cookie",
+			"Custom cookie when explicitly enabled",
 			func(c *gin.Context) {
 				c.Request.AddCookie(&http.Cookie{Name: "session", Value: "token123"})
 			},
@@ -80,13 +80,13 @@ func TestExtractToken(t *testing.T) {
 			"",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request, _ = http.NewRequest("GET", "/", nil)
 			tc.setup(c)
-			
+
 			result := ExtractToken(c, tc.config)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -108,7 +108,7 @@ func TestIsAPIKey(t *testing.T) {
 		{"Prefix only", "api_", "api_", true},
 		{"Case sensitive", "API_12345", "api_", false},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := IsAPIKey(tc.token, tc.prefix)

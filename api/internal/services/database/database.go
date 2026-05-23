@@ -77,7 +77,7 @@ func (s *Service) Ping(ctx context.Context) error {
 // GetUser gets a user by ID
 func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, error) {
 	query := `
-        SELECT id, username, email, created_at, updated_at, active, role
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role
         FROM users 
         WHERE id = $1
     `
@@ -88,6 +88,7 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 		&user.ID,
 		&user.Username,
 		&user.Email,
+		&user.PasswordHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 		&user.Active,
@@ -104,11 +105,42 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 	return &user, nil
 }
 
+// GetUserByEmail gets a user by email address
+func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
+	query := `
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role
+        FROM users 
+        WHERE email = $1
+    `
+
+	var user types.User
+
+	err := s.DB.QueryRowContext(ctx, query, email).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PasswordHash,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&user.Active,
+		&user.Role,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get user by email: %w", err)
+	}
+
+	return &user, nil
+}
+
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 	query := `
-        INSERT INTO users (id, username, email, created_at, updated_at, active, role)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO users (id, username, email, password_hash, created_at, updated_at, active, role)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `
 
 	now := time.Now()
@@ -123,6 +155,7 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 		user.ID,
 		user.Username,
 		user.Email,
+		user.PasswordHash,
 		user.CreatedAt,
 		user.UpdatedAt,
 		user.Active,
@@ -755,4 +788,94 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		return nil, nil, fmt.Errorf("error iterating workspace rows: %w", err)
 	}
 	return workspaces, pagination, nil
+}
+
+func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
+	query := `
+        INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `
+	var expiresAt interface{}
+	if apiKey.ExpiresAt != nil {
+		expiresAt = *apiKey.ExpiresAt
+	}
+	_, err := s.DB.ExecContext(ctx, query,
+		apiKey.ID,
+		apiKey.UserID,
+		apiKey.Key,
+		apiKey.Name,
+		apiKey.Active,
+		apiKey.CreatedAt,
+		expiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create api key: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	query := `
+        SELECT id, user_id, key, name, active, created_at, expires_at
+        FROM api_keys
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+    `
+	rows, err := s.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list api keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make([]*types.APIKey, 0)
+	for rows.Next() {
+		var k types.APIKey
+		var keyStr string
+		var expiresAt sql.NullTime
+		if err := rows.Scan(&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt); err != nil {
+			return nil, fmt.Errorf("failed to scan api key: %w", err)
+		}
+		k.Prefix = "lsp_"
+		if expiresAt.Valid {
+			k.ExpiresAt = &expiresAt.Time
+		}
+		keys = append(keys, &k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating api keys: %w", err)
+	}
+	return keys, nil
+}
+
+func (s *Service) GetAPIKey(ctx context.Context, userID, keyID string) (*types.APIKey, error) {
+	query := `
+        SELECT id, key, name, active, created_at, expires_at
+        FROM api_keys
+        WHERE id = $1 AND user_id = $2
+    `
+	var k types.APIKey
+	var keyStr string
+	var expiresAt sql.NullTime
+	err := s.DB.QueryRowContext(ctx, query, keyID, userID).Scan(
+		&k.ID, &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get api key: %w", err)
+	}
+	k.Prefix = "lsp_"
+	if expiresAt.Valid {
+		k.ExpiresAt = &expiresAt.Time
+	}
+	return &k, nil
+}
+
+func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM api_keys WHERE id = $1 AND user_id = $2", keyID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete api key: %w", err)
+	}
+	return nil
 }

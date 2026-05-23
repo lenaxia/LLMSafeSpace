@@ -267,9 +267,9 @@ func TestGetUser(t *testing.T) {
 	role := "user"
 
 	// Set up expectations
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role"}).
-		AddRow(userID, username, email, createdAt, updatedAt, active, role)
-	mock.ExpectQuery("SELECT id, username, email, created_at, updated_at, active, role FROM users WHERE id = \\$1").
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role"}).
+		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role)
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role FROM users WHERE id = \\$1").
 		WithArgs(userID).
 		WillReturnRows(rows)
 
@@ -284,7 +284,7 @@ func TestGetUser(t *testing.T) {
 	assert.Equal(t, role, user.Role)
 
 	// Test case: User not found
-	mock.ExpectQuery("SELECT id, username, email, created_at, updated_at, active, role FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role FROM users WHERE id = \\$1").
 		WithArgs("nonexistent").
 		WillReturnError(sql.ErrNoRows)
 
@@ -657,17 +657,18 @@ func TestCreateUser(t *testing.T) {
 		ctx := context.Background()
 		now := time.Now()
 		user := &types.User{
-			ID:        "user-abc",
-			Username:  "alice",
-			Email:     "alice@example.com",
-			CreatedAt: now,
-			UpdatedAt: now,
-			Active:    true,
-			Role:      "user",
+			ID:           "user-abc",
+			Username:     "alice",
+			Email:        "alice@example.com",
+			PasswordHash: "$2a$10$hash",
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			Active:       true,
+			Role:         "user",
 		}
 
 		mock.ExpectExec("INSERT INTO users").
-			WithArgs(user.ID, user.Username, user.Email, user.CreatedAt, user.UpdatedAt, user.Active, user.Role).
+			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, user.CreatedAt, user.UpdatedAt, user.Active, user.Role).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		err := service.CreateUser(ctx, user)
@@ -690,12 +691,11 @@ func TestCreateUser(t *testing.T) {
 		}
 
 		mock.ExpectExec("INSERT INTO users").
-			WithArgs(user.ID, user.Username, user.Email, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
+			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		err := service.CreateUser(ctx, user)
 		assert.NoError(t, err)
-		// Timestamps must have been filled in
 		assert.False(t, user.CreatedAt.IsZero())
 		assert.False(t, user.UpdatedAt.IsZero())
 		assert.NoError(t, mock.ExpectationsWereMet())
@@ -713,7 +713,7 @@ func TestCreateUser(t *testing.T) {
 		}
 
 		mock.ExpectExec("INSERT INTO users").
-			WithArgs(user.ID, user.Username, user.Email, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
+			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
 			WillReturnError(sql.ErrConnDone)
 
 		err := service.CreateUser(ctx, user)

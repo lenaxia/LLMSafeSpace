@@ -24,6 +24,14 @@ func (m *MockDatabaseService) GetUser(ctx context.Context, userID string) (*type
 	return args.Get(0).(*types.User), args.Error(1)
 }
 
+func (m *MockDatabaseService) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
+	args := m.Called(ctx, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.User), args.Error(1)
+}
+
 func (m *MockDatabaseService) CreateUser(ctx context.Context, user *types.User) error {
 	return m.Called(ctx, user).Error(0)
 }
@@ -42,6 +50,30 @@ func (m *MockDatabaseService) GetUserByAPIKey(ctx context.Context, apiKey string
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*types.User), args.Error(1)
+}
+
+func (m *MockDatabaseService) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
+	return m.Called(ctx, apiKey).Error(0)
+}
+
+func (m *MockDatabaseService) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*types.APIKey), args.Error(1)
+}
+
+func (m *MockDatabaseService) GetAPIKey(ctx context.Context, userID, keyID string) (*types.APIKey, error) {
+	args := m.Called(ctx, userID, keyID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.APIKey), args.Error(1)
+}
+
+func (m *MockDatabaseService) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	return m.Called(ctx, userID, keyID).Error(0)
 }
 
 func (m *MockDatabaseService) GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error) {

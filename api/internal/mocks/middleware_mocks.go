@@ -5,10 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/mock"
-)
 
-// Note: MockMetricsService is already defined in metrics.go
-// This file contains additional mock implementations for middleware tests
+	"github.com/lenaxia/llmsafespace/pkg/types"
+)
 
 // MockAuthMiddlewareService is a mock implementation of the AuthService interface for middleware tests
 type MockAuthMiddlewareService struct {
@@ -50,9 +49,44 @@ func (m *MockAuthMiddlewareService) AuthenticateAPIKey(ctx context.Context, apiK
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockAuthMiddlewareService) Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.AuthResponse), args.Error(1)
+}
+
+func (m *MockAuthMiddlewareService) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.AuthResponse), args.Error(1)
+}
+
+func (m *MockAuthMiddlewareService) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error) {
+	args := m.Called(ctx, userID, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.APIKey), args.Error(1)
+}
+
+func (m *MockAuthMiddlewareService) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*types.APIKey), args.Error(1)
+}
+
+func (m *MockAuthMiddlewareService) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	args := m.Called(ctx, userID, keyID)
+	return args.Error(0)
+}
+
 func (m *MockAuthMiddlewareService) AuthMiddleware() gin.HandlerFunc {
 	args := m.Called()
 	return args.Get(0).(gin.HandlerFunc)
 }
-
-// Note: MockRateLimiterService is already defined in ratelimiter.go
