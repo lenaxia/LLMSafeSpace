@@ -11,6 +11,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -52,6 +53,43 @@ func (m *MockAuthService) GenerateToken(userID string) (string, error) {
 func (m *MockAuthService) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	args := m.Called(ctx, apiKey)
 	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.AuthResponse), args.Error(1)
+}
+
+func (m *MockAuthService) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.AuthResponse), args.Error(1)
+}
+
+func (m *MockAuthService) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error) {
+	args := m.Called(ctx, userID, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.APIKey), args.Error(1)
+}
+
+func (m *MockAuthService) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*types.APIKey), args.Error(1)
+}
+
+func (m *MockAuthService) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	args := m.Called(ctx, userID, keyID)
+	return args.Error(0)
 }
 
 func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {

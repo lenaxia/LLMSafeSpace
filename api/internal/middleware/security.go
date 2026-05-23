@@ -56,11 +56,11 @@ type SecurityConfig struct {
 // DefaultSecurityConfig returns the default security configuration
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
-		AllowedOrigins:        []string{"*"},
+		AllowedOrigins:        []string{},
 		AllowedMethods:        []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:        []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
 		ExposedHeaders:        []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
-		AllowCredentials:      true,
+		AllowCredentials:      false,
 		MaxAge:                86400,
 		TrustedProxies:        []string{"127.0.0.1", "::1"},
 		ContentSecurityPolicy: "default-src 'self'; connect-src 'self' wss:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; block-all-mixed-content",

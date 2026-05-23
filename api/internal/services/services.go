@@ -10,17 +10,19 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/ratelimit"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sandbox"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 )
 
 type Services struct {
-	Auth      interfaces.AuthService
-	Database  interfaces.DatabaseService
-	Cache     interfaces.CacheService
-	Metrics   interfaces.MetricsService
-	Sandbox   interfaces.SandboxService
-	Workspace interfaces.WorkspaceService
+	Auth        interfaces.AuthService
+	Database    interfaces.DatabaseService
+	Cache       interfaces.CacheService
+	Metrics     interfaces.MetricsService
+	Sandbox     interfaces.SandboxService
+	Workspace   interfaces.WorkspaceService
+	RateLimiter interfaces.RateLimiterService
 }
 
 var _ interfaces.Services = &Services{}
@@ -47,6 +49,10 @@ func (s *Services) GetSandbox() interfaces.SandboxService {
 
 func (s *Services) GetWorkspace() interfaces.WorkspaceService {
 	return s.Workspace
+}
+
+func (s *Services) GetRateLimiter() interfaces.RateLimiterService {
+	return s.RateLimiter
 }
 
 func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
@@ -102,13 +108,16 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
 	}
 
+	rateLimiterService := ratelimit.NewWithCache(log, cacheService)
+
 	return &Services{
-		Auth:      authService,
-		Database:  dbService,
-		Cache:     cacheService,
-		Metrics:   metricsService,
-		Sandbox:   sandboxService,
-		Workspace: workspaceService,
+		Auth:        authService,
+		Database:    dbService,
+		Cache:       cacheService,
+		Metrics:     metricsService,
+		Sandbox:     sandboxService,
+		Workspace:   workspaceService,
+		RateLimiter: rateLimiterService,
 	}, nil
 }
 

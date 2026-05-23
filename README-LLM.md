@@ -680,12 +680,29 @@ What was the goal of this session?
 
 ## Work Completed
 
-### 1. <Area of work>
-- Specific thing done
-- Specific thing done
+### Worklog 0028 (2026-05-23): Rate Limiting, CORS, Account Lockout, Security Fixes
+- Rate limiter service created (Redis-backed), wired into global middleware stack, configurable via env vars
+- CORS hardened: default `AllowedOrigins: []` + `AllowCredentials: false` (was wildcard+credentials)
+- Account lockout: N failed login attempts → temporary lock (Redis-backed, configurable)
+- Token extraction: disabled query param + cookie by default (M4), only Authorization header
+- JWT cache keys hashed with MD5 before storing in Redis (M2)
+- Double response write fix in middleware/auth.go (M5)
+- 7 new env vars for security config; 11 new TDD tests
+- 27 Go test packages passing with `-race`
 
-### 2. <Area of work>
-- Specific thing done
+### Worklog 0027 (2026-05-23): Auth Endpoints + Security Hardening
+- Implemented 5 auth endpoints: register, login, API key create/list/delete
+- Security audit identified 16 findings; fixed 7 (H2 email enumeration, H3 error leaking, H1 body size limits, C1+H4 rate limiter IP fallback, M1 JWT jti, M3 input sanitization, L1 bcrypt cost)
+- 49 new/updated tests: 15 service-level TDD, 19 router e2e, 15 security e2e
+- Shell e2e script: `local/test-auth.sh` (17 test cases)
+- Updated interfaces, mocks, database service, auth service, router
+- All 26 Go test packages passing with `-race`
+
+### Worklog 0026 (2026-05-22): E2E on Kind — 22 Bug Fixes
+- Built local testing infra (`local/bootstrap.sh`, `local/test.sh`, `local/teardown.sh`)
+- 22 verified production bugs fixed
+- 8/8 e2e tests passing
+- Validated opencode boots and serves HTTP in sandbox pod
 
 ---
 
@@ -1267,29 +1284,81 @@ git commit -m "Update generated DeepCopy code"
 
 ---
 
+## Authentication & Authorization
+
+### Endpoints
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/api/v1/auth/register` | POST | Public | Create user, return JWT |
+| `/api/v1/auth/login` | POST | Public | Email+password login, return JWT |
+| `/api/v1/auth/api-keys` | POST | JWT/API Key | Generate `lsp_`-prefixed API key |
+| `/api/v1/auth/api-keys` | GET | JWT/API Key | List user's API keys (secrets stripped) |
+| `/api/v1/auth/api-keys/:id` | DELETE | JWT/API Key | Revoke an API key |
+
+### Security Controls
+
+| Control | Implementation | Validated By |
+|---------|---------------|-------------|
+| Password hashing | bcrypt cost 12 | `auth_test.go:TestRegister_Success` |
+| Email enumeration prevention | Identical generic errors for duplicate email, wrong password, nonexistent user, inactive user | `router_auth_security_test.go:TestRegister_DuplicateEmail_GenericError`, `TestLogin_WrongPassword_GenericError`, `TestLogin_InactiveUser_GenericError` |
+| Password never in response | `json:"-"` on `User.PasswordHash`; verified in e2e tests | `TestRegister_PasswordNotInResponse`, `TestLogin_PasswordNotInResponse` |
+| API key secrets stripped on list | `ListAPIKeys` zeroes `Key` field before return | `TestListAPIKeys_SecretsStripped` |
+| API key secret returned only on creation | `CreateAPIKey` returns full key; `ListAPIKeys` strips it | `TestCreateAPIKey_SecretOnlyOnCreation` |
+| Body size limits | `http.MaxBytesReader` (1 MiB) on all auth endpoints | `TestRegister_BodyTooLarge_Rejected` |
+| Sanitized binding errors | Binding failures return generic "invalid request body" | `TestRegister_InvalidJSON_SanitizedError` |
+| No internal error leakage | Service errors return generic messages; details logged server-side only | `TestRegister_DuplicateEmail_GenericError` |
+| JWT includes `jti` claim | Enables per-token revocation (not per-user) | `auth_test.go:TestGenerateToken` |
+| API keys use `crypto/rand` | 32-byte random keys with `lsp_` prefix | `auth_test.go:TestCreateAPIKey_Success` |
+| JWT cache keys hashed before Redis storage | `hashToken()` uses MD5 to prevent raw JWT exposure in Redis | `auth.go:hashToken` |
+| Token extraction: header-only by default | Query param and cookie extraction disabled | `token_extractor_test.go:Query parameter disabled by default` |
+| Rate limiter wired into global middleware stack | `ratelimit.Service` backed by Redis + in-memory token bucket | `ratelimit_test.go` |
+| Rate limiter IP fallback | Falls back to `c.ClientIP()` when no API key in context | `rate_limit.go:54-58` |
+| Rate limiter IP fallback | Falls back to `c.ClientIP()` when no API key in context | `rate_limit.go:54-58` |
+| Protected endpoints require auth | API key CRUD behind `AuthMiddleware()` | `TestAPIKeyEndpoints_RequireAuth` |
+| Wrong HTTP method rejection | Only POST on register/login, returns 404 | `TestRegister_RejectsGet`, `TestLogin_RejectsGet` |
+
+### E2E Testing
+
+Go tests: `go test -race ./api/internal/server/... -run "TestRegister|TestLogin|TestCreateAPIKey|TestListAPIKeys|TestDeleteAPIKey|TestAPIKeyEndpoints"`
+
+Shell script against running server: `./local/test-auth.sh http://localhost:8080`
+
+---
+
 ## Configuration Reference
 
 The API service is configured via `api/config/config.yaml` with environment variable overrides via Viper.
 
-| Section | Key | Default | Description |
-|---------|-----|---------|-------------|
-| `server` | `host` | `0.0.0.0` | Listen address |
-| `server` | `port` | `8080` | Listen port |
-| `server` | `shutdownTimeout` | `30s` | Graceful shutdown timeout |
-| `kubernetes` | `inCluster` | `true` | Use in-cluster config |
-| `kubernetes` | `namespace` | `llmsafespace` | Default namespace |
-| `database` | `host` | `postgres` | PostgreSQL host |
-| `database` | `port` | `5432` | PostgreSQL port |
-| `database` | `maxOpenConns` | `25` | Max open connections |
-| `redis` | `host` | `redis` | Redis host |
-| `redis` | `port` | `6379` | Redis port |
-| `redis` | `poolSize` | `20` | Connection pool size |
-| `auth` | `jwtSecret` | (empty) | JWT signing secret |
-| `auth` | `tokenDuration` | `24h` | Token expiry |
-| `auth` | `apiKeyPrefix` | `lsp_` | API key prefix |
-| `logging` | `level` | `info` | Log level |
-| `logging` | `encoding` | `json` | Log format (json/console) |
-| `rateLimiting` | `enabled` | `true` | Enable rate limiting |
+| Section | Key | Default | Env Var | Description |
+|---------|-----|---------|---------|-------------|
+| `server` | `host` | `0.0.0.0` | `LLMSAFESPACE_SERVER_HOST` | Listen address |
+| `server` | `port` | `8080` | `LLMSAFESPACE_SERVER_PORT` | Listen port |
+| `server` | `shutdownTimeout` | `30s` | — | Graceful shutdown timeout |
+| `kubernetes` | `inCluster` | `true` | — | Use in-cluster config |
+| `kubernetes` | `namespace` | `llmsafespace` | — | Default namespace |
+| `database` | `host` | `postgres` | — | PostgreSQL host |
+| `database` | `port` | `5432` | — | PostgreSQL port |
+| `database` | `password` | (empty) | `LLMSAFESPACE_DATABASE_PASSWORD` | PostgreSQL password |
+| `database` | `maxOpenConns` | `25` | — | Max open connections |
+| `redis` | `host` | `redis` | — | Redis host |
+| `redis` | `port` | `6379` | — | Redis port |
+| `redis` | `password` | (empty) | `LLMSAFESPACE_REDIS_PASSWORD` | Redis password |
+| `redis` | `poolSize` | `20` | — | Connection pool size |
+| `auth` | `jwtSecret` | (empty) | `LLMSAFESPACE_AUTH_JWTSECRET` | JWT signing secret (required) |
+| `auth` | `tokenDuration` | `24h` | — | Token expiry |
+| `auth` | `apiKeyPrefix` | `lsp_` | — | API key prefix |
+| `auth` | `lockoutEnabled` | `false` | `LLMSAFESPACE_AUTH_LOCKOUTENABLED` | Enable account lockout after failed logins |
+| `auth` | `lockoutAttempts` | `0` | `LLMSAFESPACE_AUTH_LOCKOUTATTEMPTS` | Failed attempts before lockout (e.g. `5`) |
+| `auth` | `lockoutDuration` | `0` | `LLMSAFESPACE_AUTH_LOCKOUTDURATION` | Lockout duration (e.g. `15m`) |
+| `security` | `allowedOrigins` | (empty) | `LLMSAFESPACE_SECURITY_ALLOWEDORIGINS` | Comma-separated CORS origins (e.g. `https://app.example.com,https://admin.example.com`) |
+| `security` | `allowCredentials` | `false` | `LLMSAFESPACE_SECURITY_ALLOWCREDENTIALS` | Allow credentials in CORS |
+| `rateLimiting` | `enabled` | `false` | `LLMSAFESPACE_RATELIMITING_ENABLED` | Enable rate limiting |
+| `rateLimiting` | `defaultLimit` | `100` | `LLMSAFESPACE_RATELIMITING_DEFAULTLIMIT` | Requests per window |
+| `rateLimiting` | `defaultWindow` | `1m` | `LLMSAFESPACE_RATELIMITING_DEFAULTWINDOW` | Window duration |
+| `rateLimiting` | `burstSize` | `20` | `LLMSAFESPACE_RATELIMITING_BURSTSIZE` | Burst allowance |
+| `logging` | `level` | `info` | — | Log level |
+| `logging` | `encoding` | `json` | — | Log format (json/console) |
 
 ---
 
@@ -1297,6 +1366,8 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-05-23 | Rate limiting wired, CORS hardened (no wildcard+credentials), account lockout, all configurable via env vars |
+| 1.3 | 2026-05-23 | Auth endpoints (register, login, API key CRUD) with security hardening and e2e tests |
 | 1.2 | 2026-05-22 | Repository structure, architecture, CRD ownership table, tech stack, and code generation section fully aligned with EVOLUTION-V2.md |
 | 1.1 | 2026-05-22 | Updated for V2 architecture: warm pools removed, workspace/agent model, MCP server, proxy architecture |
 | 1.0 | 2026-05-21 | Initial creation |

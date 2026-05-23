@@ -10,13 +10,13 @@ import (
 type TokenExtractorConfig struct {
 	// HeaderName is the name of the header containing the authentication token
 	HeaderName string
-	
+
 	// TokenType is the type of token (e.g., "Bearer")
 	TokenType string
-	
+
 	// QueryParamName is the name of the query parameter containing the authentication token
 	QueryParamName string
-	
+
 	// CookieName is the name of the cookie containing the authentication token
 	CookieName string
 }
@@ -26,8 +26,8 @@ func DefaultTokenExtractorConfig() TokenExtractorConfig {
 	return TokenExtractorConfig{
 		HeaderName:     "Authorization",
 		TokenType:      "Bearer",
-		QueryParamName: "token",
-		CookieName:     "auth_token",
+		QueryParamName: "",
+		CookieName:     "",
 	}
 }
 
@@ -38,7 +38,7 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	// Check header
 	authHeader := c.GetHeader(cfg.HeaderName)
 	if authHeader != "" {
@@ -54,7 +54,7 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 			return authHeader
 		}
 	}
-	
+
 	// Check query parameter
 	if cfg.QueryParamName != "" {
 		token := c.Query(cfg.QueryParamName)
@@ -62,7 +62,7 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 			return token
 		}
 	}
-	
+
 	// Check cookie
 	if cfg.CookieName != "" {
 		token, err := c.Cookie(cfg.CookieName)
@@ -70,7 +70,7 @@ func ExtractToken(c *gin.Context, config ...TokenExtractorConfig) string {
 			return token
 		}
 	}
-	
+
 	return ""
 }
 

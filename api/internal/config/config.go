@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -42,10 +44,18 @@ type Config struct {
 	} `mapstructure:"redis"`
 
 	Auth struct {
-		JWTSecret     string        `mapstructure:"jwtSecret"`
-		TokenDuration time.Duration `mapstructure:"tokenDuration"`
-		APIKeyPrefix  string        `mapstructure:"apiKeyPrefix"`
+		JWTSecret       string        `mapstructure:"jwtSecret"`
+		TokenDuration   time.Duration `mapstructure:"tokenDuration"`
+		APIKeyPrefix    string        `mapstructure:"apiKeyPrefix"`
+		LockoutEnabled  bool          `mapstructure:"lockoutEnabled"`
+		LockoutAttempts int           `mapstructure:"lockoutAttempts"`
+		LockoutDuration time.Duration `mapstructure:"lockoutDuration"`
 	} `mapstructure:"auth"`
+
+	Security struct {
+		AllowedOrigins   []string `mapstructure:"allowedOrigins"`
+		AllowCredentials bool     `mapstructure:"allowCredentials"`
+	} `mapstructure:"security"`
 
 	Logging struct {
 		Level       string `mapstructure:"level"`
@@ -54,11 +64,11 @@ type Config struct {
 	} `mapstructure:"logging"`
 
 	RateLimiting struct {
-		Enabled bool `mapstructure:"enabled"`
-		Limits  map[string]struct {
-			Requests int           `mapstructure:"requests"`
-			Window   time.Duration `mapstructure:"window"`
-		} `mapstructure:"limits"`
+		Enabled       bool          `mapstructure:"enabled"`
+		DefaultLimit  int           `mapstructure:"defaultLimit"`
+		DefaultWindow time.Duration `mapstructure:"defaultWindow"`
+		BurstSize     int           `mapstructure:"burstSize"`
+		Strategy      string        `mapstructure:"strategy"`
 	} `mapstructure:"rateLimiting"`
 }
 
@@ -105,6 +115,46 @@ func Load(path string) (*Config, error) {
 
 	if envJWTSecret := os.Getenv("LLMSAFESPACE_AUTH_JWTSECRET"); envJWTSecret != "" {
 		config.Auth.JWTSecret = envJWTSecret
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTENABLED"); v == "true" {
+		config.Auth.LockoutEnabled = true
+	}
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			config.Auth.LockoutAttempts = n
+		}
+	}
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTDURATION"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.Auth.LockoutDuration = d
+		}
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ALLOWEDORIGINS"); v != "" {
+		config.Security.AllowedOrigins = strings.Split(v, ",")
+	}
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ALLOWCREDENTIALS"); v == "true" {
+		config.Security.AllowCredentials = true
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_ENABLED"); v == "true" {
+		config.RateLimiting.Enabled = true
+	}
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_DEFAULTLIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			config.RateLimiting.DefaultLimit = n
+		}
+	}
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_DEFAULTWINDOW"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.RateLimiting.DefaultWindow = d
+		}
+	}
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_BURSTSIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			config.RateLimiting.BurstSize = n
+		}
 	}
 
 	// Pod identity for leader election. Set via the Downward API in the

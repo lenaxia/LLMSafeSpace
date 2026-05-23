@@ -25,6 +25,11 @@ type AuthService interface {
 	GenerateToken(userID string) (string, error)
 	ValidateToken(token string) (string, error)
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
+	Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error)
+	Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error)
+	CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error)
+	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
+	DeleteAPIKey(ctx context.Context, userID, keyID string) error
 	AuthMiddleware() gin.HandlerFunc
 	Start() error
 	Stop() error
@@ -32,10 +37,15 @@ type AuthService interface {
 
 type DatabaseService interface {
 	GetUser(ctx context.Context, userID string) (*types.User, error)
+	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
 	CreateUser(ctx context.Context, user *types.User) error
 	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
 	DeleteUser(ctx context.Context, userID string) error
 	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
+	CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error
+	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
+	GetAPIKey(ctx context.Context, userID, keyID string) (*types.APIKey, error)
+	DeleteAPIKey(ctx context.Context, userID, keyID string) error
 	GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error)
 	CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error
 	UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error
@@ -127,6 +137,7 @@ type Services interface {
 	GetMetrics() MetricsService
 	GetSandbox() SandboxService
 	GetWorkspace() WorkspaceService
+	GetRateLimiter() RateLimiterService
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient

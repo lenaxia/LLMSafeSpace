@@ -2,17 +2,30 @@ package auth
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
+
+func hashToken(token string) string {
+	h := md5.Sum([]byte(token))
+	return hex.EncodeToString(h[:])
+}
 
 // Service handles authentication and authorization
 type Service struct {
@@ -37,7 +50,7 @@ func (s *Service) Stop() error {
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	// Check if API key is cached
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
-	
+
 	// Try to get from cache first
 	cachedStatus, err := s.cacheService.Get(ctx, cacheKey)
 	if err == nil && cachedStatus != "" {
@@ -99,7 +112,7 @@ func (s *Service) GetUserID(c *gin.Context) string {
 func (s *Service) RevokeToken(token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	// Parse token
 	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
@@ -134,11 +147,11 @@ func (s *Service) RevokeToken(token string) error {
 	if !ok {
 		return errors.New("invalid expiration time in token")
 	}
-	
+
 	// Calculate remaining time until expiration
 	expTime := time.Unix(int64(exp), 0)
 	remainingTime := time.Until(expTime)
-	
+
 	if remainingTime <= 0 {
 		return errors.New("token has already expired")
 	}
@@ -186,14 +199,13 @@ func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action s
 
 // GenerateToken generates a JWT token for a user
 func (s *Service) GenerateToken(userID string) (string, error) {
-	// Create token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": userID,
+		"jti": uuid.New().String(),
 		"exp": time.Now().Add(s.tokenDuration).Unix(),
 		"iat": time.Now().Unix(),
 	})
 
-	// Sign token
 	tokenString, err := token.SignedString(s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign token: %w", err)
@@ -212,8 +224,8 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	// Check if token is cached
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cacheKey := fmt.Sprintf("token:%s", tokenString)
-	
+	cacheKey := fmt.Sprintf("token:%s", hashToken(tokenString))
+
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		if cachedUserID == "revoked" {
@@ -257,11 +269,11 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	if !ok {
 		return "", errors.New("invalid expiration time in token")
 	}
-	
+
 	// Calculate remaining time until expiration
 	expTime := time.Unix(int64(exp), 0)
 	remainingTime := time.Until(expTime)
-	
+
 	// Cache the token if it's valid
 	if remainingTime > 0 {
 		// Cache for the remaining time of the token, but not more than 1 hour
@@ -269,7 +281,7 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 		if cacheDuration > time.Hour {
 			cacheDuration = time.Hour
 		}
-		
+
 		err = s.cacheService.Set(ctx, cacheKey, userID, cacheDuration)
 		if err != nil {
 			s.logger.Error("Failed to cache token", err, "user_id", userID)
@@ -286,7 +298,7 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
-	
+
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		return cachedUserID, nil
@@ -310,6 +322,168 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	}
 
 	return user.ID, nil
+}
+
+const bcryptCost = 12
+
+func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error) {
+	existing, err := s.dbService.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.Error("Register: failed to check existing user", err)
+		return nil, errors.New("registration failed")
+	}
+	if existing != nil {
+		s.logger.Warn("Register: duplicate email attempt", "email", req.Email)
+		return nil, errors.New("registration failed")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
+	if err != nil {
+		return nil, errors.New("registration failed")
+	}
+
+	userID := uuid.New().String()
+	user := &types.User{
+		ID:           userID,
+		Username:     strings.TrimSpace(req.Username),
+		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
+		PasswordHash: string(hash),
+		Active:       true,
+		Role:         "user",
+	}
+
+	if err := s.dbService.CreateUser(ctx, user); err != nil {
+		s.logger.Error("Register: failed to create user", err)
+		return nil, errors.New("registration failed")
+	}
+
+	token, err := s.GenerateToken(userID)
+	if err != nil {
+		return nil, errors.New("registration failed")
+	}
+
+	user.PasswordHash = ""
+	return &types.AuthResponse{Token: token, User: *user}, nil
+}
+
+func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	if s.config.Auth.LockoutEnabled {
+		lockoutKey := fmt.Sprintf("lockout:%s", email)
+		if countStr, err := s.cacheService.Get(ctx, lockoutKey); err == nil && countStr != "" {
+			var count int
+			if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil && count >= s.config.Auth.LockoutAttempts {
+				return nil, errors.New("account temporarily locked due to too many failed attempts")
+			}
+		}
+	}
+
+	user, err := s.dbService.GetUserByEmail(ctx, email)
+	if err != nil {
+		s.logger.Error("Login: db error", err)
+		return nil, errors.New("invalid email or password")
+	}
+	if user == nil {
+		s.recordFailedAttempt(ctx, email)
+		return nil, errors.New("invalid email or password")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		s.recordFailedAttempt(ctx, email)
+		return nil, errors.New("invalid email or password")
+	}
+
+	if !user.Active {
+		s.recordFailedAttempt(ctx, email)
+		return nil, errors.New("invalid email or password")
+	}
+
+	s.clearFailedAttempts(ctx, email)
+
+	token, err := s.GenerateToken(user.ID)
+	if err != nil {
+		return nil, errors.New("login failed")
+	}
+
+	user.PasswordHash = ""
+	return &types.AuthResponse{Token: token, User: *user}, nil
+}
+
+func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
+	if !s.config.Auth.LockoutEnabled {
+		return
+	}
+	lockoutKey := fmt.Sprintf("lockout:%s", email)
+	countStr, _ := s.cacheService.Get(ctx, lockoutKey)
+	count := 0
+	if countStr != "" {
+		fmt.Sscanf(countStr, "%d", &count)
+	}
+	count++
+	duration := s.config.Auth.LockoutDuration
+	if duration == 0 {
+		duration = 15 * time.Minute
+	}
+	if err := s.cacheService.Set(ctx, lockoutKey, fmt.Sprintf("%d", count), duration); err != nil {
+		s.logger.Error("Failed to record lockout attempt", err, "email", email)
+	}
+}
+
+func (s *Service) clearFailedAttempts(ctx context.Context, email string) {
+	if !s.config.Auth.LockoutEnabled {
+		return
+	}
+	lockoutKey := fmt.Sprintf("lockout:%s", email)
+	if err := s.cacheService.Delete(ctx, lockoutKey); err != nil {
+		s.logger.Error("Failed to clear lockout", err, "email", email)
+	}
+}
+
+func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, fmt.Errorf("failed to generate api key: %w", err)
+	}
+	keyStr := s.config.Auth.APIKeyPrefix + hex.EncodeToString(raw)
+
+	apiKey := &types.APIKey{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		Name:      req.Name,
+		Key:       keyStr,
+		Prefix:    s.config.Auth.APIKeyPrefix,
+		Active:    true,
+		CreatedAt: time.Now(),
+	}
+
+	if err := s.dbService.CreateAPIKey(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("failed to store api key: %w", err)
+	}
+
+	return apiKey, nil
+}
+
+func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	keys, err := s.dbService.ListAPIKeys(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list api keys: %w", err)
+	}
+	for _, k := range keys {
+		k.Key = ""
+	}
+	return keys, nil
+}
+
+func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	existing, err := s.dbService.GetAPIKey(ctx, userID, keyID)
+	if err != nil {
+		return fmt.Errorf("failed to get api key: %w", err)
+	}
+	if existing == nil {
+		return errors.New("api key not found")
+	}
+	return s.dbService.DeleteAPIKey(ctx, userID, keyID)
 }
 
 // extractToken extracts the token from the Authorization header

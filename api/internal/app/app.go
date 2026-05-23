@@ -58,14 +58,38 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		securityCfg.RequireHTTPS = false
 		securityCfg.AllowHTTPSDowngrade = true
 	}
+	if len(cfg.Security.AllowedOrigins) > 0 {
+		securityCfg.AllowedOrigins = cfg.Security.AllowedOrigins
+	}
+	securityCfg.AllowCredentials = cfg.Security.AllowCredentials
+
+	rateLimitCfg := server.DefaultRouterConfig().RateLimitConfig
+	rateLimitCfg.Enabled = cfg.RateLimiting.Enabled
+	if cfg.RateLimiting.DefaultLimit > 0 {
+		rateLimitCfg.DefaultLimit = cfg.RateLimiting.DefaultLimit
+	}
+	if cfg.RateLimiting.DefaultWindow > 0 {
+		rateLimitCfg.DefaultWindow = cfg.RateLimiting.DefaultWindow
+	}
+	if cfg.RateLimiting.BurstSize > 0 {
+		rateLimitCfg.BurstSize = cfg.RateLimiting.BurstSize
+	}
+	if cfg.RateLimiting.Strategy != "" {
+		rateLimitCfg.Strategy = cfg.RateLimiting.Strategy
+	}
+
+	wsOrigins := server.DefaultRouterConfig().AllowedWebSocketOrigins
+	if len(cfg.Security.AllowedOrigins) > 0 && cfg.Security.AllowedOrigins[0] != "*" {
+		wsOrigins = cfg.Security.AllowedOrigins
+	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
-		RateLimitConfig:         server.DefaultRouterConfig().RateLimitConfig,
+		RateLimitConfig:         rateLimitCfg,
 		SecurityConfig:          securityCfg,
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
-		AllowedWebSocketOrigins: server.DefaultRouterConfig().AllowedWebSocketOrigins,
+		AllowedWebSocketOrigins: wsOrigins,
 	})
 
 	httpServer := &http.Server{

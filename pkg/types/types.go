@@ -478,13 +478,50 @@ type Session struct {
 
 // User represents a user
 type User struct {
-	ID        string    `json:"id" db:"id"`
-	Username  string    `json:"username" db:"username"`
-	Email     string    `json:"email" db:"email"`
-	CreatedAt time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
-	Active    bool      `json:"active" db:"active"`
-	Role      string    `json:"role" db:"role"`
+	ID           string    `json:"id" db:"id"`
+	Username     string    `json:"username" db:"username"`
+	Email        string    `json:"email" db:"email"`
+	PasswordHash string    `json:"-" db:"password_hash"`
+	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
+	Active       bool      `json:"active" db:"active"`
+	Role         string    `json:"role" db:"role"`
+}
+
+// RegisterRequest is the request body for user registration.
+type RegisterRequest struct {
+	Username string `json:"username" binding:"required,min=3,max=64"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8,max=128"`
+}
+
+// LoginRequest is the request body for user login.
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+}
+
+// AuthResponse is returned after successful registration or login.
+type AuthResponse struct {
+	Token string `json:"token"`
+	User  User   `json:"user"`
+}
+
+// CreateAPIKeyRequest is the request body for creating an API key.
+type CreateAPIKeyRequest struct {
+	Name string `json:"name" binding:"required,min=1,max=128"`
+}
+
+// APIKey represents an API key record returned in list responses.
+type APIKey struct {
+	ID        string     `json:"id"`
+	UserID    string     `json:"-" db:"user_id"`
+	Name      string     `json:"name"`
+	Key       string     `json:"key,omitempty"`
+	Prefix    string     `json:"prefix"`
+	Active    bool       `json:"active"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
