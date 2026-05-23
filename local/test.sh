@@ -10,8 +10,11 @@
 #   3. A Workspace can be created and reaches Phase=Active (PVC binds)
 #   4. A Sandbox can be created and reaches Phase=Running (pod schedules,
 #      opencode serve responds to /global/health on port 4096 inside the pod)
-#   5. Sandbox suspend / resume work
-#   6. Cleanup
+#   5. Sandbox CRUD endpoints (Create / List / Get / Status / Delete) work via API
+#   6. API proxy: session create + list + prompt round-trip with assistant reply
+#   7. Verbose flag (?verbose=true) preserves "patch" parts; default strips them
+#   8. Suspend / resume / session history continuity
+#   9. Cleanup
 #
 # Each assertion is structured: log + run + assert. Failures print the
 # relevant kubectl describe / events for debugging and exit non-zero.
@@ -36,6 +39,16 @@ WORKSPACE_NAME="e2e-workspace"
 USER_ID="e2e-user"
 PORTFWD_PORT="${PORTFWD_PORT:-18080}"
 
+# LLM provider credentials. When all three are set, Test 6 + Test 8 send a
+# real prompt through opencode and assert a non-empty response. When any are
+# missing, those steps are skipped (the rest of the suite still runs).
+#   LLM_BASE_URL  - OpenAI-compatible base URL (e.g. https://ai.example.com/v1)
+#   LLM_API_KEY   - API key passed to the provider
+#   LLM_MODEL     - model name (e.g. "default", "gpt-4o-mini")
+LLM_BASE_URL="${LLM_BASE_URL:-${OPENAI_API_BASE:-}}"
+LLM_API_KEY="${LLM_API_KEY:-${OPENAI_API_KEY:-}}"
+LLM_MODEL="${LLM_MODEL:-${OPENAI_DEFAULT_MODEL:-}}"
+
 # Cleanup local processes on exit (port-forward, etc.)
 cleanup() {
     if [[ -n "${PF_PID:-}" ]]; then
@@ -50,7 +63,7 @@ kc() { kubectl --context "${CTX}" "$@"; }
 # -----------------------------------------------------------------------------
 # Test 1: probes
 # -----------------------------------------------------------------------------
-log "Test 1/8 — API probes via port-forward"
+log "Test 1/9 — API probes via port-forward"
 
 kc -n "${NS}" port-forward svc/llmsafespace-api "${PORTFWD_PORT}:8080" >/dev/null 2>&1 &
 PF_PID=$!
@@ -74,7 +87,7 @@ ok "/readyz returns 200 (Postgres + Redis reachable)"
 # -----------------------------------------------------------------------------
 # Test 2: CRDs installed
 # -----------------------------------------------------------------------------
-log "Test 2/8 — CRDs registered"
+log "Test 2/9 — CRDs registered"
 for crd in workspaces.llmsafespace.dev sandboxes.llmsafespace.dev \
            sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev; do
     kc get crd "${crd}" >/dev/null \
@@ -89,7 +102,7 @@ ok "all 4 CRDs installed"
 # cluster-scoped RuntimeEnvironment lookup. For the e2e we ensure a
 # RuntimeEnvironment named "python-3.11" maps to the runtime-base image we
 # loaded into kind. Idempotent: re-runs apply.
-log "Test 3/8 — RuntimeEnvironment for python:3.11"
+log "Test 3/9 — RuntimeEnvironment for python:3.11"
 RUNTIME_IMAGE_REF="${RUNTIME_IMAGE_REF:-llmsafespace/runtime-base:dev}"
 cat <<EOF | kc apply -f -
 apiVersion: llmsafespace.dev/v1
@@ -106,7 +119,7 @@ ok "RuntimeEnvironment python-3.11 → ${RUNTIME_IMAGE_REF}"
 # -----------------------------------------------------------------------------
 # Test 3: Workspace creation reaches Active
 # -----------------------------------------------------------------------------
-log "Test 4/8 — Workspace lifecycle (create → Active)"
+log "Test 4/9 — Workspace lifecycle (create → Active)"
 
 # Clean slate
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
@@ -154,7 +167,7 @@ ok "Workspace PVC ${PVC_NAME} bound"
 # -----------------------------------------------------------------------------
 # Test 4: Sandbox creation reaches Running, opencode serve responds
 # -----------------------------------------------------------------------------
-log "Test 5/8 — Sandbox lifecycle (create → Running → opencode responds)"
+log "Test 5/9 — Sandbox lifecycle (create → Running → opencode responds)"
 
 kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
@@ -236,7 +249,7 @@ esac
 # The session-ownership middleware checks Sandbox.metadata.labels["user-id"]
 # against the authenticated user, so the user-id and the label must match.
 # (test.sh creates the Sandbox with `labels: { user-id: e2e-user }`.)
-log "Test 6/8 — API proxy → opencode session lifecycle"
+log "Test 6/9 — API proxy → opencode session lifecycle + prompt round-trip"
 
 API_KEY="lsp_e2etestkey1234567890abcdef"
 
@@ -305,8 +318,190 @@ case "${LIST_RESP}" in
 esac
 
 # -----------------------------------------------------------------------------
-# Test 7: Workspace suspend → sandbox pod cleanup
+# Sandbox CRUD via API (Test 6 cont'd)
 # -----------------------------------------------------------------------------
+# The API now exposes Sandbox CRUD endpoints. The sandbox under test was
+# created via kubectl earlier (Test 5) so the API will see it via the live
+# K8s read. We exercise the read-only endpoints here; create/delete are
+# tested below using a separate disposable sandbox.
+log "  GET /api/v1/sandboxes/${SANDBOX_NAME} returns the sandbox"
+GETSB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}" \
+    -o /tmp/llmsafespace-getsb.json -w "%{http_code}" || true)
+[[ "${GETSB_CODE}" == "200" ]] || die "GET sandbox returned ${GETSB_CODE}"
+ok "GET sandbox returns 200"
+
+log "  GET /api/v1/sandboxes/${SANDBOX_NAME}/status returns Running"
+STATUS_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/status" \
+    -o /tmp/llmsafespace-status.json -w "%{http_code}" || true)
+[[ "${STATUS_CODE}" == "200" ]] || die "GET status returned ${STATUS_CODE}"
+if grep -q '"phase":"Running"' /tmp/llmsafespace-status.json; then
+    ok "GET status reports phase=Running"
+else
+    warn "status payload: $(cat /tmp/llmsafespace-status.json | head -c 200)"
+    die "GET status did not return phase=Running"
+fi
+
+# Note: GET /api/v1/sandboxes (list) is currently unauthenticated by user-id
+# at the database layer when the row exists from a kubectl-created sandbox
+# (no metadata row). We still exercise the route to confirm it's wired.
+LIST_SB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes?limit=10" \
+    -o /tmp/llmsafespace-listsb.json -w "%{http_code}" || true)
+case "${LIST_SB_CODE}" in
+    200) ok "GET /api/v1/sandboxes returns 200" ;;
+    *)   warn "GET /api/v1/sandboxes returned ${LIST_SB_CODE}: $(cat /tmp/llmsafespace-listsb.json | head -c 200)" ;;
+esac
+
+# -----------------------------------------------------------------------------
+# Prompt round-trip + verbose flag (Test 6 cont'd)
+# -----------------------------------------------------------------------------
+# These steps require an LLM provider. When LLM_BASE_URL/LLM_API_KEY/LLM_MODEL
+# are set, we set workspace credentials, send a prompt, assert a non-empty
+# reply, and verify the verbose flag controls patch-part stripping.
+if [[ -n "${LLM_BASE_URL}" && -n "${LLM_API_KEY}" && -n "${LLM_MODEL}" ]]; then
+    log "  setting workspace credentials (provider=litellm, model=${LLM_MODEL})"
+    PROVIDER_CFG=$(python3 -c "
+import json, sys
+print(json.dumps({
+    '\$schema': 'https://opencode.ai/config.json',
+    'provider': {
+        'litellm': {
+            'npm': '@ai-sdk/openai-compatible',
+            'name': 'LiteLLM',
+            'options': {
+                'baseURL': '${LLM_BASE_URL}',
+                'apiKey': '${LLM_API_KEY}'
+            },
+            'models': {
+                '${LLM_MODEL}': {'name': '${LLM_MODEL}'}
+            }
+        }
+    },
+    'model': 'litellm/${LLM_MODEL}'
+}))
+")
+    SETCREDS_BODY=$(python3 -c "
+import json, sys
+print(json.dumps({'provider': 'litellm', 'config': json.loads(sys.argv[1])}))
+" "${PROVIDER_CFG}")
+    SETCREDS_CODE=$(curl -sm 10 -X PUT \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "${SETCREDS_BODY}" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/credentials" \
+        -o /dev/null -w "%{http_code}" || true)
+    [[ "${SETCREDS_CODE}" == "204" ]] \
+        || die "PUT workspace credentials returned ${SETCREDS_CODE}, expected 204"
+    ok "workspace credentials set"
+
+    # opencode picks up credentials at process start. Restart the sandbox pod
+    # by deleting it; the controller will recreate it with the new secret.
+    POD_BEFORE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+    log "  recycling sandbox pod ${POD_BEFORE} so opencode reads new credentials"
+    kc -n "${NS}" delete pod "${POD_BEFORE}" --wait=false >/dev/null 2>&1 || true
+
+    log "  waiting up to 90s for sandbox phase=Running on new pod"
+    for i in $(seq 1 30); do
+        POD_AFTER=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}' 2>/dev/null)
+        PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
+        if [[ "${PHASE}" == "Running" && -n "${POD_AFTER}" && "${POD_AFTER}" != "${POD_BEFORE}" ]]; then
+            ok "sandbox recycled, new pod=${POD_AFTER} reached phase=Running after ~$((i*3))s"
+            break
+        fi
+        if (( i == 30 )); then
+            die "sandbox did not return to Running after pod recycle"
+        fi
+        sleep 3
+    done
+
+    # Create a fresh session (the previous session was on the old pod's session
+    # store; opencode persists session state in /workspace, so it should still
+    # be visible — but use a fresh session for clarity).
+    log "  creating new session for prompt round-trip"
+    PROMPT_SESS_CODE=$(curl -sm 15 -X POST \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+        -o /tmp/llmsafespace-prompt-sess.json -w "%{http_code}" || true)
+    [[ "${PROMPT_SESS_CODE}" == "200" || "${PROMPT_SESS_CODE}" == "201" ]] \
+        || die "create-session-for-prompt failed: HTTP ${PROMPT_SESS_CODE}"
+    PROMPT_SID=$(python3 -c "import json;print(json.load(open('/tmp/llmsafespace-prompt-sess.json'))['id'])")
+    ok "session for prompt: ${PROMPT_SID}"
+
+    # Send a prompt; expect a non-empty assistant reply.
+    log "  POST /sessions/${PROMPT_SID}/message with a tiny prompt (default: patch parts stripped)"
+    PROMPT_BODY=$(python3 -c "
+import json
+print(json.dumps({
+    'model': {'providerID': 'litellm', 'modelID': '${LLM_MODEL}'},
+    'parts': [{'type': 'text', 'text': 'Reply with exactly the word: PONG'}]
+}))
+")
+    PROMPT_CODE=$(curl -sm 180 -X POST \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "${PROMPT_BODY}" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SID}/message" \
+        -o /tmp/llmsafespace-prompt-resp.json -w "%{http_code}" || true)
+    [[ "${PROMPT_CODE}" == "200" ]] \
+        || { warn "prompt body: $(cat /tmp/llmsafespace-prompt-resp.json | head -c 500)"; die "prompt failed: HTTP ${PROMPT_CODE}"; }
+
+    # Assert: response has at least one text part with non-empty content,
+    # AND no parts of type=="patch" (default strip).
+    PROMPT_OK=$(python3 -c "
+import json
+d = json.load(open('/tmp/llmsafespace-prompt-resp.json'))
+parts = d.get('parts') or []
+texts = [p.get('text','') for p in parts if p.get('type') == 'text']
+patches = [p for p in parts if p.get('type') == 'patch']
+ok = bool(texts) and any(t.strip() for t in texts) and not patches
+print('OK' if ok else f'FAIL texts={texts} patches={len(patches)}')
+")
+    case "${PROMPT_OK}" in
+        OK) ok "prompt round-trip: assistant replied (patch parts stripped by default)" ;;
+        *)  die "prompt round-trip assertion failed: ${PROMPT_OK}" ;;
+    esac
+
+    # Now verify ?verbose=true preserves patch parts.
+    log "  POST /sessions/${PROMPT_SID}/message?verbose=true (patch parts kept)"
+    VERBOSE_BODY=$(python3 -c "
+import json
+print(json.dumps({
+    'model': {'providerID': 'litellm', 'modelID': '${LLM_MODEL}'},
+    'parts': [{'type': 'text', 'text': 'Reply with exactly the word: PING'}]
+}))
+")
+    VERBOSE_CODE=$(curl -sm 180 -X POST \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "${VERBOSE_BODY}" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SID}/message?verbose=true" \
+        -o /tmp/llmsafespace-verbose-resp.json -w "%{http_code}" || true)
+    [[ "${VERBOSE_CODE}" == "200" ]] \
+        || die "verbose prompt failed: HTTP ${VERBOSE_CODE}"
+
+    VERBOSE_OK=$(python3 -c "
+import json
+d = json.load(open('/tmp/llmsafespace-verbose-resp.json'))
+parts = d.get('parts') or []
+patches = [p for p in parts if p.get('type') == 'patch']
+print('OK' if patches else 'FAIL: no patch parts present in verbose response')
+")
+    case "${VERBOSE_OK}" in
+        OK) ok "verbose flag: patch parts present in response" ;;
+        *)  die "verbose flag assertion failed: ${VERBOSE_OK}" ;;
+    esac
+
+    # Save SID for Test 8 (history continuity check across suspend/resume).
+    PROMPT_SESSION_ID="${PROMPT_SID}"
+else
+    warn "skipping prompt round-trip + verbose flag tests (LLM_BASE_URL / LLM_API_KEY / LLM_MODEL not all set)"
+    PROMPT_SESSION_ID=""
+fi
+
 # In V1, suspend is a Workspace-level operation, not a Sandbox-level one.
 # Suspending the workspace deletes all of its sandbox pods (the controller's
 # handleSuspending routine) and updates dependent Sandbox CRDs to phase
@@ -316,7 +511,7 @@ esac
 # Workspace, which is exactly what the API service does via
 # Workspace.UpdateStatus. This requires the status subresource, which the
 # Workspace CRD declares.
-log "Test 7/8 — Workspace suspend deletes sandbox pod"
+log "Test 7/9 — Workspace suspend deletes sandbox pod, then resume"
 
 PRE_POD=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
 [[ -n "${PRE_POD}" ]] || die "sandbox.status.podName missing before suspend"
@@ -380,9 +575,131 @@ for i in $(seq 1 5); do
 done
 
 # -----------------------------------------------------------------------------
-# Test 6: cleanup
+# Test 8: Sandbox CRUD via API (Create + Delete) and session history continuity
 # -----------------------------------------------------------------------------
-log "Test 8/8 — cleanup"
+# Two assertions in this block:
+#   a) POST /api/v1/sandboxes creates a disposable sandbox; DELETE removes it.
+#   b) When LLM creds were provided, session history is preserved across the
+#      suspend/resume cycle exercised in Test 7. We re-create a pod and ask
+#      opencode to recall the previous reply.
+log "Test 8/9 — Sandbox CRUD via API + session history continuity"
+
+# 8a — Sandbox CRUD via API
+DISPOSABLE_SB_BODY=$(python3 -c "
+import json
+print(json.dumps({
+    'runtime': 'base',
+    'workspaceRef': '${WORKSPACE_NAME}',
+    'securityLevel': 'standard',
+    'resources': {'cpu': '200m', 'memory': '256Mi'}
+}))
+")
+log "  POST /api/v1/sandboxes (create disposable sandbox)"
+CREATE_SB_CODE=$(curl -sm 15 -X POST \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "${DISPOSABLE_SB_BODY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes" \
+    -o /tmp/llmsafespace-create-sb.json -w "%{http_code}" || true)
+case "${CREATE_SB_CODE}" in
+    200|201)
+        DISPOSABLE_SB=$(python3 -c "
+import json, sys
+d = json.load(open('/tmp/llmsafespace-create-sb.json'))
+# Sandbox API returns ObjectMeta inline — name lives at .name (or .metadata.name).
+print(d.get('name') or d.get('metadata', {}).get('name', ''))
+")
+        [[ -n "${DISPOSABLE_SB}" ]] || die "could not extract created sandbox name"
+        ok "created disposable sandbox via API: ${DISPOSABLE_SB}"
+        ;;
+    *)
+        warn "POST /api/v1/sandboxes returned ${CREATE_SB_CODE}: $(cat /tmp/llmsafespace-create-sb.json | head -c 300)"
+        die "create-sandbox-via-API failed"
+        ;;
+esac
+
+log "  DELETE /api/v1/sandboxes/${DISPOSABLE_SB}"
+DELETE_SB_CODE=$(curl -sm 10 -X DELETE \
+    -H "Authorization: Bearer ${API_KEY}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${DISPOSABLE_SB}" \
+    -o /dev/null -w "%{http_code}" || true)
+case "${DELETE_SB_CODE}" in
+    204) ok "DELETE sandbox returned 204" ;;
+    *)   warn "DELETE sandbox returned ${DELETE_SB_CODE} (sandbox CRD may still exist)" ;;
+esac
+
+# 8b — Session history continuity across suspend/resume.
+# After Test 7 the workspace is Active again, but the sandbox pod is gone
+# (the suspend handler deleted it; resume does not re-create pods automatically
+# in V1). We delete the Sandbox CRD and apply it again so the controller
+# re-creates the pod against the existing PVC. opencode reads its DB from
+# the persistent /workspace, so prior sessions should still be visible.
+if [[ -n "${PROMPT_SESSION_ID:-}" ]]; then
+    log "  recreating sandbox CRD (PVC retained → opencode session DB persists)"
+    kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+
+    cat <<EOF | kc -n "${NS}" apply -f - >/dev/null
+apiVersion: llmsafespace.dev/v1
+kind: Sandbox
+metadata:
+  name: ${SANDBOX_NAME}
+  labels:
+    user-id: ${USER_ID}
+spec:
+  runtime: python:3.11
+  workspaceRef: ${WORKSPACE_NAME}
+  securityLevel: standard
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+EOF
+
+    log "  waiting up to 180s for sandbox phase=Running on resumed pod"
+    for i in $(seq 1 60); do
+        PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
+        if [[ "${PHASE}" == "Running" ]]; then
+            ok "sandbox back to Running after ~$((i*3))s"
+            break
+        fi
+        if (( i == 60 )); then
+            die "sandbox did not return to Running"
+        fi
+        sleep 3
+    done
+
+    # Wait for cache invalidation to propagate (proxy refreshes pod IP via watcher).
+    sleep 3
+
+    # GET history on the original session ID — should still be there.
+    log "  GET /sessions/${PROMPT_SESSION_ID}/message — verify history persisted"
+    HIST_CODE=$(curl -sm 15 \
+        -H "Authorization: Bearer ${API_KEY}" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SESSION_ID}/message" \
+        -o /tmp/llmsafespace-history.json -w "%{http_code}" || true)
+    [[ "${HIST_CODE}" == "200" ]] || die "history fetch returned ${HIST_CODE}"
+
+    HIST_OK=$(python3 -c "
+import json
+msgs = json.load(open('/tmp/llmsafespace-history.json'))
+texts = []
+for m in msgs:
+    for p in m.get('parts', []):
+        if p.get('type') == 'text':
+            texts.append(p.get('text', ''))
+print('OK' if any('PONG' in t or 'PING' in t for t in texts) else f'FAIL only={texts}')
+")
+    case "${HIST_OK}" in
+        OK) ok "session history persisted across suspend/resume" ;;
+        *)  die "session history lost: ${HIST_OK}" ;;
+    esac
+else
+    warn "skipping history continuity check (no LLM credentials provided in Test 6)"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 9: cleanup
+# -----------------------------------------------------------------------------
+log "Test 9/9 — cleanup"
 kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --wait=false >/dev/null
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --wait=false >/dev/null
 ok "delete requested"

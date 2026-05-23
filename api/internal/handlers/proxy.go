@@ -3,10 +3,12 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -144,38 +146,41 @@ func (h *ProxyHandler) Stop() error {
 }
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
-	h.proxyToSandbox(c, "/session", false, "")
+	h.proxyToSandbox(c, "/session", false, "", false)
 }
 
 func (h *ProxyHandler) ListSessions(c *gin.Context) {
-	h.proxyToSandbox(c, "/session", false, "")
+	h.proxyToSandbox(c, "/session", false, "", false)
 }
 
 func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/message", true, sid)
+	h.proxyToSandbox(c, "/session/"+sid+"/message", true, sid, true)
 }
 
 func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/prompt_async", true, sid)
+	h.proxyToSandbox(c, "/session/"+sid+"/prompt_async", true, sid, false)
 }
 
 func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/message", false, sid)
+	h.proxyToSandbox(c, "/session/"+sid+"/message", false, sid, true)
 }
 
 func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/abort", false, sid)
+	h.proxyToSandbox(c, "/session/"+sid+"/abort", false, sid, false)
 }
 
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {
-	h.proxyToSandbox(c, "/event", false, "")
+	h.proxyToSandbox(c, "/event", false, "", false)
 }
 
-func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
+// proxyToSandbox forwards the incoming request to the sandbox pod's opencode
+// server. When filterParts is true and ?verbose=true is NOT set, response
+// parts of type=="patch" are stripped before sending to the client.
+func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWriteOp bool, sessionID string, filterParts bool) {
 	sandboxID := c.Param("id")
 	if sandboxID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "sandbox ID required"})
@@ -262,13 +267,15 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	}
 
 	podIP := sandbox.Status.PodIP
-	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes)
+	verbose := c.Query("verbose") == "true"
+	stripPatch := filterParts && !verbose
+	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
 	if proxyErr != nil && isConnectionError(proxyErr) {
 		freshSandbox, getErr := h.k8sClient.LlmsafespaceV1().Sandboxes(h.namespace).Get(sandboxID, metav1.GetOptions{})
 		if getErr == nil && freshSandbox.Status.PodIP != "" && freshSandbox.Status.PodIP != podIP && freshSandbox.Status.Phase == phaseRunning {
 			h.logger.Info("Retrying proxy with fresh pod IP", "sandboxID", sandboxID, "oldIP", podIP, "newIP", freshSandbox.Status.PodIP)
-			proxyErr = h.doProxy(c, freshSandbox.Status.PodIP, targetPath, password, bodyBytes)
+			proxyErr = h.doProxy(c, freshSandbox.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
 		}
 	}
 
@@ -292,10 +299,15 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	}
 }
 
-func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte) error {
+// doProxy sends the request to the sandbox and writes the response back to
+// the client. When stripPatch is true, JSON responses with status 2xx are
+// buffered in memory so parts of type=="patch" can be removed before being
+// sent to the client. Streaming endpoints (events, prompt_async) must always
+// be invoked with stripPatch=false.
+func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte, stripPatch bool) error {
 	targetURL := fmt.Sprintf("http://%s:%d%s", podIP, opencodePort, targetPath)
-	if c.Request.URL.RawQuery != "" {
-		targetURL += "?" + c.Request.URL.RawQuery
+	if forwardedQuery := stripVerboseQuery(c.Request.URL.RawQuery); forwardedQuery != "" {
+		targetURL += "?" + forwardedQuery
 	}
 
 	var bodyReader io.Reader
@@ -322,6 +334,34 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	}
 	defer resp.Body.Close()
 
+	// Determine whether to filter the response. Filtering only applies when
+	// the caller asked, the response is JSON, and the upstream succeeded.
+	contentType := resp.Header.Get("Content-Type")
+	isJSON := strings.Contains(contentType, "application/json")
+	shouldFilter := stripPatch && isJSON && resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	if shouldFilter {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("reading sandbox response: %w", readErr)
+		}
+		filtered, filterErr := stripPatchParts(raw)
+		if filterErr != nil {
+			h.logger.Warn("Failed to filter response, returning original", "error", filterErr.Error())
+			filtered = raw
+		}
+		// Copy headers, then overwrite Content-Length to match filtered body.
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				c.Writer.Header().Add(k, v)
+			}
+		}
+		c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(filtered)))
+		c.Writer.WriteHeader(resp.StatusCode)
+		c.Writer.Write(filtered)
+		return nil
+	}
+
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			c.Writer.Header().Add(k, v)
@@ -345,6 +385,102 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	}
 
 	return nil
+}
+
+// stripVerboseQuery removes the "verbose" query parameter from a raw query
+// string. The verbose flag is consumed by the API proxy and must not be
+// forwarded to opencode (which would reject unknown query params on some
+// endpoints). Returns the remaining query string with "verbose" entries
+// removed; preserves the order of remaining parameters.
+func stripVerboseQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		// On parse failure, return the original — we'd rather forward an
+		// unparseable query and let opencode reject it than swallow it.
+		return rawQuery
+	}
+	values.Del("verbose")
+	return values.Encode()
+}
+
+// stripPatchParts removes any element where "type" == "patch" from a "parts"
+// array. It handles both shapes opencode returns:
+//   - {"info": ..., "parts": [...]}  (single message)
+//   - [{"info":..., "parts":[...]}, ...]  (history)
+//
+// Returns the original bytes unchanged if the body is neither shape.
+func stripPatchParts(body []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return body, nil
+	}
+
+	switch trimmed[0] {
+	case '{':
+		var msg messageEnvelope
+		if err := json.Unmarshal(body, &msg); err != nil {
+			return nil, err
+		}
+		if msg.Parts == nil {
+			// No parts field — pass through as-is to avoid mangling unrelated
+			// JSON objects (e.g. error responses).
+			return body, nil
+		}
+		msg.Parts = filterOutPatch(msg.Parts)
+		return json.Marshal(msg)
+	case '[':
+		var msgs []messageEnvelope
+		if err := json.Unmarshal(body, &msgs); err != nil {
+			return nil, err
+		}
+		filteredAny := false
+		for i, m := range msgs {
+			if m.Parts != nil {
+				msgs[i].Parts = filterOutPatch(m.Parts)
+				filteredAny = true
+			}
+		}
+		if !filteredAny {
+			return body, nil
+		}
+		return json.Marshal(msgs)
+	default:
+		return body, nil
+	}
+}
+
+// messageEnvelope is the minimal shape used to filter parts. Other fields
+// are preserved via json.RawMessage.
+type messageEnvelope struct {
+	Info  json.RawMessage   `json:"info,omitempty"`
+	Parts []json.RawMessage `json:"parts"`
+}
+
+// filterOutPatch returns a slice with patch parts removed. Each element is
+// inspected for a "type" field; if it equals "patch", it is dropped.
+func filterOutPatch(parts []json.RawMessage) []json.RawMessage {
+	if len(parts) == 0 {
+		return parts
+	}
+	out := make([]json.RawMessage, 0, len(parts))
+	for _, p := range parts {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(p, &probe); err != nil {
+			// Couldn't parse this entry — keep it (don't silently drop unknown shapes).
+			out = append(out, p)
+			continue
+		}
+		if probe.Type == "patch" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (h *ProxyHandler) getPassword(ctx context.Context, sandboxID string) (string, error) {

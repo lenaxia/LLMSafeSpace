@@ -89,20 +89,31 @@ func (w *SandboxWatcher) watchOnce() error {
 	w.watchRestartMu.Lock()
 	defer w.watchRestartMu.Unlock()
 
+	startedAt := time.Now()
 	watcher, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).Watch(metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("starting sandbox watch: %w", err)
 	}
 	defer watcher.Stop()
 
+	eventCount := 0
 	for {
 		select {
 		case <-w.stopCh:
 			return nil
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
+				// Diagnostic: log how long the watch lived and how many
+				// events arrived. A watch that closes immediately with 0
+				// events typically means the apiserver returned an HTTP
+				// error (e.g. 410 Gone, 405 Method Not Allowed) or the
+				// decoder rejected the first object.
+				w.logger.Warn("watch channel closed",
+					"livedFor", time.Since(startedAt).String(),
+					"eventCount", eventCount)
 				return fmt.Errorf("watch channel closed")
 			}
+			eventCount++
 			w.handleEvent(event)
 		}
 	}
