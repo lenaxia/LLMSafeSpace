@@ -104,16 +104,10 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	if user == nil {
 		return nil, apierrors.NewNotFoundError("user", req.UserID, fmt.Errorf("user not found"))
 	}
-
-	allowed, err := s.dbService.CheckPermission(req.UserID, "sandbox", "", "create")
-	if err != nil {
-		s.logger.Error("Failed to check permissions", err, "userID", req.UserID)
-		return nil, apierrors.NewInternalError("permission_check_failed", err)
-	}
-	if !allowed {
+	if !user.Active {
 		return nil, apierrors.NewForbiddenError(
-			"User does not have permission to create sandboxes",
-			fmt.Errorf("permission denied for user %s", req.UserID),
+			"User account is inactive",
+			fmt.Errorf("user %s is inactive", req.UserID),
 		)
 	}
 
@@ -121,6 +115,11 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		req.Timeout = s.config.DefaultTimeout
 	}
 
+	// Authorization model:
+	//   - Admin role bypasses ownership checks (cross-cutting authority).
+	//   - Regular users may attach a sandbox only to a workspace they own.
+	//   - With no WorkspaceRef the workspace is auto-created and owned by
+	//     the requesting user, so no extra check is needed.
 	workspaceID := req.WorkspaceRef
 	if workspaceID == "" {
 		ws, err := s.workspaceService.CreateWorkspace(ctx, req.UserID, types.CreateWorkspaceRequest{
@@ -132,6 +131,12 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 			return nil, fmt.Errorf("auto-creating workspace: %w", err)
 		}
 		workspaceID = ws.ID
+	} else if user.Role != "admin" {
+		if _, err := s.workspaceService.GetWorkspace(ctx, req.UserID, workspaceID); err != nil {
+			// GetWorkspace returns NotFound for missing, Forbidden for foreign.
+			// Both surface as the same error to the caller; do not leak existence.
+			return nil, err
+		}
 	}
 
 	crd := buildCRDFromRequest(req, workspaceID, s.config.Namespace)
@@ -257,8 +262,8 @@ func (s *Service) ListSandboxes(ctx context.Context, userID string, limit, offse
 	return &types.SandboxListResult{Items: items, Pagination: pagination}, nil
 }
 
-// TerminateSandbox deletes a sandbox and its metadata. The caller must be the
-// owner or have explicit delete permission. The userID is read from context.
+// TerminateSandbox deletes a sandbox and its metadata. The caller must own the
+// sandbox or have the admin role. The userID is read from context.
 func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error {
 	start := time.Now()
 	defer func() {
@@ -285,12 +290,13 @@ func (s *Service) TerminateSandbox(ctx context.Context, sandboxID string) error 
 	}
 
 	if !owner {
-		allowed, err := s.dbService.CheckPermission(userID, "sandbox", sandboxID, "delete")
+		// Only admins can terminate sandboxes they don't own.
+		user, err := s.dbService.GetUser(ctx, userID)
 		if err != nil {
-			s.logger.Error("Failed to check permissions", err, "userID", userID, "sandboxID", sandboxID)
-			return apierrors.NewInternalError("permission_check_failed", err)
+			s.logger.Error("Failed to retrieve user for role check", err, "userID", userID)
+			return apierrors.NewInternalError("user_retrieval_failed", err)
 		}
-		if !allowed {
+		if user == nil || user.Role != "admin" {
 			return apierrors.NewForbiddenError(
 				"User does not have permission to terminate this sandbox",
 				fmt.Errorf("permission denied for user %s", userID),

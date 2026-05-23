@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -23,6 +24,11 @@ func setupWatcherMocks(t *testing.T) (*k8smocks.MockKubernetesClient, *k8smocks.
 	sbMock := k8smocks.NewMockSandboxInterface()
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Sandboxes", "default").Return(sbMock)
+	// SandboxWatcher.Start does an initial List to seed resourceVersion.
+	// Tests that don't care about it can use this default; tests that need
+	// to assert the initial RV can override with their own .On("List", ...).
+	sbMock.On("List", mock.Anything).
+		Return(&v1.SandboxList{ListMeta: metav1.ListMeta{ResourceVersion: "100"}}, nil).Maybe()
 	return k8sMock, llmMock, sbMock
 }
 
@@ -238,7 +244,7 @@ func TestSandboxWatcher_StopClosesChannel(t *testing.T) {
 	k8sMock, _, sbMock := setupWatcherMocks(t)
 	mockWatch := k8smocks.NewMockWatch()
 	mockWatch.On("Stop").Return()
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
+	sbMock.On("Watch", mock.Anything).Return(mockWatch, nil)
 
 	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
 	require.NoError(t, err)
@@ -256,7 +262,7 @@ func TestSandboxWatcher_StartRunsWatchLoop(t *testing.T) {
 	k8sMock, _, sbMock := setupWatcherMocks(t)
 	mockWatch := k8smocks.NewMockWatch()
 	mockWatch.On("Stop").Return()
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil)
+	sbMock.On("Watch", mock.Anything).Return(mockWatch, nil)
 
 	var mu sync.Mutex
 	var captured *v1.Sandbox
@@ -296,8 +302,8 @@ func TestSandboxWatcher_RestartsOnWatchError(t *testing.T) {
 	mockWatch := k8smocks.NewMockWatch()
 	mockWatch.On("Stop").Return()
 
-	sbMock.On("Watch", metav1.ListOptions{}).Return(nil, fmt.Errorf("transient watch error")).Once()
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(nil, fmt.Errorf("transient watch error")).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch, nil).Once()
 
 	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
 	require.NoError(t, err)
@@ -324,8 +330,8 @@ func TestSandboxWatcher_RestartsOnChannelClose(t *testing.T) {
 	mockWatch2 := k8smocks.NewMockWatch()
 	mockWatch2.On("Stop").Return()
 
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch1, nil).Once()
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch2, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch2, nil).Once()
 
 	var mu sync.Mutex
 	var captured *v1.Sandbox
@@ -368,8 +374,8 @@ func TestSandboxWatcher_RestartPreservesKnownPhases(t *testing.T) {
 	mockWatch2 := k8smocks.NewMockWatch()
 	mockWatch2.On("Stop").Return()
 
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch1, nil).Once()
-	sbMock.On("Watch", metav1.ListOptions{}).Return(mockWatch2, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch2, nil).Once()
 
 	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
 	require.NoError(t, err)
@@ -424,4 +430,375 @@ func TestSandboxWatcher_EmptyPhaseStillTracked(t *testing.T) {
 	phase, ok = w.GetKnownPhase("sb-1")
 	assert.True(t, ok)
 	assert.Equal(t, "Running", phase)
+}
+
+// ============================================================================
+// New tests for the resourceVersion + bookmark + error-event contract.
+// These tests lock in behavior that does not exist in the legacy watcher
+// (no RV threading, no bookmarks, no error event handling).
+// ============================================================================
+
+// TestSandboxWatcher_InitialListSeedsResourceVersion verifies that Start()
+// performs an initial List and uses the returned resourceVersion as the
+// starting point for the first Watch call. This avoids replaying every
+// existing sandbox as an Added event on every restart.
+func TestSandboxWatcher_InitialListSeedsResourceVersion(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	// Override the default List from setupWatcherMocks with a specific RV.
+	sbMock.ExpectedCalls = nil
+	sbMock.On("List", mock.Anything).
+		Return(&v1.SandboxList{ListMeta: metav1.ListMeta{ResourceVersion: "12345"}}, nil)
+
+	mockWatch := k8smocks.NewMockWatch()
+	mockWatch.On("Stop").Return()
+
+	var optsMu sync.Mutex
+	var capturedOpts metav1.ListOptions
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		capturedOpts = opts
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch, nil)
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	// Give the loop time to call List and start the first Watch.
+	time.Sleep(200 * time.Millisecond)
+
+	optsMu.Lock()
+	defer optsMu.Unlock()
+	assert.Equal(t, "12345", capturedOpts.ResourceVersion,
+		"Watch must use resourceVersion from the initial List")
+	require.NotNil(t, capturedOpts.TimeoutSeconds, "TimeoutSeconds must be set")
+	assert.True(t, *capturedOpts.TimeoutSeconds > 0, "TimeoutSeconds must be positive")
+	assert.True(t, capturedOpts.AllowWatchBookmarks,
+		"AllowWatchBookmarks must be true so bookmarks deliver RV updates")
+}
+
+// TestSandboxWatcher_FailedInitialListStillStarts verifies that the watcher
+// degrades gracefully when the initial List fails: Watch is still attempted
+// (with empty RV — apiserver will deliver initial Added events), and
+// subsequent normal operation works.
+func TestSandboxWatcher_FailedInitialListStillStarts(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+	sbMock.ExpectedCalls = nil
+	sbMock.On("List", mock.Anything).
+		Return((*v1.SandboxList)(nil), fmt.Errorf("apiserver unavailable"))
+
+	mockWatch := k8smocks.NewMockWatch()
+	mockWatch.On("Stop").Return()
+
+	var optsMu sync.Mutex
+	var capturedOpts metav1.ListOptions
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		capturedOpts = opts
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch, nil)
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	optsMu.Lock()
+	rv := capturedOpts.ResourceVersion
+	optsMu.Unlock()
+	assert.Equal(t, "", rv,
+		"Failed List should leave RV empty so Watch starts from scratch")
+
+	mockWatch.SendEvent(watch.Added, makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"))
+	time.Sleep(100 * time.Millisecond)
+
+	phase, ok := w.GetKnownPhase("sb-1")
+	assert.True(t, ok, "watcher should still process events after failed initial List")
+	assert.Equal(t, "Running", phase)
+}
+
+// TestSandboxWatcher_BookmarkEventUpdatesRVWithoutCallback verifies that a
+// Bookmark event updates the cached resourceVersion but does NOT fire the
+// phase-change callback (bookmarks have no phase data).
+func TestSandboxWatcher_BookmarkEventUpdatesRVWithoutCallback(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	mockWatch1 := k8smocks.NewMockWatch()
+	mockWatch1.On("Stop").Return()
+	mockWatch2 := k8smocks.NewMockWatch()
+	mockWatch2.On("Stop").Return()
+
+	var watchOpts []metav1.ListOptions
+	var optsMu sync.Mutex
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch2, nil).Once()
+
+	var callbackCount int
+	var cbMu sync.Mutex
+	cb := func(s *v1.Sandbox) {
+		cbMu.Lock()
+		callbackCount++
+		cbMu.Unlock()
+	}
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", cb)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send a Bookmark event with RV=999. This should update the cached RV
+	// without invoking the phase-change callback.
+	bookmarkObj := &v1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{ResourceVersion: "999"},
+	}
+	mockWatch1.SendEvent(watch.Bookmark, bookmarkObj)
+	time.Sleep(100 * time.Millisecond)
+
+	// Force a reconnect by closing watch1's channel.
+	mockWatch1.Stop()
+	time.Sleep(300 * time.Millisecond)
+
+	cbMu.Lock()
+	assert.Equal(t, 0, callbackCount, "Bookmark events must NOT fire the phase-change callback")
+	cbMu.Unlock()
+
+	optsMu.Lock()
+	require.GreaterOrEqual(t, len(watchOpts), 2, "should have made at least 2 Watch calls")
+	assert.Equal(t, "999", watchOpts[1].ResourceVersion,
+		"second Watch must resume from the bookmarked resourceVersion")
+	optsMu.Unlock()
+}
+
+// TestSandboxWatcher_410ErrorResetsResourceVersion verifies that a 410 Gone
+// error event causes the cached resourceVersion to be cleared, so the next
+// Watch starts fresh (otherwise it would loop forever on the stale RV).
+func TestSandboxWatcher_410ErrorResetsResourceVersion(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	// Seed an initial RV via List.
+	sbMock.ExpectedCalls = nil
+	sbMock.On("List", mock.Anything).
+		Return(&v1.SandboxList{ListMeta: metav1.ListMeta{ResourceVersion: "100"}}, nil)
+
+	mockWatch1 := k8smocks.NewMockWatch()
+	mockWatch1.On("Stop").Return()
+	mockWatch2 := k8smocks.NewMockWatch()
+	mockWatch2.On("Stop").Return()
+
+	var watchOpts []metav1.ListOptions
+	var optsMu sync.Mutex
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch2, nil).Once()
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send a 410 Gone error event.
+	mockWatch1.SendEvent(watch.Error, &metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonGone,
+		Code:    410,
+		Message: "too old resource version: 100 (current: 5000)",
+	})
+
+	// Wait for backoff + reconnect (2s + slack).
+	time.Sleep(3 * time.Second)
+
+	optsMu.Lock()
+	defer optsMu.Unlock()
+	require.GreaterOrEqual(t, len(watchOpts), 2)
+	assert.Equal(t, "100", watchOpts[0].ResourceVersion,
+		"first Watch should use seeded RV")
+	assert.Equal(t, "", watchOpts[1].ResourceVersion,
+		"410 Gone must reset RV to empty so next Watch re-syncs from current state")
+}
+
+// TestSandboxWatcher_NonGoneErrorPreservesRV verifies that a non-410 error
+// (e.g. transient apiserver issue) does NOT clobber the cached RV — we want
+// to resume from where we were, not replay from scratch.
+func TestSandboxWatcher_NonGoneErrorPreservesRV(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	sbMock.ExpectedCalls = nil
+	sbMock.On("List", mock.Anything).
+		Return(&v1.SandboxList{ListMeta: metav1.ListMeta{ResourceVersion: "200"}}, nil)
+
+	mockWatch1 := k8smocks.NewMockWatch()
+	mockWatch1.On("Stop").Return()
+	mockWatch2 := k8smocks.NewMockWatch()
+	mockWatch2.On("Stop").Return()
+
+	var watchOpts []metav1.ListOptions
+	var optsMu sync.Mutex
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch2, nil).Once()
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send a 500 InternalError — transient, RV should be preserved.
+	mockWatch1.SendEvent(watch.Error, &metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonInternalError,
+		Code:    500,
+		Message: "etcd hiccup",
+	})
+
+	time.Sleep(3 * time.Second)
+
+	optsMu.Lock()
+	defer optsMu.Unlock()
+	require.GreaterOrEqual(t, len(watchOpts), 2)
+	assert.Equal(t, "200", watchOpts[1].ResourceVersion,
+		"non-410 error must preserve cached RV so Watch resumes from where it was")
+}
+
+// TestSandboxWatcher_NormalEventAdvancesRV verifies that normal Added/Modified
+// events advance the cached resourceVersion so a subsequent reconnect resumes
+// from the latest known position rather than the original List RV.
+func TestSandboxWatcher_NormalEventAdvancesRV(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	sbMock.ExpectedCalls = nil
+	sbMock.On("List", mock.Anything).
+		Return(&v1.SandboxList{ListMeta: metav1.ListMeta{ResourceVersion: "100"}}, nil)
+
+	mockWatch1 := k8smocks.NewMockWatch()
+	mockWatch1.On("Stop").Return()
+	mockWatch2 := k8smocks.NewMockWatch()
+	mockWatch2.On("Stop").Return()
+
+	var watchOpts []metav1.ListOptions
+	var optsMu sync.Mutex
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		optsMu.Lock()
+		watchOpts = append(watchOpts, opts)
+		optsMu.Unlock()
+		return true
+	})).Return(mockWatch2, nil).Once()
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Build a sandbox CRD with explicit RV=500 to simulate apiserver delivery.
+	sb := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
+	sb.ResourceVersion = "500"
+	mockWatch1.SendEvent(watch.Added, sb)
+	time.Sleep(100 * time.Millisecond)
+
+	// Trigger reconnect via clean close.
+	mockWatch1.Stop()
+	time.Sleep(300 * time.Millisecond)
+
+	optsMu.Lock()
+	defer optsMu.Unlock()
+	require.GreaterOrEqual(t, len(watchOpts), 2)
+	assert.Equal(t, "500", watchOpts[1].ResourceVersion,
+		"second Watch must resume from the highest RV observed in events")
+}
+
+// TestSandboxWatcher_CleanCloseImmediateReconnect verifies that a clean
+// channel close (apiserver cycling the watch — the normal case after ~5min)
+// triggers an immediate reconnect with no backoff, so users don't see gaps
+// in phase tracking.
+func TestSandboxWatcher_CleanCloseImmediateReconnect(t *testing.T) {
+	k8sMock, _, sbMock := setupWatcherMocks(t)
+
+	mockWatch1 := k8smocks.NewMockWatch()
+	mockWatch1.On("Stop").Return()
+	mockWatch2 := k8smocks.NewMockWatch()
+	mockWatch2.On("Stop").Return()
+
+	sbMock.On("Watch", mock.Anything).Return(mockWatch1, nil).Once()
+	sbMock.On("Watch", mock.Anything).Return(mockWatch2, nil).Once()
+
+	w, err := NewSandboxWatcher(k8sMock, &testLogger{}, "default", func(s *v1.Sandbox) {})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+	closedAt := time.Now()
+	mockWatch1.Stop()
+
+	// Poll for reconnect by sending events until one is processed. The
+	// MockWatch buffered channel will accept events even before the loop
+	// has reconnected, but the watcher will only see them once it's
+	// consuming from mockWatch2. A clean close must reconnect well under
+	// the 2s error backoff (target: <500ms).
+	mockWatch2.SendEvent(watch.Added, makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"))
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, ok := w.GetKnownPhase("sb-1"); ok {
+			elapsed := time.Since(closedAt)
+			assert.Less(t, elapsed, 1*time.Second,
+				"reconnect after clean close should be much faster than error backoff")
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("watcher did not reconnect quickly after clean close")
 }

@@ -2,7 +2,7 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.5
+**Version:** 1.6
 **Last Updated:** 2026-05-23
 **Project Status:** Active Development
 
@@ -679,6 +679,13 @@ What was the goal of this session?
 ---
 
 ## Work Completed
+
+### Worklog 0032 (2026-05-23): CI Versioning, Permissions Model, Watch Loop Hardening
+- CI: every image now tagged with `ts-<unix>` (sortable, shared across all images in one workflow run), `sha-<commit>` (immutable), `dev` (latest from main); semver tags on `v*.*.*` releases
+- Removed legacy `build-runtimes.yml` (V1, built unused python/nodejs/go runtime images)
+- Permissions model rewritten: dropped `CheckPermission` from sandbox create/terminate; admin role bypasses ownership; non-admins must own the workspace they attach to (via existing `workspaceService.GetWorkspace`)
+- Watch loop hardened: ResourceVersion threading + bookmarks + 410 Gone reset + error-event handling; clean apiserver-driven cycles now log at Debug not Warn — kills the "watch channel closed" log spam
+- TDD: 7 new watch-loop tests written first, 6 verified to fail against legacy implementation; 4 new permissions tests + 6 existing updated
 
 ### Worklog 0031 (2026-05-23): Sandbox CRUD API + Verbose Flag + Test Coverage
 - Sandbox CRUD: `POST/GET/DELETE /api/v1/sandboxes`, `GET /api/v1/sandboxes/:id/status` — wired SandboxService into router on a separate Gin group from the proxy (so List/Create are not gated by sandbox ownership middleware)

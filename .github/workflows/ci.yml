@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*.*.*']
   pull_request:
     branches: [main]
 
@@ -30,9 +31,24 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+  # Compute a single unix timestamp shared by all image-build jobs in this run
+  # so every artifact built from one workflow invocation carries the same
+  # `ts-<unix>` tag. Sortable lexicographically as a 10-digit number until
+  # 2286-11-20 (year 9999999999 fits in 10 digits through 2286). Combined with
+  # `sha-<commit>` for content addressability and `dev` for the moving pointer
+  # to the latest main build. Tagged releases (v1.2.3) emit semver tags.
+  prepare:
+    name: Prepare build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.ts.outputs.timestamp }}
+    steps:
+      - id: ts
+        run: echo "timestamp=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
   build-api:
     name: Build API
-    needs: test
+    needs: [test, prepare]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,8 +70,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.API_IMAGE }}
           tags: |
-            type=sha,prefix=
+            type=sha,prefix=sha-
+            type=raw,value=ts-${{ needs.prepare.outputs.timestamp }}
             type=raw,value=dev,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - uses: docker/build-push-action@v5
         with:
@@ -68,7 +89,7 @@ jobs:
 
   build-controller:
     name: Build Controller
-    needs: test
+    needs: [test, prepare]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,8 +111,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.CONTROLLER_IMAGE }}
           tags: |
-            type=sha,prefix=
+            type=sha,prefix=sha-
+            type=raw,value=ts-${{ needs.prepare.outputs.timestamp }}
             type=raw,value=dev,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - uses: docker/build-push-action@v5
         with:
@@ -104,7 +130,7 @@ jobs:
 
   build-runtime:
     name: Build Runtime Base
-    needs: test
+    needs: [test, prepare]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -126,8 +152,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.RUNTIME_IMAGE }}
           tags: |
-            type=sha,prefix=
+            type=sha,prefix=sha-
+            type=raw,value=ts-${{ needs.prepare.outputs.timestamp }}
             type=raw,value=dev,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - uses: docker/build-push-action@v5
         with:
