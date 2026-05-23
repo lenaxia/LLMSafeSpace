@@ -149,6 +149,10 @@ spec:
                   type: string
                   format: date-time
                   description: "Timestamp of the most recent API activity"
+                suspendedAt:
+                  type: string
+                  format: date-time
+                  description: "Timestamp when the workspace last entered the Suspended phase"
                 conditions:
                   type: array
                   items:

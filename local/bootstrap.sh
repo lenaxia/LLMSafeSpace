@@ -206,6 +206,7 @@ helm --kube-context "kind-${CLUSTER_NAME}" upgrade --install "${RELEASE_NAME}" \
     --set "redis.port=6379" \
     --set "externalSecret.create=true" \
     --set "externalSecret.postgresPassword=changeme" \
+    --set "api.config.logging.development=true" \
     --wait --timeout 5m
 
 log "  waiting for API rollout"
