@@ -403,7 +403,7 @@ func convertCRDToAPI(crd *v1.Sandbox) *types.Sandbox {
 			NetworkAccess:   crdNetworkToAPI(crd.Spec.NetworkAccess),
 			Filesystem:      crdFilesystemToAPI(crd.Spec.Filesystem),
 			Storage:         crdStorageToAPI(crd.Spec.Storage),
-			SecurityContext: crdSecurityCtxToAPI(crd.Spec.SecurityCtx),
+			SecurityContext: crdSecurityCtxToAPI(crd.Spec.SecurityContext),
 			ProfileRef:      crdProfileRefToAPI(crd.Spec.ProfileRef),
 		},
 		Status: types.SandboxStatus{

@@ -35,11 +35,11 @@ func (f *MockFactory) NewRuntimeEnvironment(name, language, version string) *v1.
 		TypeMeta:   metav1.TypeMeta{Kind: "RuntimeEnvironment", APIVersion: "llmsafespace.dev/v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "test-uid"},
 		Spec: v1.RuntimeEnvironmentSpec{
-			BaseImage: "llmsafespace/" + language + ":" + version,
-			Language:  language,
-			Version:   version,
+			Image:    "llmsafespace/" + language + ":" + version,
+			Language: language,
+			Version:  version,
 		},
-		Status: v1.RuntimeEnvironmentStatus{Ready: true},
+		Status: v1.RuntimeEnvironmentStatus{Available: true},
 	}
 }
 
@@ -48,7 +48,11 @@ func (f *MockFactory) NewSandboxProfile(name string) *v1.SandboxProfile {
 		TypeMeta:   metav1.TypeMeta{Kind: "SandboxProfile", APIVersion: "llmsafespace.dev/v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "test-uid"},
 		Spec: v1.SandboxProfileSpec{
-			Resources: &v1.ResourceRequirements{CPU: "500m", Memory: "512Mi"},
+			Language: "python",
+			ResourceDefaults: &v1.ResourceDefaults{
+				CPU:    "500m",
+				Memory: "512Mi",
+			},
 		},
 	}
 }
