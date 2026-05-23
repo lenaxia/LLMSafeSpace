@@ -36,6 +36,11 @@ func (m *MockDatabaseService) CreateUser(ctx context.Context, user *types.User) 
 	return m.Called(ctx, user).Error(0)
 }
 
+func (m *MockDatabaseService) CountUsers(ctx context.Context) (int, error) {
+	args := m.Called(ctx)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *MockDatabaseService) UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error {
 	return m.Called(ctx, userID, updates).Error(0)
 }

@@ -21,7 +21,12 @@ api:
   replicaCount: 2
   image:
     repository: llmsafespace/api
-    tag: ""  # defaults to .Chart.AppVersion
+    # Tag to deploy. Falls back to .Chart.AppVersion if empty.
+    # Recommended: pin to an immutable tag like `sha-<7-char-commit>` or
+    # `ts-<unix-timestamp>` published by CI. Avoid moving tags like `dev` or
+    # `latest` in production — kubelet image-pull caching does not always
+    # honor `imagePullPolicy: Always` for moving tags (Talos/containerd).
+    tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 
@@ -136,7 +141,9 @@ controller:
   replicaCount: 1
   image:
     repository: llmsafespace/controller
-    tag: ""  # defaults to .Chart.AppVersion
+    # Tag to deploy. Falls back to .Chart.AppVersion if empty. See api.image.tag
+    # for rationale on pinning to immutable `sha-` or `ts-` tags.
+    tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 

@@ -136,6 +136,19 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User
 	return &user, nil
 }
 
+// CountUsers returns the total number of users in the system. Used by the
+// auth Register flow to detect a fresh installation (count == 0) and
+// auto-promote the first user to admin so a brand-new install has at least
+// one administrator.
+func (s *Service) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+	return count, nil
+}
+
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 	query := `
