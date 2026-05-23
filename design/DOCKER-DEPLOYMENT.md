@@ -23,7 +23,7 @@ Every assumption below is validated with evidence from the codebase.
 | A9 | Container pause/unpause maps to suspend/resume | Docker `pause` freezes all processes (cgroups freezer). `unpause` resumes them. opencode serve resumes where it left off | Workspace suspend = pause all sandbox containers for that workspace |
 | A10 | `types.Sandbox` embeds `metav1.TypeMeta` and `metav1.ObjectMeta` — K8s apimachinery types in the API response DTO | `types.go:34-36`: `Sandbox struct { metav1.TypeMeta, metav1.ObjectMeta, ... }`. `convertCRDToAPI` (`sandbox_service.go:385-412`) copies these directly from the CRD. In Docker mode there is no CRD. | Docker mode must construct `metav1.ObjectMeta` manually (Name, Namespace, Labels, CreationTimestamp). `TypeMeta` is constant. See §8.3. |
 | A11 | `ListSandboxes` enriches each item with live phase/usage from K8s CRD status | `sandbox_service.go:238-248`: per-item `Sandboxes(ns).Get(sb.ID)` for Phase, StartTime, CPUUsage, MemoryUsage | Docker mode: per-item `Inspect()` or batch `ContainerList` for phase. See §8.4. |
-| A12 | `TerminateSandbox` deletes the CRD using `sandbox.Namespace` from the CRD's `ObjectMeta` | `sandbox_service.go:301`: `Sandboxes(sandbox.Namespace).Delete(...)`. `sandbox` is `*types.Sandbox` returned by `GetSandbox()`, which copies `ObjectMeta.Namespace` from the CRD | Docker mode: no namespace. Use fixed namespace or empty string. See §8.5. |
+| A12 | `TerminateSandbox` deletes the CRD using `sandbox.Namespace` from the CRD's `ObjectMeta` | `sandbox_service.go:307`: `Sandboxes(sandbox.Namespace).Delete(...)`. `sandbox` is `*types.Sandbox` returned by `GetSandbox()`, which copies `ObjectMeta.Namespace` from the CRD | Docker mode: no namespace. Use fixed namespace or empty string. See §8.5. |
 
 ---
 
@@ -114,7 +114,7 @@ where the user already has root. Not acceptable for multi-tenant production.
 |------|----------|-------|
 | `api/internal/app/app.go` | Creates `kubernetes.Client`, passes to services + proxy | `:33-45` |
 | `api/internal/services/services.go` | Passes `KubernetesClient` to sandbox/workspace constructors | `:58` |
-| `api/internal/services/sandbox/sandbox_service.go` | 6 calls to `k8sClient.LlmsafespaceV1().Sandboxes()`; builds `v1.Sandbox` CRDs; imports `pkg/apis/llmsafespace/v1` | `:141,162,183,190,238,301` |
+| `api/internal/services/sandbox/sandbox_service.go` | 6 calls to `k8sClient.LlmsafespaceV1().Sandboxes()`; builds `v1.Sandbox` CRDs; imports `pkg/apis/llmsafespace/v1` | `:146,167,188,195,242,307` |
 | `api/internal/services/workspace/workspace_service.go` | 10 K8s calls (CRDs + Secrets); builds `v1.Workspace` CRDs; imports `pkg/apis/llmsafespace/v1` | `:110,128,172,244,271,287,309,323,345,403-451` |
 | `api/internal/handlers/proxy.go` | 8 K8s calls (sandbox get, secrets, workspace get); `v1.Sandbox` in callbacks | `:106,117,199,275,494,527,671,684` |
 | `api/internal/handlers/crd_watcher.go` | Pure K8s: `Sandboxes().Watch()` | entire file |
