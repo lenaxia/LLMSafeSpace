@@ -18,7 +18,8 @@ import (
 
 	"github.com/lenaxia/llmsafespace/controller/internal/controller"
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	"github.com/lenaxia/llmsafespace/controller/internal/webhooks"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 var (
@@ -28,7 +29,7 @@ var (
 
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = resources.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
 }
 
 func main() {
@@ -93,15 +94,15 @@ func main() {
 	webhookDecoder := admission.NewDecoder(mgr.GetScheme())
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandbox", &webhook.Admission{
-		Handler: &resources.SandboxValidator{Client: mgr.GetClient(), Decoder: webhookDecoder},
+		Handler: &webhooks.SandboxValidator{Client: mgr.GetClient(), Decoder: webhookDecoder},
 	})
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-sandboxprofile", &webhook.Admission{
-		Handler: &resources.SandboxProfileValidator{Decoder: webhookDecoder},
+		Handler: &webhooks.SandboxProfileValidator{Decoder: webhookDecoder},
 	})
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
-		Handler: &resources.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
+		Handler: &webhooks.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
 	})
 
 	// Set up controllers
