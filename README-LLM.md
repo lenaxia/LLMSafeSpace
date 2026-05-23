@@ -2,7 +2,7 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.6
+**Version:** 1.7
 **Last Updated:** 2026-05-23
 **Project Status:** Active Development
 
@@ -679,6 +679,14 @@ What was the goal of this session?
 ---
 
 ## Work Completed
+
+### Worklog 0033 (2026-05-23): Cluster Validation, Scheme Conversion Root Cause, First-User-Admin
+- Validated worklog 0032 changes against the home-kubernetes cluster running pinned `sha-e8cdbc8`
+- Discovered the actual root cause of the "watch channel closed" log spam: `pkg/kubernetes/client_crds.go` was using `serializer.NewCodecFactory(scheme.Scheme)` without `WithoutConversion()`. Watch event decoder called `DecoderToVersion(s, nil)` and tried to convert to a non-existent internal hub version, producing a 500 error event for every Sandbox event delivered. Fix: append `.WithoutConversion()`. TDD-verified with three new codec tests in `pkg/kubernetes/client_test.go`.
+- Implemented worklog 0032 followup #3: first registered user is auto-promoted to admin. Added `DatabaseService.CountUsers`. Four new TDD tests in auth service. CountUsers errors fail closed (refuse registration, do not silently default to admin).
+- After deploying `sha-5ca1f91`: zero Warn/Error log entries in 5+ min uptime; sandbox phase reporting via `GET /sandboxes/:id/status` confirms watcher is consuming events correctly.
+- Cluster validation: fresh user (no permission rows) creates sandbox via API; foreign workspace blocked; admin role bypasses; first-user-becomes-admin works on fresh DB.
+- `charts/llmsafespace/values.yaml` documented to recommend `sha-`/`ts-` pinning over moving `:dev` tag.
 
 ### Worklog 0032 (2026-05-23): CI Versioning, Permissions Model, Watch Loop Hardening
 - CI: every image now tagged with `ts-<unix>` (sortable, shared across all images in one workflow run), `sha-<commit>` (immutable), `dev` (latest from main); semver tags on `v*.*.*` releases
