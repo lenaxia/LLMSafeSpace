@@ -680,6 +680,11 @@ What was the goal of this session?
 
 ## Work Completed
 
+### Worklog 0029 (2026-05-23): CI Pipeline + E2E Deployment Validation
+- CI pipeline: test + build API/controller/runtime-base images on every push to main
+- Deployed to real Talos cluster; auth, workspace, sandbox lifecycles validated end-to-end
+- Opencode boots and serves HTTP in sandbox pod; prompt validation blocked on MCP (Phase 4)
+
 ### Worklog 0028 (2026-05-23): Rate Limiting, CORS, Account Lockout, Security Fixes
 - Rate limiter service created (Redis-backed), wired into global middleware stack, configurable via env vars
 - CORS hardened: default `AllowedOrigins: []` + `AllowCredentials: false` (was wildcard+credentials)
