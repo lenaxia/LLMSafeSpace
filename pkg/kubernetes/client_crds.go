@@ -58,6 +58,14 @@ var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
 func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	config := *c
+	// Strip the request timeout for the typed client. The base rest.Config
+	// in pkg/kubernetes/client.go sets a 30s Timeout for unary REST calls,
+	// but the same setting kills long-lived Watch streams (their HTTP
+	// connection is closed at 30s and the watcher.ResultChan() is closed
+	// with eventCount=0). Watch responses have their own server-side
+	// timeoutSeconds; the client-side Timeout should be 0 (no timeout)
+	// for the typed client used by SandboxWatcher.
+	config.Timeout = 0
 	config.ContentConfig.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
 	config.APIPath = "/apis"
 	config.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)

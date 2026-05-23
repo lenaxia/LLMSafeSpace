@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.1
-**Last Updated:** 2026-05-22
+**Version:** 1.5
+**Last Updated:** 2026-05-23
 **Project Status:** Active Development
 
 ---
@@ -680,6 +680,18 @@ What was the goal of this session?
 
 ## Work Completed
 
+### Worklog 0031 (2026-05-23): Sandbox CRUD API + Verbose Flag + Test Coverage
+- Sandbox CRUD: `POST/GET/DELETE /api/v1/sandboxes`, `GET /api/v1/sandboxes/:id/status` — wired SandboxService into router on a separate Gin group from the proxy (so List/Create are not gated by sandbox ownership middleware)
+- `?verbose=true` query param on message + history endpoints; default strips parts where `type=="patch"` (~2KB/response saved)
+- `local/test.sh` extended to 9 tests: prompt round-trip with assertion, verbose flag verification, sandbox CRUD via API, session-history continuity across pod recycle (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL gate the LLM-dependent steps)
+- README.md rewritten from scratch for V2 (warm pools removed, REST API surface, `?verbose=true` documented)
+- 12 new sandbox CRUD router tests + 7 new patch-stripping handler tests
+
+### Worklog 0030 (2026-05-23): E2E Prompt Flow Validated, Worklog 0029 Misdiagnosis
+- End-to-end prompt round-trip validated against real cluster: client → API proxy → opencode `POST /session/:id/message` → LLM → response
+- Worklog 0029's "MCP required" claim refuted: opencode's documented `POST /session` is headless. The real blocker was credentials, not protocol.
+- Workspace credentials API path validated: `PUT /api/v1/workspaces/:id/credentials` → secret → controller mount → opencode config
+
 ### Worklog 0029 (2026-05-23): CI Pipeline + E2E Deployment Validation
 - CI pipeline: test + build API/controller/runtime-base images on every push to main
 - Deployed to real Talos cluster; auth, workspace, sandbox lifecycles validated end-to-end
@@ -1331,6 +1343,111 @@ Shell script against running server: `./local/test-auth.sh http://localhost:8080
 
 ---
 
+## Sandbox API
+
+The API exposes full CRUD for Sandboxes (replacing the previous kubectl-only flow).
+
+### Endpoints
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/api/v1/sandboxes` | GET | API key/JWT | List the caller's sandboxes (paginated: `?limit=&offset=`) |
+| `/api/v1/sandboxes` | POST | API key/JWT | Create a sandbox; body is `types.CreateSandboxRequest` |
+| `/api/v1/sandboxes/:id` | GET | API key/JWT | Get one sandbox (returns 404 if user does not own it) |
+| `/api/v1/sandboxes/:id` | DELETE | API key/JWT | Terminate (deletes pod + CRD + DB metadata) |
+| `/api/v1/sandboxes/:id/status` | GET | API key/JWT | Get phase + pod IP + resource usage |
+
+### Authorization model
+
+Sandbox CRUD is wired on a **separate** Gin group from the proxy group (`registerSandboxCRUDRoutes` in `api/internal/server/router.go`). It does **not** apply the proxy's `sandboxOwnershipMiddleware` because:
+
+1. List/Create have no `:id` to check
+2. Service-level methods (`GetSandbox`, `TerminateSandbox`) perform their own ownership checks
+3. The GET handler additionally compares `sb.Labels["user-id"]` to the authenticated user — sandboxes the user does not own return 404 (not 403; do not leak existence)
+
+### Request flow
+
+```
+POST /api/v1/sandboxes
+  → sanitizeBindError on bad JSON → 400
+  → CreateSandbox(ctx, req)
+      → validate req
+      → check user exists in DB
+      → check permission "sandbox:create"
+      → if no workspaceRef, auto-create workspace
+      → build CRD; Create(crd) in K8s
+      → CreateSandbox(meta) in DB; on failure delete CRD
+      → return *types.Sandbox (201 Created)
+```
+
+### Body shape
+
+```go
+type CreateSandboxRequest struct {
+    Runtime       string                `json:"runtime"`        // required: e.g. "base", "python:3.11"
+    SecurityLevel string                `json:"securityLevel,omitempty"`
+    Timeout       int                   `json:"timeout,omitempty"`
+    UserID        string                `json:"userId"`         // overwritten by auth context
+    Resources     *ResourceRequirements `json:"resources,omitempty"`
+    NetworkAccess *NetworkAccess        `json:"networkAccess,omitempty"`
+    WorkspaceRef  string                `json:"workspaceRef,omitempty"`
+}
+```
+
+The router always overwrites `UserID` with the authenticated user from the JWT/API key context; clients cannot impersonate.
+
+---
+
+## Session Proxy
+
+The session endpoints are reverse-proxied to the sandbox pod's `opencode serve` instance on port 4096 (HTTP basic auth `opencode:<password from sandbox-pw-<id> Secret>`).
+
+### Endpoints
+
+| Endpoint | Method | Opencode target |
+|----------|--------|-----------------|
+| `/api/v1/sandboxes/:id/sessions` | POST | `POST /session` |
+| `/api/v1/sandboxes/:id/sessions` | GET | `GET /session` |
+| `/api/v1/sandboxes/:id/sessions/:sessionId/message` | POST | `POST /session/:id/message` |
+| `/api/v1/sandboxes/:id/sessions/:sessionId/prompt` | POST | `POST /session/:id/prompt_async` |
+| `/api/v1/sandboxes/:id/sessions/:sessionId/message` | GET | `GET /session/:id/message` |
+| `/api/v1/sandboxes/:id/sessions/:sessionId/abort` | POST | `POST /session/:id/abort` |
+| `/api/v1/sandboxes/:id/events` | GET | `GET /event` (SSE) |
+
+All proxy routes pass through `sandboxOwnershipMiddleware`, which loads the Sandbox CRD, verifies `sb.Labels["user-id"]` matches the authenticated user, and caches the CRD on `c.Set("sandbox", sb)` to avoid a second K8s read in the proxy handler.
+
+### `?verbose=true` flag
+
+opencode emits a `patch` part on every assistant turn listing every workspace file it touched (`/workspace/.local/opencode/snapshot/...`). Each one is ~2 KB of internal snapshot paths and is rarely useful to the caller.
+
+The proxy strips parts where `type == "patch"` from `SendMessage` and `GetHistory` responses by default. Pass `?verbose=true` to disable filtering.
+
+| Flag | Behavior |
+|------|----------|
+| (default) | `parts[]` filtered: `patch` entries removed |
+| `?verbose=true` | `parts[]` returned unmodified |
+| `?verbose=false` (or any other value) | Same as default — strip patch parts |
+
+The `verbose` query parameter is consumed by the proxy and **must not** be forwarded to opencode (it would be ignored, but stripping prevents future opencode versions from rejecting it as unknown). See `stripVerboseQuery` in `api/internal/handlers/proxy.go`.
+
+The filter only runs when:
+
+- The handler called `proxyToSandbox(..., filterParts=true)` (only `SendMessage` and `GetHistory`)
+- The response `Content-Type` contains `application/json`
+- The response status is 2xx
+
+For non-JSON or non-2xx responses, the body is streamed unmodified. SSE streaming endpoints (`/events`, `/prompt_async`) always pass `filterParts=false` and are never buffered.
+
+### Implementation notes
+
+- `stripPatchParts(body []byte) ([]byte, error)` handles both opencode response shapes:
+  - `{info, parts: [...]}` for `POST /message`
+  - `[{info, parts: [...]}, ...]` for `GET /message` (history)
+- Filtering uses `json.RawMessage` for unknown fields so the round-trip is lossless except for the explicitly removed parts
+- On filter-time JSON parse failure, the original bytes are returned with a warning logged (defensive: never lose the response)
+
+---
+
 ## Configuration Reference
 
 The API service is configured via `api/config/config.yaml` with environment variable overrides via Viper.
@@ -1371,6 +1488,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.5 | 2026-05-23 | Sandbox CRUD via API (`/api/v1/sandboxes`), `?verbose=true` flag (strips opencode `patch` parts by default), README.md rewritten for V2 |
 | 1.4 | 2026-05-23 | Rate limiting wired, CORS hardened (no wildcard+credentials), account lockout, all configurable via env vars |
 | 1.3 | 2026-05-23 | Auth endpoints (register, login, API key CRUD) with security hardening and e2e tests |
 | 1.2 | 2026-05-22 | Repository structure, architecture, CRD ownership table, tech stack, and code generation section fully aligned with EVOLUTION-V2.md |
