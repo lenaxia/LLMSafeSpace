@@ -130,8 +130,7 @@ func TestCreateSandbox_HappyPath(t *testing.T) {
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.MatchedBy(func(r types.CreateWorkspaceRequest) bool {
 		return r.Runtime == "python:3.10" && r.StorageSize == "10Gi"
 	})).Return(&types.Workspace{ID: "ws-auto-1"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
 		return m.ID == "sb-1" && m.UserID == "user1" && m.Runtime == "python:3.10"
 	})).Return(nil)
@@ -160,8 +159,7 @@ func TestCreateSandbox_ServiceIsStateless(t *testing.T) {
 	for i, id := range []string{"sb-1", "sb-2"} {
 		_ = i
 		f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil).Once()
-		f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil).Once()
-		f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil).Once()
+		f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil).Once()
 		f.db.On("CreateSandbox", ctx, mock.MatchedBy(func(m *types.SandboxMetadata) bool {
 			return m.ID == id && m.UserID == "user1"
 		})).Return(nil).Once()
@@ -202,19 +200,18 @@ func TestCreateSandbox_UserNotFound_ReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.workspace.On("CreateWorkspace", ctx, "nobody", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "nobody").Return((*types.User)(nil), nil)
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "nobody"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not_found")
+	f.workspace.AssertNotCalled(t, "CreateWorkspace")
 }
 
 func TestCreateSandbox_GetUserError_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
 	f.db.On("GetUser", ctx, "user1").Return((*types.User)(nil), errors.New("db timeout"))
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"})
@@ -222,17 +219,57 @@ func TestCreateSandbox_GetUserError_ReturnsInternal(t *testing.T) {
 	assert.Contains(t, err.Error(), "user_retrieval_failed")
 }
 
-func TestCreateSandbox_PermissionDenied_ReturnsForbidden(t *testing.T) {
+// TestCreateSandbox_InactiveUser_ReturnsForbidden verifies that a user whose
+// account has been deactivated cannot create sandboxes regardless of role.
+func TestCreateSandbox_InactiveUser_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(false, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: false, Role: "admin"}, nil)
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "forbidden")
+	f.workspace.AssertNotCalled(t, "CreateWorkspace")
+	f.sb.AssertNotCalled(t, "Create")
+}
+
+// TestCreateSandbox_ForeignWorkspace_ReturnsForbidden verifies that a non-admin
+// user cannot attach a sandbox to a workspace owned by someone else.
+// workspaceService.GetWorkspace enforces ownership and returns the original
+// forbidden error which we propagate without modification.
+func TestCreateSandbox_ForeignWorkspace_ReturnsForbidden(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
+	f.workspace.On("GetWorkspace", ctx, "user1", "ws-foreign").
+		Return((*types.Workspace)(nil), errors.New("user does not own this workspace"))
+
+	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime: "python:3.10", UserID: "user1", WorkspaceRef: "ws-foreign",
+	})
+	assert.Error(t, err)
+	f.sb.AssertNotCalled(t, "Create")
+}
+
+// TestCreateSandbox_AdminUserAttachesForeignWorkspace_Succeeds verifies that
+// admin-role users bypass the workspace ownership check.
+func TestCreateSandbox_AdminUserAttachesForeignWorkspace_Succeeds(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "admin1").Return(&types.User{ID: "admin1", Active: true, Role: "admin"}, nil)
+	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
+	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
+	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-admin", "default", "python:3.10"), nil)
+
+	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime: "python:3.10", UserID: "admin1", WorkspaceRef: "ws-someone-elses",
+	})
+	assert.NoError(t, err)
+	// Admin path must NOT consult workspace ownership.
+	f.workspace.AssertNotCalled(t, "GetWorkspace")
 }
 
 func TestCreateSandbox_K8sCreateFails_ReturnsInternal(t *testing.T) {
@@ -240,8 +277,7 @@ func TestCreateSandbox_K8sCreateFails_ReturnsInternal(t *testing.T) {
 	ctx := context.Background()
 
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.sb.On("Create", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("k8s unavailable"))
 
 	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"})
@@ -255,8 +291,7 @@ func TestCreateSandbox_DBCreateFails_CleansUpK8s(t *testing.T) {
 	ctx := context.Background()
 
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-x", "default", "python:3.10"), nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(errors.New("db write failed"))
 	f.sb.On("Delete", "sb-x", mock.Anything).Return(nil)
@@ -272,8 +307,7 @@ func TestCreateSandbox_ZeroTimeout_AppliesDefault(t *testing.T) {
 	ctx := context.Background()
 
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
 	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
 
@@ -293,8 +327,7 @@ func TestCreateSandbox_LabelsAndAnnotationsSet(t *testing.T) {
 	ctx := context.Background()
 
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
 	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
 
@@ -322,8 +355,7 @@ func TestCreateSandbox_NoWorkspaceRef_AutoCreatesWorkspace(t *testing.T) {
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.MatchedBy(func(r types.CreateWorkspaceRequest) bool {
 		return r.Runtime == "python:3.10" && r.StorageSize == "10Gi"
 	})).Return(&types.Workspace{ID: "ws-auto-42"}, nil)
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
 	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
 
@@ -344,12 +376,15 @@ func TestCreateSandbox_NoWorkspaceRef_AutoCreatesWorkspace(t *testing.T) {
 
 // TestCreateSandbox_WithWorkspaceRef_UsesExisting verifies that when WorkspaceRef
 // is set, CreateWorkspace is NOT called and the provided workspaceID is used.
+// The non-admin caller must own the referenced workspace (verified via
+// workspaceService.GetWorkspace).
 func TestCreateSandbox_WithWorkspaceRef_UsesExisting(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
+	f.workspace.On("GetWorkspace", ctx, "user1", "ws-existing-99").
+		Return(&types.Workspace{ID: "ws-existing-99", UserID: "user1"}, nil)
 	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
 	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
 
@@ -374,8 +409,7 @@ func TestCreateSandbox_AutoWorkspaceCreateFails_ReturnsError(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1"}, nil)
-	f.db.On("CheckPermission", "user1", "sandbox", "", "create").Return(true, nil)
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
 	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return((*types.Workspace)(nil), errors.New("workspace create failed"))
 
 	req := &types.CreateSandboxRequest{Runtime: "python:3.10", UserID: "user1"}
@@ -522,13 +556,13 @@ func TestTerminateSandbox_NoUserInContext_ReturnsForbidden(t *testing.T) {
 	f.sb.AssertNotCalled(t, "Delete")
 }
 
-func TestTerminateSandbox_NotOwner_NoPermission_ReturnsForbidden(t *testing.T) {
+func TestTerminateSandbox_NotOwner_NotAdmin_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "intruder")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "intruder", "sandbox", "sb-1").Return(false, nil)
-	f.db.On("CheckPermission", "intruder", "sandbox", "sb-1", "delete").Return(false, nil)
+	f.db.On("GetUser", ctx, "intruder").Return(&types.User{ID: "intruder", Active: true, Role: "user"}, nil)
 
 	err := f.svc.TerminateSandbox(ctx, "sb-1")
 	assert.Error(t, err)
@@ -536,18 +570,35 @@ func TestTerminateSandbox_NotOwner_NoPermission_ReturnsForbidden(t *testing.T) {
 	f.sb.AssertNotCalled(t, "Delete")
 }
 
-func TestTerminateSandbox_NotOwner_HasPermission_Succeeds(t *testing.T) {
+func TestTerminateSandbox_NotOwner_AdminRole_Succeeds(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "admin")
 
 	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
 	f.db.On("CheckResourceOwnership", "admin", "sandbox", "sb-1").Return(false, nil)
-	f.db.On("CheckPermission", "admin", "sandbox", "sb-1", "delete").Return(true, nil)
+	f.db.On("GetUser", ctx, "admin").Return(&types.User{ID: "admin", Active: true, Role: "admin"}, nil)
 	f.sb.On("Delete", "sb-1", mock.Anything).Return(nil)
 	f.db.On("DeleteSandbox", ctx, "sb-1").Return(nil)
 	f.metrics.On("RecordSandboxTermination", "python:3.10", "user_requested").Return()
 
 	assert.NoError(t, f.svc.TerminateSandbox(ctx, "sb-1"))
+}
+
+// TestTerminateSandbox_NotOwner_GetUserFails_ReturnsInternal verifies that a
+// failure to load the caller's user record (needed for the role check) is
+// surfaced as an internal error rather than masquerading as forbidden.
+func TestTerminateSandbox_NotOwner_GetUserFails_ReturnsInternal(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "u")
+
+	f.sb.On("Get", "sb-1", mock.Anything).Return(crdSandbox("sb-1", "default", "python:3.10"), nil)
+	f.db.On("CheckResourceOwnership", "u", "sandbox", "sb-1").Return(false, nil)
+	f.db.On("GetUser", ctx, "u").Return((*types.User)(nil), errors.New("db down"))
+
+	err := f.svc.TerminateSandbox(ctx, "sb-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "user_retrieval_failed")
+	f.sb.AssertNotCalled(t, "Delete")
 }
 
 func TestTerminateSandbox_K8sDeleteFails_ReturnsInternal(t *testing.T) {

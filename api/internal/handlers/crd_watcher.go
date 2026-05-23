@@ -14,16 +14,29 @@ import (
 
 type PhaseChangeCallback func(sandbox *v1.Sandbox)
 
+// Watch tuning. The apiserver enforces a max watch lifetime of about 60 minutes
+// (default). We pick a shorter explicit timeout so reconnects happen at
+// predictable intervals; bookmarks keep us in sync with resourceVersion in the
+// meantime so reconnects are O(1).
+const (
+	watchTimeoutSeconds    = 290 // ~5 min, leaves slack under apiserver's 5-10m default
+	watchBackoffInitial    = 2 * time.Second
+	watchBackoffMax        = 30 * time.Second
+	watchBackoffMultiplier = 2
+)
+
 type SandboxWatcher struct {
-	k8sClient      pkginterfaces.KubernetesClient
-	logger         pkginterfaces.LoggerInterface
-	namespace      string
-	onPhaseChange  PhaseChangeCallback
-	stopCh         chan struct{}
-	stopOnce       sync.Once
-	knownPhases    map[string]string
-	knownPhasesMu  sync.RWMutex
-	watchRestartMu sync.Mutex
+	k8sClient            pkginterfaces.KubernetesClient
+	logger               pkginterfaces.LoggerInterface
+	namespace            string
+	onPhaseChange        PhaseChangeCallback
+	stopCh               chan struct{}
+	stopOnce             sync.Once
+	knownPhases          map[string]string
+	knownPhasesMu        sync.RWMutex
+	watchRestartMu       sync.Mutex
+	lastResourceVersion  string
+	lastResourceVersionM sync.Mutex
 }
 
 func NewSandboxWatcher(
@@ -66,7 +79,17 @@ func (w *SandboxWatcher) GetKnownPhase(name string) (string, bool) {
 	return phase, ok
 }
 
+// runWatchLoop drives the Watch lifecycle: List once to seed
+// lastResourceVersion, then loop calling watchOnce() and reconnecting on clean
+// close or error. Backoff is exponential on error and immediate on clean close
+// (apiserver-driven cycling is the common case and not an error).
 func (w *SandboxWatcher) runWatchLoop() {
+	if err := w.seedResourceVersion(); err != nil {
+		w.logger.Warn("Initial List for sandbox watcher failed; will rely on Watch alone",
+			"error", err.Error())
+	}
+
+	backoff := watchBackoffInitial
 	for {
 		select {
 		case <-w.stopCh:
@@ -74,25 +97,61 @@ func (w *SandboxWatcher) runWatchLoop() {
 		default:
 		}
 
-		if err := w.watchOnce(); err != nil {
-			w.logger.Error("Sandbox watch error, restarting", err)
-			select {
-			case <-w.stopCh:
+		cleanClose, err := w.watchOnce()
+		if err != nil {
+			w.logger.Warn("Sandbox watch error; will retry",
+				"error", err.Error(),
+				"backoff", backoff.String())
+			if !sleepCancellable(w.stopCh, backoff) {
 				return
-			case <-time.After(2 * time.Second):
 			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+
+		// Clean close. apiserver cycles long-lived watches roughly every
+		// 5–10 minutes; this is normal. Reconnect immediately and reset
+		// backoff. Log at debug so it doesn't clutter normal operation.
+		if cleanClose {
+			w.logger.Debug("Sandbox watch closed cleanly, reconnecting")
+			backoff = watchBackoffInitial
 		}
 	}
 }
 
-func (w *SandboxWatcher) watchOnce() error {
+// seedResourceVersion does an initial List to populate lastResourceVersion so
+// the first Watch starts from a known position instead of replaying the world.
+// Failures here are non-fatal: a Watch with empty resourceVersion will still
+// work, it will just return an initial Added event for every existing object.
+func (w *SandboxWatcher) seedResourceVersion() error {
+	list, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).List(metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	w.setResourceVersion(list.ResourceVersion)
+	return nil
+}
+
+// watchOnce runs a single Watch session until it ends. Returns (cleanClose,
+// error): cleanClose==true means the channel closed without observing an
+// error event; error!=nil means the Watch couldn't start or an apiserver
+// error event was observed.
+func (w *SandboxWatcher) watchOnce() (bool, error) {
 	w.watchRestartMu.Lock()
 	defer w.watchRestartMu.Unlock()
 
+	timeoutSeconds := int64(watchTimeoutSeconds)
+	allowBookmarks := true
+	opts := metav1.ListOptions{
+		ResourceVersion:     w.getResourceVersion(),
+		TimeoutSeconds:      &timeoutSeconds,
+		AllowWatchBookmarks: allowBookmarks,
+	}
+
 	startedAt := time.Now()
-	watcher, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).Watch(metav1.ListOptions{})
+	watcher, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).Watch(opts)
 	if err != nil {
-		return fmt.Errorf("starting sandbox watch: %w", err)
+		return false, fmt.Errorf("starting sandbox watch: %w", err)
 	}
 	defer watcher.Stop()
 
@@ -100,29 +159,51 @@ func (w *SandboxWatcher) watchOnce() error {
 	for {
 		select {
 		case <-w.stopCh:
-			return nil
+			return true, nil
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				// Diagnostic: log how long the watch lived and how many
-				// events arrived. A watch that closes immediately with 0
-				// events typically means the apiserver returned an HTTP
-				// error (e.g. 410 Gone, 405 Method Not Allowed) or the
-				// decoder rejected the first object.
-				w.logger.Warn("watch channel closed",
+				w.logger.Debug("Sandbox watch channel closed",
 					"livedFor", time.Since(startedAt).String(),
-					"eventCount", eventCount)
-				return fmt.Errorf("watch channel closed")
+					"eventCount", eventCount,
+					"resourceVersion", w.getResourceVersion())
+				return true, nil
 			}
 			eventCount++
+
+			if event.Type == watch.Error {
+				// apiserver returned an error event (often Status with code
+				// 410 Gone — resource version too old). Drop the cached
+				// version so the next Watch re-Lists from current state.
+				status, _ := event.Object.(*metav1.Status)
+				w.handleWatchError(status)
+				if status != nil && status.Code == 410 {
+					w.setResourceVersion("")
+				}
+				return false, fmt.Errorf("watch error event: %s", statusMessage(status))
+			}
+
 			w.handleEvent(event)
 		}
 	}
 }
 
+// handleEvent updates phase tracking. Bookmark events carry only
+// resourceVersion; we record it and otherwise skip them.
 func (w *SandboxWatcher) handleEvent(event watch.Event) {
+	if event.Type == watch.Bookmark {
+		if obj, ok := event.Object.(*v1.Sandbox); ok && obj.ResourceVersion != "" {
+			w.setResourceVersion(obj.ResourceVersion)
+		}
+		return
+	}
+
 	sandbox, ok := event.Object.(*v1.Sandbox)
 	if !ok {
 		return
+	}
+
+	if sandbox.ResourceVersion != "" {
+		w.setResourceVersion(sandbox.ResourceVersion)
 	}
 
 	name := sandbox.Name
@@ -135,5 +216,56 @@ func (w *SandboxWatcher) handleEvent(event watch.Event) {
 
 	if existed && oldPhase != newPhase {
 		w.onPhaseChange(sandbox)
+	}
+}
+
+func (w *SandboxWatcher) handleWatchError(status *metav1.Status) {
+	if status == nil {
+		w.logger.Warn("Sandbox watch returned error event with nil status")
+		return
+	}
+	w.logger.Warn("Sandbox watch returned error event",
+		"reason", string(status.Reason),
+		"message", status.Message,
+		"code", status.Code)
+}
+
+func (w *SandboxWatcher) getResourceVersion() string {
+	w.lastResourceVersionM.Lock()
+	defer w.lastResourceVersionM.Unlock()
+	return w.lastResourceVersion
+}
+
+func (w *SandboxWatcher) setResourceVersion(rv string) {
+	w.lastResourceVersionM.Lock()
+	defer w.lastResourceVersionM.Unlock()
+	w.lastResourceVersion = rv
+}
+
+func statusMessage(s *metav1.Status) string {
+	if s == nil {
+		return "<nil status>"
+	}
+	return s.Message
+}
+
+func nextBackoff(current time.Duration) time.Duration {
+	next := current * watchBackoffMultiplier
+	if next > watchBackoffMax {
+		return watchBackoffMax
+	}
+	return next
+}
+
+// sleepCancellable sleeps for d or until stopCh closes. Returns true if the
+// full duration elapsed, false if stopCh closed first.
+func sleepCancellable(stopCh <-chan struct{}, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-stopCh:
+		return false
+	case <-timer.C:
+		return true
 	}
 }
