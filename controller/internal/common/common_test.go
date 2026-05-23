@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -129,8 +129,8 @@ func TestIsConditionTrue_Missing(t *testing.T) {
 
 // minimalObject is a minimal client.Object for testing finalizer operations.
 // Using a real Sandbox CRD object avoids the need for a full fake client.
-func makeSandbox() *resources.Sandbox {
-	return &resources.Sandbox{
+func makeSandbox() *v1.Sandbox {
+	return &v1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-sandbox",
 			Namespace: "default",
@@ -252,7 +252,7 @@ func TestGenerateRandomString_NotEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestConvertToMetaV1Condition_FieldMapping(t *testing.T) {
-	sc := resources.SandboxCondition{
+	sc := v1.SandboxCondition{
 		Type:    "Ready",
 		Status:  "True",
 		Reason:  "PodRunning",
@@ -286,7 +286,7 @@ func TestConvertFromMetaV1Condition_FieldMapping(t *testing.T) {
 }
 
 func TestConvertRoundTrip(t *testing.T) {
-	original := resources.SandboxCondition{
+	original := v1.SandboxCondition{
 		Type:    "Ready",
 		Status:  "False",
 		Reason:  "PodNotRunning",
@@ -313,7 +313,7 @@ func TestConvertFromMetaV1ConditionArray_Empty(t *testing.T) {
 }
 
 func TestConvertToMetaV1ConditionArray_Multiple(t *testing.T) {
-	in := []resources.SandboxCondition{
+	in := []v1.SandboxCondition{
 		{Type: "A", Status: "True"},
 		{Type: "B", Status: "False"},
 	}
@@ -328,7 +328,7 @@ func TestConvertToMetaV1ConditionArray_Multiple(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSetSandboxCondition_AddsNew(t *testing.T) {
-	conditions := []resources.SandboxCondition{}
+	conditions := []v1.SandboxCondition{}
 	SetSandboxCondition(&conditions, "Ready", "True", "PodReady", "pod is running")
 
 	require.Len(t, conditions, 1)
@@ -337,7 +337,7 @@ func TestSetSandboxCondition_AddsNew(t *testing.T) {
 }
 
 func TestSetSandboxCondition_UpdatesExisting(t *testing.T) {
-	conditions := []resources.SandboxCondition{
+	conditions := []v1.SandboxCondition{
 		{Type: "Ready", Status: "False", Reason: "Init", Message: "initializing"},
 	}
 	SetSandboxCondition(&conditions, "Ready", "True", "PodReady", "pod is running")

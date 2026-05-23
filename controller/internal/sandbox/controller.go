@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // sanitizeLabelValue replaces characters that Kubernetes does not accept in
@@ -48,11 +48,11 @@ func sanitizeLabelValue(v string) string {
 // Returns false on lookup error or if WorkspaceRef is empty — degrades to
 // the original Failed-on-pod-loss behavior, which is the conservative
 // choice for unparented sandboxes.
-func (r *SandboxReconciler) parentWorkspaceIsSuspending(ctx context.Context, sandbox *resources.Sandbox) bool {
+func (r *SandboxReconciler) parentWorkspaceIsSuspending(ctx context.Context, sandbox *v1.Sandbox) bool {
 	if sandbox.Spec.WorkspaceRef == "" {
 		return false
 	}
-	ws := &resources.Workspace{}
+	ws := &v1.Workspace{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name:      sandbox.Spec.WorkspaceRef,
 		Namespace: sandbox.Namespace,
@@ -60,7 +60,7 @@ func (r *SandboxReconciler) parentWorkspaceIsSuspending(ctx context.Context, san
 		return false
 	}
 	switch ws.Status.Phase {
-	case resources.WorkspacePhaseSuspending, resources.WorkspacePhaseSuspended:
+	case v1.WorkspacePhaseSuspending, v1.WorkspacePhaseSuspended:
 		return true
 	}
 	return false
@@ -77,7 +77,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	logger := log.FromContext(ctx).WithValues("sandbox", req.NamespacedName)
 	logger.Info("Reconciling Sandbox")
 
-	sandbox := &resources.Sandbox{}
+	sandbox := &v1.Sandbox{}
 	err := r.Get(ctx, req.NamespacedName, sandbox)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -139,7 +139,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 }
 
-func (r *SandboxReconciler) handlePendingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handlePendingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling pending sandbox")
 
@@ -152,7 +152,7 @@ func (r *SandboxReconciler) handlePendingSandbox(ctx context.Context, sandbox *r
 	return r.createSandboxPod(ctx, sandbox)
 }
 
-func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling creating sandbox")
 
@@ -178,7 +178,7 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 		sandbox.Status.PodIP = pod.Status.PodIP
 		sandbox.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", pod.Name, pod.Namespace)
 
-		conditions := []resources.SandboxCondition{}
+		conditions := []v1.SandboxCondition{}
 		common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "True", common.ReasonPodRunning, "Pod is running")
 		common.SetSandboxCondition(&conditions, common.ConditionReady, "True", common.ReasonPodRunning, "Sandbox is ready")
 		sandbox.Status.Conditions = conditions
@@ -196,7 +196,7 @@ func (r *SandboxReconciler) handleCreatingSandbox(ctx context.Context, sandbox *
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling running sandbox")
 
@@ -289,7 +289,7 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *r
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling suspending sandbox")
 
@@ -319,7 +319,7 @@ func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox
 	return ctrl.Result{}, nil
 }
 
-func (r *SandboxReconciler) handleResumingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleResumingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling resuming sandbox")
 
@@ -332,7 +332,7 @@ func (r *SandboxReconciler) handleResumingSandbox(ctx context.Context, sandbox *
 	return r.createSandboxPod(ctx, sandbox)
 }
 
-func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling terminating sandbox")
 
@@ -379,7 +379,7 @@ func (r *SandboxReconciler) handleTerminatingSandbox(ctx context.Context, sandbo
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling sandbox deletion")
 
@@ -424,7 +424,7 @@ func (r *SandboxReconciler) handleDeletion(ctx context.Context, sandbox *resourc
 	return ctrl.Result{}, nil
 }
 
-func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resources.Sandbox) (ctrl.Result, error) {
+func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Creating new pod for sandbox")
 
@@ -452,7 +452,7 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 	sandbox.Status.PodName = pod.Name
 	sandbox.Status.PodNamespace = pod.Namespace
 
-	conditions := []resources.SandboxCondition{}
+	conditions := []v1.SandboxCondition{}
 	common.SetSandboxCondition(&conditions, common.ConditionPodCreated, "True", common.ReasonPodCreated, "Pod created successfully")
 	sandbox.Status.Conditions = conditions
 
@@ -465,7 +465,7 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *resou
 }
 
 // ensurePasswordSecret creates the sandbox password secret if it does not exist.
-func (r *SandboxReconciler) ensurePasswordSecret(ctx context.Context, sandbox *resources.Sandbox) error {
+func (r *SandboxReconciler) ensurePasswordSecret(ctx context.Context, sandbox *v1.Sandbox) error {
 	secretName := fmt.Sprintf("sandbox-pw-%s", sandbox.Name)
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: sandbox.Namespace}, secret)
@@ -493,7 +493,7 @@ func (r *SandboxReconciler) ensurePasswordSecret(ctx context.Context, sandbox *r
 }
 
 // buildSandboxPodWithContext builds a sandbox pod, looking up workspace details if needed.
-func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sandbox *resources.Sandbox) (*corev1.Pod, error) {
+func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sandbox *v1.Sandbox) (*corev1.Pod, error) {
 	podName := fmt.Sprintf("%s-%s", sandbox.Name, sandbox.UID[0:8])
 
 	labels := map[string]string{
@@ -569,7 +569,7 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 	var initContainers []corev1.Container
 
 	if sandbox.Spec.WorkspaceRef != "" {
-		ws := &resources.Workspace{}
+		ws := &v1.Workspace{}
 		if err := r.Get(ctx, client.ObjectKey{Name: sandbox.Spec.WorkspaceRef, Namespace: sandbox.Namespace}, ws); err != nil {
 			return nil, fmt.Errorf("failed to get workspace %s: %w", sandbox.Spec.WorkspaceRef, err)
 		}
@@ -637,7 +637,7 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 //
 // Defaults match the runtime-base Dockerfile's `useradd -u 1000 sandbox`.
 // The Sandbox CRD's securityContext.runAsUser/runAsGroup override these.
-func buildPodSecurityContext(sandbox *resources.Sandbox) *corev1.PodSecurityContext {
+func buildPodSecurityContext(sandbox *v1.Sandbox) *corev1.PodSecurityContext {
 	runAsUser := int64(1000)
 	runAsGroup := int64(1000)
 	if sc := sandbox.Spec.SecurityContext; sc != nil {
@@ -658,7 +658,7 @@ func buildPodSecurityContext(sandbox *resources.Sandbox) *corev1.PodSecurityCont
 // buildCredentialSetupInit builds the credential-setup init container and the
 // pw-secret projected volume it needs. Returns the container, the pw-secret volume,
 // and an optional cred-secret volume (non-nil only when workspace credentials exist).
-func (r *SandboxReconciler) buildCredentialSetupInit(ctx context.Context, sandbox *resources.Sandbox, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
+func (r *SandboxReconciler) buildCredentialSetupInit(ctx context.Context, sandbox *v1.Sandbox, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
 	credScript := `
 if [ -f /mnt/secrets/credentials/provider-config ]; then
   cp /mnt/secrets/credentials/provider-config /sandbox-cfg/credentials
@@ -731,7 +731,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 
 // buildWorkspaceSetupInit builds the workspace-setup init container that installs
 // packages and/or runs the initScript before the main container starts.
-func (r *SandboxReconciler) buildWorkspaceSetupInit(ws *resources.Workspace, runtimeImage string) corev1.Container {
+func (r *SandboxReconciler) buildWorkspaceSetupInit(ws *v1.Workspace, runtimeImage string) corev1.Container {
 	trueVal := true
 	falseVal := false
 
@@ -753,7 +753,7 @@ func (r *SandboxReconciler) buildWorkspaceSetupInit(ws *resources.Workspace, run
 }
 
 // buildWorkspaceSetupScript constructs the shell script for the workspace-setup init container.
-func buildWorkspaceSetupScript(ws *resources.Workspace) string {
+func buildWorkspaceSetupScript(ws *v1.Workspace) string {
 	script := "#!/bin/sh\nset -e\nmkdir -p /workspace/packages\n"
 
 	for _, pkgSet := range ws.Spec.Packages {
@@ -791,7 +791,7 @@ func buildWorkspaceSetupScript(ws *resources.Workspace) string {
 // SetupWithManager sets up the controller with the Manager
 func (r *SandboxReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&resources.Sandbox{}).
+		For(&v1.Sandbox{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)

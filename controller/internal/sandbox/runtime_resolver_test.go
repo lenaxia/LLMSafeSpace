@@ -9,13 +9,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
-func newRE(name, lang, version, image string) *resources.RuntimeEnvironment {
-	return &resources.RuntimeEnvironment{
+func newRE(name, lang, version, image string) *v1.RuntimeEnvironment {
+	return &v1.RuntimeEnvironment{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: resources.RuntimeEnvironmentSpec{
+		Spec: v1.RuntimeEnvironmentSpec{
 			Language: lang,
 			Version:  version,
 			Image:    image,

@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ import (
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, resources.AddToScheme(scheme))
+	require.NoError(t, v1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	return scheme
 }
@@ -39,7 +39,7 @@ func reconcilerFor(t *testing.T, objs ...runtime.Object) *WorkspaceReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&resources.Workspace{}, &resources.Sandbox{}).
+		WithStatusSubresource(&v1.Workspace{}, &v1.Sandbox{}).
 		Build()
 	return &WorkspaceReconciler{
 		Client: fakeClient,
@@ -51,21 +51,21 @@ func reqFor(name, namespace string) ctrl.Request {
 	return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}}
 }
 
-func makeWorkspace(name, namespace string, phase resources.WorkspacePhase) *resources.Workspace {
-	return &resources.Workspace{
+func makeWorkspace(name, namespace string, phase v1.WorkspacePhase) *v1.Workspace {
+	return &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       "aaaabbbb-cccc-dddd-eeee-ffffgggghhhh",
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner: resources.WorkspaceOwner{UserID: "user-1"},
-			Storage: resources.WorkspaceStorageConfig{
+		Spec: v1.WorkspaceSpec{
+			Owner: v1.WorkspaceOwner{UserID: "user-1"},
+			Storage: v1.WorkspaceStorageConfig{
 				Size:       "5Gi",
 				AccessMode: "ReadWriteOnce",
 			},
 		},
-		Status: resources.WorkspaceStatus{
+		Status: v1.WorkspaceStatus{
 			Phase: phase,
 		},
 	}
@@ -95,8 +95,8 @@ func makeBoundPVC(name, namespace string) *corev1.PersistentVolumeClaim {
 	return pvc
 }
 
-func makeSandboxForWorkspace(sbName, wsName, namespace string) *resources.Sandbox {
-	return &resources.Sandbox{
+func makeSandboxForWorkspace(sbName, wsName, namespace string) *v1.Sandbox {
+	return &v1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sbName,
 			Namespace: namespace,
@@ -104,10 +104,10 @@ func makeSandboxForWorkspace(sbName, wsName, namespace string) *resources.Sandbo
 				"llmsafespace.dev/workspace": wsName,
 			},
 		},
-		Spec: resources.SandboxSpec{
+		Spec: v1.SandboxSpec{
 			Runtime: "python:3.11",
 		},
-		Status: resources.SandboxStatus{
+		Status: v1.SandboxStatus{
 			Phase: "Running",
 		},
 	}
@@ -146,7 +146,7 @@ func TestReconcile_ObjectNotFound_ReturnsNoError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Pending_CreatesVolumeAndTransitionsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-pending", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-pending", "default", v1.WorkspacePhasePending)
 	r := reconcilerFor(t, ws)
 
 	result, err := r.Reconcile(context.Background(), reqFor("ws-pending", "default"))
@@ -156,14 +156,14 @@ func TestReconcile_Pending_CreatesVolumeAndTransitionsToActive(t *testing.T) {
 	assert.Equal(t, 5*time.Second, result.RequeueAfter)
 
 	// Fetch updated workspace
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pending", Namespace: "default"}, updated))
 
 	// Finalizer must have been added
 	assert.Contains(t, updated.Finalizers, WorkspaceFinalizer)
 
 	// Phase must still be Pending (PVC exists but not yet Bound)
-	assert.Equal(t, resources.WorkspacePhasePending, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhasePending, updated.Status.Phase)
 
 	// PVCName must be set
 	expectedPVCName := fmt.Sprintf("workspace-%s", ws.Name)
@@ -196,10 +196,10 @@ func TestReconcile_EmptyPhase_CreatesVolumeAndTransitionsToActive(t *testing.T) 
 	// First reconcile: PVC just created, not yet Bound — requeue to check binding
 	assert.Equal(t, 5*time.Second, result.RequeueAfter)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-empty", Namespace: "default"}, updated))
 	// Phase must still be Pending (or empty — the PVC was not bound yet)
-	assert.NotEqual(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.NotEqual(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ func TestReconcile_EmptyPhase_CreatesVolumeAndTransitionsToActive(t *testing.T) 
 // ---------------------------------------------------------------------------
 
 func TestReconcile_PendingAlreadyHasPVC_IdempotentNoError(t *testing.T) {
-	ws := makeWorkspace("ws-idempotent", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-idempotent", "default", v1.WorkspacePhasePending)
 	existingPVC := makeBoundPVC(fmt.Sprintf("workspace-%s", ws.Name), "default")
 
 	r := reconcilerFor(t, ws, existingPVC)
@@ -217,9 +217,9 @@ func TestReconcile_PendingAlreadyHasPVC_IdempotentNoError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-idempotent", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ func TestReconcile_PendingAlreadyHasPVC_IdempotentNoError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Active_NoAutoSuspend_UpdatesSessionsNoRequeue(t *testing.T) {
-	ws := makeWorkspace("ws-active", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-active", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-active"
 	// No autoSuspend set (nil)
@@ -242,7 +242,7 @@ func TestReconcile_Active_NoAutoSuspend_UpdatesSessionsNoRequeue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-active", Namespace: "default"}, updated))
 	assert.Equal(t, int32(2), updated.Status.ActiveSessions)
 }
@@ -252,10 +252,10 @@ func TestReconcile_Active_NoAutoSuspend_UpdatesSessionsNoRequeue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Active_AutoSuspend_NotIdle_RequeuedAfterCalculatedDuration(t *testing.T) {
-	ws := makeWorkspace("ws-not-idle", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-not-idle", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-not-idle"
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600, // 1 hour
 	}
@@ -272,9 +272,9 @@ func TestReconcile_Active_AutoSuspend_NotIdle_RequeuedAfterCalculatedDuration(t 
 	assert.True(t, result.RequeueAfter > 0, "expected a positive RequeueAfter duration")
 
 	// The phase should still be Active
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-not-idle", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -282,10 +282,10 @@ func TestReconcile_Active_AutoSuspend_NotIdle_RequeuedAfterCalculatedDuration(t 
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Active_AutoSuspend_IdleExceeded_TransitionsToSuspending(t *testing.T) {
-	ws := makeWorkspace("ws-idle", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-idle", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-idle"
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600, // 1 hour
 	}
@@ -300,17 +300,17 @@ func TestReconcile_Active_AutoSuspend_IdleExceeded_TransitionsToSuspending(t *te
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-idle", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspending, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspending, updated.Status.Phase)
 }
 
 // Test 6b: Active, auto-suspend enabled, lastActivityAt is nil → transitions to Suspending
 func TestReconcile_Active_AutoSuspend_NilLastActivity_TransitionsToSuspending(t *testing.T) {
-	ws := makeWorkspace("ws-nil-activity", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-nil-activity", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-nil-activity"
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600,
 	}
@@ -323,9 +323,9 @@ func TestReconcile_Active_AutoSuspend_NilLastActivity_TransitionsToSuspending(t 
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-nil-activity", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspending, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspending, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +333,7 @@ func TestReconcile_Active_AutoSuspend_NilLastActivity_TransitionsToSuspending(t 
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspending_NoPods_TransitionsToSuspended(t *testing.T) {
-	ws := makeWorkspace("ws-suspending", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-suspending", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspending"
 	// Activity long ago so no race condition
@@ -347,13 +347,13 @@ func TestReconcile_Suspending_NoPods_TransitionsToSuspended(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspending", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase)
 }
 
 func TestReconcile_Suspending_WithPods_DeletesPodsAndTransitionsToSuspended(t *testing.T) {
-	ws := makeWorkspace("ws-suspending-pods", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-suspending-pods", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspending-pods"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -369,9 +369,9 @@ func TestReconcile_Suspending_WithPods_DeletesPodsAndTransitionsToSuspended(t *t
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspending-pods", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase)
 
 	// Pods should be deleted
 	podList := &corev1.PodList{}
@@ -387,13 +387,13 @@ func TestReconcile_Suspending_WithPods_DeletesPodsAndTransitionsToSuspended(t *t
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspending_RaceCondition_RecentActivity_TransitionsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-race", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-race", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-race"
 	// Very recent activity — this is the race condition
 	justNow := metav1.NewTime(time.Now().Add(-5 * time.Second))
 	ws.Status.LastActivityAt = &justNow
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600,
 	}
@@ -406,9 +406,9 @@ func TestReconcile_Suspending_RaceCondition_RecentActivity_TransitionsToActive(t
 	// Should requeue because it went back to Active
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-race", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ func TestReconcile_Suspending_RaceCondition_RecentActivity_TransitionsToActive(t
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspended_NoTTL_NoActionNoRequeue(t *testing.T) {
-	ws := makeWorkspace("ws-suspended-nttl", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-suspended-nttl", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspended-nttl"
 	// TTLSecondsAfterSuspended == 0 (default)
@@ -429,9 +429,9 @@ func TestReconcile_Suspended_NoTTL_NoActionNoRequeue(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	// Phase stays Suspended
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspended-nttl", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +439,7 @@ func TestReconcile_Suspended_NoTTL_NoActionNoRequeue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspended_TTLExpired_TransitionsToTerminating(t *testing.T) {
-	ws := makeWorkspace("ws-suspended-ttl", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-suspended-ttl", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspended-ttl"
 	ws.Spec.TTLSecondsAfterSuspended = 3600 // 1 hour
@@ -455,9 +455,9 @@ func TestReconcile_Suspended_TTLExpired_TransitionsToTerminating(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspended-ttl", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseTerminating, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseTerminating, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +465,7 @@ func TestReconcile_Suspended_TTLExpired_TransitionsToTerminating(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspended_TTLNotExpired_RequeuesAfterRemainingTime(t *testing.T) {
-	ws := makeWorkspace("ws-suspended-wait", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-suspended-wait", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspended-wait"
 	ws.Spec.TTLSecondsAfterSuspended = 3600 // 1 hour
@@ -482,9 +482,9 @@ func TestReconcile_Suspended_TTLNotExpired_RequeuesAfterRemainingTime(t *testing
 	assert.True(t, result.RequeueAfter > 0, "expected a positive RequeueAfter for remaining TTL")
 
 	// Phase stays Suspended
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspended-wait", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +492,7 @@ func TestReconcile_Suspended_TTLNotExpired_RequeuesAfterRemainingTime(t *testing
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Terminating_DeletesPVCAndRemovesFinalizer(t *testing.T) {
-	ws := makeWorkspace("ws-terminating", "default", resources.WorkspacePhaseTerminating)
+	ws := makeWorkspace("ws-terminating", "default", v1.WorkspacePhaseTerminating)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-terminating"
 
@@ -512,16 +512,16 @@ func TestReconcile_Terminating_DeletesPVCAndRemovesFinalizer(t *testing.T) {
 	assert.True(t, k8serrors.IsNotFound(err), "PVC should be deleted")
 
 	// Sandbox CRDs should be deleted
-	sbCheck := &resources.Sandbox{}
+	sbCheck := &v1.Sandbox{}
 	err = r.Get(context.Background(), types.NamespacedName{Name: "sb-term", Namespace: "default"}, sbCheck)
 	assert.True(t, k8serrors.IsNotFound(err), "Sandbox CRD should be deleted")
 
 	// Workspace should have finalizer removed and phase Terminated
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "ws-terminating", Namespace: "default"}, updated)
 	if fetchErr == nil {
 		assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
-		assert.Equal(t, resources.WorkspacePhaseTerminated, updated.Status.Phase)
+		assert.Equal(t, v1.WorkspacePhaseTerminated, updated.Status.Phase)
 	} else {
 		assert.True(t, k8serrors.IsNotFound(fetchErr))
 	}
@@ -533,7 +533,7 @@ func TestReconcile_Terminating_DeletesPVCAndRemovesFinalizer(t *testing.T) {
 
 func TestReconcile_DeletionTimestamp_CleansUpAllResourcesAndRemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
-	ws := makeWorkspace("ws-deleting", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-deleting", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-deleting"
 	ws.DeletionTimestamp = &now
@@ -556,13 +556,13 @@ func TestReconcile_DeletionTimestamp_CleansUpAllResourcesAndRemovesFinalizer(t *
 
 	// Sandbox CRDs should be deleted
 	for _, sbName := range []string{"sb-del-1", "sb-del-2"} {
-		sbCheck := &resources.Sandbox{}
+		sbCheck := &v1.Sandbox{}
 		err = r.Get(context.Background(), types.NamespacedName{Name: sbName, Namespace: "default"}, sbCheck)
 		assert.True(t, k8serrors.IsNotFound(err), fmt.Sprintf("Sandbox %s should be deleted", sbName))
 	}
 
 	// Finalizer should be removed
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "ws-deleting", Namespace: "default"}, updated)
 	if fetchErr == nil {
 		assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
@@ -576,7 +576,7 @@ func TestReconcile_DeletionTimestamp_CleansUpAllResourcesAndRemovesFinalizer(t *
 // ---------------------------------------------------------------------------
 
 func TestReconcile_FailedPhase_NoRequeueNoError(t *testing.T) {
-	ws := makeWorkspace("ws-failed", "default", resources.WorkspacePhaseFailed)
+	ws := makeWorkspace("ws-failed", "default", v1.WorkspacePhaseFailed)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 
 	r := reconcilerFor(t, ws)
@@ -608,7 +608,7 @@ func TestReconcile_UnknownPhase_NoRequeue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Resuming_AllSandboxesRunning_TransitionsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-resuming", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-resuming", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-resuming"
 
@@ -622,13 +622,13 @@ func TestReconcile_Resuming_AllSandboxesRunning_TransitionsToActive(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-resuming", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 func TestReconcile_Resuming_SandboxesNotRunning_RequeuesAfter5s(t *testing.T) {
-	ws := makeWorkspace("ws-resuming-wait", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-resuming-wait", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-resuming-wait"
 
@@ -648,7 +648,7 @@ func TestReconcile_Resuming_SandboxesNotRunning_RequeuesAfter5s(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Pending_CustomStorageClass_SetsPVCStorageClass(t *testing.T) {
-	ws := makeWorkspace("ws-custom-sc", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-custom-sc", "default", v1.WorkspacePhasePending)
 	ws.Spec.Storage.StorageClassName = "fast-ssd"
 
 	r := reconcilerFor(t, ws)
@@ -671,7 +671,7 @@ func TestReconcile_Pending_CustomStorageClass_SetsPVCStorageClass(t *testing.T) 
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Pending_EmptyStorageClass_DoesNotSetPVCStorageClass(t *testing.T) {
-	ws := makeWorkspace("ws-no-sc", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-no-sc", "default", v1.WorkspacePhasePending)
 	// StorageClassName is empty string (default)
 
 	r := reconcilerFor(t, ws)
@@ -693,7 +693,7 @@ func TestReconcile_Pending_EmptyStorageClass_DoesNotSetPVCStorageClass(t *testin
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Terminating_PVCAlreadyGone_NoError(t *testing.T) {
-	ws := makeWorkspace("ws-term-no-pvc", "default", resources.WorkspacePhaseTerminating)
+	ws := makeWorkspace("ws-term-no-pvc", "default", v1.WorkspacePhaseTerminating)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-term-no-pvc"
 	// No PVC in store — should be best-effort
@@ -711,7 +711,7 @@ func TestReconcile_Terminating_PVCAlreadyGone_NoError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Suspending_UpdatesSandboxCRDsToSuspended(t *testing.T) {
-	ws := makeWorkspace("ws-suspending-sb", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-suspending-sb", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-suspending-sb"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -728,12 +728,12 @@ func TestReconcile_Suspending_UpdatesSandboxCRDsToSuspended(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	// Workspace should be Suspended
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspending-sb", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updatedWS.Status.Phase)
 
 	// Sandbox CRD status.Phase should be Suspended
-	updatedSB := &resources.Sandbox{}
+	updatedSB := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-to-suspend", Namespace: "default"}, updatedSB))
 	assert.Equal(t, common.SandboxPhaseSuspended, updatedSB.Status.Phase)
 }
@@ -743,7 +743,7 @@ func TestReconcile_Suspending_UpdatesSandboxCRDsToSuspended(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Pending_PVCBound_TransitionsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-pvc-bound", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-pvc-bound", "default", v1.WorkspacePhasePending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	existingPVC := makeBoundPVC("workspace-ws-pvc-bound", "default")
 
@@ -754,14 +754,14 @@ func TestReconcile_Pending_PVCBound_TransitionsToActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pvc-bound", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // MAJOR-2: Pending PVC unbound, within 5-minute timeout → requeue 30s
 func TestReconcile_Pending_PVCUnbound_WithinTimeout_Requeues(t *testing.T) {
-	ws := makeWorkspace("ws-pvc-unbound", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-pvc-unbound", "default", v1.WorkspacePhasePending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	// CreationTimestamp defaults to zero; the timeout check uses IsZero guard, so
 	// set a recent creation time explicitly.
@@ -776,14 +776,14 @@ func TestReconcile_Pending_PVCUnbound_WithinTimeout_Requeues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 30*time.Second, result.RequeueAfter)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pvc-unbound", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhasePending, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhasePending, updated.Status.Phase)
 }
 
 // MAJOR-2: Pending PVC unbound, past 5-minute timeout → transitions to Failed
 func TestReconcile_Pending_PVCUnbound_TimedOut_TransitionsToFailed(t *testing.T) {
-	ws := makeWorkspace("ws-pvc-timeout", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-pvc-timeout", "default", v1.WorkspacePhasePending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	existingPVC := makePVC("workspace-ws-pvc-timeout", "default")
@@ -796,9 +796,9 @@ func TestReconcile_Pending_PVCUnbound_TimedOut_TransitionsToFailed(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pvc-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
 	assert.Equal(t, "PVC not bound after 5 minutes", updated.Status.Message)
 }
 
@@ -807,9 +807,9 @@ func TestReconcile_Pending_PVCUnbound_TimedOut_TransitionsToFailed(t *testing.T)
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Active_AutoSuspend_RequeueAt80PercentOfIdleTimeout(t *testing.T) {
-	ws := makeWorkspace("ws-requeue-formula", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-requeue-formula", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 1000,
 	}
@@ -828,9 +828,9 @@ func TestReconcile_Active_AutoSuspend_RequeueAt80PercentOfIdleTimeout(t *testing
 	assert.True(t, result.RequeueAfter >= 695*time.Second && result.RequeueAfter <= 705*time.Second,
 		"expected requeueAfter near 700s, got %v", result.RequeueAfter)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-requeue-formula", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -838,7 +838,7 @@ func TestReconcile_Active_AutoSuspend_RequeueAt80PercentOfIdleTimeout(t *testing
 // ---------------------------------------------------------------------------
 
 func TestReconcile_Resuming_NoSandboxes_TransitionsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-resuming-empty", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-resuming-empty", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-resuming-empty"
 	// No sandboxes registered for this workspace
@@ -850,9 +850,9 @@ func TestReconcile_Resuming_NoSandboxes_TransitionsToActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-resuming-empty", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
 }
 
 // ===========================================================================
@@ -860,7 +860,7 @@ func TestReconcile_Resuming_NoSandboxes_TransitionsToActive(t *testing.T) {
 // ===========================================================================
 
 func TestE2E_SuspendWorkspace_SetsSandboxCRDsToSuspended(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-suspend", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-e2e-suspend", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-suspend"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -875,18 +875,18 @@ func TestE2E_SuspendWorkspace_SetsSandboxCRDsToSuspended(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-suspend", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updatedWS.Status.Phase)
 	assert.NotNil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be set")
 
-	updatedSB := &resources.Sandbox{}
+	updatedSB := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-1", Namespace: "default"}, updatedSB))
 	assert.Equal(t, common.SandboxPhaseSuspended, updatedSB.Status.Phase)
 }
 
 func TestE2E_ResumeWorkspace_TransitionsSuspendedSandboxesToResuming(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-resume", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-e2e-resume", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-resume"
 
@@ -899,14 +899,14 @@ func TestE2E_ResumeWorkspace_TransitionsSuspendedSandboxesToResuming(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, 5*time.Second, result.RequeueAfter)
 
-	updatedSB := &resources.Sandbox{}
+	updatedSB := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-2", Namespace: "default"}, updatedSB))
 	assert.Equal(t, common.SandboxPhaseResuming, updatedSB.Status.Phase,
 		"sandbox must be transitioned from Suspended to Resuming so sandbox reconciler recreates pod")
 }
 
 func TestE2E_ResumeAllRunning_TransitionsToActiveAndClearsSuspendedAt(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-active", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-e2e-active", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-active"
 	suspendedAt := metav1.NewTime(time.Now().Add(-1 * time.Hour))
@@ -921,14 +921,14 @@ func TestE2E_ResumeAllRunning_TransitionsToActiveAndClearsSuspendedAt(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-active", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updatedWS.Status.Phase)
 	assert.Nil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be cleared on resume to Active")
 }
 
 func TestE2E_TTLAfterSuspended_UsesSuspendedAt(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-ttl", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-e2e-ttl", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-ttl"
 	ws.Spec.TTLSecondsAfterSuspended = 3600
@@ -946,13 +946,13 @@ func TestE2E_TTLAfterSuspended_UsesSuspendedAt(t *testing.T) {
 	assert.True(t, result.RequeueAfter > 0, "should requeue because TTL not expired (suspended 30m ago, TTL=1h)")
 	assert.True(t, result.RequeueAfter > 25*time.Minute, "should have ~30m remaining TTL")
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-ttl", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updatedWS.Status.Phase)
 }
 
 func TestE2E_TTLAfterSuspended_SuspendedAtExpired_TransitionsToTerminating(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-ttl-exp", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-e2e-ttl-exp", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-ttl-exp"
 	ws.Spec.TTLSecondsAfterSuspended = 60
@@ -969,14 +969,14 @@ func TestE2E_TTLAfterSuspended_SuspendedAtExpired_TransitionsToTerminating(t *te
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-ttl-exp", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseTerminating, updatedWS.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseTerminating, updatedWS.Status.Phase,
 		"TTL must be calculated from SuspendedAt, not LastActivityAt — lastActivity was 5m ago but suspended 2h ago")
 }
 
 func TestE2E_SuspendWorkspace_SetsSuspendedAtTimestamp(t *testing.T) {
-	ws := makeWorkspace("ws-e2e-timestamp", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-e2e-timestamp", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-e2e-timestamp"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -989,9 +989,9 @@ func TestE2E_SuspendWorkspace_SetsSuspendedAtTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-e2e-timestamp", Namespace: "default"}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updatedWS.Status.Phase)
 	require.NotNil(t, updatedWS.Status.SuspendedAt, "SuspendedAt must be set on transition to Suspended")
 	assert.WithinDuration(t, time.Now(), updatedWS.Status.SuspendedAt.Time, 5*time.Second,
 		"SuspendedAt should be approximately now")
@@ -1005,7 +1005,7 @@ func TestE2E_FullFlow_SuspendResumeCycle(t *testing.T) {
 	ns := "default"
 	wsName := "ws-flow"
 
-	ws := makeWorkspace(wsName, ns, resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace(wsName, ns, v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-flow"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -1021,18 +1021,18 @@ func TestE2E_FullFlow_SuspendResumeCycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updatedWS.Status.Phase)
 	require.NotNil(t, updatedWS.Status.SuspendedAt)
 
-	updatedSB := &resources.Sandbox{}
+	updatedSB := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-flow", Namespace: ns}, updatedSB))
 	assert.Equal(t, common.SandboxPhaseSuspended, updatedSB.Status.Phase)
 
 	// Step 2: Resume → sandbox goes Suspended → Resuming
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
-	updatedWS.Status.Phase = resources.WorkspacePhaseResuming
+	updatedWS.Status.Phase = v1.WorkspacePhaseResuming
 	require.NoError(t, r.Status().Update(context.Background(), updatedWS))
 
 	result, err = r.Reconcile(context.Background(), reqFor(wsName, ns))
@@ -1053,7 +1053,7 @@ func TestE2E_FullFlow_SuspendResumeCycle(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updatedWS.Status.Phase)
 	assert.Nil(t, updatedWS.Status.SuspendedAt)
 	assert.Equal(t, "workspace-ws-flow", updatedWS.Status.PVCName,
 		"PVC reference must survive suspend/resume cycle")
@@ -1071,7 +1071,7 @@ func TestE2E_FullFlow_WorkspaceCreationToActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5*time.Second, result.RequeueAfter)
 
-	updatedWS := &resources.Workspace{}
+	updatedWS := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
 	assert.Contains(t, updatedWS.Finalizers, WorkspaceFinalizer)
 	assert.Equal(t, "workspace-ws-create", updatedWS.Status.PVCName)
@@ -1091,7 +1091,7 @@ func TestE2E_FullFlow_WorkspaceCreationToActive(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: wsName, Namespace: ns}, updatedWS))
-	assert.Equal(t, resources.WorkspacePhaseActive, updatedWS.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseActive, updatedWS.Status.Phase)
 }
 
 func TestE2E_FullFlow_WorkspaceCreation_WithCustomStorageClass(t *testing.T) {
@@ -1120,7 +1120,7 @@ func TestE2E_FullFlow_WorkspaceCreation_WithCustomStorageClass(t *testing.T) {
 // ===========================================================================
 
 func TestE2E_Unhappy_Pending_PVCTimeout_TransitionsToFailed(t *testing.T) {
-	ws := makeWorkspace("ws-pvc-timeout", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-pvc-timeout", "default", v1.WorkspacePhasePending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	pvc := makePVC("workspace-ws-pvc-timeout", "default")
@@ -1132,14 +1132,14 @@ func TestE2E_Unhappy_Pending_PVCTimeout_TransitionsToFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-pvc-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
 	assert.Contains(t, updated.Status.Message, "not bound")
 }
 
 func TestE2E_Unhappy_Pending_NoPVC_Timeout_TransitionsToFailed(t *testing.T) {
-	ws := makeWorkspace("ws-nopvc-timeout", "default", resources.WorkspacePhasePending)
+	ws := makeWorkspace("ws-nopvc-timeout", "default", v1.WorkspacePhasePending)
 	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 
 	r := reconcilerFor(t, ws)
@@ -1147,18 +1147,18 @@ func TestE2E_Unhappy_Pending_NoPVC_Timeout_TransitionsToFailed(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("ws-nopvc-timeout", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-nopvc-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
 }
 
 func TestE2E_Unhappy_Suspend_RaceCondition_RevertsToActive(t *testing.T) {
-	ws := makeWorkspace("ws-race-unhappy", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-race-unhappy", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-race-unhappy"
 	justNow := metav1.NewTime(time.Now().Add(-5 * time.Second))
 	ws.Status.LastActivityAt = &justNow
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600,
 	}
@@ -1169,14 +1169,14 @@ func TestE2E_Unhappy_Suspend_RaceCondition_RevertsToActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-race-unhappy", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseActive, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase,
 		"recent activity during suspend must revert to Active")
 }
 
 func TestE2E_Unhappy_Suspending_PodDeletionFails_ReturnsError(t *testing.T) {
-	ws := makeWorkspace("ws-podfail", "default", resources.WorkspacePhaseSuspending)
+	ws := makeWorkspace("ws-podfail", "default", v1.WorkspacePhaseSuspending)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-podfail"
 	longAgo := metav1.NewTime(time.Now().Add(-2 * time.Hour))
@@ -1188,14 +1188,14 @@ func TestE2E_Unhappy_Suspending_PodDeletionFails_ReturnsError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-podfail", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase,
 		"suspend with no pods should succeed")
 }
 
 func TestE2E_Unhappy_Resuming_OneSandboxFails_StaysResuming(t *testing.T) {
-	ws := makeWorkspace("ws-partial", "default", resources.WorkspacePhaseResuming)
+	ws := makeWorkspace("ws-partial", "default", v1.WorkspacePhaseResuming)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-partial"
 
@@ -1212,15 +1212,15 @@ func TestE2E_Unhappy_Resuming_OneSandboxFails_StaysResuming(t *testing.T) {
 	assert.Equal(t, 5*time.Second, result.RequeueAfter,
 		"workspace with non-running sandbox must requeue, not go Active")
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-partial", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseResuming, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseResuming, updated.Status.Phase,
 		"must stay Resuming until all sandboxes are Running")
 }
 
 func TestE2E_Unhappy_DeletingWorkspace_WithSandboxCRDs_DeletesAll(t *testing.T) {
 	now := metav1.Now()
-	ws := makeWorkspace("ws-del", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-del", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-del"
 	ws.DeletionTimestamp = &now
@@ -1236,7 +1236,7 @@ func TestE2E_Unhappy_DeletingWorkspace_WithSandboxCRDs_DeletesAll(t *testing.T) 
 	assert.Equal(t, ctrl.Result{}, result)
 
 	for _, sbName := range []string{"sb-del-1", "sb-del-2"} {
-		sbCheck := &resources.Sandbox{}
+		sbCheck := &v1.Sandbox{}
 		err := r.Get(context.Background(), types.NamespacedName{Name: sbName, Namespace: "default"}, sbCheck)
 		assert.True(t, k8serrors.IsNotFound(err), "sandbox %s should be deleted", sbName)
 	}
@@ -1245,7 +1245,7 @@ func TestE2E_Unhappy_DeletingWorkspace_WithSandboxCRDs_DeletesAll(t *testing.T) 
 	err = r.Get(context.Background(), types.NamespacedName{Name: "workspace-ws-del", Namespace: "default"}, pvcCheck)
 	assert.True(t, k8serrors.IsNotFound(err), "PVC should be deleted")
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "ws-del", Namespace: "default"}, updated)
 	if fetchErr == nil {
 		assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
@@ -1255,7 +1255,7 @@ func TestE2E_Unhappy_DeletingWorkspace_WithSandboxCRDs_DeletesAll(t *testing.T) 
 }
 
 func TestE2E_Unhappy_FailedPhase_StaysFailed_NoAction(t *testing.T) {
-	ws := makeWorkspace("ws-stuck", "default", resources.WorkspacePhaseFailed)
+	ws := makeWorkspace("ws-stuck", "default", v1.WorkspacePhaseFailed)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-stuck"
 	ws.Status.Message = "manual intervention required"
@@ -1266,14 +1266,14 @@ func TestE2E_Unhappy_FailedPhase_StaysFailed_NoAction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-stuck", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
 	assert.Equal(t, "manual intervention required", updated.Status.Message)
 }
 
 func TestE2E_Unhappy_TTLNotExpired_DoesNotTerminate(t *testing.T) {
-	ws := makeWorkspace("ws-ttl-safe", "default", resources.WorkspacePhaseSuspended)
+	ws := makeWorkspace("ws-ttl-safe", "default", v1.WorkspacePhaseSuspended)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-ttl-safe"
 	ws.Spec.TTLSecondsAfterSuspended = 3600
@@ -1287,17 +1287,17 @@ func TestE2E_Unhappy_TTLNotExpired_DoesNotTerminate(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.RequeueAfter > 0, "should requeue, not terminate")
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-ttl-safe", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspended, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase,
 		"must stay Suspended when TTL not expired")
 }
 
 func TestE2E_Unhappy_AutoSuspend_NoActivity_SuspendsImmediately(t *testing.T) {
-	ws := makeWorkspace("ws-noactivity", "default", resources.WorkspacePhaseActive)
+	ws := makeWorkspace("ws-noactivity", "default", v1.WorkspacePhaseActive)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-noactivity"
-	ws.Spec.AutoSuspend = &resources.WorkspaceAutoSuspend{
+	ws.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
 		Enabled:            true,
 		IdleTimeoutSeconds: 3600,
 	}
@@ -1309,14 +1309,14 @@ func TestE2E_Unhappy_AutoSuspend_NoActivity_SuspendsImmediately(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Workspace{}
+	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-noactivity", Namespace: "default"}, updated))
-	assert.Equal(t, resources.WorkspacePhaseSuspending, updated.Status.Phase,
+	assert.Equal(t, v1.WorkspacePhaseSuspending, updated.Status.Phase,
 		"workspace with nil LastActivityAt and autoSuspend enabled should suspend")
 }
 
 func TestE2E_Unhappy_Terminating_PVCAlreadyGone_Succeeds(t *testing.T) {
-	ws := makeWorkspace("ws-term-nopvc", "default", resources.WorkspacePhaseTerminating)
+	ws := makeWorkspace("ws-term-nopvc", "default", v1.WorkspacePhaseTerminating)
 	ws.Finalizers = []string{WorkspaceFinalizer}
 	ws.Status.PVCName = "workspace-ws-term-nopvc"
 
@@ -1330,7 +1330,7 @@ func TestE2E_Unhappy_Terminating_PVCAlreadyGone_Succeeds(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	// Sandbox CRD should be deleted even though PVC was missing
-	sbCheck := &resources.Sandbox{}
+	sbCheck := &v1.Sandbox{}
 	err = r.Get(context.Background(), types.NamespacedName{Name: "sb-term", Namespace: "default"}, sbCheck)
 	assert.True(t, k8serrors.IsNotFound(err))
 }

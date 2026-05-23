@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // ServiceManager handles service creation and management
@@ -30,7 +30,7 @@ func NewServiceManager(client client.Client, scheme *runtime.Scheme) *ServiceMan
 }
 
 // CreateSandboxService creates a new service for a sandbox
-func (s *ServiceManager) CreateSandboxService(ctx context.Context, sandbox *resources.Sandbox, podName string) (*corev1.Service, error) {
+func (s *ServiceManager) CreateSandboxService(ctx context.Context, sandbox *v1.Sandbox, podName string) (*corev1.Service, error) {
 	// Create a unique name for the service
 	serviceName := fmt.Sprintf("sandbox-%s", sandbox.Name)
 	

@@ -3,12 +3,12 @@ package common
 import (
 	"time"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ConvertToMetaV1Condition converts a SandboxCondition to metav1.Condition
-func ConvertToMetaV1Condition(condition resources.SandboxCondition) metav1.Condition {
+func ConvertToMetaV1Condition(condition v1.SandboxCondition) metav1.Condition {
 	return metav1.Condition{
 		Type:               condition.Type,
 		Status:             metav1.ConditionStatus(condition.Status),
@@ -19,8 +19,8 @@ func ConvertToMetaV1Condition(condition resources.SandboxCondition) metav1.Condi
 }
 
 // ConvertFromMetaV1Condition converts a metav1.Condition to SandboxCondition
-func ConvertFromMetaV1Condition(condition metav1.Condition) resources.SandboxCondition {
-	return resources.SandboxCondition{
+func ConvertFromMetaV1Condition(condition metav1.Condition) v1.SandboxCondition {
+	return v1.SandboxCondition{
 		Type:    condition.Type,
 		Status:  string(condition.Status),
 		Reason:  condition.Reason,
@@ -29,7 +29,7 @@ func ConvertFromMetaV1Condition(condition metav1.Condition) resources.SandboxCon
 }
 
 // ConvertToMetaV1ConditionArray converts an array of SandboxCondition to metav1.Condition
-func ConvertToMetaV1ConditionArray(conditions []resources.SandboxCondition) []metav1.Condition {
+func ConvertToMetaV1ConditionArray(conditions []v1.SandboxCondition) []metav1.Condition {
 	result := make([]metav1.Condition, len(conditions))
 	for i, condition := range conditions {
 		result[i] = ConvertToMetaV1Condition(condition)
@@ -38,15 +38,15 @@ func ConvertToMetaV1ConditionArray(conditions []resources.SandboxCondition) []me
 }
 
 // ConvertFromMetaV1ConditionArray converts an array of metav1.Condition to SandboxCondition
-func ConvertFromMetaV1ConditionArray(conditions []metav1.Condition) []resources.SandboxCondition {
-	result := make([]resources.SandboxCondition, len(conditions))
+func ConvertFromMetaV1ConditionArray(conditions []metav1.Condition) []v1.SandboxCondition {
+	result := make([]v1.SandboxCondition, len(conditions))
 	for i, condition := range conditions {
 		result[i] = ConvertFromMetaV1Condition(condition)
 	}
 	return result
 }
 
-func SetSandboxCondition(conditions *[]resources.SandboxCondition, conditionType string, status string, reason, message string) {
+func SetSandboxCondition(conditions *[]v1.SandboxCondition, conditionType string, status string, reason, message string) {
 	metaConditions := ConvertToMetaV1ConditionArray(*conditions)
 	SetCondition(&metaConditions, conditionType, metav1.ConditionStatus(status), reason, message)
 	*conditions = ConvertFromMetaV1ConditionArray(metaConditions)

@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // resolveRuntimeImage maps a Sandbox's spec.runtime field (e.g.
@@ -55,7 +55,7 @@ func resolveRuntimeImage(
 	}
 
 	// Case 2: exact name match.
-	env := &resources.RuntimeEnvironment{}
+	env := &v1.RuntimeEnvironment{}
 	if err := c.Get(ctx, types.NamespacedName{Name: runtime}, env); err == nil {
 		if env.Spec.Image == "" {
 			return "", env.Name, fmt.Errorf(
@@ -69,7 +69,7 @@ func resolveRuntimeImage(
 	// Case 3: ':' → '-' (e.g. "python:3.11" → "python-3.11").
 	if strings.Contains(runtime, ":") {
 		alt := strings.ReplaceAll(runtime, ":", "-")
-		env := &resources.RuntimeEnvironment{}
+		env := &v1.RuntimeEnvironment{}
 		if err := c.Get(ctx, types.NamespacedName{Name: alt}, env); err == nil {
 			if env.Spec.Image == "" {
 				return "", env.Name, fmt.Errorf(
@@ -85,7 +85,7 @@ func resolveRuntimeImage(
 	if idx := strings.Index(runtime, ":"); idx > 0 {
 		lang := runtime[:idx]
 		ver := runtime[idx+1:]
-		list := &resources.RuntimeEnvironmentList{}
+		list := &v1.RuntimeEnvironmentList{}
 		if err := c.List(ctx, list); err != nil {
 			return "", "", fmt.Errorf("listing RuntimeEnvironments: %w", err)
 		}

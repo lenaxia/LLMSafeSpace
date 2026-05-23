@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,23 +26,23 @@ import (
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, resources.AddToScheme(scheme))
+	require.NoError(t, v1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	return scheme
 }
 
-func makeSandbox(name, namespace, phase string) *resources.Sandbox {
-	return &resources.Sandbox{
+func makeSandbox(name, namespace, phase string) *v1.Sandbox {
+	return &v1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       "12345678-1234-1234-1234-1234567890ab",
 		},
-		Spec: resources.SandboxSpec{
+		Spec: v1.SandboxSpec{
 			Runtime: "python:3.11",
 			Timeout: 300,
 		},
-		Status: resources.SandboxStatus{
+		Status: v1.SandboxStatus{
 			Phase: phase,
 		},
 	}
@@ -58,9 +58,9 @@ func reconcilerFor(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
 	// their own RuntimeEnvironment (with the same or a different name) in
 	// objs — controller-runtime's fake client does NOT de-dupe on name,
 	// but the resolver always picks the first hit on exact name.
-	defaultRE := &resources.RuntimeEnvironment{
+	defaultRE := &v1.RuntimeEnvironment{
 		ObjectMeta: metav1.ObjectMeta{Name: "python-3.11"},
-		Spec: resources.RuntimeEnvironmentSpec{
+		Spec: v1.RuntimeEnvironmentSpec{
 			Language: "python",
 			Version:  "3.11",
 			Image:    "test-registry.local/runtime-base:test",
@@ -68,7 +68,7 @@ func reconcilerFor(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
 	}
 	hasOwnRE := false
 	for _, o := range objs {
-		if _, ok := o.(*resources.RuntimeEnvironment); ok {
+		if _, ok := o.(*v1.RuntimeEnvironment); ok {
 			hasOwnRE = true
 			break
 		}
@@ -80,7 +80,7 @@ func reconcilerFor(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&resources.Sandbox{}).
+		WithStatusSubresource(&v1.Sandbox{}).
 		Build()
 	return &SandboxReconciler{
 		Client: fakeClient,
@@ -122,7 +122,7 @@ func TestReconcile_PendingSandbox_TransitionsToCreating(t *testing.T) {
 	_ = err
 
 	// Fetch updated sandbox
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "sb-pending", Namespace: "default"}, updated)
 	require.NoError(t, fetchErr)
 
@@ -140,7 +140,7 @@ func TestReconcile_EmptyPhase_AddsFinalizer(t *testing.T) {
 
 	_, _ = r.Reconcile(context.Background(), reqFor("sb-empty", "default"))
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-empty", Namespace: "default"}, updated))
 	assert.Contains(t, updated.Finalizers, common.SandboxFinalizer)
 }
@@ -197,7 +197,7 @@ func TestHandleCreatingSandbox_PodRunning_TransitionsToRunning(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-creating", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseRunning, updated.Status.Phase)
 }
@@ -219,7 +219,7 @@ func TestHandleCreatingSandbox_PodNotFound_RevertsToInProgress(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Requeue)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-creating2", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhasePending, updated.Status.Phase)
 }
@@ -265,7 +265,7 @@ func TestHandleRunningSandbox_PodNotFound_MarksFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-running", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase)
 }
@@ -294,7 +294,7 @@ func TestHandleRunningSandbox_TimeoutExceeded_TransitionsToTerminating(t *testin
 	require.NoError(t, err)
 	assert.True(t, result.Requeue)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-timeout", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseTerminating, updated.Status.Phase)
 }
@@ -316,7 +316,7 @@ func TestHandleTerminatingSandbox_PodAlreadyGone_MarksTerminated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-terminating", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseTerminated, updated.Status.Phase)
 }
@@ -338,7 +338,7 @@ func TestHandleDeletion_FinalizerRemovedAfterCleanup(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 
 	// After deletion the object may be gone from the store; a NotFound is acceptable
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	fetchErr := r.Get(context.Background(), types.NamespacedName{Name: "sb-deleting", Namespace: "default"}, updated)
 	if fetchErr == nil {
 		assert.NotContains(t, updated.Finalizers, common.SandboxFinalizer)
@@ -363,7 +363,7 @@ func TestHandleDeletion_RunningWithDeletionTimestamp_TransitionsToTerminating(t 
 	require.NoError(t, err)
 	assert.True(t, result.Requeue)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-delrun", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseTerminating, updated.Status.Phase)
 }
@@ -387,19 +387,19 @@ func TestReconcile_UnknownPhase_NoRequeue(t *testing.T) {
 // helpers for workspace tests
 // ---------------------------------------------------------------------------
 
-func makeWorkspace(name, namespace, pvcName string) *resources.Workspace {
-	return &resources.Workspace{
+func makeWorkspace(name, namespace, pvcName string) *v1.Workspace {
+	return &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner:          resources.WorkspaceOwner{UserID: "user-1"},
+		Spec: v1.WorkspaceSpec{
+			Owner:          v1.WorkspaceOwner{UserID: "user-1"},
 			DefaultRuntime: "python:3.11",
-			Storage:        resources.WorkspaceStorageConfig{Size: "10Gi"},
+			Storage:        v1.WorkspaceStorageConfig{Size: "10Gi"},
 		},
-		Status: resources.WorkspaceStatus{
-			Phase:   resources.WorkspacePhaseActive,
+		Status: v1.WorkspaceStatus{
+			Phase:   v1.WorkspacePhaseActive,
 			PVCName: pvcName,
 		},
 	}
@@ -550,7 +550,7 @@ func TestReconcile_Creating_UpdatesPodIP(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-podip", Namespace: "default"}, updated))
 	assert.Equal(t, "10.0.0.42", updated.Status.PodIP)
 }
@@ -579,7 +579,7 @@ func TestReconcile_Suspending_DeletesPodAndTransitionsToSuspended(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-suspending", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase)
 
@@ -605,7 +605,7 @@ func TestReconcile_Resuming_CreatesNewPodAndTransitionsToRunning(t *testing.T) {
 	require.NoError(t, err)
 	_ = result
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-resuming", Namespace: "default"}, updated))
 	// Phase should be Creating (pod created, waiting for Running)
 	assert.Equal(t, common.SandboxPhaseCreating, updated.Status.Phase)
@@ -717,9 +717,9 @@ func TestReconcile_Creating_WorkspaceNotFound_ReturnsError(t *testing.T) {
 // ===========================================================================
 
 func TestE2E_SetupScript_PythonRuntime_UsesPip(t *testing.T) {
-	ws := &resources.Workspace{
-		Spec: resources.WorkspaceSpec{
-			Packages: []resources.WorkspacePackageSet{
+	ws := &v1.Workspace{
+		Spec: v1.WorkspaceSpec{
+			Packages: []v1.WorkspacePackageSet{
 				{Runtime: "python:3.11", Requirements: []string{"numpy", "pandas"}},
 			},
 		},
@@ -729,9 +729,9 @@ func TestE2E_SetupScript_PythonRuntime_UsesPip(t *testing.T) {
 }
 
 func TestE2E_SetupScript_NodejsRuntime_UsesNpm(t *testing.T) {
-	ws := &resources.Workspace{
-		Spec: resources.WorkspaceSpec{
-			Packages: []resources.WorkspacePackageSet{
+	ws := &v1.Workspace{
+		Spec: v1.WorkspaceSpec{
+			Packages: []v1.WorkspacePackageSet{
 				{Runtime: "nodejs:18", Requirements: []string{"express", "lodash"}},
 			},
 		},
@@ -742,9 +742,9 @@ func TestE2E_SetupScript_NodejsRuntime_UsesNpm(t *testing.T) {
 }
 
 func TestE2E_SetupScript_GoRuntime_UsesGoInstall(t *testing.T) {
-	ws := &resources.Workspace{
-		Spec: resources.WorkspaceSpec{
-			Packages: []resources.WorkspacePackageSet{
+	ws := &v1.Workspace{
+		Spec: v1.WorkspaceSpec{
+			Packages: []v1.WorkspacePackageSet{
 				{Runtime: "go:1.21", Requirements: []string{"github.com/gin-gonic/gin@latest"}},
 			},
 		},
@@ -755,9 +755,9 @@ func TestE2E_SetupScript_GoRuntime_UsesGoInstall(t *testing.T) {
 }
 
 func TestE2E_SetupScript_MixedRuntimes(t *testing.T) {
-	ws := &resources.Workspace{
-		Spec: resources.WorkspaceSpec{
-			Packages: []resources.WorkspacePackageSet{
+	ws := &v1.Workspace{
+		Spec: v1.WorkspaceSpec{
+			Packages: []v1.WorkspacePackageSet{
 				{Runtime: "python:3.11", Requirements: []string{"requests"}},
 				{Runtime: "nodejs:18", Requirements: []string{"axios"}},
 				{Runtime: "go:1.21", Requirements: []string{"golang.org/x/tools@latest"}},
@@ -771,9 +771,9 @@ func TestE2E_SetupScript_MixedRuntimes(t *testing.T) {
 }
 
 func TestE2E_SetupScript_EmptyRequirements_NoInstall(t *testing.T) {
-	ws := &resources.Workspace{
-		Spec: resources.WorkspaceSpec{
-			Packages: []resources.WorkspacePackageSet{
+	ws := &v1.Workspace{
+		Spec: v1.WorkspaceSpec{
+			Packages: []v1.WorkspacePackageSet{
 				{Runtime: "python:3.11", Requirements: []string{}},
 			},
 		},
@@ -787,17 +787,17 @@ func TestE2E_SetupScript_EmptyRequirements_NoInstall(t *testing.T) {
 // ===========================================================================
 
 func TestE2E_SandboxWithWorkspaceRef_LooksUpWorkspaceAndMountsPVC(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-ws",
 			Namespace: "default",
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "user-1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "10Gi"},
 		},
-		Status: resources.WorkspaceStatus{
-			Phase:   resources.WorkspacePhaseActive,
+		Status: v1.WorkspaceStatus{
+			Phase:   v1.WorkspacePhaseActive,
 			PVCName: "pvc-e2e-ws",
 		},
 	}
@@ -845,17 +845,17 @@ func TestE2E_SandboxNoWorkspaceRef_NoPVCVolume(t *testing.T) {
 }
 
 func TestE2E_SandboxWithCredSecret_MountsCredVolume(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-cred-ws",
 			Namespace: "default",
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "user-1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "10Gi"},
 		},
-		Status: resources.WorkspaceStatus{
-			Phase:   resources.WorkspacePhaseActive,
+		Status: v1.WorkspaceStatus{
+			Phase:   v1.WorkspacePhaseActive,
 			PVCName: "pvc-e2e-cred-ws",
 		},
 	}
@@ -919,7 +919,7 @@ func TestE2E_PodIP_PopulatedInStatus(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("sb-e2e-ip", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-ip", Namespace: "default"}, updated))
 	assert.Equal(t, "10.1.2.3", updated.Status.PodIP, "PodIP must be populated in sandbox status")
 }
@@ -944,17 +944,17 @@ func TestE2E_Unhappy_WorkspaceRefNotFound_ReturnsError(t *testing.T) {
 }
 
 func TestE2E_Unhappy_WorkspaceRef_NoPVCName_PodBuildFails(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ws-no-pvc",
 			Namespace: "default",
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "10Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "user-1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "10Gi"},
 		},
-		Status: resources.WorkspaceStatus{
-			Phase:   resources.WorkspacePhaseActive,
+		Status: v1.WorkspaceStatus{
+			Phase:   v1.WorkspacePhaseActive,
 			PVCName: "",
 		},
 	}
@@ -1003,7 +1003,7 @@ func TestE2E_Unhappy_SandboxTimeout_ExceededWhileRunning(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Requeue)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-e2e-timeout", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseTerminating, updated.Status.Phase,
 		"sandbox exceeding timeout must transition to Terminating")
@@ -1022,7 +1022,7 @@ func TestE2E_Unhappy_RunningPod_Disappears_MarksFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-pod-gone", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase,
 		"running sandbox with missing pod must transition to Failed")
@@ -1049,7 +1049,7 @@ func TestE2E_Unhappy_Suspending_DeletesPod_ClearsPodFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-susp-clear", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase)
 	assert.Equal(t, "", updated.Status.PodIP, "PodIP must be cleared on suspend")
@@ -1058,17 +1058,17 @@ func TestE2E_Unhappy_Suspending_DeletesPod_ClearsPodFields(t *testing.T) {
 
 // M8: Credential Secret naming convention
 func TestE2E_CredentialSecret_Naming_WiredCorrectly(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-workspace",
 			Namespace: "test-ns",
 		},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "user-1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "5Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "user-1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "5Gi"},
 		},
-		Status: resources.WorkspaceStatus{
-			Phase:   resources.WorkspacePhaseActive,
+		Status: v1.WorkspaceStatus{
+			Phase:   v1.WorkspacePhaseActive,
 			PVCName: "pvc-my-workspace",
 		},
 	}

@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // NetworkPolicyManager handles network policy creation and management
@@ -30,7 +30,7 @@ func NewNetworkPolicyManager(client client.Client, scheme *runtime.Scheme) *Netw
 }
 
 // CreateDefaultDenyPolicy creates a default deny policy for a sandbox
-func (n *NetworkPolicyManager) CreateDefaultDenyPolicy(ctx context.Context, sandbox *resources.Sandbox) error {
+func (n *NetworkPolicyManager) CreateDefaultDenyPolicy(ctx context.Context, sandbox *v1.Sandbox) error {
 	// Define the network policy
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -69,7 +69,7 @@ func (n *NetworkPolicyManager) CreateDefaultDenyPolicy(ctx context.Context, sand
 }
 
 // CreateEgressPolicies creates egress policies for a sandbox
-func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox *resources.Sandbox) error {
+func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox *v1.Sandbox) error {
 	if sandbox.Spec.NetworkAccess == nil || len(sandbox.Spec.NetworkAccess.Egress) == 0 {
 		return nil
 	}
@@ -134,7 +134,7 @@ func (n *NetworkPolicyManager) CreateEgressPolicies(ctx context.Context, sandbox
 }
 
 // DeleteNetworkPolicies deletes all network policies for a sandbox
-func (n *NetworkPolicyManager) DeleteNetworkPolicies(ctx context.Context, sandbox *resources.Sandbox) error {
+func (n *NetworkPolicyManager) DeleteNetworkPolicies(ctx context.Context, sandbox *v1.Sandbox) error {
 	// List all network policies for this sandbox
 	policyList := &networkingv1.NetworkPolicyList{}
 	if err := n.Client.List(ctx, policyList, client.InNamespace(sandbox.Namespace), client.MatchingLabels{

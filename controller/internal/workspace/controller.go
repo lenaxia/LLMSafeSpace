@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 const WorkspaceFinalizer = "workspace.llmsafespace.dev/finalizer"
@@ -34,7 +34,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger := log.FromContext(ctx).WithValues("workspace", req.NamespacedName)
 	logger.Info("Reconciling Workspace")
 
-	workspace := &resources.Workspace{}
+	workspace := &v1.Workspace{}
 	if err := r.Get(ctx, req.NamespacedName, workspace); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("Workspace resource not found. Ignoring since object must be deleted")
@@ -49,19 +49,19 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	switch workspace.Status.Phase {
-	case "", resources.WorkspacePhasePending:
+	case "", v1.WorkspacePhasePending:
 		return r.handlePending(ctx, workspace)
-	case resources.WorkspacePhaseActive:
+	case v1.WorkspacePhaseActive:
 		return r.handleActive(ctx, workspace)
-	case resources.WorkspacePhaseSuspending:
+	case v1.WorkspacePhaseSuspending:
 		return r.handleSuspending(ctx, workspace)
-	case resources.WorkspacePhaseSuspended:
+	case v1.WorkspacePhaseSuspended:
 		return r.handleSuspended(ctx, workspace)
-	case resources.WorkspacePhaseResuming:
+	case v1.WorkspacePhaseResuming:
 		return r.handleResuming(ctx, workspace)
-	case resources.WorkspacePhaseTerminating:
+	case v1.WorkspacePhaseTerminating:
 		return r.handleTerminating(ctx, workspace)
-	case resources.WorkspacePhaseFailed:
+	case v1.WorkspacePhaseFailed:
 		logger.Info("Workspace is in Failed phase; manual intervention required", "workspace", workspace.Name)
 		return ctrl.Result{}, nil
 	default:
@@ -70,7 +70,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 }
 
-func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling pending workspace")
 
@@ -125,7 +125,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 			return ctrl.Result{}, err
 		}
 		if !workspace.CreationTimestamp.IsZero() && time.Since(workspace.CreationTimestamp.Time) > pendingPhaseTimeout {
-			workspace.Status.Phase = resources.WorkspacePhaseFailed
+			workspace.Status.Phase = v1.WorkspacePhaseFailed
 			workspace.Status.Message = "workspace timed out in Pending phase after 5 minutes"
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
@@ -164,7 +164,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 		// downstream sandboxes can be scheduled and trigger PVC binding.
 		if r.pvcUsesWaitForFirstConsumer(ctx, existingPVC) {
 			workspace.Status.PVCName = pvcName
-			workspace.Status.Phase = resources.WorkspacePhaseActive
+			workspace.Status.Phase = v1.WorkspacePhaseActive
 			if err := r.Status().Update(ctx, workspace); err != nil {
 				logger.Error(err, "Failed to update Workspace status to Active (WaitForFirstConsumer)")
 				return ctrl.Result{}, err
@@ -173,7 +173,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 		}
 
 		if !workspace.CreationTimestamp.IsZero() && time.Since(workspace.CreationTimestamp.Time) > pendingPhaseTimeout {
-			workspace.Status.Phase = resources.WorkspacePhaseFailed
+			workspace.Status.Phase = v1.WorkspacePhaseFailed
 			workspace.Status.Message = "PVC not bound after 5 minutes"
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
@@ -181,7 +181,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *reso
 	}
 
 	workspace.Status.PVCName = pvcName
-	workspace.Status.Phase = resources.WorkspacePhaseActive
+	workspace.Status.Phase = v1.WorkspacePhaseActive
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		logger.Error(err, "Failed to update Workspace status to Active")
 		return ctrl.Result{}, err
@@ -218,7 +218,7 @@ func (r *WorkspaceReconciler) pvcUsesWaitForFirstConsumer(ctx context.Context, p
 	return *sc.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
 }
 
-func (r *WorkspaceReconciler) buildPVC(workspace *resources.Workspace, pvcName string) *corev1.PersistentVolumeClaim {
+func (r *WorkspaceReconciler) buildPVC(workspace *v1.Workspace, pvcName string) *corev1.PersistentVolumeClaim {
 	accessMode := corev1.ReadWriteOnce
 	if workspace.Spec.Storage.AccessMode == "ReadWriteMany" {
 		accessMode = corev1.ReadWriteMany
@@ -253,7 +253,7 @@ func (r *WorkspaceReconciler) buildPVC(workspace *resources.Workspace, pvcName s
 	return pvc
 }
 
-func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling active workspace")
 
@@ -276,7 +276,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *resou
 	idleTimeout := time.Duration(workspace.Spec.AutoSuspend.IdleTimeoutSeconds) * time.Second
 
 	if workspace.Status.LastActivityAt == nil {
-		workspace.Status.Phase = resources.WorkspacePhaseSuspending
+		workspace.Status.Phase = v1.WorkspacePhaseSuspending
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to update Workspace status to Suspending")
 			return ctrl.Result{}, err
@@ -287,7 +287,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *resou
 	lastActivity := workspace.Status.LastActivityAt.Time
 	elapsed := time.Since(lastActivity)
 	if elapsed >= idleTimeout {
-		workspace.Status.Phase = resources.WorkspacePhaseSuspending
+		workspace.Status.Phase = v1.WorkspacePhaseSuspending
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to update Workspace status to Suspending")
 			return ctrl.Result{}, err
@@ -305,7 +305,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *resou
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
-func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling suspending workspace")
 
@@ -316,7 +316,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *r
 		idleTimeout := time.Duration(workspace.Spec.AutoSuspend.IdleTimeoutSeconds) * time.Second
 		if time.Since(workspace.Status.LastActivityAt.Time) < idleTimeout {
 			logger.Info("Recent activity detected during suspend; reverting to Active")
-			workspace.Status.Phase = resources.WorkspacePhaseActive
+			workspace.Status.Phase = v1.WorkspacePhaseActive
 			if err := r.Status().Update(ctx, workspace); err != nil {
 				logger.Error(err, "Failed to revert Workspace status to Active")
 				return ctrl.Result{}, err
@@ -335,7 +335,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *r
 		return ctrl.Result{}, err
 	}
 
-	workspace.Status.Phase = resources.WorkspacePhaseSuspended
+	workspace.Status.Phase = v1.WorkspacePhaseSuspended
 	now := metav1.Now()
 	workspace.Status.SuspendedAt = &now
 	if err := r.Status().Update(ctx, workspace); err != nil {
@@ -346,7 +346,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *r
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling suspended workspace")
 
@@ -367,7 +367,7 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *re
 
 	elapsed := time.Since(referenceTime)
 	if elapsed >= ttl {
-		workspace.Status.Phase = resources.WorkspacePhaseTerminating
+		workspace.Status.Phase = v1.WorkspacePhaseTerminating
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to update Workspace status to Terminating")
 			return ctrl.Result{}, err
@@ -380,7 +380,7 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *re
 	return ctrl.Result{RequeueAfter: remaining}, nil
 }
 
-func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling resuming workspace")
 
@@ -410,7 +410,7 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *res
 	}
 
 	if allRunning {
-		workspace.Status.Phase = resources.WorkspacePhaseActive
+		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.SuspendedAt = nil
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to update Workspace status to Active")
@@ -422,7 +422,7 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *res
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling terminating workspace")
 
@@ -447,7 +447,7 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 		return ctrl.Result{}, err
 	}
 
-	workspace.Status.Phase = resources.WorkspacePhaseTerminated
+	workspace.Status.Phase = v1.WorkspacePhaseTerminated
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		logger.Error(err, "Failed to update Workspace status to Terminated")
 		return ctrl.Result{}, err
@@ -462,7 +462,7 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkspaceReconciler) handleDeletion(ctx context.Context, workspace *resources.Workspace) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) handleDeletion(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 	logger.Info("Handling workspace deletion")
 
@@ -501,8 +501,8 @@ func (r *WorkspaceReconciler) handleDeletion(ctx context.Context, workspace *res
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkspaceReconciler) listSandboxesForWorkspace(ctx context.Context, workspace *resources.Workspace) ([]resources.Sandbox, error) {
-	sandboxList := &resources.SandboxList{}
+func (r *WorkspaceReconciler) listSandboxesForWorkspace(ctx context.Context, workspace *v1.Workspace) ([]v1.Sandbox, error) {
+	sandboxList := &v1.SandboxList{}
 	if err := r.List(ctx, sandboxList,
 		client.InNamespace(workspace.Namespace),
 		client.MatchingLabels{"llmsafespace.dev/workspace": workspace.Name},
@@ -512,7 +512,7 @@ func (r *WorkspaceReconciler) listSandboxesForWorkspace(ctx context.Context, wor
 	return sandboxList.Items, nil
 }
 
-func (r *WorkspaceReconciler) updateSandboxesToSuspended(ctx context.Context, workspace *resources.Workspace) error {
+func (r *WorkspaceReconciler) updateSandboxesToSuspended(ctx context.Context, workspace *v1.Workspace) error {
 	sandboxes, err := r.listSandboxesForWorkspace(ctx, workspace)
 	if err != nil {
 		return err
@@ -528,7 +528,7 @@ func (r *WorkspaceReconciler) updateSandboxesToSuspended(ctx context.Context, wo
 	return nil
 }
 
-func (r *WorkspaceReconciler) deleteSandboxCRDs(ctx context.Context, workspace *resources.Workspace) error {
+func (r *WorkspaceReconciler) deleteSandboxCRDs(ctx context.Context, workspace *v1.Workspace) error {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 
 	sandboxes, err := r.listSandboxesForWorkspace(ctx, workspace)
@@ -546,7 +546,7 @@ func (r *WorkspaceReconciler) deleteSandboxCRDs(ctx context.Context, workspace *
 	return nil
 }
 
-func (r *WorkspaceReconciler) deleteWorkspacePods(ctx context.Context, workspace *resources.Workspace) error {
+func (r *WorkspaceReconciler) deleteWorkspacePods(ctx context.Context, workspace *v1.Workspace) error {
 	logger := log.FromContext(ctx).WithValues("workspace", types.NamespacedName{Name: workspace.Name, Namespace: workspace.Namespace})
 
 	podList := &corev1.PodList{}
@@ -569,6 +569,6 @@ func (r *WorkspaceReconciler) deleteWorkspacePods(ctx context.Context, workspace
 
 func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&resources.Workspace{}).
+		For(&v1.Workspace{}).
 		Complete(r)
 }

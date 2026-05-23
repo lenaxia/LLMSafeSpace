@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/resources"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // On first reconcile, a Sandbox with WorkspaceRef set must have the
@@ -29,7 +29,7 @@ func TestReconcile_Pending_PropagatesWorkspaceLabel(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("sb-needs-label", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "sb-needs-label", Namespace: "default"}, updated))
 	got, ok := updated.Labels[common.LabelWorkspace]
@@ -42,13 +42,13 @@ func TestReconcile_Pending_PropagatesWorkspaceLabel(t *testing.T) {
 // This avoids a phase-label race between the workspace controller and the
 // sandbox controller during suspend.
 func TestHandleRunning_PodGone_WorkspaceSuspending_SetsSuspended(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-susp", Namespace: "default"},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "u1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "1Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "u1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "1Gi"},
 		},
-		Status: resources.WorkspaceStatus{Phase: resources.WorkspacePhaseSuspending},
+		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspending},
 	}
 	sb := makeSandbox("sb-running", "default", common.SandboxPhaseRunning)
 	sb.Spec.WorkspaceRef = "ws-susp"
@@ -64,7 +64,7 @@ func TestHandleRunning_PodGone_WorkspaceSuspending_SetsSuspended(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("sb-running", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "sb-running", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase,
@@ -75,13 +75,13 @@ func TestHandleRunning_PodGone_WorkspaceSuspending_SetsSuspended(t *testing.T) {
 // This is the regression check that the suspend-aware path doesn't break
 // the legitimate "pod crashed unexpectedly" case.
 func TestHandleRunning_PodGone_WorkspaceActive_StillFailed(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-act", Namespace: "default"},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "u1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "1Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "u1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "1Gi"},
 		},
-		Status: resources.WorkspaceStatus{Phase: resources.WorkspacePhaseActive},
+		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
 	}
 	sb := makeSandbox("sb-crashed", "default", common.SandboxPhaseRunning)
 	sb.Spec.WorkspaceRef = "ws-act"
@@ -94,7 +94,7 @@ func TestHandleRunning_PodGone_WorkspaceActive_StillFailed(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), reqFor("sb-crashed", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "sb-crashed", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase,
@@ -106,13 +106,13 @@ func TestHandleRunning_PodGone_WorkspaceActive_StillFailed(t *testing.T) {
 // awareness applies. Without this, even briefly-flapping pods during
 // suspend would mark the sandbox Failed.
 func TestHandleRunning_PodFailedPhase_WorkspaceSuspending_SetsSuspended(t *testing.T) {
-	ws := &resources.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-flap", Namespace: "default"},
-		Spec: resources.WorkspaceSpec{
-			Owner:   resources.WorkspaceOwner{UserID: "u1"},
-			Storage: resources.WorkspaceStorageConfig{Size: "1Gi"},
+		Spec: v1.WorkspaceSpec{
+			Owner:   v1.WorkspaceOwner{UserID: "u1"},
+			Storage: v1.WorkspaceStorageConfig{Size: "1Gi"},
 		},
-		Status: resources.WorkspaceStatus{Phase: resources.WorkspacePhaseSuspending},
+		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspending},
 	}
 	sb := makeSandbox("sb-flap", "default", common.SandboxPhaseRunning)
 	sb.Spec.WorkspaceRef = "ws-flap"
@@ -130,7 +130,7 @@ func TestHandleRunning_PodFailedPhase_WorkspaceSuspending_SetsSuspended(t *testi
 	_, err := r.Reconcile(context.Background(), reqFor("sb-flap", "default"))
 	require.NoError(t, err)
 
-	updated := &resources.Sandbox{}
+	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "sb-flap", Namespace: "default"}, updated))
 	assert.Equal(t, common.SandboxPhaseSuspended, updated.Status.Phase)
