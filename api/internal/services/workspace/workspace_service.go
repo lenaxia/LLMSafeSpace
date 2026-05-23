@@ -359,7 +359,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	}
 	for _, c := range crd.Status.Conditions {
 		result.Conditions = append(result.Conditions, types.WorkspaceConditionResult{
-			Type:    c.Type,
+			Type:    string(c.Type),
 			Status:  c.Status,
 			Reason:  c.Reason,
 			Message: c.Message,
