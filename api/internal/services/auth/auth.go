@@ -337,6 +337,21 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		return nil, errors.New("registration failed")
 	}
 
+	// First user in a fresh installation is auto-promoted to admin so the
+	// system has at least one administrator. CountUsers must succeed; on
+	// error we fail closed (do not silently default to admin).
+	userCount, err := s.dbService.CountUsers(ctx)
+	if err != nil {
+		s.logger.Error("Register: failed to count users", err)
+		return nil, errors.New("registration failed")
+	}
+	role := "user"
+	if userCount == 0 {
+		role = "admin"
+		s.logger.Info("Register: first user in fresh installation, promoting to admin",
+			"email", req.Email)
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
 	if err != nil {
 		return nil, errors.New("registration failed")
@@ -349,7 +364,7 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
 		PasswordHash: string(hash),
 		Active:       true,
-		Role:         "user",
+		Role:         role,
 	}
 
 	if err := s.dbService.CreateUser(ctx, user); err != nil {

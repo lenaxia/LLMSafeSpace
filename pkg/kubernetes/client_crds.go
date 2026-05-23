@@ -68,7 +68,14 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	config.Timeout = 0
 	config.ContentConfig.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
 	config.APIPath = "/apis"
-	config.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)
+	// WithoutConversion() is required for CRD types that don't define a
+	// separate internal hub version. Without it, the rest client's watch
+	// decoder calls DecoderToVersion(serializer, nil), which (with conversion
+	// enabled) tries to convert to the internal version of the object's
+	// group — and fails with "no kind ... is registered for the internal
+	// version of group llmsafespace.dev". See client_test.go for the
+	// regression test that locks in this requirement.
+	config.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme).WithoutConversion()
 	config.UserAgent = rest.DefaultKubernetesUserAgent()
 
 	client, err := rest.RESTClientFor(&config)

@@ -41,6 +41,7 @@ type DatabaseService interface {
 	CreateUser(ctx context.Context, user *types.User) error
 	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
 	DeleteUser(ctx context.Context, userID string) error
+	CountUsers(ctx context.Context) (int, error)
 	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
 	CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)

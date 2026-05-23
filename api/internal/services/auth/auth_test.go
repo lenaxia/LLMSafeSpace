@@ -500,6 +500,7 @@ func TestRegister_Success(t *testing.T) {
 	ctx := context.Background()
 
 	mockDb.On("GetUserByEmail", ctx, "new@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(5, nil) // existing users → role=user
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com" && u.Username == "newuser" && u.PasswordHash != "" && u.Active && u.Role == "user"
 	})).Return(nil)
@@ -517,6 +518,78 @@ func TestRegister_Success(t *testing.T) {
 	assert.Equal(t, "new@example.com", resp.User.Email)
 	assert.Empty(t, resp.User.PasswordHash, "password hash must not be in response")
 	mockDb.AssertExpectations(t)
+}
+
+// TestRegister_FirstUserBecomesAdmin verifies that the first user registered
+// in a fresh installation is auto-promoted to admin. Otherwise the system
+// has no admin and is effectively inert (no way to grant admin powers).
+func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "first@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(0, nil) // empty system → first user is admin
+	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
+		return u.Email == "first@example.com" && u.Role == "admin"
+	})).Return(nil)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "founder",
+		Email:    "first@example.com",
+		Password: "securepassword123",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, "admin", resp.User.Role, "first user must be promoted to admin")
+	mockDb.AssertExpectations(t)
+}
+
+// TestRegister_SubsequentUsersAreNotAdmin verifies that after the first user
+// exists, subsequent registrations get role=user. Only the very first user
+// (CountUsers == 0 at registration time) is auto-promoted.
+func TestRegister_SubsequentUsersAreNotAdmin(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "second@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(1, nil) // one existing user
+	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
+		return u.Email == "second@example.com" && u.Role == "user"
+	})).Return(nil)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "regular",
+		Email:    "second@example.com",
+		Password: "securepassword123",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, "user", resp.User.Role)
+	mockDb.AssertExpectations(t)
+}
+
+// TestRegister_CountUsersError_FailsClosed verifies that a CountUsers failure
+// blocks registration rather than silently defaulting to admin. We must not
+// accidentally promote on transient DB errors.
+func TestRegister_CountUsersError_FailsClosed(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "any@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(0, errors.New("db down"))
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "any",
+		Email:    "any@example.com",
+		Password: "securepassword123",
+	})
+
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	mockDb.AssertExpectations(t)
+	mockDb.AssertNotCalled(t, "CreateUser")
 }
 
 func TestRegister_DuplicateEmail(t *testing.T) {
@@ -558,6 +631,7 @@ func TestRegister_CreateUserError(t *testing.T) {
 	ctx := context.Background()
 
 	mockDb.On("GetUserByEmail", ctx, "fail@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(2, nil)
 	mockDb.On("CreateUser", ctx, mock.Anything).Return(errors.New("insert failed"))
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
