@@ -241,12 +241,12 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 			return ctrl.Result{}, err
 		}
 		// Pod missing — transient recovery.
-		return r.recoverFromTransientPodLoss(ctx, workspace, logger)
+		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
 		// Pod exists but not running — transient recovery.
-		return r.recoverFromTransientPodLoss(ctx, workspace, logger)
+		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
 	// Pod running — check timeout.
@@ -353,7 +353,7 @@ func (r *WorkspaceReconciler) handleDeletion(ctx context.Context, workspace *v1.
 
 // --- Transient recovery ---
 
-func (r *WorkspaceReconciler) recoverFromTransientPodLoss(ctx context.Context, workspace *v1.Workspace, logger interface{ Info(string, ...interface{}) }) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) recoverFromTransientPodLoss(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	workspace.Status.TransientFailureCount++
 	now := metav1.Now()
 	workspace.Status.LastTransientFailureAt = &now
