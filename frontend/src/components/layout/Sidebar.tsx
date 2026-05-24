@@ -38,15 +38,24 @@ export function Sidebar() {
     },
   });
 
+  const [sessionError, setSessionError] = useState("");
+
   const handleNewSession = async () => {
     if (!workspaceId) return;
+    setSessionError("");
     try {
       const sandboxes = await workspacesApi.getSandboxes(workspaceId);
       const running = sandboxes.find((sb) => sb.phase === "Running");
       if (running) {
         createSessionMutation.mutate(running.id);
+      } else {
+        setSessionError("Workspace is not ready yet");
+        setTimeout(() => setSessionError(""), 3000);
       }
-    } catch { /* workspace may not be active */ }
+    } catch {
+      setSessionError("Failed to check workspace status");
+      setTimeout(() => setSessionError(""), 3000);
+    }
   };
 
   return (
@@ -102,6 +111,9 @@ export function Sidebar() {
               selectedSessionId={sessionId}
               onSelectSession={(sid) => navigate(`/chat/${workspaceId}/${sid}`)}
             />
+            {sessionError && (
+              <p className="px-3 py-1 text-xs text-destructive">{sessionError}</p>
+            )}
           </div>
         )}
       </div>
