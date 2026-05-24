@@ -671,6 +671,13 @@ func (r *SandboxReconciler) createSandboxPod(ctx context.Context, sandbox *v1.Sa
 	}
 
 	if err := r.Create(ctx, pod); err != nil {
+		if errors.IsAlreadyExists(err) {
+			// Pod with the same name still exists (likely in Terminating state
+			// from a restart or transient recovery). Requeue after a short delay
+			// to let the old pod finish terminating.
+			logger.Info("Pod already exists (likely still terminating); requeueing", "pod", pod.Name)
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
 		logger.Error(err, "Failed to create Pod")
 		return ctrl.Result{}, err
 	}
