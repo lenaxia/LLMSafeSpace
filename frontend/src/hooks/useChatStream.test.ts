@@ -20,7 +20,7 @@ describe("useChatStream", () => {
     expect(result.current.streaming).toBe(false);
   });
 
-  it("does nothing when sandboxId is undefined", async () => {
+  it("does nothing when workspaceId is undefined", async () => {
     const { result } = renderHook(() => useChatStream(undefined, "sess-1"));
     const onComplete = vi.fn();
     await act(async () => { result.current.send("hi", onComplete); });

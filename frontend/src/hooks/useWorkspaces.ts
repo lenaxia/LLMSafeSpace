@@ -22,10 +22,3 @@ export function useWorkspaceStatus(workspaceId: string | undefined) {
   });
 }
 
-export function useWorkspaceSandboxes(workspaceId: string | undefined) {
-  return useQuery({
-    queryKey: ["workspace-sandboxes", workspaceId],
-    queryFn: () => workspacesApi.getSandboxes(workspaceId!),
-    enabled: !!workspaceId,
-  });
-}

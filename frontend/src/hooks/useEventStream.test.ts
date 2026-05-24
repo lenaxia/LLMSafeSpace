@@ -33,7 +33,7 @@ describe("useEventStream", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not connect when sandboxId is undefined", () => {
+  it("does not connect when workspaceId is undefined", () => {
     renderHook(() => useEventStream(undefined, vi.fn()));
     expect(MockEventSource.instances).toHaveLength(0);
   });
@@ -41,7 +41,7 @@ describe("useEventStream", () => {
   it("connects to the correct SSE endpoint", () => {
     renderHook(() => useEventStream("sb-123", vi.fn()));
     expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0]!.url).toContain("/sandboxes/sb-123/events");
+    expect(MockEventSource.instances[0]!.url).toContain("/workspaces/sb-123/events");
     expect(MockEventSource.instances[0]!.withCredentials).toBe(true);
   });
 
@@ -64,7 +64,7 @@ describe("useEventStream", () => {
     expect(es.close).toHaveBeenCalled();
   });
 
-  it("reconnects when sandboxId changes", () => {
+  it("reconnects when workspaceId changes", () => {
     const { rerender } = renderHook(
       ({ id }) => useEventStream(id, vi.fn()),
       { initialProps: { id: "sb-1" as string | undefined } },
@@ -77,7 +77,7 @@ describe("useEventStream", () => {
 
     expect(first.close).toHaveBeenCalled();
     expect(MockEventSource.instances).toHaveLength(2);
-    expect(MockEventSource.instances[1]!.url).toContain("/sandboxes/sb-2/events");
+    expect(MockEventSource.instances[1]!.url).toContain("/workspaces/sb-2/events");
   });
 
   it("ignores malformed messages", () => {

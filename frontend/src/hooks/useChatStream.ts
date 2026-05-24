@@ -4,7 +4,7 @@ import { registerTabCloseAbort } from "../api/events";
 import { extractStreamText, parseCompleteStream } from "../lib/stream";
 import type { Message } from "../api/types";
 
-export function useChatStream(sandboxId: string | undefined, sessionId: string | undefined) {
+export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined) {
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState("");
   const abortRef = useRef<AbortController | null>(null);
@@ -16,14 +16,14 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
 
   const send = useCallback(
     async (text: string, onComplete: (msg: Message) => void) => {
-      if (!sandboxId || !sessionId) return;
+      if (!workspaceId || !sessionId) return;
       setStreaming(true);
       setStreamedText("");
       abortRef.current = new AbortController();
-      cleanupBeaconRef.current = registerTabCloseAbort(sandboxId, sessionId);
+      cleanupBeaconRef.current = registerTabCloseAbort(workspaceId, sessionId);
 
       try {
-        const res = await messagesApi.send(sandboxId, sessionId, {
+        const res = await messagesApi.send(workspaceId, sessionId, {
           parts: [{ type: "text", text }],
         });
 
@@ -63,7 +63,7 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
         cleanupBeaconRef.current = null;
       }
     },
-    [sandboxId, sessionId],
+    [workspaceId, sessionId],
   );
 
   const abort = useCallback(() => {

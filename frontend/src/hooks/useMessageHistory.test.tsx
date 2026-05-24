@@ -18,7 +18,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("useMessageHistory", () => {
-  it("does not fetch when sandboxId is undefined", () => {
+  it("does not fetch when workspaceId is undefined", () => {
     const { result } = renderHook(() => useMessageHistory(undefined, "sess-1"), { wrapper });
     expect(result.current.isFetching).toBe(false);
   });

@@ -2,15 +2,15 @@ import { api } from "./client";
 import type {
   ActivateWorkspaceResponse,
   ActiveSessionsResponse,
-  SandboxListItem,
+  WorkspaceListItem,
   SessionListItem,
   WorkspaceListResponse,
   WorkspaceStatus,
 } from "./types";
 
 export interface EnsureSessionResponse {
-  sandboxId: string;
-  sandboxPhase: string;
+  workspaceId: string;
+  workspacePhase: string;
   sessionId: string;
   resumed: boolean;
 }
@@ -18,13 +18,13 @@ export interface EnsureSessionResponse {
 export const workspacesApi = {
   list: () => api.get<WorkspaceListResponse>("/workspaces"),
   create: (params: { name: string; runtime?: string }) =>
-    api.post<{ id: string; name: string; sandboxId?: string }>("/workspaces", {
+    api.post<{ id: string; name: string; workspaceId?: string }>("/workspaces", {
       name: params.name,
       runtime: params.runtime || "base",
       storageSize: "5Gi",
     }),
-  createSandbox: (workspaceId: string, runtime = "base") =>
-    api.post<{ id: string }>("/sandboxes", { runtime, workspaceRef: workspaceId }),
+  createWorkspace: (workspaceId: string, runtime = "base") =>
+    api.post<{ id: string }>("/workspaces", { runtime, workspaceRef: workspaceId }),
   ensureSession: (workspaceId: string) =>
     api.post<EnsureSessionResponse>(`/workspaces/${workspaceId}/sessions/new`),
   getStatus: (id: string) => api.get<WorkspaceStatus>(`/workspaces/${id}/status`),
@@ -32,7 +32,7 @@ export const workspacesApi = {
   suspend: (id: string) => api.post<void>(`/workspaces/${id}/suspend`),
   getSessions: (id: string) => api.get<SessionListItem[]>(`/workspaces/${id}/sessions`),
   getActiveSessions: (id: string) => api.get<ActiveSessionsResponse>(`/workspaces/${id}/sessions/active`),
-  getSandboxes: (id: string) => api.get<SandboxListItem[]>(`/workspaces/${id}/sandboxes`),
+  getWorkspaceSessions: (id: string) => api.get<WorkspaceListItem[]>(`/workspaces/${id}/sessions`),
   renameSession: (workspaceId: string, sessionId: string, title: string) =>
     api.put<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/title`, { title }),
 };

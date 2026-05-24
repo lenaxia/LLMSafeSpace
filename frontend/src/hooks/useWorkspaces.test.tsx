@@ -2,13 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useWorkspaces, useWorkspaceStatus, useWorkspaceSandboxes } from "./useWorkspaces";
+import { useWorkspaces, useWorkspaceStatus } from "./useWorkspaces";
 
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
     list: vi.fn(),
     getStatus: vi.fn(),
-    getSandboxes: vi.fn(),
   },
 }));
 
@@ -47,18 +46,3 @@ describe("useWorkspaceStatus", () => {
   });
 });
 
-describe("useWorkspaceSandboxes", () => {
-  it("does not fetch when workspaceId is undefined", () => {
-    const { result } = renderHook(() => useWorkspaceSandboxes(undefined), { wrapper });
-    expect(result.current.isFetching).toBe(false);
-  });
-
-  it("fetches sandboxes for given workspace", async () => {
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sb-1", phase: "Running" },
-    ]);
-    const { result } = renderHook(() => useWorkspaceSandboxes("ws-1"), { wrapper });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(1);
-  });
-});

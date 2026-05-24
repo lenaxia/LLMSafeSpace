@@ -9,7 +9,7 @@ import { ChatPage } from "./ChatPage";
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
     getStatus: vi.fn(),
-    getSandboxes: vi.fn(),
+    getWorkspaceSessions: vi.fn(),
     activate: vi.fn(),
   },
 }));
@@ -36,7 +36,7 @@ function renderChat(path: string) {
 describe("Workspace activate flow — state machine", () => {
   it("suspended workspace shows banner with resume button, composer disabled", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     renderChat("/chat/ws-1");
 
@@ -48,7 +48,7 @@ describe("Workspace activate flow — state machine", () => {
   it("clicking resume calls activate API", async () => {
     const user = userEvent.setup();
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (workspacesApi.activate as ReturnType<typeof vi.fn>).mockResolvedValue({ resumed: "ws-1" });
 
     renderChat("/chat/ws-1");
@@ -61,16 +61,16 @@ describe("Workspace activate flow — state machine", () => {
 
   it("resuming state shows spinner with transitioning message", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Resuming" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     renderChat("/chat/ws-1");
 
     await waitFor(() => expect(screen.getByText(/resuming/i)).toBeInTheDocument());
   });
 
-  it("active workspace with running sandbox enables composer", async () => {
+  it("active workspace with running workspace enables composer", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: "sb-1", phase: "Running", podIP: "10.0.0.1" },
     ]);
 
@@ -81,9 +81,9 @@ describe("Workspace activate flow — state machine", () => {
     });
   });
 
-  it("active workspace with no sandbox keeps composer disabled", async () => {
+  it("active workspace with no workspace keeps composer disabled", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     renderChat("/chat/ws-1");
 
@@ -92,9 +92,9 @@ describe("Workspace activate flow — state machine", () => {
     });
   });
 
-  it("active workspace with sandbox in Creating state keeps composer disabled", async () => {
+  it("active workspace with workspace in Creating state keeps composer disabled", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: "sb-1", phase: "Creating" },
     ]);
 
