@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
+import { sessionsApi } from "../../api/sessions";
 import { useAuth } from "../../providers/AuthProvider";
 import { WorkspaceList } from "../workspace/WorkspaceList";
 import { WorkspaceSessionList } from "../workspace/WorkspaceSessionList";
@@ -28,6 +29,25 @@ export function Sidebar() {
       navigate(`/chat/${data.id}`);
     },
   });
+
+  const createSessionMutation = useMutation({
+    mutationFn: (sandboxId: string) => sessionsApi.create(sandboxId, "New chat"),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+      if (workspaceId) navigate(`/chat/${workspaceId}/${data.id}`);
+    },
+  });
+
+  const handleNewSession = async () => {
+    if (!workspaceId) return;
+    try {
+      const sandboxes = await workspacesApi.getSandboxes(workspaceId);
+      const running = sandboxes.find((sb) => sb.phase === "Running");
+      if (running) {
+        createSessionMutation.mutate(running.id);
+      }
+    } catch { /* workspace may not be active */ }
+  };
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-border bg-card" aria-label="Navigation">
@@ -64,7 +84,7 @@ export function Sidebar() {
             <div className="flex items-center justify-between px-3 pb-1">
               <p className="text-xs font-medium text-muted-foreground">Sessions</p>
               <button
-                onClick={() => navigate(`/chat/${workspaceId}`)}
+                onClick={handleNewSession}
                 className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                 aria-label="New session"
                 title="New chat"
