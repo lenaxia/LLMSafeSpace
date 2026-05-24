@@ -1,0 +1,35 @@
+{{- if and .Values.frontend.enabled .Values.frontend.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  {{- with .Values.frontend.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.frontend.ingress.className }}
+  ingressClassName: {{ .Values.frontend.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.frontend.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "llmsafespace.fullname" . }}-frontend
+                port:
+                  name: http
+  {{- if .Values.frontend.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.frontend.ingress.host | quote }}
+      secretName: {{ .Values.frontend.ingress.tlsSecret | default (printf "%s-frontend-tls" (include "llmsafespace.fullname" .)) }}
+  {{- end }}
+{{- end }}
