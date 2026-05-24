@@ -80,7 +80,7 @@ func reconcilerFor(t *testing.T, objs ...runtime.Object) *SandboxReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&v1.Sandbox{}).
+		WithStatusSubresource(&v1.Sandbox{}, &corev1.Pod{}).
 		Build()
 	return &SandboxReconciler{
 		Client: fakeClient,

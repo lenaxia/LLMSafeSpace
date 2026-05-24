@@ -62,6 +62,8 @@ var sandboxRoutes = []struct {
 	{http.MethodGet, "/api/v1/sandboxes/sb-1"},
 	{http.MethodDelete, "/api/v1/sandboxes/sb-1"},
 	{http.MethodGet, "/api/v1/sandboxes/sb-1/status"},
+	{http.MethodPost, "/api/v1/sandboxes/sb-1/restart"},
+	{http.MethodPost, "/api/v1/sandboxes/sb-1/retry"},
 }
 
 // TestSandboxRoutes_Exist verifies every sandbox CRUD route is registered.
@@ -82,6 +84,10 @@ func TestSandboxRoutes_Exist(t *testing.T) {
 				Return(assert.AnError).Maybe()
 			sb.On("GetSandboxStatus", mock.Anything, mock.Anything).
 				Return(nil, assert.AnError).Maybe()
+			sb.On("RestartSandbox", mock.Anything, mock.Anything).
+				Return(assert.AnError).Maybe()
+			sb.On("RetrySandbox", mock.Anything, mock.Anything).
+				Return(assert.AnError).Maybe()
 
 			req, _ := http.NewRequest(rt.method, rt.path, bytes.NewReader([]byte(`{"runtime":"base"}`)))
 			req.Header.Set("Authorization", "Bearer testtoken")
@@ -263,4 +269,118 @@ func TestSandboxRoutes_GetStatus_Success(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err == nil {
 		assert.Equal(t, "Running", got.Phase)
 	}
+}
+
+// ===========================================================================
+// Fix #1: POST /sandboxes/:id/restart E2E
+// ===========================================================================
+
+func TestSandboxRoutes_RestartSandbox_Success(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RestartSandbox", mock.Anything, "sb-1").Return(nil)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/restart", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	sb.AssertCalled(t, "RestartSandbox", mock.Anything, "sb-1")
+}
+
+func TestSandboxRoutes_RestartSandbox_NotFound(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RestartSandbox", mock.Anything, "missing").
+		Return(apierrors.NewNotFoundError("sandbox", "missing", assert.AnError))
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/missing/restart", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSandboxRoutes_RestartSandbox_Conflict(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RestartSandbox", mock.Anything, "sb-1").
+		Return(&apierrors.APIError{
+			Type:    apierrors.ErrorTypeConflict,
+			Code:    "invalid_phase",
+			Message: "sandbox is in phase \"Pending\"; restart requires Running",
+		})
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/restart", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestSandboxRoutes_RestartSandbox_NoAuth(t *testing.T) {
+	router, _ := newSandboxRouterFixture(t)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/restart", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// ===========================================================================
+// Fix #5: POST /sandboxes/:id/retry E2E
+// ===========================================================================
+
+func TestSandboxRoutes_RetrySandbox_Success(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RetrySandbox", mock.Anything, "sb-1").Return(nil)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/retry", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	sb.AssertCalled(t, "RetrySandbox", mock.Anything, "sb-1")
+}
+
+func TestSandboxRoutes_RetrySandbox_NotFound(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RetrySandbox", mock.Anything, "missing").
+		Return(apierrors.NewNotFoundError("sandbox", "missing", assert.AnError))
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/missing/retry", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSandboxRoutes_RetrySandbox_MaxRetriesExceeded(t *testing.T) {
+	router, sb := newSandboxRouterFixture(t)
+	sb.On("RetrySandbox", mock.Anything, "sb-1").
+		Return(&apierrors.APIError{
+			Type:    apierrors.ErrorTypeConflict,
+			Code:    "max_retries_exceeded",
+			Message: "sandbox has reached maximum retries (3/3)",
+		})
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/retry", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestSandboxRoutes_RetrySandbox_NoAuth(t *testing.T) {
+	router, _ := newSandboxRouterFixture(t)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/retry", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
