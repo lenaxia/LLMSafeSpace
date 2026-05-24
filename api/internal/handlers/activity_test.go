@@ -159,9 +159,8 @@ func TestActivityTracker_StartBeginsFlushLoop(t *testing.T) {
 	err = tracker.Stop()
 	assert.NoError(t, err)
 
-	require.Eventually(t, func() bool {
-		return wsMock.AssertExpectations(t)
-	}, 2*time.Second, 10*time.Millisecond, "Stop should trigger final flush via stopCh")
+	time.Sleep(100 * time.Millisecond)
+	wsMock.AssertExpectations(t)
 }
 
 func TestActivityTracker_Stop_FinalFlush(t *testing.T) {
@@ -180,9 +179,8 @@ func TestActivityTracker_Stop_FinalFlush(t *testing.T) {
 	err = tracker.Stop()
 	assert.NoError(t, err)
 
-	require.Eventually(t, func() bool {
-		return wsMock.AssertExpectations(t)
-	}, 2*time.Second, 10*time.Millisecond, "final flush should have been called via stopCh")
+	time.Sleep(100 * time.Millisecond)
+	wsMock.AssertExpectations(t)
 }
 
 func TestActivityTracker_PendingCount(t *testing.T) {
