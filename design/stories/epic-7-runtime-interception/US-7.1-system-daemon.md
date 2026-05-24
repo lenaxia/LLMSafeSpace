@@ -128,12 +128,13 @@ func connectWithRetry() (net.Conn, error) {
 1. Daemon starts, creates socket at `/run/llmsafespace/system.sock`
 2. Accepts connection from another container via shared emptyDir volume
 3. `apt install curl` succeeds when requested via socket
-4. Blocked flag (`--allow-unauthenticated`) rejected with clear error
-5. Rate limit triggers after N rapid requests
-6. Audit log written to `/var/log/llmsafespace/audit.jsonl`
-7. SIGTERM → graceful shutdown (finish in-flight, close socket, exit)
-8. Binary is <10MB static Go binary
-9. Unit tests: policy allow/deny, rate limit, malformed request, concurrent requests
+4. `apt install python3` succeeds AND wrapper at `/usr/bin/python3` is restored after install
+5. Blocked flag (`--allow-unauthenticated`) rejected with clear error
+6. Rate limit triggers after N rapid requests
+7. Audit log written to `/var/log/llmsafespace/audit.jsonl`
+8. SIGTERM → graceful shutdown (finish in-flight, close socket, exit)
+9. Binary is <10MB static Go binary
+10. Unit tests: policy allow/deny, rate limit, malformed request, concurrent requests, wrapper restoration
 
 ## Non-Goals
 

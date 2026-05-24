@@ -169,7 +169,7 @@ The sentinel controls whether enforcement is active. One file, two behaviors:
 
 | Sentinel State | Behavior |
 |----------------|----------|
-| **Absent** | Docker mode. Daemon exec's opencode directly. Wrappers passthrough. No policy. No UID separation. |
+| **Absent** | Docker mode. Wrappers passthrough. No policy. No UID separation. Agent runs as root. |
 | **Present (empty)** | Full enforcement with defaults: daemon on socket, UID 1000, all policies active. |
 | **Present (with JSON)** | Full enforcement with custom config. |
 
@@ -252,7 +252,7 @@ All security/policy fields move to `RuntimePolicy` CRD.
 | US-7.4 | RuntimePolicy CRD | New CRD type for per-language security config |
 | US-7.5 | Workspace Spec: languages + runtimeClass | CRD changes, controller mounts policy ConfigMaps, runtimeClassName |
 | US-7.6 | RuntimeEnvironment Cleanup | Trim dead fields, deduplicate resolveRuntimeImage() |
-| US-7.7 | Base Dockerfile Rewrite | Binary relocation, wrapper install, daemon as entrypoint, drop read-only rootfs |
+| US-7.7 | Base Dockerfile Rewrite | Binary relocation, wrapper install, daemon binary included, drop read-only rootfs |
 | US-7.8 | Delete Legacy Runtime Artifacts | Remove runtimes/python/, nodejs/, go/, tests/, design/RUNTIMEENV.md |
 
 ## Dependency Graph

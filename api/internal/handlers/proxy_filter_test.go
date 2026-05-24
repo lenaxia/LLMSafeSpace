@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // opencodeMessageResponse mirrors the shape opencode returns for
@@ -53,11 +55,11 @@ func TestProxy_StripsPatchParts_FromMessageResponse(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/ses_1/message",
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/ses_1/message",
 		strings.NewReader(`{"parts":[{"type":"text","text":"hi"}]}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -85,12 +87,12 @@ func TestProxy_VerboseFlag_KeepsPatchParts(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
 	w := env.doRequestWithT(t, "POST",
-		"/api/v1/sandboxes/sb-1/sessions/ses_1/message?verbose=true",
+		"/api/v1/workspaces/ws-1/sessions/ses_1/message?verbose=true",
 		strings.NewReader(`{"parts":[{"type":"text","text":"hi"}]}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -118,11 +120,11 @@ func TestProxy_StripsPatchParts_FromHistoryResponse(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeHistoryBody))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions/ses_1/message", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/ses_1/message", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var msgs []struct {
@@ -148,12 +150,12 @@ func TestProxy_VerboseFlag_FalseStillStripsParts(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
 	w := env.doRequestWithT(t, "POST",
-		"/api/v1/sandboxes/sb-1/sessions/ses_1/message?verbose=false",
+		"/api/v1/workspaces/ws-1/sessions/ses_1/message?verbose=false",
 		strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -176,11 +178,11 @@ func TestProxy_StripDoesNotApplyToSessionList(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(body))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, body, w.Body.String(),
 		"session list response should pass through unchanged")
@@ -194,11 +196,11 @@ func TestProxy_StripPreservesNonJSONResponses(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not json {{{"))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions/ses_1/message", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/ses_1/message", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "not json {{{", w.Body.String())
 }
@@ -211,11 +213,11 @@ func TestProxy_StripPreservesNon200Responses(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"bad request"}`))
 	})
-	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/ses_1/message",
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/ses_1/message",
 		strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, `{"error":"bad request"}`, w.Body.String())
