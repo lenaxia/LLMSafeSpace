@@ -34,7 +34,8 @@ type Service struct {
 
 // Config holds workspace service configuration.
 type Config struct {
-	Namespace string
+	Namespace   string
+	OpencodePort int // Port for opencode on sandbox pods. Default: 4096.
 }
 
 var _ apiinterfaces.WorkspaceService = (*Service)(nil)
@@ -614,12 +615,12 @@ func (s *Service) ensureSandbox(ctx context.Context, userID, workspaceID, runtim
 
 	// Prefer a Running sandbox, then any non-terminated one.
 	for _, sb := range sandboxes {
-		if sb.Phase == "Running" {
+		if sb.Status == "Running" {
 			return sb.ID, nil
 		}
 	}
 	for _, sb := range sandboxes {
-		if sb.Phase != "Terminated" && sb.Phase != "Failed" {
+		if sb.Status != "Terminated" && sb.Status != "Failed" {
 			return sb.ID, nil
 		}
 	}
@@ -681,7 +682,11 @@ func (s *Service) createSessionOnSandbox(ctx context.Context, sandboxID, podIP s
 	}
 	password := string(secret.Data["password"])
 
-	url := fmt.Sprintf("http://%s:4096/session", podIP)
+	port := s.config.OpencodePort
+	if port == 0 {
+		port = 4096
+	}
+	url := fmt.Sprintf("http://%s:%d/session", podIP, port)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", apierrors.NewInternalError("session_request_failed", err)
