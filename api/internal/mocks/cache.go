@@ -29,6 +29,11 @@ func (m *MockCacheService) Set(ctx context.Context, key string, value string, ex
 	return m.Called(ctx, key, value, expiration).Error(0)
 }
 
+func (m *MockCacheService) SetNX(ctx context.Context, key string, value string, expiration time.Duration) (bool, error) {
+	args := m.Called(ctx, key, value, expiration)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockCacheService) Delete(ctx context.Context, key string) error {
 	return m.Called(ctx, key).Error(0)
 }

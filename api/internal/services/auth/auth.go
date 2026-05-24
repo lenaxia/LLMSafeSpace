@@ -501,9 +501,13 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 	return s.dbService.DeleteAPIKey(ctx, userID, keyID)
 }
 
-// extractToken extracts the token from the Authorization header
+// extractToken extracts the token from the Authorization header or cookie
 func extractToken(c *gin.Context) string {
-	return utilities.ExtractToken(c)
+	return utilities.ExtractToken(c, utilities.TokenExtractorConfig{
+		HeaderName: "Authorization",
+		TokenType:  "Bearer",
+		CookieName: "lsp_session",
+	})
 }
 
 // AuthMiddleware returns a middleware that validates JWT tokens

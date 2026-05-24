@@ -2,6 +2,7 @@ package mocks
 
 import (
 	"context"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -162,4 +163,24 @@ func (m *MockDatabaseService) Stop() error  { return m.Called().Error(0) }
 
 func (m *MockDatabaseService) Ping(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
+}
+
+func (m *MockDatabaseService) ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.SessionListItem), args.Error(1)
+}
+
+func (m *MockDatabaseService) DeleteSessionIndex(ctx context.Context, workspaceID string) error {
+	return m.Called(ctx, workspaceID).Error(0)
+}
+
+func (m *MockDatabaseService) UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error {
+	return m.Called(ctx, workspaceID, sessionID, at).Error(0)
+}
+
+func (m *MockDatabaseService) UpsertSessionTitle(ctx context.Context, workspaceID, sessionID, title string) error {
+	return m.Called(ctx, workspaceID, sessionID, title).Error(0)
 }

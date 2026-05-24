@@ -1,0 +1,68 @@
+import { getEnv } from "../env";
+import type { ApiError } from "./types";
+
+export class ApiClientError extends Error {
+  constructor(
+    public status: number,
+    public body: ApiError,
+  ) {
+    super(body.error);
+    this.name = "ApiClientError";
+  }
+}
+
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const { apiBaseUrl } = getEnv();
+  const url = `${apiBaseUrl}${path}`;
+  const res = await fetch(url, {
+    ...options,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiClientError(res.status, body);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export const api = {
+  get: <T>(path: string) => request<T>(path),
+  post: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  put: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+};
+
+/**
+ * Streaming fetch for chat messages. Returns the raw Response for
+ * ReadableStream consumption.
+ */
+export async function streamRequest(
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const { apiBaseUrl } = getEnv();
+  const url = `${apiBaseUrl}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiClientError(res.status, err);
+  }
+  return res;
+}

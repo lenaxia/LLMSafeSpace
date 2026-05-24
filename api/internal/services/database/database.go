@@ -892,3 +892,62 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 	}
 	return nil
 }
+
+// --- Session Index DB methods (Phase A) ---
+
+func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT session_id, title, last_message_at, message_count
+		 FROM session_index WHERE workspace_id = $1
+		 ORDER BY last_message_at DESC NULLS LAST LIMIT 100`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []types.SessionListItem
+	for rows.Next() {
+		var item types.SessionListItem
+		var title sql.NullString
+		var lastMsg sql.NullTime
+		if err := rows.Scan(&item.ID, &title, &lastMsg, &item.MessageCount); err != nil {
+			return nil, err
+		}
+		if title.Valid {
+			item.Title = title.String
+		}
+		if lastMsg.Valid {
+			t := lastMsg.Time
+			item.LastMessageAt = &t
+		}
+		item.Status = "idle"
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) DeleteSessionIndex(ctx context.Context, workspaceID string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM session_index WHERE workspace_id = $1`, workspaceID)
+	return err
+}
+
+func (s *Service) UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO session_index (workspace_id, session_id, last_message_at, message_count, updated_at)
+		 VALUES ($1, $2, $3, 1, NOW())
+		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   last_message_at = EXCLUDED.last_message_at,
+		   message_count = session_index.message_count + 1,
+		   updated_at = NOW()`, workspaceID, sessionID, at)
+	return err
+}
+
+func (s *Service) UpsertSessionTitle(ctx context.Context, workspaceID, sessionID, title string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO session_index (workspace_id, session_id, title, updated_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   title = EXCLUDED.title,
+		   updated_at = NOW()`, workspaceID, sessionID, title)
+	return err
+}

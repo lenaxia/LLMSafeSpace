@@ -626,14 +626,15 @@ type WorkspaceListResult struct {
 
 // WorkspaceListItem is a lightweight workspace representation for list responses.
 type WorkspaceListItem struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	UserID      string    `json:"userId"`
-	Runtime     string    `json:"runtime"`
-	StorageSize string    `json:"storageSize"`
-	Phase       string    `json:"phase,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	UserID            string    `json:"userId"`
+	Runtime           string    `json:"runtime"`
+	StorageSize       string    `json:"storageSize"`
+	Phase             string    `json:"phase,omitempty"`
+	MaxActiveSessions int       `json:"maxActiveSessions,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // WorkspaceStatusResult carries the status fields read from the Workspace CRD.
@@ -683,4 +684,34 @@ type WorkspaceNotFoundError struct {
 
 func (e *WorkspaceNotFoundError) Error() string {
 	return fmt.Sprintf("workspace %s not found", e.ID)
+}
+
+// --- Frontend types (Phase A) ---
+
+// AuthConfig is returned by GET /auth/config for feature-flag discovery.
+type AuthConfig struct {
+	RegistrationEnabled bool     `json:"registrationEnabled"`
+	OIDCEnabled         bool     `json:"oidcEnabled"`
+	SSOProviders        []string `json:"ssoProviders,omitempty"`
+}
+
+// ActivateWorkspaceResponse is returned by POST /workspaces/:id/activate.
+type ActivateWorkspaceResponse struct {
+	Resumed   string `json:"resumed"`
+	Suspended string `json:"suspended,omitempty"`
+}
+
+// SessionListItem is sidebar metadata for a session (NOT message bodies).
+type SessionListItem struct {
+	ID            string     `json:"id"`
+	Title         string     `json:"title,omitempty"`
+	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
+	MessageCount  int        `json:"messageCount"`
+	Status        string     `json:"status"` // "active" | "idle"
+}
+
+// ActiveSessionsResponse is returned by GET /workspaces/:id/sessions/active.
+type ActiveSessionsResponse struct {
+	Active    []string `json:"active"`
+	MaxActive int      `json:"maxActive"`
 }
