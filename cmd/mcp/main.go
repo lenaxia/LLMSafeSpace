@@ -33,10 +33,14 @@ func main() {
 	flag.DurationVar(&timeout, "timeout", 300*time.Second, "Default timeout for session_message")
 	flag.Parse()
 
+	if apiKey == "" {
+		fmt.Fprintf(os.Stderr, "WARNING: no API key configured (set LLMSAFESPACE_API_KEY or --api-key). All API calls will fail with 401.\n")
+	}
+
 	client := &llmmcp.HTTPClient{
 		BaseURL:    baseURL,
 		APIKey:     apiKey,
-		HTTPClient: &http.Client{Timeout: 0}, // no client-level timeout; per-request context handles it
+		HTTPClient: &http.Client{Timeout: 0}, // per-request context handles timeouts
 	}
 
 	srv := llmmcp.NewServer(client, timeout)
@@ -47,8 +51,16 @@ func main() {
 	if sse {
 		sseServer := mcpserver.NewSSEServer(srv)
 		log.Printf("MCP SSE server listening on %s", addr)
-		if err := sseServer.Start(addr); err != nil {
+
+		// Run in goroutine so we can listen for shutdown signal
+		errCh := make(chan error, 1)
+		go func() { errCh <- sseServer.Start(addr) }()
+
+		select {
+		case err := <-errCh:
 			log.Fatalf("SSE server error: %v", err)
+		case <-ctx.Done():
+			log.Println("Shutting down SSE server...")
 		}
 	} else {
 		stdioServer := mcpserver.NewStdioServer(srv)
