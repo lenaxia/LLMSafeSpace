@@ -281,3 +281,51 @@ func TestHTTPClient_ContextCancelled(t *testing.T) {
 	_, err := client.CreateWorkspace(ctx, CreateWorkspaceReq{Runtime: "python:3.10"})
 	assert.Error(t, err)
 }
+
+// ===== Malformed responses =====
+
+func TestHTTPClient_MalformedJSONResponse(t *testing.T) {
+	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`<html>502 Bad Gateway</html>`))
+	}))
+	defer ts.Close()
+
+	_, err := client.CreateWorkspace(context.Background(), CreateWorkspaceReq{Runtime: "python:3.10"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "decode response")
+}
+
+// ===== SSE with keepalive comments and retry directives =====
+
+func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
+	})
+	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/sandboxes/sb-99/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Real SSE streams have comments, retry directives, and event types
+		fmt.Fprintf(w, ":keepalive\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "retry: 3000\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"type\":\"content\",\"content\":\"answer\"}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: not-json-at-all\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"type\":\"session.idle\"}\n\n")
+		flusher.Flush()
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "hi", 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "answer", resp)
+}
