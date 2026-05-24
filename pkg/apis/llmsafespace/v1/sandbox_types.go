@@ -182,6 +182,32 @@ type SandboxStatus struct {
 	// LastActivityAt is the timestamp of the most recent API activity.
 	// Updated by the API server (not the controller).
 	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
+
+	// RestartCount is the cumulative number of pod restarts the controller
+	// has performed on this sandbox over its lifetime, regardless of cause
+	// (transient pod-loss recovery, user-initiated restart, credential
+	// rotation, etc). Never resets while the sandbox exists. Surfaced as a
+	// metric and as a debugging aid; clients should not key behaviour on
+	// the absolute value.
+	RestartCount int32 `json:"restartCount,omitempty"`
+
+	// TransientFailureCount is the running count of consecutive transient
+	// pod-loss events that the controller has self-healed by reverting to
+	// Pending (see design/SANDBOX-LIFECYCLE.md §4.1, fix #2). It increments
+	// each time the controller observes "pod missing while phase=Running"
+	// and decides to retry instead of failing. It resets to 0 once the
+	// sandbox stays in Running for the recovery-stable window.
+	//
+	// When this counter reaches MaxTransientFailures (3), the next pod-loss
+	// event marks the sandbox Failed terminally; recovery requires
+	// POST /sandboxes/:id/retry (fix #5).
+	TransientFailureCount int32 `json:"transientFailureCount,omitempty"`
+
+	// LastTransientFailureAt is the wall-clock time of the most recent
+	// transient pod-loss recovery. Used by the reset-on-stable-Running
+	// logic to compute "how long has the pod been healthy since the last
+	// transient event". Nil when no transient failure has occurred.
+	LastTransientFailureAt *metav1.Time `json:"lastTransientFailureAt,omitempty"`
 }
 
 // SandboxCondition is a condition of a sandbox.

@@ -247,10 +247,15 @@ func TestHandleCreatingSandbox_PodPending_RequeuesAfterDelay(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleRunningSandbox — pod not found → mark failed
+// handleRunningSandbox — pod not found, no priors → revert to Pending (fix #2)
+//
+// Pre-fix #2 this branch went straight to Failed. Post-fix #2, the first
+// MaxTransientFailures-1 occurrences self-heal by reverting to Pending; only
+// the Nth (= MaxTransientFailures) is terminal. The terminal-failure case
+// is covered by transient_failure_test.go::TestHandleRunningSandbox_PodMissing_AtThreshold_MarksFailed.
 // ---------------------------------------------------------------------------
 
-func TestHandleRunningSandbox_PodNotFound_MarksFailed(t *testing.T) {
+func TestHandleRunningSandbox_PodNotFound_FirstOccurrence_RevertsToPending(t *testing.T) {
 	now := metav1.Now()
 	sb := makeSandbox("sb-running", "default", common.SandboxPhaseRunning)
 	sb.Finalizers = []string{common.SandboxFinalizer}
@@ -263,11 +268,13 @@ func TestHandleRunningSandbox_PodNotFound_MarksFailed(t *testing.T) {
 	result, err := r.Reconcile(context.Background(), reqFor("sb-running", "default"))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.True(t, result.Requeue, "transient recovery must request immediate requeue")
 
 	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-running", Namespace: "default"}, updated))
-	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase)
+	assert.Equal(t, common.SandboxPhasePending, updated.Status.Phase,
+		"first transient pod-loss must revert to Pending (fix #2); see transient_failure_test.go for full matrix")
+	assert.Equal(t, int32(1), updated.Status.TransientFailureCount)
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,7 +1016,9 @@ func TestE2E_Unhappy_SandboxTimeout_ExceededWhileRunning(t *testing.T) {
 		"sandbox exceeding timeout must transition to Terminating")
 }
 
-func TestE2E_Unhappy_RunningPod_Disappears_MarksFailed(t *testing.T) {
+func TestE2E_Unhappy_RunningPod_Disappears_RevertsToPending(t *testing.T) {
+	// Post-fix #2: first transient pod-loss reverts to Pending, not Failed.
+	// Multi-loss / threshold cases live in transient_failure_test.go.
 	sb := makeSandbox("sb-pod-gone", "default", common.SandboxPhaseRunning)
 	sb.Finalizers = []string{common.SandboxFinalizer}
 	sb.Status.PodName = "ghost-pod"
@@ -1020,12 +1029,13 @@ func TestE2E_Unhappy_RunningPod_Disappears_MarksFailed(t *testing.T) {
 
 	result, err := r.Reconcile(context.Background(), reqFor("sb-pod-gone", "default"))
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	// Recovery requests an immediate requeue so handlePending creates the new pod.
+	assert.True(t, result.Requeue, "transient recovery must request immediate requeue")
 
 	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "sb-pod-gone", Namespace: "default"}, updated))
-	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase,
-		"running sandbox with missing pod must transition to Failed")
+	assert.Equal(t, common.SandboxPhasePending, updated.Status.Phase,
+		"running sandbox with missing pod must self-heal to Pending on first occurrence")
 }
 
 func TestE2E_Unhappy_Suspending_DeletesPod_ClearsPodFields(t *testing.T) {
