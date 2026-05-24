@@ -55,6 +55,10 @@ func newFixture(t *testing.T) *fixture {
 	k8s.On("LlmsafespaceV1").Return(v1i)
 	v1i.On("Sandboxes", "default").Return(sb)
 
+	rte := kmocks.NewMockRuntimeEnvironmentInterface()
+	rte.On("Get", mock.Anything, mock.Anything).Return((*v1.RuntimeEnvironment)(nil), errors.New("not found")).Maybe()
+	v1i.On("RuntimeEnvironments", mock.Anything).Return(rte).Maybe()
+
 	svc, err := New(log, k8s, db, cache, met, wsSvc, &Config{
 		Namespace:      "default",
 		DefaultTimeout: 300,
