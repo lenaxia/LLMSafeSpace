@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useWorkspaceStatus, useWorkspaceSandboxes } from "../hooks/useWorkspaces";
+import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
@@ -21,15 +21,14 @@ export function ChatPage() {
   const queryClient = useQueryClient();
 
   const { data: status } = useWorkspaceStatus(workspaceId);
-  const { data: sandboxes } = useWorkspaceSandboxes(workspaceId);
   const activateMutation = useActivateWorkspace();
 
-  const sandbox = sandboxes?.[0];
-  const sandboxId = sandbox?.phase === "Running" ? sandbox.id : undefined;
+  // Workspace is ready when phase is Active
+  const isReady = status?.phase === "Active";
 
-  // Auto-create session when sandbox is ready but no session selected
+  // Auto-create session when workspace is ready but no session selected
   const createSessionMutation = useMutation({
-    mutationFn: (sbId: string) => sessionsApi.create(sbId, "New chat"),
+    mutationFn: (wsId: string) => sessionsApi.create(wsId, "New chat"),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
       if (workspaceId) {
@@ -39,13 +38,14 @@ export function ChatPage() {
   });
 
   useEffect(() => {
-    if (sandboxId && !sessionId && !createSessionMutation.isPending) {
-      createSessionMutation.mutate(sandboxId);
+    if (isReady && workspaceId && !sessionId && !createSessionMutation.isPending) {
+      createSessionMutation.mutate(workspaceId);
     }
-  }, [sandboxId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isReady, workspaceId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data: history, isLoading: historyLoading } = useMessageHistory(sandboxId, sessionId);
-  const { send, abort, streaming, streamedText } = useChatStream(sandboxId, sessionId);
+  const activeWorkspaceId = isReady ? workspaceId : undefined;
+  const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
+  const { send, abort, streaming, streamedText } = useChatStream(activeWorkspaceId, sessionId);
 
   // SSE event stream
   const handleSSEEvent = useCallback((data: unknown) => {
@@ -55,7 +55,7 @@ export function ChatPage() {
     }
   }, [queryClient, workspaceId]);
 
-  useEventStream(sandboxId, handleSSEEvent);
+  useEventStream(activeWorkspaceId, handleSSEEvent);
 
   const allMessages = [...(history ?? []), ...localMessages];
 
@@ -113,7 +113,7 @@ export function ChatPage() {
           messages={allMessages}
           streaming={streaming}
           streamedText={streamedText}
-          disabled={!sandboxId || !sessionId || isSuspended}
+          disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}
           onAbort={abort}
         />

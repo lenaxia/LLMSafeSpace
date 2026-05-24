@@ -24,7 +24,7 @@ export function Sidebar() {
   const createMutation = useMutation({
     mutationFn: async (params: { name: string }) => {
       const ws = await workspacesApi.create(params);
-      // Backend auto-creates sandbox; now ensure session is ready.
+      // Backend auto-creates workspace; now ensure session is ready.
       const session = await workspacesApi.ensureSession(ws.id);
       return { workspaceId: ws.id, sessionId: session.sessionId };
     },

@@ -67,7 +67,7 @@ export interface ActiveSessionsResponse {
   maxActive: number;
 }
 
-export interface SandboxListItem {
+export interface WorkspaceSessionItem {
   id: string;
   phase: string;
   podIP?: string;

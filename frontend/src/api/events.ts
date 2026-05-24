@@ -17,10 +17,10 @@ const LEADER_TIMEOUT_MS = 5000;
  * takes over after LEADER_TIMEOUT_MS.
  */
 export function createEventStream(
-  sandboxId: string,
+  workspaceId: string,
   onEvent: (event: SSEEvent) => void,
 ): () => void {
-  const channelName = `${CHANNEL_PREFIX}${sandboxId}`;
+  const channelName = `${CHANNEL_PREFIX}${workspaceId}`;
   const channel = new BroadcastChannel(channelName);
   const tabId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -35,7 +35,7 @@ export function createEventStream(
     isLeader = true;
 
     const { apiBaseUrl } = getEnv();
-    eventSource = new EventSource(`${apiBaseUrl}/sandboxes/${sandboxId}/events`, {
+    eventSource = new EventSource(`${apiBaseUrl}/workspaces/${workspaceId}/events`, {
       withCredentials: true,
     });
 
@@ -122,10 +122,10 @@ export function createEventStream(
  * Sends an abort signal via sendBeacon on tab close.
  * Used to notify the server that an in-flight stream should be cancelled.
  */
-export function registerTabCloseAbort(sandboxId: string, sessionId: string): () => void {
+export function registerTabCloseAbort(workspaceId: string, sessionId: string): () => void {
   const handler = () => {
     const { apiBaseUrl } = getEnv();
-    const url = `${apiBaseUrl}/sandboxes/${sandboxId}/sessions/${sessionId}/abort`;
+    const url = `${apiBaseUrl}/workspaces/${workspaceId}/sessions/${sessionId}/abort`;
     navigator.sendBeacon(url);
   };
 

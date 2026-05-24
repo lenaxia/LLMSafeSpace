@@ -2,17 +2,17 @@ import { useEffect, useRef } from "react";
 import { getEnv } from "../env";
 
 export function useEventStream(
-  sandboxId: string | undefined,
+  workspaceId: string | undefined,
   onEvent: (data: unknown) => void,
 ) {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
   useEffect(() => {
-    if (!sandboxId) return;
+    if (!workspaceId) return;
 
     const { apiBaseUrl } = getEnv();
-    const es = new EventSource(`${apiBaseUrl}/sandboxes/${sandboxId}/events`, {
+    const es = new EventSource(`${apiBaseUrl}/workspaces/${workspaceId}/events`, {
       withCredentials: true,
     });
 
@@ -28,5 +28,5 @@ export function useEventStream(
     return () => {
       es.close();
     };
-  }, [sandboxId]);
+  }, [workspaceId]);
 }

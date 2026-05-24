@@ -51,7 +51,7 @@ describe("API client — auth error handling", () => {
     });
 
     try {
-      await api.post("/sandboxes/sb-1/sessions/s1/message", {});
+      await api.post("/workspaces/sb-1/sessions/s1/message", {});
       expect.fail("should have thrown");
     } catch (e) {
       expect((e as ApiClientError).status).toBe(429);

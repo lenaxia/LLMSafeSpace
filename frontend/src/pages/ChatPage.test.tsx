@@ -8,7 +8,7 @@ import { ChatPage } from "./ChatPage";
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
     getStatus: vi.fn(),
-    getSandboxes: vi.fn(),
+    getWorkspaceSessions: vi.fn(),
     activate: vi.fn(),
   },
 }));
@@ -41,28 +41,28 @@ describe("ChatPage", () => {
 
   it("shows suspended banner for suspended workspace", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     renderChatPage("/chat/ws-1");
     await waitFor(() => expect(screen.getByText(/is suspended/)).toBeInTheDocument());
   });
 
   it("shows transitioning state", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Resuming" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     renderChatPage("/chat/ws-1");
     await waitFor(() => expect(screen.getByText(/resuming/i)).toBeInTheDocument());
   });
 
   it("disables composer when workspace is suspended", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     renderChatPage("/chat/ws-1/sess-1");
     await waitFor(() => expect(document.querySelector("textarea")).toBeDisabled());
   });
 
-  it("enables composer when sandbox is running and session is selected", async () => {
+  it("enables composer when workspace is running and session is selected", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "sb-1", phase: "Running" }]);
+    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "sb-1", phase: "Running" }]);
     renderChatPage("/chat/ws-1/sess-1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
   });
