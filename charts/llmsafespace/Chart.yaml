@@ -1,8 +1,8 @@
 apiVersion: v2
 name: llmsafespace
 description: |
-  Kubernetes-first platform for running AI agents securely in isolated sandboxes.
-  Each sandbox runs `opencode serve` as a persistent HTTP server with a
+  Kubernetes-first platform for running AI agents securely in isolated workspaces.
+  Each workspace runs `opencode serve` as a persistent HTTP server with a
   PVC-backed workspace. The API service acts as a reverse proxy to the agent.
 type: application
 version: 0.1.0
@@ -14,7 +14,7 @@ sources:
 keywords:
   - ai
   - agent
-  - sandbox
+  - workspace
   - opencode
   - mcp
 maintainers:

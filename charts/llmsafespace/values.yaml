@@ -6,7 +6,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 # Namespace where the platform's own components run.
-# Sandboxes are created in the same namespace by default; controller can be
+# Workspaces are created in the same namespace by default; controller can be
 # configured to watch additional namespaces via .controller.watchNamespaces.
 namespace:
   # If create: true, the chart will create the release namespace.
@@ -77,7 +77,7 @@ api:
     kubernetes:
       configPath: ""
       inCluster: true
-      # Defaults to the release namespace; override to deploy sandboxes
+      # Defaults to the release namespace; override to deploy workspaces
       # into a different namespace.
       namespace: ""
       leaderElection:
@@ -98,7 +98,7 @@ api:
         default:
           requests: 1000
           window: 1h
-        create_sandbox:
+        create_workspace:
           requests: 100
           window: 1h
         execute_code:
@@ -300,7 +300,7 @@ networkPolicy:
   #   - kube-apiserver
   #   - postgres / redis (via .postgresql.host and .redis.host pod selectors)
   #   - DNS
-  # Sandbox pod network policy is owned by the controller (Section 9.7) and
+  # Workspace pod network policy is owned by the controller (Section 9.7) and
   # is not part of this chart.
 
 # ----------------------------------------------------------------------------
@@ -312,7 +312,7 @@ networkPolicy:
 kyverno:
   enabled: false
   # If enabled is false, the chart prints a warning in NOTES.txt that
-  # Kyverno-enforced sandbox pod security is not active.
+  # Kyverno-enforced workspace pod security is not active.
 
 # ----------------------------------------------------------------------------
 # Service accounts
@@ -347,8 +347,8 @@ rbac:
 # ----------------------------------------------------------------------------
 # Admission webhooks
 # ----------------------------------------------------------------------------
-# The controller registers ValidatingAdmissionWebhooks for Sandbox,
-# SandboxProfile, and RuntimeEnvironment resources. These provide
+# The controller registers ValidatingAdmissionWebhooks for Workspace,
+# and RuntimeEnvironment resources. These provide
 # defense-in-depth: even if a user has direct kubectl access to create CRDs,
 # the webhook validates the object before persistence.
 #

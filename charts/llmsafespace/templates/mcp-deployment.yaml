@@ -19,7 +19,7 @@ spec:
         {{- include "llmsafespace.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: mcp
     spec:
-      serviceAccountName: {{ include "llmsafespace.serviceAccountName" . }}
+      serviceAccountName: {{ include "llmsafespace.api.serviceAccountName" . }}
       containers:
         - name: mcp
           image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default .Chart.AppVersion }}"
