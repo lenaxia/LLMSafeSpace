@@ -1,28 +1,58 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
 import { WorkspaceList } from "../workspace/WorkspaceList";
 import { WorkspaceSessionList } from "../workspace/WorkspaceSessionList";
-import { Settings, LogOut } from "lucide-react";
+import { NewWorkspaceDialog } from "../workspace/NewWorkspaceDialog";
+import { Settings, LogOut, Plus } from "lucide-react";
 
 export function Sidebar() {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { workspaceId, sessionId } = useParams();
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 
   const { data: workspaces } = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => workspacesApi.list(),
   });
 
+  const createMutation = useMutation({
+    mutationFn: (params: { name: string; runtime: string }) => workspacesApi.create(params),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      setShowNewWorkspace(false);
+      navigate(`/chat/${data.id}`);
+    },
+  });
+
   return (
-    <aside className="flex w-64 flex-col border-r border-border bg-card" aria-label="Navigation">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+    <aside className="flex h-full w-64 flex-col border-r border-border bg-card" aria-label="Navigation">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h1 className="text-sm font-semibold">Safe Space</h1>
+        <button
+          onClick={() => setShowNewWorkspace(true)}
+          className="rounded p-1 hover:bg-accent"
+          aria-label="New workspace"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {showNewWorkspace && (
+          <div className="border-b border-border">
+            <NewWorkspaceDialog
+              onCreate={(params) => createMutation.mutate(params)}
+              onCancel={() => setShowNewWorkspace(false)}
+              loading={createMutation.isPending}
+            />
+          </div>
+        )}
+
         <WorkspaceList
           workspaces={workspaces?.items ?? []}
           selectedId={workspaceId}

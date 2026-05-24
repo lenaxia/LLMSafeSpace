@@ -14,6 +14,7 @@ vi.mock("../api/workspaces", () => ({
   },
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn(), send: vi.fn() } }));
+vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
 
 import { workspacesApi } from "../api/workspaces";
@@ -73,7 +74,7 @@ describe("Workspace activate flow — state machine", () => {
       { id: "sb-1", phase: "Running", podIP: "10.0.0.1" },
     ]);
 
-    renderChat("/chat/ws-1");
+    renderChat("/chat/ws-1/sess-1");
 
     await waitFor(() => {
       expect(document.querySelector("textarea")).not.toBeDisabled();

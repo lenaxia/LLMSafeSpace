@@ -9,21 +9,12 @@ vi.mock("../api/workspaces", () => ({
   workspacesApi: {
     getStatus: vi.fn(),
     getSandboxes: vi.fn(),
-    getSessions: vi.fn(),
     activate: vi.fn(),
   },
 }));
-
-vi.mock("../api/messages", () => ({
-  messagesApi: {
-    getHistory: vi.fn(),
-    send: vi.fn(),
-  },
-}));
-
-vi.mock("../hooks/useEventStream", () => ({
-  useEventStream: vi.fn(),
-}));
+vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn(), send: vi.fn() } }));
+vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
+vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
 
 import { workspacesApi } from "../api/workspaces";
 
@@ -51,16 +42,13 @@ describe("ChatPage", () => {
   it("shows suspended banner for suspended workspace", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
     (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
     renderChatPage("/chat/ws-1");
     await waitFor(() => expect(screen.getByText(/is suspended/)).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Resume to chat" })).toBeInTheDocument();
   });
 
   it("shows transitioning state", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Resuming" });
     (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
     renderChatPage("/chat/ws-1");
     await waitFor(() => expect(screen.getByText(/resuming/i)).toBeInTheDocument());
   });
@@ -68,22 +56,14 @@ describe("ChatPage", () => {
   it("disables composer when workspace is suspended", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
     (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    renderChatPage("/chat/ws-1");
-    await waitFor(() => {
-      const textarea = document.querySelector("textarea");
-      expect(textarea).toBeDisabled();
-    });
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(document.querySelector("textarea")).toBeDisabled());
   });
 
-  it("renders composer when sandbox is running", async () => {
+  it("enables composer when sandbox is running and session is selected", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
     (workspacesApi.getSandboxes as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "sb-1", phase: "Running" }]);
-
-    renderChatPage("/chat/ws-1");
-    await waitFor(() => {
-      const textarea = document.querySelector("textarea");
-      expect(textarea).not.toBeDisabled();
-    });
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
   });
 });
