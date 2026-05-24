@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "llmsafespace.fullname" . }}-frontend
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespace.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
