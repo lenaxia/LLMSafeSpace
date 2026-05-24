@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -145,14 +146,13 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 	// which would leave the sandbox unable to function. Users must explicitly create
 	// a workspace, set credentials, then create the sandbox with workspaceRef.
 	if req.WorkspaceRef == "" {
-		if rte, err := s.k8sClient.LlmsafespaceV1().RuntimeEnvironments("").Get(req.Runtime, metav1.GetOptions{}); err == nil {
-			if rte.Spec.RequiresCredentials {
-				return nil, &apierrors.APIError{
-					Type:    apierrors.ErrorTypeConflict,
-					Code:    "credentials_required",
-					Message: fmt.Sprintf("runtime %q requires credentials; create a workspace, set credentials via PUT /workspaces/:id/credentials, then create a sandbox with workspaceRef", req.Runtime),
-					Err:     errors.New("runtime requires credentials but no workspace specified"),
-				}
+		rte := s.lookupRuntimeEnvironment(req.Runtime)
+		if rte != nil && rte.Spec.RequiresCredentials {
+			return nil, &apierrors.APIError{
+				Type:    apierrors.ErrorTypeConflict,
+				Code:    "credentials_required",
+				Message: fmt.Sprintf("runtime %q requires credentials; create a workspace, set credentials via PUT /workspaces/:id/credentials, then create a sandbox with workspaceRef", req.Runtime),
+				Err:     errors.New("runtime requires credentials but no workspace specified"),
 			}
 		}
 	}
@@ -518,6 +518,32 @@ func crdSecurityCtxToAPI(s *v1.SecurityContext) *types.SecurityContext {
 	}
 	return &types.SecurityContext{RunAsUser: s.RunAsUser, RunAsGroup: s.RunAsGroup}
 }
+
+// lookupRuntimeEnvironment attempts to find a RuntimeEnvironment CRD matching
+// the given runtime string. Mirrors the controller's resolution strategy:
+// exact name, then colon-to-dash replacement. Returns nil if not found.
+func (s *Service) lookupRuntimeEnvironment(runtime string) *v1.RuntimeEnvironment {
+	// Skip fully-qualified image references (contain '/').
+	if strings.Contains(runtime, "/") {
+		return nil
+	}
+
+	// Try exact name.
+	if rte, err := s.k8sClient.LlmsafespaceV1().RuntimeEnvironments("").Get(runtime, metav1.GetOptions{}); err == nil {
+		return rte
+	}
+
+	// Try colon-to-dash (e.g. "python:3.11" → "python-3.11").
+	if strings.Contains(runtime, ":") {
+		alt := strings.ReplaceAll(runtime, ":", "-")
+		if rte, err := s.k8sClient.LlmsafespaceV1().RuntimeEnvironments("").Get(alt, metav1.GetOptions{}); err == nil {
+			return rte
+		}
+	}
+
+	return nil
+}
+
 
 func crdProfileRefToAPI(p *v1.ProfileReference) *types.ProfileReference {
 	if p == nil {

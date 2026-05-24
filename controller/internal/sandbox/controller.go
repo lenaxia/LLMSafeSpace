@@ -479,10 +479,19 @@ func (r *SandboxReconciler) checkCredentialSecretChanged(ctx context.Context, sa
 	logger.Info("Credential secret changed; triggering restart",
 		"secret", secretName, "oldHash", sandbox.Status.CredentialSecretHash[:8], "newHash", hash[:8])
 
-	sandbox.Status.CredentialSecretHash = hash
+	// Update spec (RestartGeneration) — r.Update writes spec+metadata only
+	// when the status subresource is enabled.
 	sandbox.Spec.RestartGeneration = time.Now().UnixNano()
 	if err := r.Update(ctx, sandbox); err != nil {
 		return false, err
+	}
+
+	// Update status (CredentialSecretHash) separately via the status subresource.
+	sandbox.Status.CredentialSecretHash = hash
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		// Non-fatal: the restart will still trigger; hash will be updated
+		// on the next reconcile when it matches again.
+		logger.Error(err, "Failed to update CredentialSecretHash (restart still triggered)")
 	}
 	return true, nil
 }
