@@ -178,9 +178,22 @@ func sanitizeBindError(err error) string {
 	return "invalid request body"
 }
 
+// setSessionCookie sets the HttpOnly session cookie on the response.
+func setSessionCookie(c *gin.Context, token string) {
+	c.SetCookie("lsp_session", token, 86400, "/", "", true, true)
+}
+
 // API key management routes.
 func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
 	authSvc := services.GetAuth()
+
+	// Public: feature flag discovery
+	rg.GET("/config", func(c *gin.Context) {
+		c.JSON(http.StatusOK, types.AuthConfig{
+			RegistrationEnabled: false, // TODO: read from config
+			OIDCEnabled:         false,
+		})
+	})
 
 	rg.POST("/register", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
@@ -194,6 +207,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		setSessionCookie(c, resp.Token)
 		c.JSON(http.StatusCreated, resp)
 	})
 
@@ -209,7 +223,31 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
+		setSessionCookie(c, resp.Token)
 		c.JSON(http.StatusOK, resp)
+	})
+
+	// Public: logout (clears cookie)
+	rg.POST("/logout", func(c *gin.Context) {
+		c.SetCookie("lsp_session", "", -1, "/", "", true, true)
+		c.Status(http.StatusNoContent)
+	})
+
+	// Authenticated: current user info
+	meGroup := rg.Group("")
+	meGroup.Use(authSvc.AuthMiddleware())
+	meGroup.GET("/me", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		user, err := services.GetDatabase().GetUser(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch user"})
+			return
+		}
+		c.JSON(http.StatusOK, user)
 	})
 
 	apiKeyGroup := rg.Group("")
@@ -406,6 +444,70 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			return
 		}
 		if err := wsSvc.DeleteCredentials(c.Request.Context(), userID, c.Param("id")); err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	// --- Frontend routes (Phase A) ---
+
+	rg.POST("/:id/activate", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		resp, err := wsSvc.ActivateWorkspace(c.Request.Context(), userID, c.Param("id"))
+		if err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+
+	rg.GET("/:id/sandboxes", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		sandboxes, err := wsSvc.ListWorkspaceSandboxes(c.Request.Context(), userID, c.Param("id"))
+		if err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, sandboxes)
+	})
+
+	rg.GET("/:id/sessions", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		sessions, err := wsSvc.ListWorkspaceSessions(c.Request.Context(), userID, c.Param("id"))
+		if err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, sessions)
+	})
+
+	rg.PUT("/:id/sessions/:sessionId/title", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		var body struct {
+			Title string `json:"title" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+			return
+		}
+		if err := wsSvc.RenameSession(c.Request.Context(), userID, c.Param("id"), c.Param("sessionId"), body.Title); err != nil {
 			respondWithError(c, err)
 			return
 		}

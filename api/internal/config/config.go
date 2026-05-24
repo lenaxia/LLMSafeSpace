@@ -44,12 +44,14 @@ type Config struct {
 	} `mapstructure:"redis"`
 
 	Auth struct {
-		JWTSecret       string        `mapstructure:"jwtSecret"`
-		TokenDuration   time.Duration `mapstructure:"tokenDuration"`
-		APIKeyPrefix    string        `mapstructure:"apiKeyPrefix"`
-		LockoutEnabled  bool          `mapstructure:"lockoutEnabled"`
-		LockoutAttempts int           `mapstructure:"lockoutAttempts"`
-		LockoutDuration time.Duration `mapstructure:"lockoutDuration"`
+		JWTSecret           string        `mapstructure:"jwtSecret"`
+		TokenDuration       time.Duration `mapstructure:"tokenDuration"`
+		APIKeyPrefix        string        `mapstructure:"apiKeyPrefix"`
+		CookieName          string        `mapstructure:"cookieName"`
+		RegistrationEnabled bool          `mapstructure:"registrationEnabled"`
+		LockoutEnabled      bool          `mapstructure:"lockoutEnabled"`
+		LockoutAttempts     int           `mapstructure:"lockoutAttempts"`
+		LockoutDuration     time.Duration `mapstructure:"lockoutDuration"`
 	} `mapstructure:"auth"`
 
 	Security struct {

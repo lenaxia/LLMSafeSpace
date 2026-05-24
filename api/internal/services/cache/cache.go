@@ -84,6 +84,16 @@ func (s *Service) Set(ctx context.Context, key string, value string, expiration 
 	return nil
 }
 
+// SetNX atomically sets a key only if it does not already exist.
+// Returns true if the key was set, false if it already existed.
+func (s *Service) SetNX(ctx context.Context, key string, value string, expiration time.Duration) (bool, error) {
+	ok, err := s.client.SetNX(ctx, key, value, expiration).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to setnx in cache: %w", err)
+	}
+	return ok, nil
+}
+
 // Delete deletes a value from the cache
 func (s *Service) Delete(ctx context.Context, key string) error {
 	err := s.client.Del(ctx, key).Err()

@@ -59,6 +59,10 @@ type DatabaseService interface {
 	ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+	ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
+	DeleteSessionIndex(ctx context.Context, workspaceID string) error
+	UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error
+	UpsertSessionTitle(ctx context.Context, workspaceID, sessionID, title string) error
 	Ping(ctx context.Context) error
 	Start() error
 	Stop() error
@@ -67,6 +71,7 @@ type DatabaseService interface {
 type CacheService interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key string, value string, expiration time.Duration) error
+	SetNX(ctx context.Context, key string, value string, expiration time.Duration) (bool, error)
 	Delete(ctx context.Context, key string) error
 	GetObject(ctx context.Context, key string, value interface{}) error
 	SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error
@@ -124,6 +129,10 @@ type WorkspaceService interface {
 	GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error)
 	SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error
 	DeleteCredentials(ctx context.Context, userID, workspaceID string) error
+	ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error)
+	ListWorkspaceSandboxes(ctx context.Context, userID, workspaceID string) ([]types.SandboxListItem, error)
+	ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error)
+	RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error
 	Start() error
 	Stop() error
 }

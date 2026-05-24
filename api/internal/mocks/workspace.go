@@ -69,3 +69,31 @@ func (m *MockWorkspaceService) DeleteCredentials(ctx context.Context, userID, wo
 
 func (m *MockWorkspaceService) Start() error { return m.Called().Error(0) }
 func (m *MockWorkspaceService) Stop() error  { return m.Called().Error(0) }
+
+func (m *MockWorkspaceService) ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error) {
+	args := m.Called(ctx, userID, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.ActivateWorkspaceResponse), args.Error(1)
+}
+
+func (m *MockWorkspaceService) ListWorkspaceSandboxes(ctx context.Context, userID, workspaceID string) ([]types.SandboxListItem, error) {
+	args := m.Called(ctx, userID, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.SandboxListItem), args.Error(1)
+}
+
+func (m *MockWorkspaceService) ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error) {
+	args := m.Called(ctx, userID, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.SessionListItem), args.Error(1)
+}
+
+func (m *MockWorkspaceService) RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error {
+	return m.Called(ctx, userID, workspaceID, sessionID, title).Error(0)
+}

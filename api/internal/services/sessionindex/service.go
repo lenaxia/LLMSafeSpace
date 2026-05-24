@@ -86,14 +86,23 @@ func (s *Service) drain() {
 	defer s.wg.Done()
 	for {
 		select {
-		case <-s.closeC:
-			return
 		case ev := <-s.queue:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := s.db.UpsertSessionMessage(ctx, ev.workspaceID, ev.sessionID, ev.at); err != nil {
-				s.logger.Error("session index upsert failed", err)
+				if s.logger != nil {
+					s.logger.Error("session index upsert failed", err)
+				}
 			}
 			cancel()
+		case <-s.closeC:
+			// Drain remaining
+			for len(s.queue) > 0 {
+				ev := <-s.queue
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = s.db.UpsertSessionMessage(ctx, ev.workspaceID, ev.sessionID, ev.at)
+				cancel()
+			}
+			return
 		}
 	}
 }
