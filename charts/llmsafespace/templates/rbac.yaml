@@ -8,9 +8,7 @@
 # ============================================================================
 {{- $controllerRules := list
   (dict "apiGroups" (list "llmsafespace.dev")
-        "resources" (list "sandboxes" "sandboxes/status" "sandboxes/finalizers"
-                          "workspaces" "workspaces/status" "workspaces/finalizers"
-                          "sandboxprofiles" "sandboxprofiles/status"
+        "resources" (list "workspaces" "workspaces/status" "workspaces/finalizers"
                           "runtimeenvironments" "runtimeenvironments/status")
         "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
   (dict "apiGroups" (list "")
@@ -98,23 +96,20 @@ subjects:
 ---
 # ============================================================================
 # API — namespaced permissions; uses the K8s API to manage CRDs and Secrets
-# in the sandbox namespace.
+# in the workspace namespace.
 # ============================================================================
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "llmsafespace.fullname" . }}-api
-  namespace: {{ include "llmsafespace.sandboxNamespace" . }}
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
   labels:
     {{- include "llmsafespace.api.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["llmsafespace.dev"]
     resources:
-      - sandboxes
-      - sandboxes/status
       - workspaces
       - workspaces/status
-      - sandboxprofiles
       - runtimeenvironments
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
@@ -137,7 +132,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "llmsafespace.fullname" . }}-api
-  namespace: {{ include "llmsafespace.sandboxNamespace" . }}
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
   labels:
     {{- include "llmsafespace.api.labels" . | nindent 4 }}
 roleRef:

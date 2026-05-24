@@ -14,7 +14,7 @@ data:
     kubernetes:
       configPath: {{ .Values.api.config.kubernetes.configPath | quote }}
       inCluster: {{ .Values.api.config.kubernetes.inCluster }}
-      namespace: {{ include "llmsafespace.sandboxNamespace" . | quote }}
+      namespace: {{ include "llmsafespace.workspaceNamespace" . | quote }}
       leaderElection:
         enabled: {{ .Values.api.config.kubernetes.leaderElection.enabled }}
         leaseDuration: {{ .Values.api.config.kubernetes.leaderElection.leaseDuration }}

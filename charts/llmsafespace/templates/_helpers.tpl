@@ -96,7 +96,7 @@ Resolve the name of the credentials secret.
 Resolve the namespace where sandbox/workspace CRDs are created. Falls back to
 the release namespace if not explicitly set.
 */}}
-{{- define "llmsafespace.sandboxNamespace" -}}
+{{- define "llmsafespace.workspaceNamespace" -}}
 {{- default .Release.Namespace .Values.api.config.kubernetes.namespace }}
 {{- end }}
 
