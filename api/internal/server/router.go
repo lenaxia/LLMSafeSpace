@@ -92,6 +92,35 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
 	registerWorkspaceRoutes(workspaceGroup, services)
 
+	// Sessions/active endpoint — needs proxyHandler for active session data
+	if proxyHandler != nil {
+		workspaceGroup.GET("/:id/sessions/active", func(c *gin.Context) {
+			userID := services.GetAuth().GetUserID(c)
+			if userID == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+				return
+			}
+			workspaceID := c.Param("id")
+			// Get sandboxes for this workspace to find the sandbox ID
+			sandboxes, err := services.GetWorkspace().ListWorkspaceSandboxes(c.Request.Context(), userID, workspaceID)
+			if err != nil {
+				respondWithError(c, err)
+				return
+			}
+			var active []string
+			for _, sb := range sandboxes {
+				active = append(active, proxyHandler.GetActiveSessions(sb.ID)...)
+			}
+			if active == nil {
+				active = []string{}
+			}
+			c.JSON(http.StatusOK, types.ActiveSessionsResponse{
+				Active:    active,
+				MaxActive: 5, // default; could read from workspace CRD
+			})
+		})
+	}
+
 	// Authenticated sandbox CRUD routes (Create, List, Get, Delete, Status).
 	// These do NOT use the proxy ownership middleware because:
 	//   - List/Create have no :id yet

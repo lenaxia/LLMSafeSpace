@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
@@ -59,6 +60,7 @@ type ProxyHandler struct {
 	activityTracker *ActivityTracker
 	watcher         *SandboxWatcher
 	sseTracker      *SSETracker
+	sessionIndex    interfaces.SessionIndexService
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -652,8 +654,33 @@ func (h *ProxyHandler) onSessionIdle(sandboxID, sessionID string) {
 		h.wsConfigMu.RUnlock()
 		if ok && cfg.workspaceID != "" {
 			h.activityTracker.Record(cfg.workspaceID)
+			// Record message in session index
+			if h.sessionIndex != nil {
+				h.sessionIndex.RecordMessage(cfg.workspaceID, sessionID, "", time.Now())
+			}
 		}
 	}
+}
+
+// SetSessionIndex injects the session index service for recording message activity.
+func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
+	h.sessionIndex = si
+}
+
+// GetActiveSessions returns the active session IDs for a sandbox.
+// This is a per-replica view (not globally consistent across API replicas).
+func (h *ProxyHandler) GetActiveSessions(sandboxID string) []string {
+	h.activeMu.Lock()
+	defer h.activeMu.Unlock()
+	sessions := h.activeSess[sandboxID]
+	if sessions == nil {
+		return nil
+	}
+	result := make([]string, 0, len(sessions))
+	for sid := range sessions {
+		result = append(result, sid)
+	}
+	return result
 }
 
 func (h *ProxyHandler) onSessionActive(sandboxID, sessionID string) {
