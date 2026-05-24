@@ -6,17 +6,18 @@ import { ChatPage } from "./pages/ChatPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { AppShell } from "./components/layout/AppShell";
+import { Spinner } from "./components/ui/Spinner";
 
 function RequireAuth() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
+  if (loading) return <div className="flex h-screen items-center justify-center"><Spinner size="lg" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   return <Outlet />;
 }
 
 function GuestOnly() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
+  if (loading) return <div className="flex h-screen items-center justify-center"><Spinner size="lg" /></div>;
   if (user) return <Navigate to="/chat" replace />;
   return <Outlet />;
 }

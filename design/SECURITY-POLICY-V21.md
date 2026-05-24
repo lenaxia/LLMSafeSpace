@@ -1714,7 +1714,72 @@ Users who set `redaction.enabled: false` will see it overridden to `true` with a
 
 ---
 
-## Appendix A: Comparison with V2 Binary Model
+## Appendix A: Consistency with Existing Code
+
+This section documents how the design integrates with the existing codebase.
+
+### A.1 Type Ownership
+
+Per README-LLM.md, CRD types and API transfer objects are intentionally separate:
+
+| Location | Purpose | SecurityPolicy type needed |
+|----------|---------|---------------------------|
+| `pkg/apis/llmsafespace/v1/` | CRD types (kubebuilder-annotated, deepcopy generated) | `SecurityPolicySpec` — embedded in `SandboxSpec` and `WorkspaceSpec` |
+| `pkg/types/types.go` | API DTOs (REST request/response shapes) | `SecurityPolicy` — used in `CreateWorkspaceRequest`, `CreateSandboxRequest` |
+
+The API service converts between these at the service boundary (existing pattern: `convertCRDToAPI()` in `api/internal/services/sandbox/sandbox_service.go`).
+
+### A.2 Existing Field Overlap
+
+| Existing field | Location | Overlap with | Migration |
+|---------------|----------|-------------|-----------|
+| `SandboxSpec.SecurityLevel` | `sandbox_types.go:15` | `securityPolicy.preset` | Deprecated; maps to preset (§12.1) |
+| `WorkspaceSpec.SecurityLevel` | `workspace_types.go:82` | `securityPolicy.preset` | Deprecated; maps to preset (§12.1) |
+| `SandboxProfileSpec.SecurityLevel` | `sandboxprofile_types.go:15` | `securityPolicy.preset` | Deprecated; maps to preset (§12.1) |
+| `SandboxSpec.NetworkAccess` | `sandbox_types.go:28` | `securityPolicy.network` | Deprecated; domain+ports map to `allowedDomains` + `allowedPorts` (§6.2) |
+| `WorkspaceSpec.NetworkAccess` | `workspace_types.go:87` | `securityPolicy.network` | Deprecated; domain list maps to `allowedDomains` (no ports on workspace egress rules) |
+| `SandboxProfileSpec.NetworkPolicies` | `sandboxprofile_types.go:20` | `securityPolicy.network` | Deprecated; egress rules map to `allowedDomains`; CIDR rules not supported in V2.1 (log warning, ignore) |
+
+**Key constraint:** The existing `WorkspaceEgressRule` has domain-only (no ports), while `EgressRule` on Sandbox has domain + ports. The new `NetworkConfig.allowedPorts` is top-level (applies to all domains). Per-domain port rules are not supported in V2.1 — if the deprecated `NetworkAccess` has per-domain ports, they are flattened to the union of all ports in `allowedPorts`.
+
+### A.3 Status Field Addition
+
+`resolvedSecurityPolicy` is NEW on `SandboxStatus`. Implementation requires:
+
+1. Add `ResolvedSecurityPolicy *ResolvedSecurityPolicy` to `SandboxStatus` in `pkg/apis/llmsafespace/v1/sandbox_types.go`
+2. Add corresponding OpenAPI schema to `pkg/crds/sandbox_crd.yaml`
+3. Regenerate deepcopy: `make deepcopy`
+4. Controller writes this field during reconciliation (after policy resolution)
+5. Proxy reads it from the cached Sandbox CRD (already loaded by `sandboxOwnershipMiddleware`)
+
+### A.4 Controller Integration Points
+
+The existing controller (`controller/internal/sandbox/controller.go`) currently:
+- Does NOT act on `SecurityLevel` (confirmed: no conditional logic on the field)
+- Already has `buildCredentialSetupInit()` that writes to `/sandbox-cfg/` via shared emptyDir
+- Already has `buildPodSecurityContext()` for pod-level security settings
+
+The new `security-setup` init container follows the same pattern as `credential-setup`:
+- Same shared emptyDir volume (`sandbox-cfg`)
+- Same image reference pattern
+- Runs AFTER `credential-setup` (order matters: credentials first, then policy)
+
+### A.5 Proxy Integration Points
+
+The existing proxy (`api/internal/handlers/proxy.go`) currently:
+- Loads Sandbox CRD via `c.Get("sandbox")` (cached by ownership middleware)
+- Reads `sandbox.Status.PodIP` for forwarding
+- Has `stripPatchParts()` for response filtering (existing pattern for post-processing responses)
+
+Proxy-layer redaction and injection detection follow the same pattern as `stripPatchParts()`:
+- Read response body from opencode
+- Apply transformation (redaction/injection scan)
+- Write modified body to client
+- Only on JSON responses, only on 2xx status codes
+
+---
+
+## Appendix B: Comparison with V2 Binary Model
 
 | Aspect | V2 (binary) | V2.1 (composable) |
 |--------|-------------|-------------------|
@@ -1726,7 +1791,7 @@ Users who set `redaction.enabled: false` will see it overridden to `true` with a
 | Observability | None | Per-feature metrics, dashboards, alerts |
 | Backwards compat | N/A | `securityLevel` maps to presets |
 
-## Appendix B: Decision Log
+## Appendix C: Decision Log
 
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|

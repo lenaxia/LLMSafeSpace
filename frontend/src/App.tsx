@@ -2,6 +2,7 @@ import { RouterProvider } from "react-router-dom";
 import { AuthProvider } from "./providers/AuthProvider";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { QueryClientProvider } from "./providers/QueryClientProvider";
+import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 import { UpdateAvailableToast } from "./components/layout/UpdateAvailableToast";
 import { usePWA } from "./hooks/usePWA";
 import { router } from "./router";
@@ -14,13 +15,15 @@ function PWAUpdater() {
 
 export function App() {
   return (
-    <ThemeProvider>
-      <QueryClientProvider>
-        <AuthProvider>
-          <RouterProvider router={router} />
-          <PWAUpdater />
-        </AuthProvider>
-      </QueryClientProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <QueryClientProvider>
+          <AuthProvider>
+            <RouterProvider router={router} />
+            <PWAUpdater />
+          </AuthProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

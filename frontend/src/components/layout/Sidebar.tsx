@@ -61,7 +61,17 @@ export function Sidebar() {
 
         {workspaceId && (
           <div className="border-t border-border px-2 py-2">
-            <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">Sessions</p>
+            <div className="flex items-center justify-between px-3 pb-1">
+              <p className="text-xs font-medium text-muted-foreground">Sessions</p>
+              <button
+                onClick={() => navigate(`/chat/${workspaceId}`)}
+                className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="New session"
+                title="New chat"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
             <WorkspaceSessionList
               workspaceId={workspaceId}
               selectedSessionId={sessionId}
