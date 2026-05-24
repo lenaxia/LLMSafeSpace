@@ -24,6 +24,7 @@ type fixture struct {
 	k8s       *kmocks.MockKubernetesClient
 	v1iface   *kmocks.MockLLMSafespaceV1Interface
 	sb        *kmocks.MockSandboxInterface
+	rte       *kmocks.MockRuntimeEnvironmentInterface
 	db        *imocks.MockDatabaseService
 	cache     *imocks.MockCacheService
 	metrics   *imocks.MockMetricsService
@@ -45,6 +46,7 @@ func newFixture(t *testing.T) *fixture {
 	k8s := kmocks.NewMockKubernetesClient()
 	v1i := kmocks.NewMockLLMSafespaceV1Interface()
 	sb := kmocks.NewMockSandboxInterface()
+	rte := kmocks.NewMockRuntimeEnvironmentInterface()
 	db := &imocks.MockDatabaseService{}
 	cache := &imocks.MockCacheService{}
 	met := &imocks.MockMetricsService{}
@@ -54,6 +56,8 @@ func newFixture(t *testing.T) *fixture {
 
 	k8s.On("LlmsafespaceV1").Return(v1i)
 	v1i.On("Sandboxes", "default").Return(sb)
+	v1i.On("RuntimeEnvironments", "").Return(rte)
+	rte.On("Get", mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
 
 	rte := kmocks.NewMockRuntimeEnvironmentInterface()
 	rte.On("Get", mock.Anything, mock.Anything).Return((*v1.RuntimeEnvironment)(nil), errors.New("not found")).Maybe()
@@ -67,7 +71,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
-	return &fixture{svc: svc, k8s: k8s, v1iface: v1i, sb: sb, db: db, cache: cache, metrics: met, log: log, workspace: wsSvc}
+	return &fixture{svc: svc, k8s: k8s, v1iface: v1i, sb: sb, rte: rte, db: db, cache: cache, metrics: met, log: log, workspace: wsSvc}
 }
 
 func crdSandbox(name, ns, runtime string) *v1.Sandbox {
@@ -949,4 +953,302 @@ func TestE2E_ConvertCRDToAPI_EmptyStatus_NoPanic(t *testing.T) {
 	assert.Equal(t, "", result.Status.Phase)
 	assert.Equal(t, "", result.Status.PodIP)
 	assert.Nil(t, result.Status.StartTime)
+}
+
+// ===========================================================================
+// Fix #1: RestartSandbox
+// ===========================================================================
+
+func TestRestartSandbox_HappyPath(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-rst", "default", "python:3.10")
+	crd.Status.Phase = "Running"
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-rst", mock.Anything).Return(crd, nil)
+	f.sb.On("Update", mock.MatchedBy(func(s *v1.Sandbox) bool {
+		return s.Name == "sb-rst" && s.Spec.RestartGeneration > 0
+	})).Return(crd, nil)
+
+	err := f.svc.RestartSandbox(ctx, "sb-rst")
+	assert.NoError(t, err)
+	f.sb.AssertExpectations(t)
+}
+
+func TestRestartSandbox_NoUserInContext_ReturnsForbidden(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	err := f.svc.RestartSandbox(ctx, "sb-rst")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+}
+
+func TestRestartSandbox_NotFound_ReturnsNotFound(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	f.sb.On("Get", "missing", mock.Anything).Return(nil, errors.New("not found"))
+
+	err := f.svc.RestartSandbox(ctx, "missing")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not_found")
+}
+
+func TestRestartSandbox_ForeignOwner_ReturnsNotFound(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-rst", "default", "python:3.10")
+	crd.Status.Phase = "Running"
+	crd.Labels = map[string]string{"user-id": "other-user"}
+	f.sb.On("Get", "sb-rst", mock.Anything).Return(crd, nil)
+
+	err := f.svc.RestartSandbox(ctx, "sb-rst")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not_found")
+}
+
+func TestRestartSandbox_NotRunning_ReturnsConflict(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-rst", "default", "python:3.10")
+	crd.Status.Phase = "Pending"
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-rst", mock.Anything).Return(crd, nil)
+
+	err := f.svc.RestartSandbox(ctx, "sb-rst")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid_phase")
+}
+
+func TestRestartSandbox_UpdateFails_ReturnsInternal(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-rst", "default", "python:3.10")
+	crd.Status.Phase = "Running"
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-rst", mock.Anything).Return(crd, nil)
+	f.sb.On("Update", mock.Anything).Return(nil, errors.New("k8s unavailable"))
+
+	err := f.svc.RestartSandbox(ctx, "sb-rst")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "restart_update_failed")
+}
+
+// ===========================================================================
+// Fix #5: RetrySandbox
+// ===========================================================================
+
+func TestRetrySandbox_HappyPath(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-retry", "default", "python:3.10")
+	crd.Status.Phase = "Failed"
+	crd.Status.RestartCount = 1
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-retry", mock.Anything).Return(crd, nil)
+	f.sb.On("UpdateStatus", mock.MatchedBy(func(s *v1.Sandbox) bool {
+		return s.Name == "sb-retry" && s.Status.Phase == "Pending"
+	})).Return(crd, nil)
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.NoError(t, err)
+	f.sb.AssertExpectations(t)
+}
+
+func TestRetrySandbox_NoUserInContext_ReturnsForbidden(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+}
+
+func TestRetrySandbox_NotFound_ReturnsNotFound(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	f.sb.On("Get", "missing", mock.Anything).Return(nil, errors.New("not found"))
+
+	err := f.svc.RetrySandbox(ctx, "missing")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not_found")
+}
+
+func TestRetrySandbox_ForeignOwner_ReturnsNotFound(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-retry", "default", "python:3.10")
+	crd.Status.Phase = "Failed"
+	crd.Labels = map[string]string{"user-id": "other-user"}
+	f.sb.On("Get", "sb-retry", mock.Anything).Return(crd, nil)
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not_found")
+}
+
+func TestRetrySandbox_NotFailed_ReturnsConflict(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-retry", "default", "python:3.10")
+	crd.Status.Phase = "Running"
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-retry", mock.Anything).Return(crd, nil)
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid_phase")
+}
+
+func TestRetrySandbox_MaxRetriesExceeded_ReturnsConflict(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-retry", "default", "python:3.10")
+	crd.Status.Phase = "Failed"
+	crd.Status.RestartCount = 3
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-retry", mock.Anything).Return(crd, nil)
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "max_retries_exceeded")
+}
+
+func TestRetrySandbox_UpdateStatusFails_ReturnsInternal(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.WithValue(context.Background(), types.ContextKeyUserID, "user1")
+
+	crd := crdSandbox("sb-retry", "default", "python:3.10")
+	crd.Status.Phase = "Failed"
+	crd.Status.RestartCount = 0
+	crd.Labels = map[string]string{"user-id": "user1"}
+	f.sb.On("Get", "sb-retry", mock.Anything).Return(crd, nil)
+	f.sb.On("UpdateStatus", mock.Anything).Return(nil, errors.New("k8s unavailable"))
+
+	err := f.svc.RetrySandbox(ctx, "sb-retry")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "retry_update_failed")
+}
+
+// ===========================================================================
+// Fix #4: requiresCredentials gate in CreateSandbox
+// ===========================================================================
+
+func TestCreateSandbox_RequiresCredentials_NoWorkspaceRef_ReturnsConflict(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
+
+	rteObj := &v1.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python:3.10"},
+		Spec:       v1.RuntimeEnvironmentSpec{RequiresCredentials: true},
+	}
+	f.rte.ExpectedCalls = nil
+	f.rte.On("Get", "python:3.10", mock.Anything).Return(rteObj, nil).Once()
+	f.rte.On("Get", mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
+
+	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime: "python:3.10",
+		UserID:  "user1",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "credentials_required")
+	f.sb.AssertNotCalled(t, "Create")
+}
+
+func TestCreateSandbox_RequiresCredentials_WithWorkspaceRef_Succeeds(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
+	f.workspace.On("GetWorkspace", ctx, "user1", "ws-1").Return(&types.Workspace{ID: "ws-1", UserID: "user1"}, nil)
+	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
+	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-cred", "default", "python:3.10"), nil)
+	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
+
+	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime:      "python:3.10",
+		UserID:       "user1",
+		WorkspaceRef: "ws-1",
+	})
+	assert.NoError(t, err)
+}
+
+func TestCreateSandbox_NoRequiresCredentials_AutoWorkspace_Succeeds(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetUser", ctx, "user1").Return(&types.User{ID: "user1", Active: true, Role: "user"}, nil)
+	f.workspace.On("CreateWorkspace", ctx, "user1", mock.Anything).Return(&types.Workspace{ID: "ws-auto"}, nil)
+	f.db.On("CreateSandbox", ctx, mock.Anything).Return(nil)
+	f.sb.On("Create", mock.Anything).Return(crdSandbox("sb-ok", "default", "python:3.10"), nil)
+	f.metrics.On("RecordSandboxCreation", mock.Anything, mock.Anything).Return()
+
+	_, err := f.svc.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime: "python:3.10",
+		UserID:  "user1",
+	})
+	assert.NoError(t, err)
+}
+
+// ===========================================================================
+// lookupRuntimeEnvironment
+// ===========================================================================
+
+func TestLookupRuntimeEnvironment_ExactMatch(t *testing.T) {
+	f := newFixture(t)
+	rteObj := &v1.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python:3.10"},
+		Spec:       v1.RuntimeEnvironmentSpec{RequiresCredentials: true},
+	}
+	f.rte.ExpectedCalls = nil
+	f.rte.On("Get", "python:3.10", mock.Anything).Return(rteObj, nil).Once()
+	f.rte.On("Get", mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
+
+	result := f.svc.lookupRuntimeEnvironment("python:3.10")
+	require.NotNil(t, result)
+	assert.True(t, result.Spec.RequiresCredentials)
+}
+
+func TestLookupRuntimeEnvironment_ColonToDash(t *testing.T) {
+	f := newFixture(t)
+	rteObj := &v1.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python-3.10"},
+	}
+	f.rte.ExpectedCalls = nil
+	f.rte.On("Get", "python:3.10", mock.Anything).Return(nil, errors.New("not found")).Once()
+	f.rte.On("Get", "python-3.10", mock.Anything).Return(rteObj, nil).Once()
+	f.rte.On("Get", mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
+
+	result := f.svc.lookupRuntimeEnvironment("python:3.10")
+	require.NotNil(t, result)
+}
+
+func TestLookupRuntimeEnvironment_NotFound_ReturnsNil(t *testing.T) {
+	f := newFixture(t)
+	f.rte.On("Get", "nodejs:18", mock.Anything).Return(nil, errors.New("not found")).Once()
+	f.rte.On("Get", "nodejs-18", mock.Anything).Return(nil, errors.New("not found")).Once()
+
+	result := f.svc.lookupRuntimeEnvironment("nodejs:18")
+	assert.Nil(t, result)
+}
+
+func TestLookupRuntimeEnvironment_FullyQualifiedImage_SkipsLookup(t *testing.T) {
+	f := newFixture(t)
+
+	result := f.svc.lookupRuntimeEnvironment("registry.example.com/runtimes/python:3.10")
+	assert.Nil(t, result)
+	f.rte.AssertNotCalled(t, "Get")
 }
