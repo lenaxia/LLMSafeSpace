@@ -1,4 +1,4 @@
-FROM golang:1.23-bookworm AS redact-builder
+FROM golang:1.25-bookworm AS redact-builder
 
 ARG TARGETARCH=amd64
 

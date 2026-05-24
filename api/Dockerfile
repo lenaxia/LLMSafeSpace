@@ -4,7 +4,7 @@
 #
 #   docker build -f api/Dockerfile -t llmsafespace/api:dev .
 
-FROM golang:1.23 AS builder
+FROM golang:1.25 AS builder
 
 WORKDIR /workspace
 
