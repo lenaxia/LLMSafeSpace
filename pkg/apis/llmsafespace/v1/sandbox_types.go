@@ -221,6 +221,12 @@ type SandboxStatus struct {
 	// Status.ObservedRestartGeneration, the controller gracefully deletes
 	// the pod and reverts to Pending for recreation.
 	ObservedRestartGeneration int64 `json:"observedRestartGeneration,omitempty"`
+
+	// CredentialSecretHash is the SHA-256 hash of the credential Secret's
+	// data field as last observed by the controller. When the hash changes,
+	// the controller increments Spec.RestartGeneration to trigger a pod
+	// recycle (fix #3). Empty string means no credential secret observed.
+	CredentialSecretHash string `json:"credentialSecretHash,omitempty"`
 }
 
 // SandboxCondition is a condition of a sandbox.

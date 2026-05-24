@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -14,6 +16,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
@@ -193,6 +196,16 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 	// (or fix #3's credential watcher) requested a pod recycle.
 	if sandbox.Spec.RestartGeneration > sandbox.Status.ObservedRestartGeneration {
 		return r.handleRestartRequest(ctx, sandbox, logger)
+	}
+
+	// Fix #3: check if the credential secret has changed since last observation.
+	// If so, trigger a restart by bumping RestartGeneration.
+	if sandbox.Spec.WorkspaceRef != "" {
+		if restarted, err := r.checkCredentialSecretChanged(ctx, sandbox, logger); err != nil {
+			return ctrl.Result{}, err
+		} else if restarted {
+			return ctrl.Result{Requeue: true}, nil
+		}
 	}
 
 	pod := &corev1.Pod{}
@@ -428,6 +441,70 @@ func (r *SandboxReconciler) handleRestartRequest(ctx context.Context, sandbox *v
 	}
 	return ctrl.Result{Requeue: true}, nil
 }
+
+// checkCredentialSecretChanged computes the hash of the workspace credential
+// secret and compares it to Status.CredentialSecretHash. If changed, it bumps
+// Spec.RestartGeneration to trigger a pod recycle via fix #1's machinery.
+// Returns true if a restart was triggered (caller should requeue).
+func (r *SandboxReconciler) checkCredentialSecretChanged(ctx context.Context, sandbox *v1.Sandbox, logger logr.Logger) (bool, error) {
+	secretName := "workspace-creds-" + sandbox.Spec.WorkspaceRef
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: sandbox.Namespace}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			// No credential secret — nothing to watch. Clear hash if set.
+			if sandbox.Status.CredentialSecretHash != "" {
+				sandbox.Status.CredentialSecretHash = ""
+				_ = r.Status().Update(ctx, sandbox)
+			}
+			return false, nil
+		}
+		return false, err
+	}
+
+	hash := hashSecretData(secret.Data)
+	if hash == sandbox.Status.CredentialSecretHash {
+		return false, nil // unchanged
+	}
+
+	// First observation (hash was empty) — record without restarting.
+	if sandbox.Status.CredentialSecretHash == "" {
+		sandbox.Status.CredentialSecretHash = hash
+		if err := r.Status().Update(ctx, sandbox); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	// Hash changed — trigger restart via RestartGeneration.
+	logger.Info("Credential secret changed; triggering restart",
+		"secret", secretName, "oldHash", sandbox.Status.CredentialSecretHash[:8], "newHash", hash[:8])
+
+	sandbox.Status.CredentialSecretHash = hash
+	sandbox.Spec.RestartGeneration = time.Now().UnixNano()
+	if err := r.Update(ctx, sandbox); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// hashSecretData produces a stable SHA-256 hex digest of a Secret's data map.
+func hashSecretData(data map[string][]byte) string {
+	h := sha256.New()
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write(data[k])
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 
 func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
@@ -934,5 +1011,41 @@ func (r *SandboxReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1.Sandbox{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Secret{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapCredSecretToSandboxes)).
 		Complete(r)
+}
+
+// mapCredSecretToSandboxes maps a credential Secret update to the Sandboxes
+// that reference the corresponding workspace. Only reacts to secrets named
+// "workspace-creds-*"; ignores all others (including sandbox password secrets).
+func (r *SandboxReconciler) mapCredSecretToSandboxes(ctx context.Context, obj client.Object) []ctrl.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	// Only credential secrets match the naming pattern.
+	const prefix = "workspace-creds-"
+	if len(secret.Name) <= len(prefix) || secret.Name[:len(prefix)] != prefix {
+		return nil
+	}
+	workspaceID := secret.Name[len(prefix):]
+
+	// Find all sandboxes attached to this workspace via label selector.
+	var sandboxList v1.SandboxList
+	if err := r.List(ctx, &sandboxList, client.InNamespace(secret.Namespace),
+		client.MatchingLabels{common.LabelWorkspace: workspaceID}); err != nil {
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(sandboxList.Items))
+	for i := range sandboxList.Items {
+		requests = append(requests, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      sandboxList.Items[i].Name,
+				Namespace: sandboxList.Items[i].Namespace,
+			},
+		})
+	}
+	return requests
 }
