@@ -32,8 +32,8 @@ warn() { printf '%s !%s %s\n' "${YELLOW}" "${RESET}" "$*" >&2; }
 die()  { printf '%s ✗%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2; exit 1; }
 
 CLUSTER_NAME="${CLUSTER_NAME:-llmsafespace}"
-CTX="kind-${CLUSTER_NAME}"
-NS="llmsafespace"
+CTX="${CTX:-kind-${CLUSTER_NAME}}"
+NS="${NS:-llmsafespace}"
 SANDBOX_NAME="e2e-sandbox"
 WORKSPACE_NAME="e2e-workspace"
 USER_ID="e2e-user"

@@ -38,8 +38,8 @@ test.describe("Chat page (authenticated)", () => {
 
   test("settings page renders tabs", async ({ page }) => {
     await page.goto("/settings");
-    await expect(page.getByText("API Keys")).toBeVisible();
-    await expect(page.getByText("Appearance")).toBeVisible();
+    await expect(page.getByRole("button", { name: "API Keys" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Appearance" })).toBeVisible();
   });
 
   test("theme toggle works", async ({ page }) => {
