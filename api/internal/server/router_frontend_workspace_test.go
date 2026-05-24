@@ -273,3 +273,75 @@ func TestRenameSession_Unauthorized(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// --- POST /api/v1/workspaces/:id/sessions/new ---
+
+func TestEnsureSession_Route_Success(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("EnsureSession", mock.Anything, "test-user", "ws-1").Return(
+		&types.EnsureSessionResponse{
+			SandboxID:    "sb-1",
+			SandboxPhase: "Running",
+			SessionID:    "sess-abc",
+			Resumed:      false,
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/sessions/new", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp types.EnsureSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "sb-1", resp.SandboxID)
+	assert.Equal(t, "sess-abc", resp.SessionID)
+	assert.False(t, resp.Resumed)
+}
+
+func TestEnsureSession_Route_Resumed(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("EnsureSession", mock.Anything, "test-user", "ws-2").Return(
+		&types.EnsureSessionResponse{
+			SandboxID:    "sb-new",
+			SandboxPhase: "Running",
+			SessionID:    "sess-xyz",
+			Resumed:      true,
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-2/sessions/new", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp types.EnsureSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.True(t, resp.Resumed)
+}
+
+func TestEnsureSession_Route_Unauthorized(t *testing.T) {
+	router, _ := newRouterFixture(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/sessions/new", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestEnsureSession_Route_ServiceError(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("EnsureSession", mock.Anything, "test-user", "ws-bad").Return(
+		nil, errors.New("internal_error: sandbox_timeout"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-bad/sessions/new", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
