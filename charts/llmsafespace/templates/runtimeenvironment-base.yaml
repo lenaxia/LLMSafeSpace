@@ -1,0 +1,8 @@
+apiVersion: llmsafespace.dev/v1
+kind: RuntimeEnvironment
+metadata:
+  name: base
+spec:
+  image: "{{ .Values.runtimeEnvironments.base.image.repository }}:{{ .Values.runtimeEnvironments.base.image.tag | default .Chart.AppVersion }}"
+  language: "multi"
+  version: "1.0"
