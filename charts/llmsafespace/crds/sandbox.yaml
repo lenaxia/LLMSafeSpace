@@ -230,6 +230,9 @@ spec:
                   type: integer
                   format: int64
                   description: "Last spec.restartGeneration value the controller acted on. Restart triggered when spec > status."
+                credentialSecretHash:
+                  type: string
+                  description: "SHA-256 hash of the credential Secret data. Controller triggers restart when hash changes."
       additionalPrinterColumns:
         - name: Runtime
           type: string
