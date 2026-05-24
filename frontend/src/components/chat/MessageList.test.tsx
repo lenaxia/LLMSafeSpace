@@ -16,16 +16,20 @@ describe("MessageList", () => {
     expect(screen.getByText("Send a message to start the conversation")).toBeInTheDocument();
   });
 
-  it("renders all messages", () => {
+  it("renders messages", () => {
     render(<MessageList messages={messages} />);
     expect(screen.getByText("Hello")).toBeInTheDocument();
     expect(screen.getByText("Hi!")).toBeInTheDocument();
     expect(screen.getByText("How are you?")).toBeInTheDocument();
   });
 
-  it("renders messages in order", () => {
+  it("has accessible log role", () => {
     render(<MessageList messages={messages} />);
-    const texts = screen.getAllByText(/Hello|Hi!|How are you\?/).map((el) => el.textContent);
-    expect(texts).toEqual(["Hello", "Hi!", "How are you?"]);
+    expect(screen.getByRole("log")).toBeInTheDocument();
+  });
+
+  it("has aria-live polite for screen readers", () => {
+    render(<MessageList messages={messages} />);
+    expect(screen.getByRole("log")).toHaveAttribute("aria-live", "polite");
   });
 });

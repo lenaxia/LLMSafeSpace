@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Message } from "../../api/types";
 import { MessageBubble } from "./MessageBubble";
 
@@ -7,12 +8,24 @@ interface Props {
   streaming?: boolean;
 }
 
-export function MessageList({ messages, streaming }: Props) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+const MemoizedBubble = memo(MessageBubble, (prev, next) => prev.message.id === next.message.id);
 
+export function MessageList({ messages, streaming }: Props) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80,
+    overscan: 5,
+  });
+
+  // Auto-scroll to bottom on new messages or while streaming
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming]);
+    if (messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end", behavior: "smooth" });
+    }
+  }, [messages.length, streaming, virtualizer]);
 
   if (messages.length === 0) {
     return (
@@ -23,11 +36,31 @@ export function MessageList({ messages, streaming }: Props) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
-      <div ref={bottomRef} />
+    <div ref={parentRef} className="flex-1 overflow-y-auto" role="log" aria-live="polite" aria-label="Chat messages">
+      <div
+        style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const msg = messages[virtualItem.index]!;
+          return (
+            <div
+              key={msg.id}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+              className="p-2"
+            >
+              <MemoizedBubble message={msg} />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
