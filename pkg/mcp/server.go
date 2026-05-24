@@ -158,6 +158,9 @@ func (h *handlers) sessionMessage(ctx context.Context, req mcp.CallToolRequest) 
 	if message == "" {
 		return mcp.NewToolResultError("message is required"), nil
 	}
+	if len(message) > maxMessageSize {
+		return mcp.NewToolResultError(fmt.Sprintf("message too large (%d bytes, max %d)", len(message), maxMessageSize)), nil
+	}
 
 	response, err := h.client.SendMessage(ctx, workspaceID, sessionID, message, h.timeout)
 	if err != nil {
