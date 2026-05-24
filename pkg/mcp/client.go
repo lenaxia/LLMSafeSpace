@@ -162,11 +162,11 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 	}
 
 	// 2. Subscribe to SSE events and wait for session.idle
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	sseCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	eventsURL := fmt.Sprintf("%s/api/v1/sandboxes/%s/events", c.BaseURL, sandboxID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
+	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, eventsURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create SSE request: %w", err)
 	}
@@ -177,7 +177,8 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("SSE connect failed: %w", err)
+		// SSE failed or timed out — fall back to polling history
+		return c.fallbackHistory(ctx, sandboxID, sessionID)
 	}
 	defer resp.Body.Close()
 
@@ -206,7 +207,11 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		return response.String(), nil
 	}
 
-	// Fallback: poll history
+	// Fallback: poll history (using parent context, not the timed-out SSE context)
+	return c.fallbackHistory(ctx, sandboxID, sessionID)
+}
+
+func (c *HTTPClient) fallbackHistory(ctx context.Context, sandboxID, sessionID string) (string, error) {
 	var msgs []Message
 	histPath := fmt.Sprintf("/api/v1/sandboxes/%s/sessions/%s/message", sandboxID, sessionID)
 	if err := c.doJSON(ctx, http.MethodGet, histPath, nil, &msgs); err != nil {
