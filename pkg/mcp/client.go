@@ -14,26 +14,34 @@ import (
 )
 
 // APIClient defines the interface for calling the LLMSafeSpace REST API.
+// All operations are workspace-centric — the sandbox layer is internal.
 type APIClient interface {
-	CreateSandbox(ctx context.Context, req CreateSandboxReq) (*SandboxResp, error)
-	TerminateSandbox(ctx context.Context, sandboxID string) error
-	CreateSession(ctx context.Context, sandboxID string) (*SessionResp, error)
-	GetHistory(ctx context.Context, sandboxID, sessionID string) ([]Message, error)
-	SendMessage(ctx context.Context, sandboxID, sessionID, message string, timeout time.Duration) (string, error)
+	CreateWorkspace(ctx context.Context, req CreateWorkspaceReq) (*WorkspaceResp, error)
+	ActivateWorkspace(ctx context.Context, workspaceID string) (*ActivateResp, error)
+	SuspendWorkspace(ctx context.Context, workspaceID string) error
+	CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error)
+	GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error)
+	SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error)
 }
 
-// CreateSandboxReq is the request body for sandbox creation.
-type CreateSandboxReq struct {
-	Runtime       string `json:"runtime"`
-	WorkspaceID   string `json:"workspaceId,omitempty"`
-	SecurityLevel string `json:"securityLevel,omitempty"`
-}
-
-// SandboxResp is the response from sandbox creation.
-type SandboxResp struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
+// CreateWorkspaceReq is the request body for workspace creation.
+type CreateWorkspaceReq struct {
+	Name    string `json:"name,omitempty"`
 	Runtime string `json:"runtime"`
+}
+
+// WorkspaceResp is the response from workspace creation.
+type WorkspaceResp struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Runtime string `json:"runtime"`
+	Phase   string `json:"phase"`
+}
+
+// ActivateResp is the response from workspace activation.
+type ActivateResp struct {
+	Resumed   string `json:"resumed"`
+	Suspended string `json:"suspended,omitempty"`
 }
 
 // SessionResp is the response from session creation.
@@ -48,6 +56,7 @@ type Message struct {
 }
 
 // HTTPClient implements APIClient using HTTP calls to the LLMSafeSpace API.
+// It resolves workspace → sandbox internally for session/message operations.
 type HTTPClient struct {
 	BaseURL    string
 	HTTPClient *http.Client
@@ -92,19 +101,32 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body any, 
 	return nil
 }
 
-func (c *HTTPClient) CreateSandbox(ctx context.Context, req CreateSandboxReq) (*SandboxResp, error) {
-	var resp SandboxResp
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/sandboxes", req, &resp); err != nil {
+func (c *HTTPClient) CreateWorkspace(ctx context.Context, req CreateWorkspaceReq) (*WorkspaceResp, error) {
+	var resp WorkspaceResp
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-func (c *HTTPClient) TerminateSandbox(ctx context.Context, sandboxID string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/sandboxes/"+sandboxID, nil, nil)
+func (c *HTTPClient) ActivateWorkspace(ctx context.Context, workspaceID string) (*ActivateResp, error) {
+	var resp ActivateResp
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/activate", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
-func (c *HTTPClient) CreateSession(ctx context.Context, sandboxID string) (*SessionResp, error) {
+func (c *HTTPClient) SuspendWorkspace(ctx context.Context, workspaceID string) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/suspend", nil, nil)
+}
+
+// CreateSession resolves workspace → sandbox, then creates a session via the proxy.
+func (c *HTTPClient) CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error) {
+	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
 	var resp SessionResp
 	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/sandboxes/"+sandboxID+"/sessions", nil, &resp); err != nil {
 		return nil, err
@@ -112,7 +134,11 @@ func (c *HTTPClient) CreateSession(ctx context.Context, sandboxID string) (*Sess
 	return &resp, nil
 }
 
-func (c *HTTPClient) GetHistory(ctx context.Context, sandboxID, sessionID string) ([]Message, error) {
+func (c *HTTPClient) GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error) {
+	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
 	var msgs []Message
 	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/sandboxes/"+sandboxID+"/sessions/"+sessionID+"/message", nil, &msgs); err != nil {
 		return nil, err
@@ -122,7 +148,12 @@ func (c *HTTPClient) GetHistory(ctx context.Context, sandboxID, sessionID string
 
 // SendMessage sends a prompt via prompt_async, then subscribes to SSE events
 // until session.idle is received or timeout expires.
-func (c *HTTPClient) SendMessage(ctx context.Context, sandboxID, sessionID, message string, timeout time.Duration) (string, error) {
+func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error) {
+	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+
 	// 1. Fire prompt_async
 	body := map[string]string{"message": message}
 	path := fmt.Sprintf("/api/v1/sandboxes/%s/sessions/%s/prompt", sandboxID, sessionID)
@@ -150,7 +181,6 @@ func (c *HTTPClient) SendMessage(ctx context.Context, sandboxID, sessionID, mess
 	}
 	defer resp.Body.Close()
 
-	// Read SSE events until session.idle
 	scanner := bufio.NewScanner(resp.Body)
 	var response strings.Builder
 	for scanner.Scan() {
@@ -172,18 +202,32 @@ func (c *HTTPClient) SendMessage(ctx context.Context, sandboxID, sessionID, mess
 		}
 	}
 
-	// If we got content from SSE, return it
 	if response.Len() > 0 {
 		return response.String(), nil
 	}
 
 	// Fallback: poll history
-	msgs, err := c.GetHistory(ctx, sandboxID, sessionID)
-	if err != nil {
+	var msgs []Message
+	histPath := fmt.Sprintf("/api/v1/sandboxes/%s/sessions/%s/message", sandboxID, sessionID)
+	if err := c.doJSON(ctx, http.MethodGet, histPath, nil, &msgs); err != nil {
 		return "", fmt.Errorf("fallback history fetch: %w", err)
 	}
 	if len(msgs) > 0 {
 		return msgs[len(msgs)-1].Content, nil
 	}
 	return "", nil
+}
+
+// resolveSandbox finds the active sandbox for a workspace via GET /workspaces/:id/sandboxes.
+func (c *HTTPClient) resolveSandbox(ctx context.Context, workspaceID string) (string, error) {
+	var sandboxes []struct {
+		ID string `json:"id"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workspaces/"+workspaceID+"/sandboxes", nil, &sandboxes); err != nil {
+		return "", fmt.Errorf("resolve sandbox for workspace %s: %w", workspaceID, err)
+	}
+	if len(sandboxes) == 0 {
+		return "", fmt.Errorf("workspace %s has no active sandbox — call workspace_activate first", workspaceID)
+	}
+	return sandboxes[0].ID, nil
 }

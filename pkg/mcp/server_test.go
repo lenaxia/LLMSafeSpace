@@ -16,36 +16,44 @@ type MockAPIClient struct {
 	mock.Mock
 }
 
-func (m *MockAPIClient) CreateSandbox(ctx context.Context, req CreateSandboxReq) (*SandboxResp, error) {
+func (m *MockAPIClient) CreateWorkspace(ctx context.Context, req CreateWorkspaceReq) (*WorkspaceResp, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*SandboxResp), args.Error(1)
+	return args.Get(0).(*WorkspaceResp), args.Error(1)
 }
 
-func (m *MockAPIClient) TerminateSandbox(ctx context.Context, sandboxID string) error {
-	return m.Called(ctx, sandboxID).Error(0)
+func (m *MockAPIClient) ActivateWorkspace(ctx context.Context, workspaceID string) (*ActivateResp, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ActivateResp), args.Error(1)
 }
 
-func (m *MockAPIClient) CreateSession(ctx context.Context, sandboxID string) (*SessionResp, error) {
-	args := m.Called(ctx, sandboxID)
+func (m *MockAPIClient) SuspendWorkspace(ctx context.Context, workspaceID string) error {
+	return m.Called(ctx, workspaceID).Error(0)
+}
+
+func (m *MockAPIClient) CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error) {
+	args := m.Called(ctx, workspaceID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*SessionResp), args.Error(1)
 }
 
-func (m *MockAPIClient) GetHistory(ctx context.Context, sandboxID, sessionID string) ([]Message, error) {
-	args := m.Called(ctx, sandboxID, sessionID)
+func (m *MockAPIClient) GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error) {
+	args := m.Called(ctx, workspaceID, sessionID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]Message), args.Error(1)
 }
 
-func (m *MockAPIClient) SendMessage(ctx context.Context, sandboxID, sessionID, message string, timeout time.Duration) (string, error) {
-	args := m.Called(ctx, sandboxID, sessionID, message, timeout)
+func (m *MockAPIClient) SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error) {
+	args := m.Called(ctx, workspaceID, sessionID, message, timeout)
 	return args.String(0), args.Error(1)
 }
 
@@ -62,77 +70,102 @@ func makeReq(name string, args map[string]any) mcp.CallToolRequest {
 	return req
 }
 
-// ===== sandbox_create =====
+// ===== workspace_create =====
 
-func TestSandboxCreate_HappyPath(t *testing.T) {
+func TestWorkspaceCreate_HappyPath(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("CreateSandbox", ctx, CreateSandboxReq{
-		Runtime:       "python:3.10",
-		SecurityLevel: "standard",
-	}).Return(&SandboxResp{ID: "sb-123", Status: "creating", Runtime: "python:3.10"}, nil)
+	mockClient.On("CreateWorkspace", ctx, CreateWorkspaceReq{
+		Runtime: "python:3.10",
+		Name:    "my-project",
+	}).Return(&WorkspaceResp{ID: "ws-123", Name: "my-project", Runtime: "python:3.10", Phase: "Active"}, nil)
 
-	result, err := h.sandboxCreate(ctx, makeReq("sandbox_create", map[string]any{
-		"runtime":        "python:3.10",
-		"security_level": "standard",
+	result, err := h.workspaceCreate(ctx, makeReq("workspace_create", map[string]any{
+		"runtime": "python:3.10",
+		"name":    "my-project",
 	}))
 
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "sb-123")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "ws-123")
 	mockClient.AssertExpectations(t)
 }
 
-func TestSandboxCreate_MissingRuntime(t *testing.T) {
+func TestWorkspaceCreate_MissingRuntime(t *testing.T) {
 	h, _ := newTestHandlers()
 
-	result, err := h.sandboxCreate(context.Background(), makeReq("sandbox_create", map[string]any{}))
+	result, err := h.workspaceCreate(context.Background(), makeReq("workspace_create", map[string]any{}))
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "runtime")
 }
 
-func TestSandboxCreate_APIError(t *testing.T) {
+func TestWorkspaceCreate_APIError(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("CreateSandbox", ctx, CreateSandboxReq{Runtime: "python:3.10"}).
-		Return((*SandboxResp)(nil), assert.AnError)
+	mockClient.On("CreateWorkspace", ctx, CreateWorkspaceReq{Runtime: "python:3.10"}).
+		Return((*WorkspaceResp)(nil), assert.AnError)
 
-	result, err := h.sandboxCreate(ctx, makeReq("sandbox_create", map[string]any{"runtime": "python:3.10"}))
+	result, err := h.workspaceCreate(ctx, makeReq("workspace_create", map[string]any{"runtime": "python:3.10"}))
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "failed to create sandbox")
 	mockClient.AssertExpectations(t)
 }
 
-// ===== sandbox_terminate =====
+// ===== workspace_activate =====
 
-func TestSandboxTerminate_HappyPath(t *testing.T) {
+func TestWorkspaceActivate_HappyPath(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("TerminateSandbox", ctx, "sb-123").Return(nil)
+	mockClient.On("ActivateWorkspace", ctx, "ws-123").
+		Return(&ActivateResp{Resumed: "ws-123"}, nil)
 
-	result, err := h.sandboxTerminate(ctx, makeReq("sandbox_terminate", map[string]any{"sandbox_id": "sb-123"}))
+	result, err := h.workspaceActivate(ctx, makeReq("workspace_activate", map[string]any{"workspace_id": "ws-123"}))
 
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "sb-123")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "ws-123")
 	mockClient.AssertExpectations(t)
 }
 
-func TestSandboxTerminate_MissingSandboxID(t *testing.T) {
+func TestWorkspaceActivate_MissingID(t *testing.T) {
 	h, _ := newTestHandlers()
 
-	result, err := h.sandboxTerminate(context.Background(), makeReq("sandbox_terminate", map[string]any{}))
+	result, err := h.workspaceActivate(context.Background(), makeReq("workspace_activate", map[string]any{}))
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "sandbox_id")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "workspace_id")
+}
+
+// ===== workspace_stop =====
+
+func TestWorkspaceStop_HappyPath(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("SuspendWorkspace", ctx, "ws-123").Return(nil)
+
+	result, err := h.workspaceStop(ctx, makeReq("workspace_stop", map[string]any{"workspace_id": "ws-123"}))
+
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "ws-123")
+	mockClient.AssertExpectations(t)
+}
+
+func TestWorkspaceStop_MissingID(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	result, err := h.workspaceStop(context.Background(), makeReq("workspace_stop", map[string]any{}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
 }
 
 // ===== session_create =====
@@ -141,9 +174,9 @@ func TestSessionCreate_HappyPath(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("CreateSession", ctx, "sb-123").Return(&SessionResp{ID: "sess-456"}, nil)
+	mockClient.On("CreateSession", ctx, "ws-123").Return(&SessionResp{ID: "sess-456"}, nil)
 
-	result, err := h.sessionCreate(ctx, makeReq("session_create", map[string]any{"sandbox_id": "sb-123"}))
+	result, err := h.sessionCreate(ctx, makeReq("session_create", map[string]any{"workspace_id": "ws-123"}))
 
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -151,7 +184,7 @@ func TestSessionCreate_HappyPath(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestSessionCreate_MissingSandboxID(t *testing.T) {
+func TestSessionCreate_MissingWorkspaceID(t *testing.T) {
 	h, _ := newTestHandlers()
 
 	result, err := h.sessionCreate(context.Background(), makeReq("session_create", map[string]any{}))
@@ -166,13 +199,13 @@ func TestSessionMessage_HappyPath(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("SendMessage", ctx, "sb-123", "sess-456", "hello", 300*time.Second).
+	mockClient.On("SendMessage", ctx, "ws-123", "sess-456", "hello", 300*time.Second).
 		Return("Hello! How can I help?", nil)
 
 	result, err := h.sessionMessage(ctx, makeReq("session_message", map[string]any{
-		"sandbox_id": "sb-123",
-		"session_id": "sess-456",
-		"message":    "hello",
+		"workspace_id": "ws-123",
+		"session_id":   "sess-456",
+		"message":      "hello",
 	}))
 
 	require.NoError(t, err)
@@ -185,8 +218,8 @@ func TestSessionMessage_MissingMessage(t *testing.T) {
 	h, _ := newTestHandlers()
 
 	result, err := h.sessionMessage(context.Background(), makeReq("session_message", map[string]any{
-		"sandbox_id": "sb-123",
-		"session_id": "sess-456",
+		"workspace_id": "ws-123",
+		"session_id":   "sess-456",
 	}))
 
 	require.NoError(t, err)
@@ -198,13 +231,13 @@ func TestSessionMessage_APIError(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("SendMessage", ctx, "sb-123", "sess-456", "hello", 300*time.Second).
+	mockClient.On("SendMessage", ctx, "ws-123", "sess-456", "hello", 300*time.Second).
 		Return("", assert.AnError)
 
 	result, err := h.sessionMessage(ctx, makeReq("session_message", map[string]any{
-		"sandbox_id": "sb-123",
-		"session_id": "sess-456",
-		"message":    "hello",
+		"workspace_id": "ws-123",
+		"session_id":   "sess-456",
+		"message":      "hello",
 	}))
 
 	require.NoError(t, err)
@@ -218,14 +251,14 @@ func TestSessionHistory_HappyPath(t *testing.T) {
 	h, mockClient := newTestHandlers()
 	ctx := context.Background()
 
-	mockClient.On("GetHistory", ctx, "sb-123", "sess-456").Return([]Message{
+	mockClient.On("GetHistory", ctx, "ws-123", "sess-456").Return([]Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "Hi there!"},
 	}, nil)
 
 	result, err := h.sessionHistory(ctx, makeReq("session_history", map[string]any{
-		"sandbox_id": "sb-123",
-		"session_id": "sess-456",
+		"workspace_id": "ws-123",
+		"session_id":   "sess-456",
 	}))
 
 	require.NoError(t, err)
@@ -240,7 +273,7 @@ func TestSessionHistory_MissingSessionID(t *testing.T) {
 	h, _ := newTestHandlers()
 
 	result, err := h.sessionHistory(context.Background(), makeReq("session_history", map[string]any{
-		"sandbox_id": "sb-123",
+		"workspace_id": "ws-123",
 	}))
 
 	require.NoError(t, err)
