@@ -40,6 +40,13 @@ type SandboxSpec struct {
 
 	// WorkspaceRef is the name of the Workspace this sandbox is attached to.
 	WorkspaceRef string `json:"workspaceRef,omitempty"`
+
+	// RestartGeneration is incremented by the API service when a user
+	// requests a sandbox restart (POST /sandboxes/:id/restart) or when
+	// credential rotation triggers an automatic restart (fix #3). The
+	// controller compares this to Status.ObservedRestartGeneration; when
+	// spec > status, it gracefully deletes the pod and reverts to Pending.
+	RestartGeneration int64 `json:"restartGeneration,omitempty"`
 }
 
 // ResourceRequirements defines compute resource requirements.
@@ -208,6 +215,12 @@ type SandboxStatus struct {
 	// logic to compute "how long has the pod been healthy since the last
 	// transient event". Nil when no transient failure has occurred.
 	LastTransientFailureAt *metav1.Time `json:"lastTransientFailureAt,omitempty"`
+
+	// ObservedRestartGeneration is the last Spec.RestartGeneration value
+	// the controller has acted on. When Spec.RestartGeneration >
+	// Status.ObservedRestartGeneration, the controller gracefully deletes
+	// the pod and reverts to Pending for recreation.
+	ObservedRestartGeneration int64 `json:"observedRestartGeneration,omitempty"`
 }
 
 // SandboxCondition is a condition of a sandbox.

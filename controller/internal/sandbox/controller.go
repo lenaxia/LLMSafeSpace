@@ -188,6 +188,13 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 	logger := log.FromContext(ctx).WithValues("sandbox", types.NamespacedName{Name: sandbox.Name, Namespace: sandbox.Namespace})
 	logger.Info("Handling running sandbox")
 
+	// Fix #1: detect user-initiated or credential-triggered restart request.
+	// Spec.RestartGeneration > Status.ObservedRestartGeneration means the API
+	// (or fix #3's credential watcher) requested a pod recycle.
+	if sandbox.Spec.RestartGeneration > sandbox.Status.ObservedRestartGeneration {
+		return r.handleRestartRequest(ctx, sandbox, logger)
+	}
+
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}, pod)
 	if err != nil {
@@ -378,6 +385,48 @@ func (r *SandboxReconciler) maybeResetTransientCounter(sandbox *v1.Sandbox) {
 		sandbox.Status.TransientFailureCount = 0
 		sandbox.Status.LastTransientFailureAt = nil
 	}
+}
+
+
+// handleRestartRequest gracefully deletes the sandbox pod and reverts to
+// Pending when Spec.RestartGeneration > Status.ObservedRestartGeneration.
+// This is the controller-side of fix #1 (POST /sandboxes/:id/restart).
+// The existing Pending → Creating → Running path recreates the pod.
+func (r *SandboxReconciler) handleRestartRequest(ctx context.Context, sandbox *v1.Sandbox, logger logr.Logger) (ctrl.Result, error) {
+	logger.Info("Restart requested; gracefully deleting pod",
+		"restartGeneration", sandbox.Spec.RestartGeneration,
+		"observedRestartGeneration", sandbox.Status.ObservedRestartGeneration)
+
+	// Delete the existing pod gracefully (uses pod's terminationGracePeriodSeconds).
+	if sandbox.Status.PodName != "" {
+		pod := &corev1.Pod{}
+		podKey := types.NamespacedName{Name: sandbox.Status.PodName, Namespace: sandbox.Status.PodNamespace}
+		if err := r.Get(ctx, podKey, pod); err == nil {
+			if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete pod for restart")
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	// Revert to Pending so handlePendingSandbox creates a fresh pod.
+	sandbox.Status.Phase = common.SandboxPhasePending
+	sandbox.Status.ObservedRestartGeneration = sandbox.Spec.RestartGeneration
+	sandbox.Status.RestartCount++
+	sandbox.Status.PodName = ""
+	sandbox.Status.PodNamespace = ""
+	sandbox.Status.PodIP = ""
+
+	conditions := sandbox.Status.Conditions
+	common.SetSandboxCondition(&conditions, common.ConditionReady, "False",
+		"RestartRequested", "Pod recycling due to restart request")
+	sandbox.Status.Conditions = conditions
+
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to update Sandbox status for restart")
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {

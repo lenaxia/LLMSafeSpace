@@ -561,6 +561,20 @@ func registerSandboxCRUDRoutes(rg *gin.RouterGroup, services interfaces.Services
 		}
 		c.JSON(http.StatusOK, status)
 	})
+
+	rg.POST("/:id/restart", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		ctx := context.WithValue(c.Request.Context(), types.ContextKeyUserID, userID)
+		if err := sbSvc.RestartSandbox(ctx, c.Param("id")); err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"message": "restart initiated"})
+	})
 }
 
 // respondWithError maps API errors to HTTP responses.
