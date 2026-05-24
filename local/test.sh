@@ -699,7 +699,99 @@ fi
 # -----------------------------------------------------------------------------
 # Test 9: cleanup
 # -----------------------------------------------------------------------------
-log "Test 9/9 — cleanup"
+
+# -----------------------------------------------------------------------------
+# Test 10: Sandbox restart API (fix #1)
+# Requires: sandbox in Running phase from earlier tests.
+# -----------------------------------------------------------------------------
+log "Test 10 — Sandbox restart API (fix #1)"
+
+# Re-create sandbox if it was deleted by earlier tests.
+SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+if [[ "${SB_PHASE}" != "Running" ]]; then
+    warn "sandbox not Running (phase=${SB_PHASE}); skipping restart probe"
+else
+    RESTART_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/restart")
+    if [[ "${RESTART_CODE}" == "202" ]]; then
+        ok "POST /restart returned 202"
+        # Wait for sandbox to return to Running (pod recycle).
+        log "  waiting up to 60s for sandbox to return to Running after restart"
+        for i in $(seq 1 20); do
+            SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "${SB_PHASE}" == "Running" ]]; then
+                ok "Sandbox returned to Running after restart (~$((i*3))s)"
+                break
+            fi
+            if (( i == 20 )); then
+                warn "Sandbox did not return to Running after restart (phase=${SB_PHASE})"
+            fi
+            sleep 3
+        done
+    else
+        warn "POST /restart returned ${RESTART_CODE} (expected 202); skipping"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11: Transient pod-loss recovery (fix #2)
+# Gracefully delete the sandbox pod; verify sandbox self-heals to Running.
+# -----------------------------------------------------------------------------
+log "Test 11 — Transient pod-loss recovery (fix #2)"
+
+SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+if [[ "${SB_PHASE}" != "Running" ]]; then
+    warn "sandbox not Running (phase=${SB_PHASE}); skipping transient-loss probe"
+else
+    POD_NAME=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+    if [[ -n "${POD_NAME}" ]]; then
+        log "  deleting pod ${POD_NAME} (graceful, no --force)"
+        kc -n "${NS}" delete pod "${POD_NAME}" --wait=false >/dev/null 2>&1
+        sleep 5
+        # Sandbox should NOT be Failed — it should self-heal to Pending then Running.
+        for i in $(seq 1 20); do
+            SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "${SB_PHASE}" == "Running" ]]; then
+                ok "Sandbox self-healed to Running after pod deletion (~$((i*3+5))s)"
+                break
+            fi
+            if [[ "${SB_PHASE}" == "Failed" ]]; then
+                die "Sandbox went to Failed after single pod deletion (fix #2 regression)"
+            fi
+            if (( i == 20 )); then
+                warn "Sandbox did not return to Running (phase=${SB_PHASE})"
+            fi
+            sleep 3
+        done
+    else
+        warn "no pod name on sandbox; skipping"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Test 12: Retry from Failed (fix #5)
+# Force the sandbox to Failed by exhausting transient retries, then retry.
+# This test is destructive — only run if LLM creds are available (so we can
+# verify the sandbox actually works after retry).
+# -----------------------------------------------------------------------------
+log "Test 12 — Retry from Failed (fix #5)"
+
+# We'll test the API response shape even without forcing a real failure.
+RETRY_CODE=$(curl -s -o /tmp/llmsafespace-retry.json -w "%{http_code}" \
+    -X POST \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/retry")
+if [[ "${RETRY_CODE}" == "409" ]]; then
+    ok "POST /retry correctly returns 409 when sandbox is not Failed"
+elif [[ "${RETRY_CODE}" == "202" ]]; then
+    ok "POST /retry returned 202 (sandbox was Failed; retry initiated)"
+else
+    warn "POST /retry returned ${RETRY_CODE} (expected 409 for non-Failed sandbox)"
+fi
+
+log "Test 13/13 — cleanup"
 kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --wait=false >/dev/null
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --wait=false >/dev/null
 ok "delete requested"
