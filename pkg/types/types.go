@@ -465,8 +465,8 @@ type Session struct {
 	// User ID
 	UserID string
 
-	// Sandbox ID
-	SandboxID string
+	// Workspace ID
+	WorkspaceID string
 
 	// WebSocket connection
 	Conn WSConnection
@@ -571,9 +571,9 @@ type SandboxUpdates struct {
 // CachedSession is the typed representation of a WebSocket session stored in
 // the cache. It replaces the previous map[string]interface{} bag.
 type CachedSession struct {
-	SessionID string `json:"sessionId"`
-	UserID    string `json:"userId"`
-	SandboxID string `json:"sandboxId"`
+	SessionID   string `json:"sessionId"`
+	UserID      string `json:"userId"`
+	WorkspaceID string `json:"workspaceId"`
 }
 
 type Message struct {
@@ -598,7 +598,6 @@ type Workspace struct {
 	StorageSize string            `json:"storageSize"`
 	Phase       string            `json:"phase"`
 	PVCName     string            `json:"pvcName,omitempty"`
-	SandboxID   string            `json:"sandboxId,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	CreatedAt   time.Time         `json:"createdAt"`
 	UpdatedAt   time.Time         `json:"updatedAt"`

@@ -196,7 +196,7 @@ func TestSessionOperations(t *testing.T) {
 	session := types.CachedSession{
 		SessionID: sessionID,
 		UserID:    "user123",
-		SandboxID: "sandbox456",
+		WorkspaceID: "workspace456",
 	}
 
 	// SetSession stores the typed session
@@ -208,7 +208,7 @@ func TestSessionOperations(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, session.SessionID, retrieved.SessionID)
 	assert.Equal(t, session.UserID, retrieved.UserID)
-	assert.Equal(t, session.SandboxID, retrieved.SandboxID)
+	assert.Equal(t, session.WorkspaceID, retrieved.WorkspaceID)
 
 	// DeleteSession removes it
 	err = service.DeleteSession(ctx, sessionID)
@@ -289,7 +289,7 @@ func TestSetSession_GetSession_TTLExpiry(t *testing.T) {
 	session := types.CachedSession{
 		SessionID: sessionID,
 		UserID:    "user-ttl",
-		SandboxID: "sb-ttl",
+		WorkspaceID: "ws-ttl",
 	}
 
 	// Store with a 1-second TTL
