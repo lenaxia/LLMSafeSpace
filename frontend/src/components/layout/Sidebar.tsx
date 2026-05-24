@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
-import { sessionsApi } from "../../api/sessions";
 import { useAuth } from "../../providers/AuthProvider";
 import { WorkspaceList } from "../workspace/WorkspaceList";
 import { WorkspaceSessionList } from "../workspace/WorkspaceSessionList";
@@ -15,6 +14,7 @@ export function Sidebar() {
   const queryClient = useQueryClient();
   const { workspaceId, sessionId } = useParams();
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
+  const [sessionError, setSessionError] = useState("");
 
   const { data: workspaces } = useQuery({
     queryKey: ["workspaces"],
@@ -24,43 +24,33 @@ export function Sidebar() {
   const createMutation = useMutation({
     mutationFn: async (params: { name: string }) => {
       const ws = await workspacesApi.create(params);
-      // Auto-create a sandbox attached to the workspace
-      await workspacesApi.createSandbox(ws.id);
-      return ws;
+      // Backend auto-creates sandbox; now ensure session is ready.
+      const session = await workspacesApi.ensureSession(ws.id);
+      return { workspaceId: ws.id, sessionId: session.sessionId };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowNewWorkspace(false);
-      navigate(`/chat/${data.id}`);
+      navigate(`/chat/${data.workspaceId}/${data.sessionId}`);
     },
   });
 
-  const createSessionMutation = useMutation({
-    mutationFn: (sandboxId: string) => sessionsApi.create(sandboxId, "New chat"),
+  const newSessionMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.ensureSession(wsId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (workspaceId) navigate(`/chat/${workspaceId}/${data.id}`);
+      if (workspaceId) navigate(`/chat/${workspaceId}/${data.sessionId}`);
+    },
+    onError: () => {
+      setSessionError("Failed to create session");
+      setTimeout(() => setSessionError(""), 3000);
     },
   });
 
-  const [sessionError, setSessionError] = useState("");
-
-  const handleNewSession = async () => {
+  const handleNewSession = () => {
     if (!workspaceId) return;
     setSessionError("");
-    try {
-      const sandboxes = await workspacesApi.getSandboxes(workspaceId);
-      const running = sandboxes.find((sb) => sb.phase === "Running");
-      if (running) {
-        createSessionMutation.mutate(running.id);
-      } else {
-        setSessionError("Workspace is not ready yet");
-        setTimeout(() => setSessionError(""), 3000);
-      }
-    } catch {
-      setSessionError("Failed to check workspace status");
-      setTimeout(() => setSessionError(""), 3000);
-    }
+    newSessionMutation.mutate(workspaceId);
   };
 
   return (
@@ -99,12 +89,12 @@ export function Sidebar() {
               <p className="text-xs font-medium text-muted-foreground">Sessions</p>
               <button
                 onClick={handleNewSession}
-                disabled={createSessionMutation.isPending}
+                disabled={newSessionMutation.isPending}
                 className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                 aria-label="New session"
                 title="New chat"
               >
-                {createSessionMutation.isPending ? (
+                {newSessionMutation.isPending ? (
                   <span className="block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
                 ) : (
                   <Plus className="h-3 w-3" />

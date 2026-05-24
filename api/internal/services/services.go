@@ -108,6 +108,9 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		return nil, fmt.Errorf("failed to initialize sandbox service: %w", err)
 	}
 
+	// Break circular dependency: workspace needs sandbox for auto-creation.
+	workspaceService.SetSandboxService(sandboxService)
+
 	rateLimiterService := ratelimit.NewWithCache(log, cacheService)
 
 	return &Services{
