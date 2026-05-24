@@ -341,7 +341,7 @@ func TestCreateSandbox_LabelsAndAnnotationsSet(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "sb-", captured.GenerateName)
 	assert.Equal(t, "user1", captured.Labels["user-id"])
-	assert.Equal(t, "python:3.10", captured.Labels["runtime"])
+	assert.Equal(t, "python_3.10", captured.Labels["runtime"], "runtime label must be sanitized for K8s label validity")
 	assert.NotEmpty(t, captured.Annotations["llmsafespace.dev/created-at"])
 }
 
@@ -819,7 +819,7 @@ func TestBuildCRDFromRequest_SetsAllFields(t *testing.T) {
 	assert.Equal(t, "sb-", crd.GenerateName)
 	assert.Equal(t, "testns", crd.Namespace)
 	assert.Equal(t, "user42", crd.Labels["user-id"])
-	assert.Equal(t, "python:3.10", crd.Labels["runtime"])
+	assert.Equal(t, "python_3.10", crd.Labels["runtime"], "runtime label must be sanitized for K8s label validity")
 	assert.Equal(t, "llmsafespace", crd.Labels["app"])
 	assert.Equal(t, "ws-123", crd.Labels["llmsafespace.dev/workspace"])
 	assert.Equal(t, "user42", crd.Annotations["llmsafespace.dev/created-by"])

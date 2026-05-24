@@ -3,7 +3,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,26 +17,14 @@ import (
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
-// sanitizeLabelValue replaces characters that Kubernetes does not accept in
-// label values. Per K8s validation:
-//
-//	regex: (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
-//
-// Image-style runtime identifiers like "python:3.11" contain ':' which is
-// not in the allowed set. Replace with '_'. Truncate to 63 chars (the K8s
-// label-value max length).
-//
-// This function is intentionally minimal: it only handles the cases we
-// expect (':'). If we need broader sanitization later, extend the regex.
-func sanitizeLabelValue(v string) string {
-	v = strings.ReplaceAll(v, ":", "_")
-	if len(v) > 63 {
-		v = v[:63]
-	}
-	return v
-}
+// Label sanitization for runtime values lives in
+// controller/internal/common.SanitizeLabelValue. It is called from both
+// the API service (when creating Sandbox CRDs) and from this controller
+// (when projecting labels onto child Pods), so it must be in a shared
+// package — otherwise the API and the controller will disagree.
 
 // parentWorkspaceIsSuspending returns true if the sandbox's referenced
 // Workspace exists and is currently in a Suspending or Suspended phase.
@@ -505,7 +492,7 @@ func (r *SandboxReconciler) buildSandboxPodWithContext(ctx context.Context, sand
 		// runtime is preserved in label form for selectors and metrics.
 		// The full unsanitized runtime string is also kept in annotations
 		// (see below) for round-tripping back to the spec.
-		common.LabelRuntime: sanitizeLabelValue(sandbox.Spec.Runtime),
+		common.LabelRuntime: utilities.SanitizeLabelValue(sandbox.Spec.Runtime),
 	}
 	// Tag pods with their parent workspace so the workspace controller's
 	// deleteWorkspacePods (which selects by `llmsafespace.dev/workspace`)

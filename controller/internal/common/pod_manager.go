@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // PodManager handles pod creation and management
@@ -35,11 +36,16 @@ func (p *PodManager) CreateSandboxPod(ctx context.Context, sandbox *v1.Sandbox) 
 	podName := fmt.Sprintf("sandbox-%s", sandbox.Name)
 
 	// Define labels and annotations
+	// LabelRuntime carries an image-style runtime identifier like
+	// "python:3.11". Image references contain ':' which K8s rejects in
+	// label values; SanitizeLabelValue replaces it with '_' and truncates
+	// to 63 chars. The canonical (unsanitized) value remains in
+	// sandbox.Spec.Runtime; this label is for grouping/filtering only.
 	labels := map[string]string{
 		LabelApp:       "llmsafespace",
 		LabelComponent: ComponentSandbox,
 		LabelSandboxID: sandbox.Name,
-		LabelRuntime:   sandbox.Spec.Runtime,
+		LabelRuntime:   utilities.SanitizeLabelValue(sandbox.Spec.Runtime),
 	}
 
 	annotations := map[string]string{
