@@ -111,7 +111,7 @@ func TestEnsureSession_ActiveWorkspace_RunningSandbox(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	f.ws.On("Get", "ws-1", mock.Anything).Return(&v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
-		Spec:       v1.WorkspaceSpec{DefaultRuntime: "base"},
+		Spec:       v1.WorkspaceSpec{Runtime: "base"},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
 	}, nil)
 	f.sb.On("List", mock.Anything).Return(&v1.SandboxList{
@@ -146,7 +146,7 @@ func TestEnsureSession_SuspendedWorkspace_ResumesAndCreates(t *testing.T) {
 	// Workspace is Suspended
 	f.ws.On("Get", "ws-2", mock.Anything).Return(&v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-2", Namespace: "default"},
-		Spec:       v1.WorkspaceSpec{DefaultRuntime: "python:3.11"},
+		Spec:       v1.WorkspaceSpec{Runtime: "python:3.11"},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
 	}, nil)
 	f.ws.On("UpdateStatus", mock.Anything).Return(&v1.Workspace{
@@ -213,7 +213,7 @@ func TestEnsureSession_FailedSandbox_CreatesNew(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "ws", "10Gi"), nil)
 	f.ws.On("Get", "ws-1", mock.Anything).Return(&v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
-		Spec:       v1.WorkspaceSpec{DefaultRuntime: "base"},
+		Spec:       v1.WorkspaceSpec{Runtime: "base"},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
 	}, nil)
 	// Only a Failed sandbox exists — should be skipped
@@ -296,7 +296,7 @@ func TestEnsureSession_CreatingSandbox_WaitsForRunning(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "ws", "10Gi"), nil)
 	f.ws.On("Get", "ws-1", mock.Anything).Return(&v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
-		Spec:       v1.WorkspaceSpec{DefaultRuntime: "base"},
+		Spec:       v1.WorkspaceSpec{Runtime: "base"},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
 	}, nil)
 	// Sandbox exists but is Creating

@@ -57,27 +57,6 @@ type SandboxSpec struct {
 	MaxRetries int32 `json:"maxRetries,omitempty"`
 }
 
-// ResourceRequirements defines compute resource requirements.
-type ResourceRequirements struct {
-	// CPU resource limit.
-	// +kubebuilder:validation:Pattern=^([0-9]+m|[0-9]+\.[0-9]+)$
-	// +kubebuilder:default="500m"
-	CPU string `json:"cpu,omitempty"`
-
-	// Memory resource limit.
-	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
-	// +kubebuilder:default="512Mi"
-	Memory string `json:"memory,omitempty"`
-
-	// EphemeralStorage limit.
-	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
-	// +kubebuilder:default="1Gi"
-	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
-
-	// CPUPinning enables CPU pinning for sensitive workloads.
-	CPUPinning bool `json:"cpuPinning,omitempty"`
-}
-
 // NetworkAccess defines network access configuration.
 type NetworkAccess struct {
 	// Egress rules.

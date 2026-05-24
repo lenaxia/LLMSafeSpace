@@ -733,6 +733,6 @@ func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {
 		return crd.Spec.Owner.UserID == "user1" &&
 			crd.Spec.Storage.Size == "10Gi" &&
 			crd.Spec.Storage.StorageClassName == "fast-ssd" &&
-			crd.Spec.DefaultRuntime == "python:3.11"
+			crd.Spec.Runtime == "python:3.11"
 	}))
 }

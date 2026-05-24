@@ -529,7 +529,7 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 			Size:             req.StorageSize,
 			StorageClassName: req.StorageClass,
 		},
-		DefaultRuntime: req.Runtime,
+		Runtime: req.Runtime,
 	}
 
 	return &v1.Workspace{
@@ -581,7 +581,7 @@ func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string)
 	}
 
 	// Find or create sandbox for this workspace.
-	sandboxID, err := s.ensureSandbox(ctx, userID, workspaceID, crd.Spec.DefaultRuntime)
+	sandboxID, err := s.ensureSandbox(ctx, userID, workspaceID, crd.Spec.Runtime)
 	if err != nil {
 		return nil, err
 	}
