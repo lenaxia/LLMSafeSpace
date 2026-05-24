@@ -26,22 +26,6 @@ func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync
 	}
 }
 
-func (f *InformerFactory) SandboxInformer() cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.Sandboxes(f.namespace).List(options)
-			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.Sandboxes(f.namespace).Watch(options)
-			},
-		},
-		&v1.Sandbox{},
-		f.defaultResync,
-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
-	)
-}
-
 func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
@@ -58,17 +42,17 @@ func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer
 	)
 }
 
-func (f *InformerFactory) SandboxProfileInformer() cache.SharedIndexInformer {
+func (f *InformerFactory) WorkspaceInformer() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.SandboxProfiles(f.namespace).List(options)
+				return f.client.Workspaces(f.namespace).List(options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.SandboxProfiles(f.namespace).Watch(options)
+				return f.client.Workspaces(f.namespace).Watch(options)
 			},
 		},
-		&v1.SandboxProfile{},
+		&v1.Workspace{},
 		f.defaultResync,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -76,11 +60,9 @@ func (f *InformerFactory) SandboxProfileInformer() cache.SharedIndexInformer {
 
 func (f *InformerFactory) StartInformers(stopCh <-chan struct{}) {
 	informers := []cache.SharedIndexInformer{
-		f.SandboxInformer(),
 		f.RuntimeEnvironmentInformer(),
-		f.SandboxProfileInformer(),
+		f.WorkspaceInformer(),
 	}
-
 	for _, informer := range informers {
 		go informer.Run(stopCh)
 	}

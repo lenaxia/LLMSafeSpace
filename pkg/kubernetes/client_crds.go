@@ -20,12 +20,8 @@ func init() {
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
 				schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"},
-				&v1.Sandbox{},
-				&v1.SandboxList{},
 				&v1.RuntimeEnvironment{},
 				&v1.RuntimeEnvironmentList{},
-				&v1.SandboxProfile{},
-				&v1.SandboxProfileList{},
 				&v1.Workspace{},
 				&v1.WorkspaceList{},
 			)
@@ -64,7 +60,6 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	// connection is closed at 30s and the watcher.ResultChan() is closed
 	// with eventCount=0). Watch responses have their own server-side
 	// timeoutSeconds; the client-side Timeout should be 0 (no timeout)
-	// for the typed client used by SandboxWatcher.
 	config.Timeout = 0
 	config.ContentConfig.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
 	config.APIPath = "/apis"
@@ -86,103 +81,12 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	return &LLMSafespaceV1Client{restClient: client}, nil
 }
 
-func (c *LLMSafespaceV1Client) Sandboxes(namespace string) interfaces.SandboxInterface {
-	return &sandboxes{client: c.restClient, ns: namespace}
-}
-
 func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
 	return &runtimeEnvironments{client: c.restClient, ns: namespace}
 }
 
-func (c *LLMSafespaceV1Client) SandboxProfiles(namespace string) interfaces.SandboxProfileInterface {
-	return &sandboxProfiles{client: c.restClient, ns: namespace}
-}
-
 func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
 	return &workspaces{client: c.restClient, ns: namespace}
-}
-
-type sandboxes struct {
-	client rest.Interface
-	ns     string
-}
-
-func (s *sandboxes) Create(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
-	result := &v1.Sandbox{}
-	err := s.client.Post().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		Body(sandbox).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxes) Update(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
-	result := &v1.Sandbox{}
-	err := s.client.Put().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		Name(sandbox.Name).
-		Body(sandbox).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxes) UpdateStatus(sandbox *v1.Sandbox) (*v1.Sandbox, error) {
-	result := &v1.Sandbox{}
-	err := s.client.Put().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		Name(sandbox.Name).
-		SubResource("status").
-		Body(sandbox).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxes) Delete(name string, options metav1.DeleteOptions) error {
-	return s.client.Delete().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-func (s *sandboxes) Get(name string, options metav1.GetOptions) (*v1.Sandbox, error) {
-	result := &v1.Sandbox{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxes) List(opts metav1.ListOptions) (*v1.SandboxList, error) {
-	result := &v1.SandboxList{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxes) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxes").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
 }
 
 type runtimeEnvironments struct {
@@ -264,76 +168,6 @@ func (r *runtimeEnvironments) Watch(opts metav1.ListOptions) (watch.Interface, e
 	return r.client.Get().
 		Namespace(r.ns).
 		Resource("runtimeenvironments").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
-}
-
-type sandboxProfiles struct {
-	client rest.Interface
-	ns     string
-}
-
-func (s *sandboxProfiles) Create(profile *v1.SandboxProfile) (*v1.SandboxProfile, error) {
-	result := &v1.SandboxProfile{}
-	err := s.client.Post().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Body(profile).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxProfiles) Update(profile *v1.SandboxProfile) (*v1.SandboxProfile, error) {
-	result := &v1.SandboxProfile{}
-	err := s.client.Put().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(profile.Name).
-		Body(profile).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxProfiles) Delete(name string, options metav1.DeleteOptions) error {
-	return s.client.Delete().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(name).
-		Body(&options).
-		Do(context.TODO()).
-		Error()
-}
-
-func (s *sandboxProfiles) Get(name string, options metav1.GetOptions) (*v1.SandboxProfile, error) {
-	result := &v1.SandboxProfile{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxProfiles) List(opts metav1.ListOptions) (*v1.SandboxProfileList, error) {
-	result := &v1.SandboxProfileList{}
-	err := s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
-		Into(result)
-	return result, err
-}
-
-func (s *sandboxProfiles) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	opts.Watch = true
-	return s.client.Get().
-		Namespace(s.ns).
-		Resource("sandboxprofiles").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Watch(context.TODO())
 }

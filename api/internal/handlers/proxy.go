@@ -58,7 +58,7 @@ type ProxyHandler struct {
 	connMu    sync.Mutex
 
 	activityTracker *ActivityTracker
-	watcher         *SandboxWatcher
+	watcher         *WorkspaceWatcher
 	sseTracker      *SSETracker
 	sessionIndex    interfaces.SessionIndexService
 
@@ -116,7 +116,7 @@ func (h *ProxyHandler) Start() error {
 		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
 		h.sseTracker.SetOnSessionActive(h.onSessionActive)
 
-		watcher, err := NewSandboxWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
+		watcher, err := NewWorkspaceWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
 		if err != nil {
 			h.activityTracker.Stop()
 			startErr = fmt.Errorf("creating CRD watcher: %w", err)
@@ -183,24 +183,24 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 // server. When filterParts is true and ?verbose=true is NOT set, response
 // parts of type=="patch" are stripped before sending to the client.
 func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWriteOp bool, sessionID string, filterParts bool) {
-	sandboxID := c.Param("id")
-	if sandboxID == "" {
+	workspaceID := c.Param("id")
+	if workspaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "sandbox ID required"})
 		return
 	}
 
-	var sandbox *v1.Sandbox
+	var sandbox *v1.Workspace
 	// Reuse sandbox CRD if already fetched by ownership middleware (avoids double read)
 	if cached, exists := c.Get("sandbox"); exists {
-		if sb, ok := cached.(*v1.Sandbox); ok {
+		if sb, ok := cached.(*v1.Workspace); ok {
 			sandbox = sb
 		}
 	}
 	if sandbox == nil {
 		var err error
-		sandbox, err = h.k8sClient.LlmsafespaceV1().Sandboxes(h.namespace).Get(sandboxID, metav1.GetOptions{})
+		sandbox, err = h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 		if err != nil {
-			h.logger.Error("Failed to get sandbox CRD", err, "sandboxID", sandboxID)
+			h.logger.Error("Failed to get sandbox CRD", err, "workspaceID", workspaceID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
 			return
 		}
@@ -216,21 +216,21 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 		return
 	}
 
-	password, err := h.getPassword(c.Request.Context(), sandboxID)
+	password, err := h.getPassword(c.Request.Context(), workspaceID)
 	if err != nil {
-		h.logger.Error("Failed to get sandbox password", err, "sandboxID", sandboxID)
+		h.logger.Error("Failed to get sandbox password", err, "workspaceID", workspaceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve sandbox credentials"})
 		return
 	}
 
-	wsCfg, err := h.getWorkspaceConfig(c.Request.Context(), sandboxID, sandbox.Spec.WorkspaceRef)
+	wsCfg, err := h.getWorkspaceConfig(c.Request.Context(), workspaceID, workspaceID)
 	if err != nil {
-		h.logger.Error("Failed to get workspace config", err, "sandboxID", sandboxID)
+		h.logger.Error("Failed to get workspace config", err, "workspaceID", workspaceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve workspace configuration"})
 		return
 	}
 
-	if !h.acquireConnection(sandboxID) {
+	if !h.acquireConnection(workspaceID) {
 		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 		c.JSON(http.StatusTooManyRequests, gin.H{
 			"error":      "connection limit reached",
@@ -238,11 +238,11 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 		})
 		return
 	}
-	defer h.releaseConnection(sandboxID)
+	defer h.releaseConnection(workspaceID)
 
 	if isWriteOp && sessionID != "" {
-		if !h.checkAndAddActiveSession(sandboxID, sessionID, wsCfg.maxActiveSessions) {
-			h.releaseConnection(sandboxID)
+		if !h.checkAndAddActiveSession(workspaceID, sessionID, wsCfg.maxActiveSessions) {
+			h.releaseConnection(workspaceID)
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":             "active session limit reached",
@@ -254,7 +254,7 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	}
 
 	if isWriteOp && sessionID != "" && h.sseTracker != nil {
-		h.sseTracker.EnsureWatching(sandboxID)
+		h.sseTracker.EnsureWatching(workspaceID)
 	}
 
 	var bodyBytes []byte
@@ -262,7 +262,7 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 		bodyBytes, err = io.ReadAll(c.Request.Body)
 		c.Request.Body.Close()
 		if err != nil {
-			h.logger.Error("Failed to read request body", err, "sandboxID", sandboxID)
+			h.logger.Error("Failed to read request body", err, "workspaceID", workspaceID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
 		}
@@ -274,17 +274,17 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
 	if proxyErr != nil && isConnectionError(proxyErr) {
-		freshSandbox, getErr := h.k8sClient.LlmsafespaceV1().Sandboxes(h.namespace).Get(sandboxID, metav1.GetOptions{})
+		freshSandbox, getErr := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 		if getErr == nil && freshSandbox.Status.PodIP != "" && freshSandbox.Status.PodIP != podIP && freshSandbox.Status.Phase == phaseRunning {
-			h.logger.Info("Retrying proxy with fresh pod IP", "sandboxID", sandboxID, "oldIP", podIP, "newIP", freshSandbox.Status.PodIP)
+			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshSandbox.Status.PodIP)
 			proxyErr = h.doProxy(c, freshSandbox.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
 		}
 	}
 
 	if proxyErr != nil {
-		h.logger.Error("Proxy request failed", proxyErr, "sandboxID", sandboxID)
+		h.logger.Error("Proxy request failed", proxyErr, "workspaceID", workspaceID)
 		if isWriteOp && sessionID != "" {
-			h.removeActiveSession(sandboxID, sessionID)
+			h.removeActiveSession(workspaceID, sessionID)
 		}
 		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -297,7 +297,7 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	if h.activityTracker != nil && wsCfg.workspaceID != "" {
 		h.activityTracker.Record(wsCfg.workspaceID)
 	} else if h.activityTracker != nil && wsCfg.workspaceID == "" {
-		h.logger.Debug("Skipping activity tracking: sandbox has no workspaceRef", "sandboxID", sandboxID)
+		h.logger.Debug("Skipping activity tracking: sandbox has no workspaceRef", "workspaceID", workspaceID)
 	}
 }
 
@@ -485,15 +485,15 @@ func filterOutPatch(parts []json.RawMessage) []json.RawMessage {
 	return out
 }
 
-func (h *ProxyHandler) getPassword(ctx context.Context, sandboxID string) (string, error) {
+func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (string, error) {
 	h.pwCacheMu.RLock()
-	if pw, ok := h.pwCache[sandboxID]; ok {
+	if pw, ok := h.pwCache[workspaceID]; ok {
 		h.pwCacheMu.RUnlock()
 		return pw, nil
 	}
 	h.pwCacheMu.RUnlock()
 
-	secretName := fmt.Sprintf("sandbox-pw-%s", sandboxID)
+	secretName := fmt.Sprintf("sandbox-pw-%s", workspaceID)
 	secret, err := h.k8sClient.Clientset().CoreV1().Secrets(h.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("reading password secret %s: %w", secretName, err)
@@ -505,15 +505,15 @@ func (h *ProxyHandler) getPassword(ctx context.Context, sandboxID string) (strin
 	}
 
 	h.pwCacheMu.Lock()
-	h.pwCache[sandboxID] = pw
+	h.pwCache[workspaceID] = pw
 	h.pwCacheMu.Unlock()
 
 	return pw, nil
 }
 
-func (h *ProxyHandler) getWorkspaceConfig(ctx context.Context, sandboxID, workspaceRef string) (workspaceConfig, error) {
+func (h *ProxyHandler) getWorkspaceConfig(ctx context.Context, workspaceID, workspaceRef string) (workspaceConfig, error) {
 	h.wsConfigMu.RLock()
-	if cfg, ok := h.wsConfig[sandboxID]; ok {
+	if cfg, ok := h.wsConfig[workspaceID]; ok {
 		h.wsConfigMu.RUnlock()
 		return cfg, nil
 	}
@@ -546,91 +546,91 @@ func (h *ProxyHandler) getWorkspaceConfig(ctx context.Context, sandboxID, worksp
 	}
 
 	h.wsConfigMu.Lock()
-	h.wsConfig[sandboxID] = cfg
+	h.wsConfig[workspaceID] = cfg
 	h.wsConfigMu.Unlock()
 
 	return cfg, nil
 }
 
-func (h *ProxyHandler) checkAndAddActiveSession(sandboxID, sessionID string, maxSessions int) bool {
+func (h *ProxyHandler) checkAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool {
 	h.activeMu.Lock()
 	defer h.activeMu.Unlock()
 
-	if h.activeSess[sandboxID] == nil {
-		h.activeSess[sandboxID] = make(map[string]bool)
+	if h.activeSess[workspaceID] == nil {
+		h.activeSess[workspaceID] = make(map[string]bool)
 	}
 
-	if h.activeSess[sandboxID][sessionID] {
+	if h.activeSess[workspaceID][sessionID] {
 		return true
 	}
 
-	if len(h.activeSess[sandboxID]) >= maxSessions {
+	if len(h.activeSess[workspaceID]) >= maxSessions {
 		return false
 	}
 
-	h.activeSess[sandboxID][sessionID] = true
+	h.activeSess[workspaceID][sessionID] = true
 	return true
 }
 
-func (h *ProxyHandler) removeActiveSession(sandboxID, sessionID string) {
+func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
 	h.activeMu.Lock()
 	defer h.activeMu.Unlock()
-	if sessions, ok := h.activeSess[sandboxID]; ok {
+	if sessions, ok := h.activeSess[workspaceID]; ok {
 		delete(sessions, sessionID)
 		if len(sessions) == 0 {
-			delete(h.activeSess, sandboxID)
+			delete(h.activeSess, workspaceID)
 		}
 	}
 }
 
-func (h *ProxyHandler) activeSessionCount(sandboxID string) int {
+func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
 	h.activeMu.Lock()
 	defer h.activeMu.Unlock()
-	return len(h.activeSess[sandboxID])
+	return len(h.activeSess[workspaceID])
 }
 
-func (h *ProxyHandler) acquireConnection(sandboxID string) bool {
+func (h *ProxyHandler) acquireConnection(workspaceID string) bool {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
-	if h.connCount[sandboxID] >= maxConnectionsPerSandbox {
+	if h.connCount[workspaceID] >= maxConnectionsPerSandbox {
 		return false
 	}
-	h.connCount[sandboxID]++
+	h.connCount[workspaceID]++
 	return true
 }
 
-func (h *ProxyHandler) releaseConnection(sandboxID string) {
+func (h *ProxyHandler) releaseConnection(workspaceID string) {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
-	if h.connCount[sandboxID] > 0 {
-		h.connCount[sandboxID]--
+	if h.connCount[workspaceID] > 0 {
+		h.connCount[workspaceID]--
 	}
-	if h.connCount[sandboxID] == 0 {
-		delete(h.connCount, sandboxID)
+	if h.connCount[workspaceID] == 0 {
+		delete(h.connCount, workspaceID)
 	}
 }
 
-func (h *ProxyHandler) connectionCount(sandboxID string) int {
+func (h *ProxyHandler) connectionCount(workspaceID string) int {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
-	return h.connCount[sandboxID]
+	return h.connCount[workspaceID]
 }
 
-func (h *ProxyHandler) invalidateCaches(sandboxID string) {
+func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 	h.pwCacheMu.Lock()
-	delete(h.pwCache, sandboxID)
+	delete(h.pwCache, workspaceID)
 	h.pwCacheMu.Unlock()
 
 	h.wsConfigMu.Lock()
-	delete(h.wsConfig, sandboxID)
+	delete(h.wsConfig, workspaceID)
 	h.wsConfigMu.Unlock()
 
 	h.activeMu.Lock()
-	delete(h.activeSess, sandboxID)
+	delete(h.activeSess, workspaceID)
 	h.activeMu.Unlock()
 }
 
-func (h *ProxyHandler) onPhaseChange(sandbox *v1.Sandbox) {
+func (h *ProxyHandler) onPhaseChange(sandbox *v1.Workspace) {
 	phase := sandbox.Status.Phase
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
 		h.invalidateCaches(sandbox.Name)
@@ -646,11 +646,11 @@ func (h *ProxyHandler) onPhaseChange(sandbox *v1.Sandbox) {
 	}
 }
 
-func (h *ProxyHandler) onSessionIdle(sandboxID, sessionID string) {
-	h.removeActiveSession(sandboxID, sessionID)
+func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
+	h.removeActiveSession(workspaceID, sessionID)
 	if h.activityTracker != nil {
 		h.wsConfigMu.RLock()
-		cfg, ok := h.wsConfig[sandboxID]
+		cfg, ok := h.wsConfig[workspaceID]
 		h.wsConfigMu.RUnlock()
 		if ok && cfg.workspaceID != "" {
 			h.activityTracker.Record(cfg.workspaceID)
@@ -669,10 +669,10 @@ func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
 
 // GetActiveSessions returns the active session IDs for a sandbox.
 // This is a per-replica view (not globally consistent across API replicas).
-func (h *ProxyHandler) GetActiveSessions(sandboxID string) []string {
+func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
 	h.activeMu.Lock()
 	defer h.activeMu.Unlock()
-	sessions := h.activeSess[sandboxID]
+	sessions := h.activeSess[workspaceID]
 	if sessions == nil {
 		return nil
 	}
@@ -683,19 +683,19 @@ func (h *ProxyHandler) GetActiveSessions(sandboxID string) []string {
 	return result
 }
 
-func (h *ProxyHandler) onSessionActive(sandboxID, sessionID string) {
+func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.wsConfigMu.RLock()
-	cfg, ok := h.wsConfig[sandboxID]
+	cfg, ok := h.wsConfig[workspaceID]
 	h.wsConfigMu.RUnlock()
 	maxSessions := defaultMaxActiveSessions
 	if ok {
 		maxSessions = cfg.maxActiveSessions
 	}
-	h.checkAndAddActiveSession(sandboxID, sessionID, maxSessions)
+	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 }
 
-func (h *ProxyHandler) getPodIPForSSE(sandboxID string) string {
-	sandbox, err := h.k8sClient.LlmsafespaceV1().Sandboxes(h.namespace).Get(sandboxID, metav1.GetOptions{})
+func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
+	sandbox, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return ""
 	}
@@ -707,8 +707,8 @@ func (h *ProxyHandler) getPodIPForSSE(sandboxID string) string {
 
 // GetSandboxCRD retrieves a Sandbox CRD by name. Used by the ownership
 // middleware in the router to verify sandbox ownership before proxying.
-func (h *ProxyHandler) GetSandboxCRD(sandboxID string) (*v1.Sandbox, error) {
-	return h.k8sClient.LlmsafespaceV1().Sandboxes(h.namespace).Get(sandboxID, metav1.GetOptions{})
+func (h *ProxyHandler) GetSandboxCRD(workspaceID string) (*v1.Workspace, error) {
+	return h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 }
 
 func isConnectionError(err error) bool {

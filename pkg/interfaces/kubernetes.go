@@ -22,20 +22,8 @@ type KubernetesClient interface {
 }
 
 type LLMSafespaceV1Interface interface {
-	Sandboxes(namespace string) SandboxInterface
 	RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface
-	SandboxProfiles(namespace string) SandboxProfileInterface
 	Workspaces(namespace string) WorkspaceInterface
-}
-
-type SandboxInterface interface {
-	Create(*v1.Sandbox) (*v1.Sandbox, error)
-	Update(*v1.Sandbox) (*v1.Sandbox, error)
-	UpdateStatus(*v1.Sandbox) (*v1.Sandbox, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*v1.Sandbox, error)
-	List(opts metav1.ListOptions) (*v1.SandboxList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 
 type RuntimeEnvironmentInterface interface {
@@ -45,15 +33,6 @@ type RuntimeEnvironmentInterface interface {
 	Delete(name string, options metav1.DeleteOptions) error
 	Get(name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error)
 	List(opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
-}
-
-type SandboxProfileInterface interface {
-	Create(*v1.SandboxProfile) (*v1.SandboxProfile, error)
-	Update(*v1.SandboxProfile) (*v1.SandboxProfile, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*v1.SandboxProfile, error)
-	List(opts metav1.ListOptions) (*v1.SandboxProfileList, error)
 	Watch(opts metav1.ListOptions) (watch.Interface, error)
 }
 

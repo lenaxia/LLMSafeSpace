@@ -54,71 +54,13 @@ func NewMockLLMSafespaceV1Interface() *MockLLMSafespaceV1Interface {
 	return &MockLLMSafespaceV1Interface{}
 }
 
-func (m *MockLLMSafespaceV1Interface) Sandboxes(ns string) interfaces.SandboxInterface {
-	return m.Called(ns).Get(0).(interfaces.SandboxInterface)
-}
 func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments(ns string) interfaces.RuntimeEnvironmentInterface {
 	return m.Called(ns).Get(0).(interfaces.RuntimeEnvironmentInterface)
-}
-func (m *MockLLMSafespaceV1Interface) SandboxProfiles(ns string) interfaces.SandboxProfileInterface {
-	return m.Called(ns).Get(0).(interfaces.SandboxProfileInterface)
 }
 func (m *MockLLMSafespaceV1Interface) Workspaces(ns string) interfaces.WorkspaceInterface {
 	return m.Called(ns).Get(0).(interfaces.WorkspaceInterface)
 }
 
-// MockSandboxInterface mocks interfaces.SandboxInterface.
-type MockSandboxInterface struct{ mock.Mock }
-
-var _ interfaces.SandboxInterface = (*MockSandboxInterface)(nil)
-
-func NewMockSandboxInterface() *MockSandboxInterface { return &MockSandboxInterface{} }
-
-func (m *MockSandboxInterface) Create(s *v1.Sandbox) (*v1.Sandbox, error) {
-	args := m.Called(s)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.Sandbox), args.Error(1)
-}
-func (m *MockSandboxInterface) Update(s *v1.Sandbox) (*v1.Sandbox, error) {
-	args := m.Called(s)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.Sandbox), args.Error(1)
-}
-func (m *MockSandboxInterface) UpdateStatus(s *v1.Sandbox) (*v1.Sandbox, error) {
-	args := m.Called(s)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.Sandbox), args.Error(1)
-}
-func (m *MockSandboxInterface) Delete(name string, opts metav1.DeleteOptions) error {
-	return m.Called(name, opts).Error(0)
-}
-func (m *MockSandboxInterface) Get(name string, opts metav1.GetOptions) (*v1.Sandbox, error) {
-	args := m.Called(name, opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.Sandbox), args.Error(1)
-}
-func (m *MockSandboxInterface) List(opts metav1.ListOptions) (*v1.SandboxList, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.SandboxList), args.Error(1)
-}
-func (m *MockSandboxInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(watch.Interface), args.Error(1)
-}
 
 // MockRuntimeEnvironmentInterface mocks interfaces.RuntimeEnvironmentInterface.
 type MockRuntimeEnvironmentInterface struct{ mock.Mock }
@@ -175,53 +117,6 @@ func (m *MockRuntimeEnvironmentInterface) Watch(opts metav1.ListOptions) (watch.
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
 
-// MockSandboxProfileInterface mocks interfaces.SandboxProfileInterface.
-type MockSandboxProfileInterface struct{ mock.Mock }
-
-var _ interfaces.SandboxProfileInterface = (*MockSandboxProfileInterface)(nil)
-
-func NewMockSandboxProfileInterface() *MockSandboxProfileInterface {
-	return &MockSandboxProfileInterface{}
-}
-
-func (m *MockSandboxProfileInterface) Create(p *v1.SandboxProfile) (*v1.SandboxProfile, error) {
-	args := m.Called(p)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.SandboxProfile), args.Error(1)
-}
-func (m *MockSandboxProfileInterface) Update(p *v1.SandboxProfile) (*v1.SandboxProfile, error) {
-	args := m.Called(p)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.SandboxProfile), args.Error(1)
-}
-func (m *MockSandboxProfileInterface) Delete(name string, opts metav1.DeleteOptions) error {
-	return m.Called(name, opts).Error(0)
-}
-func (m *MockSandboxProfileInterface) Get(name string, opts metav1.GetOptions) (*v1.SandboxProfile, error) {
-	args := m.Called(name, opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.SandboxProfile), args.Error(1)
-}
-func (m *MockSandboxProfileInterface) List(opts metav1.ListOptions) (*v1.SandboxProfileList, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*v1.SandboxProfileList), args.Error(1)
-}
-func (m *MockSandboxProfileInterface) Watch(opts metav1.ListOptions) (watch.Interface, error) {
-	args := m.Called(opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(watch.Interface), args.Error(1)
-}
 
 // MockWorkspaceInterface mocks interfaces.WorkspaceInterface.
 type MockWorkspaceInterface struct{ mock.Mock }
