@@ -18,28 +18,39 @@ The real need is:
 
 ## Architecture
 
-### Core Concept: Single Container, Multi-Process (Supervisor Pattern)
+### Core Concept: Sentinel-Driven Dual Mode
 
-The container starts as root. A daemon (PID 1) handles privileged operations and forks the agent process as UID 1000. This is the same pattern as nginx, postgres, and sshd.
+One image. Two behaviors based on a sentinel file (`/etc/llmsafespace/mode`):
+
+**Docker (no sentinel):** Container runs as root. No daemon. No wrappers. No policy. Agent has full access. Just opencode.
+
+**Kubernetes (sentinel present):** Main container runs as UID 1000 with wrappers active. A sidecar container runs the daemon as root with minimal capabilities. They share a volume for the Unix socket. Wrappers in the main container talk to the sidecar for apt installs.
 
 ```
+Docker/Homelab (no sentinel):
+┌─────────────────────────────────────────┐
+│  Container (root, full access)           │
+│  entrypoint-opencode.sh → opencode serve │
+│  apt/pip/npm/python → real binaries      │
+└─────────────────────────────────────────┘
+
+Kubernetes (sentinel present):
 ┌─────────────────────────────────────────────────────────────┐
-│  Container                                                   │
+│  Pod                                                         │
 │                                                              │
-│  PID 1: system-daemon (root)                                 │
-│    ├── /run/llmsafespace/system.sock (0660 root:sandbox)     │
-│    ├── handles apt/apk install requests                      │
-│    ├── validates against policy (allowlist, rate limit)       │
-│    ├── logs all operations to /var/log/llmsafespace/audit.jsonl│
-│    └── forks:                                                │
-│         └── gosu sandbox entrypoint-opencode.sh (UID 1000)   │
-│              └── opencode serve                              │
-│                   └── agent shell (UID 1000)                 │
-│                        ├── pip install requests  (direct, no root needed)
-│                        ├── npm install express   (direct, no root needed)
-│                        ├── apt install python3   (→ wrapper → socket → daemon)
-│                        └── python3 script.py     (→ wrapper → policy → exec)
+│  ┌─────────────────────────────────┐  ┌──────────────────┐  │
+│  │  Main: workspace (UID 1000)     │  │  Sidecar: daemon  │  │
+│  │  opencode serve                 │  │  (root, minimal   │  │
+│  │  wrappers → policy enforcement  │  │   caps)           │  │
+│  │  apt wrapper → socket ──────────┼──┼→ system.sock      │  │
+│  │  pip/npm → policy → direct exec │  │  handles apt      │  │
+│  │  python/node → policy → exec    │  │  audit log        │  │
+│  └─────────────────────────────────┘  └──────────────────┘  │
 │                                                              │
+│  Shared volumes:                                             │
+│    - /run/llmsafespace/ (emptyDir) — socket                  │
+│    - /workspace (PVC) — persistent data                      │
+│    - /etc/llmsafespace/ (ConfigMap) — sentinel + policies    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -88,16 +99,42 @@ Two interception modes:
 
 ### Container Security Context (Kubernetes)
 
+Main container (workspace):
 ```yaml
 securityContext:
-  # NOT readOnlyRootFilesystem — agent needs writable fs for installs
-  # NOT runAsNonRoot — daemon is root (PID 1)
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
   allowPrivilegeEscalation: false
   capabilities:
     drop: [ALL]
-    add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]  # minimum for apt + gosu
   seccompProfile:
     type: RuntimeDefault
+```
+
+Sidecar container (system-daemon):
+```yaml
+securityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+    add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+Shared volumes:
+```yaml
+volumes:
+  - name: daemon-socket
+    emptyDir: {}
+  - name: policies
+    configMap:
+      name: {workspace}-policies  # includes sentinel + language policies
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: {workspace}-pvc
 ```
 
 For multi-tenant deployments, add:
@@ -112,9 +149,11 @@ runtimeClassName: gvisor  # or kata, firecracker
 docker run -v workspace:/workspace ghcr.io/lenaxia/llmsafespace/base
 
 # Homelab with security opt-in (empty sentinel = defaults)
-docker run -v workspace:/workspace -v ./mode:/etc/llmsafespace/mode ghcr.io/lenaxia/llmsafespace/base
+docker run -v workspace:/workspace \
+  -v ./mode:/etc/llmsafespace/mode \
+  ghcr.io/lenaxia/llmsafespace/base
 
-# docker-compose
+# docker-compose (no sidecar needed — security layer is off)
 services:
   workspace:
     image: ghcr.io/lenaxia/llmsafespace/base
@@ -122,7 +161,7 @@ services:
       - workspace:/workspace
 ```
 
-No sidecars, no special runtime flags, no multi-container orchestration. Single image, single container.
+No sidecars in Docker. The sidecar only exists in Kubernetes where the controller builds the pod spec. Docker users get a single container with full root access — the simplest possible experience.
 
 ### Sentinel File: `/etc/llmsafespace/mode`
 
@@ -138,10 +177,12 @@ Sentinel JSON (all fields optional, shown with defaults):
 ```json
 {
   "enforcement": "full",
-  "daemon": true,
-  "dropToUser": 1000
+  "daemon": "/run/llmsafespace/system.sock"
 }
 ```
+
+- `enforcement`: `"full"` (all wrappers enforce policy) or `"audit"` (log only, don't block)
+- `daemon`: socket path for apt wrapper to connect to. If empty/absent, apt wrapper returns an error instead of passthrough (prevents accidental unprotected installs in K8s).
 
 **Kubernetes**: Controller mounts sentinel as a ConfigMap key at `/etc/llmsafespace/mode`.
 **Docker (opt-in)**: User bind-mounts a file (even an empty one) to activate.
@@ -205,7 +246,7 @@ All security/policy fields move to `RuntimePolicy` CRD.
 
 | Story | Title | Scope |
 |-------|-------|-------|
-| US-7.1 | System Daemon | PID 1 root process; Unix socket; policy engine; gosu fork of opencode; audit log |
+| US-7.1 | System Daemon | Sidecar container (K8s only); root; Unix socket; policy engine; audit log |
 | US-7.2 | Package Manager Wrappers | apt wrapper → daemon (privilege); pip/npm/cargo wrappers → policy only (no root) |
 | US-7.3 | Language Runtime Wrappers | python/node/go wrappers with policy enforcement; config-driven |
 | US-7.4 | RuntimePolicy CRD | New CRD type for per-language security config |
@@ -233,21 +274,21 @@ US-7.8 (delete legacy) ── independent
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | Single container, daemon as PID 1 | Docker-compatible. No sidecars. Works everywhere. Same pattern as nginx/postgres. |
-| D2 | Drop ReadOnlyRootFilesystem | Agent must install packages at runtime. Security comes from UID separation + file ownership, not filesystem flags. |
-| D3 | UID separation as security boundary | UID 1000 cannot write to root-owned paths. No SUID, no sudo, no caps on agent process. |
-| D4 | Wrappers are compiled Go binaries | <1ms overhead. Static. No dependency on wrapped language. Cannot be modified by UID 1000. |
+| D1 | Sidecar for daemon in K8s, no daemon in Docker | K8s gets proper container isolation between root daemon and UID 1000 agent. Docker skips the security layer entirely (homelab, trusted). |
+| D2 | Sentinel file controls mode | One image, two behaviors. No build-time branching. Kubernetes mounts it via ConfigMap; Docker users ignore it or opt in. |
+| D3 | Drop ReadOnlyRootFilesystem on main container | Agent must install packages (pip/npm to user paths). Security comes from UID 1000 + file ownership, not filesystem flags. |
+| D4 | Wrappers are compiled Go binaries | <1ms overhead. Static. No dependency on wrapped language. Cannot be modified by UID 1000 (root-owned). |
 | D5 | Binary relocation at build time | Real binaries at /opt/llmsafespace/.bin/ (root:root 750). Not in PATH. Not accessible to UID 1000. |
-| D6 | Daemon only handles apt/apk | pip/npm/cargo/go work as UID 1000 directly. Only system package managers need root. Minimizes daemon scope. |
-| D7 | Policy is optional | No policy = passthrough. Supported runtimes get hardening. Unsupported runtimes just work. |
+| D6 | Daemon only handles apt/apk | pip/npm/cargo/go work as UID 1000 directly. Only system package managers need root. Minimizes daemon scope and attack surface. |
+| D7 | Policy is optional | No sentinel or no policy = passthrough. Supported runtimes get hardening. Unsupported runtimes just work. |
 | D8 | RuntimeClass for multi-tenant isolation | Same image, swap runtime (gVisor/Kata/Firecracker). No code changes needed. |
-| D9 | Minimal capabilities on container | Only CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID. Not SYS_ADMIN. Not NET_ADMIN. |
+| D9 | Main container keeps RunAsNonRoot in K8s | Agent never has root. Only the sidecar has root with minimal caps. Clean separation. |
 
 ## Security Comparison
 
 | Property | Before (V1/current) | After — Docker (no sentinel) | After — K8s (sentinel present) |
 |----------|---------------------|------------------------------|-------------------------------|
-| Root in container | No | Yes (everything) | Yes (daemon only, PID 1) |
+| Root in container | No | Yes (everything) | Yes (daemon sidecar only) |
 | Agent runs as | UID 1000 | root | UID 1000 |
 | Agent can write /usr/bin | No (read-only rootfs) | Yes (root) | No (root-owned, UID 1000 can't write) |
 | Agent can apt install | No | Yes (direct) | Via daemon only (policy-gated) |

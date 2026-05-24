@@ -56,7 +56,7 @@ func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -96,10 +96,10 @@ func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.
 	return router, sbMock, fakeClientset
 }
 
-func makeSandboxForProxy(sandboxID, userID, podIP, phase string) *v1.Workspace {
+func makeWorkspaceForProxy(workspaceID, userID, podIP, phase string) *v1.Workspace {
 	return &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      sandboxID,
+			Name:      workspaceID,
 			Namespace: "default",
 			Labels:    map[string]string{"user-id": userID},
 		},
@@ -107,11 +107,11 @@ func makeSandboxForProxy(sandboxID, userID, podIP, phase string) *v1.Workspace {
 	}
 }
 
-func addProxyPasswordSecret(t *testing.T, clientset *k8sfake.Clientset, sandboxID, password string) {
+func addProxyPasswordSecret(t *testing.T, clientset *k8sfake.Clientset, workspaceID, password string) {
 	t.Helper()
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("sandbox-pw-%s", sandboxID),
+			Name:      fmt.Sprintf("workspace-pw-%s", workspaceID),
 			Namespace: "default",
 		},
 		Data: map[string][]byte{"password": []byte(password)},
@@ -143,7 +143,7 @@ func TestProxyRoutes_Exist(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 			})
 
-			sb := makeSandboxForProxy("sb-1", "test-user", "10.0.0.1", "Running")
+			sb := makeWorkspaceForProxy("sb-1", "test-user", "10.0.0.1", "Running")
 			sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 			addProxyPasswordSecret(t, fakeClientset, "sb-1", "pw")
 
@@ -184,7 +184,7 @@ func TestProxyRoutes_OwnershipCheck_WrongUser_Returns403(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	sb := makeSandboxForProxy("sb-1", "other-user", "10.0.0.1", "Running")
+	sb := makeWorkspaceForProxy("sb-1", "other-user", "10.0.0.1", "Running")
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 
 	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
@@ -195,7 +195,7 @@ func TestProxyRoutes_OwnershipCheck_WrongUser_Returns403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code, "wrong owner should receive 403")
 }
 
-func TestProxyRoutes_OwnershipCheck_SandboxNotFound_Returns404(t *testing.T) {
+func TestProxyRoutes_OwnershipCheck_WorkspaceNotFound_Returns404(t *testing.T) {
 	router, sbMock, _ := newProxyRouterFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -207,7 +207,7 @@ func TestProxyRoutes_OwnershipCheck_SandboxNotFound_Returns404(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusNotFound, w.Code, "missing sandbox should return 404")
+	assert.Equal(t, http.StatusNotFound, w.Code, "missing workspace should return 404")
 }
 
 func TestProxyRoutes_NoProxyHandler_RoutesNotRegistered(t *testing.T) {
@@ -229,7 +229,7 @@ func TestProxyRoutes_E2E_ProxiesRequest(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	sb := makeSandboxForProxy("sb-1", "test-user", "10.0.0.1", "Running")
+	sb := makeWorkspaceForProxy("sb-1", "test-user", "10.0.0.1", "Running")
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 	addProxyPasswordSecret(t, fakeClientset, "sb-1", "test-pw")
 
@@ -266,7 +266,7 @@ func TestProxyRoutes_E2E_EndpointMapping(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 			})
 
-			sb := makeSandboxForProxy("sb-1", "test-user", "10.0.0.1", "Running")
+			sb := makeWorkspaceForProxy("sb-1", "test-user", "10.0.0.1", "Running")
 			sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 			addProxyPasswordSecret(t, fakeClientset, "sb-1", "test-pw")
 
@@ -316,7 +316,7 @@ func TestProxyRoutes_OwnershipCheck_MissingUserIDLabel_Returns403(t *testing.T) 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code, "sandbox with no user-id label should return 403")
+	assert.Equal(t, http.StatusForbidden, w.Code, "workspace with no user-id label should return 403")
 }
 
 func TestProxyRoutes_OwnershipCheck_NilLabels_Returns403(t *testing.T) {
@@ -339,5 +339,5 @@ func TestProxyRoutes_OwnershipCheck_NilLabels_Returns403(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code, "sandbox with nil labels should return 403")
+	assert.Equal(t, http.StatusForbidden, w.Code, "workspace with nil labels should return 403")
 }

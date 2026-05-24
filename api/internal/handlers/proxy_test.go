@@ -114,7 +114,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -149,19 +149,15 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	}
 }
 
-func (e *testEnv) setupSandboxMulti(sandboxID string, crds ...*v1.Workspace) {
+func (e *testEnv) setupWorkspaceMulti(workspaceID string, crds ...*v1.Workspace) {
 	for _, crd := range crds {
-		e.sbMock.On("Get", sandboxID, metav1.GetOptions{}).Return(crd, nil).Once()
+		e.sbMock.On("Get", workspaceID, metav1.GetOptions{}).Return(crd, nil).Once()
 	}
 }
 
-func (e *testEnv) setupSandboxWithT(t *testing.T, sandboxID, podIP, phase, workspaceRef string) {
-	sb := makeSandboxCRD(sandboxID, podIP, phase, workspaceRef)
-	e.sbMock.On("Get", sandboxID, metav1.GetOptions{}).Return(sb, nil).Once()
-}
 
-func (e *testEnv) setupPasswordWithT(t *testing.T, sandboxID, password string) {
-	secret := makePasswordSecret(sandboxID, password)
+func (e *testEnv) setupPasswordWithT(t *testing.T, workspaceID, password string) {
+	secret := makePasswordSecret(workspaceID, password)
 	_, err := e.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 }
@@ -169,6 +165,11 @@ func (e *testEnv) setupPasswordWithT(t *testing.T, sandboxID, password string) {
 func (e *testEnv) setupWorkspaceWithT(t *testing.T, name string, maxSessions int) {
 	ws := makeWorkspaceCRD(name, maxSessions)
 	e.wsMock.On("Get", name, metav1.GetOptions{}).Return(ws, nil).Once()
+}
+
+func (e *testEnv) setupWorkspacePodWithT(t *testing.T, workspaceID, podIP, phase, _ string) {
+	ws := makeWorkspaceCRDWithStatus(workspaceID, podIP, phase, "")
+	e.wsMock.On("Get", workspaceID, metav1.GetOptions{}).Return(ws, nil).Maybe()
 }
 
 func (e *testEnv) doRequestWithT(t *testing.T, method, path string, body io.Reader) *httptest.ResponseRecorder {
@@ -183,7 +184,7 @@ func (e *testEnv) doRequestWithT(t *testing.T, method, path string, body io.Read
 
 func TestProxy_ProxiesGETRequest(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -198,7 +199,7 @@ func TestProxy_ProxiesGETRequest(t *testing.T) {
 
 func TestProxy_ProxiesPOSTRequest(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -218,7 +219,7 @@ func TestProxy_SendsBasicAuth(t *testing.T) {
 		capturedUser, capturedPass, _ = r.BasicAuth()
 		w.WriteHeader(http.StatusOK)
 	})
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "my-secret-pw")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -230,7 +231,7 @@ func TestProxy_SendsBasicAuth(t *testing.T) {
 
 func TestProxy_ForwardsQueryParameters(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -253,7 +254,7 @@ func TestProxy_StreamingResponse(t *testing.T) {
 			flusher.Flush()
 		}
 	})
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -275,7 +276,7 @@ func TestProxy_SSEStreamPassthrough(t *testing.T) {
 		fmt.Fprintf(w, "event: session.status\ndata: {\"type\":\"session.status\",\"session_id\":\"s1\",\"status\":\"idle\"}\n\n")
 		flusher.Flush()
 	})
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -304,14 +305,14 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	oldCRD := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
-	newCRD := makeSandboxCRD("ws-1", "10.0.0.2", "Running", "ws-1")
+	oldCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	newCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.2", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
 
@@ -344,13 +345,13 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
@@ -377,10 +378,10 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Equal(t, "10", w.Header().Get("Retry-After"))
-	assert.Contains(t, w.Body.String(), "sandbox connection failed")
+	assert.Contains(t, w.Body.String(), "workspace connection failed")
 }
 
-func TestProxy_SandboxNotRunning(t *testing.T) {
+func TestProxy_WorkspaceNotRunning(t *testing.T) {
 	tests := []struct {
 		name  string
 		phase string
@@ -389,14 +390,14 @@ func TestProxy_SandboxNotRunning(t *testing.T) {
 		{"Pending phase", "Pending", ""},
 		{"Creating phase", "Creating", ""},
 		{"Suspended phase", "Suspended", ""},
-		{"Running but no PodIP", "Running", ""},
+		{"Running but no PodIP", string(v1.WorkspacePhaseActive), ""},
 		{"Suspending phase", "Suspending", "10.0.0.1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newTestEnv(t)
-			sb := makeSandboxCRD("ws-1", tt.podIP, tt.phase, "ws-1")
+			sb := makeWorkspaceCRDWithStatus("ws-1", tt.podIP, tt.phase, "ws-1")
 			env.sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(sb, nil).Once()
 
 			w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
@@ -406,7 +407,7 @@ func TestProxy_SandboxNotRunning(t *testing.T) {
 	}
 }
 
-func TestProxy_SandboxNotFound(t *testing.T) {
+func TestProxy_WorkspaceNotFound(t *testing.T) {
 	env := newTestEnv(t)
 	env.sbMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
@@ -416,36 +417,36 @@ func TestProxy_SandboxNotFound(t *testing.T) {
 
 func TestProxy_PasswordCachedAfterFirstRead(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
 	w1 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w2 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w2.Code)
 
-	_, err := env.clientset.CoreV1().Secrets("default").Get(context.Background(), "sandbox-pw-ws-1", metav1.GetOptions{})
+	_, err := env.clientset.CoreV1().Secrets("default").Get(context.Background(), "workspace-pw-ws-1", metav1.GetOptions{})
 	assert.NoError(t, err, "password should be read from cache on second request")
 }
 
 func TestProxy_SecretNotFound(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "failed to retrieve sandbox credentials")
+	assert.Contains(t, w.Body.String(), "failed to retrieve workspace credentials")
 }
 
 func TestProxy_EmptyPasswordKey(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "sandbox-pw-ws-1", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-pw-ws-1", Namespace: "default"},
 		Data:       map[string][]byte{"password": {}},
 	}
 	_, err := env.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
@@ -461,13 +462,13 @@ func TestProxy_ActiveSessionLimit(t *testing.T) {
 	env.setupWorkspaceWithT(t, "ws-1", 2)
 
 	for i := 0; i < 2; i++ {
-		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+		env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 		sid := fmt.Sprintf("session-%d", i)
 		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{"msg":"hi"}`))
 		assert.Equal(t, http.StatusOK, w.Code, "session %s should succeed", sid)
 	}
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/session-2/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, "10", w.Header().Get("Retry-After"))
@@ -484,11 +485,11 @@ func TestProxy_AlreadyActiveSessionSucceeds(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w2 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi2"}`))
 	assert.Equal(t, http.StatusOK, w2.Code, "same session should not be double-counted")
 }
@@ -498,11 +499,11 @@ func TestProxy_ReadOnlyBypassesSessionLimit(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w2 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", nil)
 	assert.Equal(t, http.StatusOK, w2.Code, "read-only GET history should bypass limit")
 }
@@ -512,7 +513,7 @@ func TestProxy_CreateSessionBypassesLimit(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 0)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code, "create session should bypass limit")
 }
@@ -522,7 +523,7 @@ func TestProxy_AbortBypassesLimit(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 0)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", nil)
 	assert.Equal(t, http.StatusOK, w.Code, "abort should bypass limit")
 }
@@ -532,11 +533,11 @@ func TestProxy_PromptAsyncEnforcesLimit(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", strings.NewReader(`{"prompt":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w2 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s2/prompt", strings.NewReader(`{"prompt":"hi"}`))
 	assert.Equal(t, http.StatusTooManyRequests, w2.Code, "prompt_async should enforce session limit")
 }
@@ -551,7 +552,7 @@ func TestProxy_ConnectionCeiling(t *testing.T) {
 	env.setupWorkspaceWithT(t, "ws-1", 100)
 
 	for i := 0; i < 10; i++ {
-		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+		env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	}
 	require.True(t, env.handler.acquireConnection("ws-1"))
 
@@ -570,7 +571,7 @@ func TestProxy_ConnectionCeiling_Returns429(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 100)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	env.handler.connMu.Lock()
 	env.handler.connCount["ws-1"] = 10
@@ -605,7 +606,7 @@ func TestProxy_EndpointMapping(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path})
 			})
-			env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+			env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 			env.setupPasswordWithT(t, "ws-1", "test-password")
 			env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -653,31 +654,31 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions", strings.NewReader(`{"runtime":"python"}`))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/message", strings.NewReader(`{"content":"hello"}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/prompt", strings.NewReader(`{"prompt":"do something"}`))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/sess-1/message", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/abort", nil)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -693,7 +694,7 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	assert.Equal(t, expected, requests)
 }
 
-func TestProxy_E2E_MultipleSandboxIsolation(t *testing.T) {
+func TestProxy_E2E_MultipleWorkspaceIsolation(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -703,35 +704,35 @@ func TestProxy_E2E_MultipleSandboxIsolation(t *testing.T) {
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "sb-2", "10.0.0.2", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-2", "10.0.0.2", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/sb-2/sessions/s2/message", strings.NewReader(`{}`))
-	assert.Equal(t, http.StatusOK, w.Code, "different sandbox should have independent session tracking")
+	assert.Equal(t, http.StatusOK, w.Code, "different workspace should have independent session tracking")
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s3/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code, "ws-1 should be at limit")
 }
 
 func TestProxy_WorkspaceNotFound_UsesDefaults(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-missing")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	for i := 0; i < 6; i++ {
 		env.wsMock.On("Get", "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 	}
 
 	for i := 0; i < 5; i++ {
-		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
+		env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-missing")
 		sid := fmt.Sprintf("s%d", i)
 		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{}`))
 		assert.Equal(t, http.StatusOK, w.Code, "session %s with default limit 5 should succeed", sid)
 	}
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-missing")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s6/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code, "6th session with default limit 5 should be rejected")
 }
@@ -741,7 +742,7 @@ func TestProxy_BackendErrorPassthrough(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal opencode error"})
 	})
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -755,7 +756,7 @@ func TestProxy_Backend404Passthrough(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "session not found"})
 	})
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -809,7 +810,7 @@ func TestProxy_PhaseChangeCallback(t *testing.T) {
 
 	phases := []string{phaseSuspending, phaseSuspended, phaseTerminating, phaseTerminated}
 	for _, phase := range phases {
-		sb := makeSandboxCRD("ws-1", "10.0.0.1", phase, "ws-1")
+		sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", phase, "ws-1")
 		handler.onPhaseChange(sb)
 	}
 
@@ -826,7 +827,7 @@ func TestProxy_PhaseChange_RunningNoInvalidation(t *testing.T) {
 	handler.pwCache["ws-1"] = "password"
 	handler.pwCacheMu.Unlock()
 
-	sb := makeSandboxCRD("ws-1", "10.0.0.1", phaseRunning, "ws-1")
+	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
 
 	handler.pwCacheMu.RLock()
@@ -844,7 +845,7 @@ func TestProxy_ConcurrentRequests(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	for i := 0; i < 5; i++ {
 		env.setupWorkspaceWithT(t, "ws-1", 100)
-		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+		env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	}
 
 	results := make(chan int, 5)
@@ -871,13 +872,13 @@ func TestProxy_E2E_MaxActiveSessionsCustom(t *testing.T) {
 	env.setupWorkspaceWithT(t, "ws-1", 3)
 
 	for i := 0; i < 3; i++ {
-		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+		env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 		sid := fmt.Sprintf("s%d", i)
 		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{}`))
 		assert.Equal(t, http.StatusOK, w.Code)
 	}
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s3/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }
@@ -1014,7 +1015,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1031,7 +1032,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
+		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
 	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
@@ -1045,7 +1046,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	proxy.POST("/sessions/:sessionId/message", handler.SendMessage)
 
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
+		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
 	w := httptest.NewRecorder()
@@ -1055,7 +1056,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "session s1 should be active")
 
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
+		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
 	w2 := httptest.NewRecorder()
@@ -1070,7 +1071,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	}, 3*time.Second, 50*time.Millisecond, "SSE idle event should clear session s1")
 
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
+		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
 	handler.sseTracker.StopWatching("ws-1")
@@ -1104,7 +1105,7 @@ func TestProxy_SessionLeak_NotOnConnectionCeilingReject(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	env.handler.connMu.Lock()
 	env.handler.connCount["ws-1"] = 10
@@ -1124,7 +1125,7 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1137,7 +1138,7 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
@@ -1165,9 +1166,9 @@ func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 
-	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
@@ -1183,9 +1184,9 @@ func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 
-	crd := makeSandboxCRD("ws-1", "", "Suspended", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "", "Suspended", "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
@@ -1201,7 +1202,7 @@ func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 
 	sbMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
@@ -1218,12 +1219,12 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 	handler.sseTracker = NewSSETracker(
 		&http.Client{},
 		&testLogger{},
-		func(sandboxID, sessionID string) {},
+		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
+	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
 		return "pw", nil
 	})
-	handler.sseTracker.SetPodIPResolver(func(sandboxID string) string { return "10.0.0.1" })
+	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	handler.sseTracker.EnsureWatching("ws-1")
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount())
@@ -1231,7 +1232,7 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 	phases := []string{phaseSuspending, phaseSuspended, phaseTerminating, phaseTerminated}
 	for _, phase := range phases {
 		handler.sseTracker.EnsureWatching("ws-1")
-		sb := makeSandboxCRD("ws-1", "10.0.0.1", phase, "ws-1")
+		sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", phase, "ws-1")
 		handler.onPhaseChange(sb)
 		assert.Equal(t, 0, handler.sseTracker.SubscriptionCount(),
 			"SSE subscription should be stopped on phase %s", phase)
@@ -1244,17 +1245,17 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 	handler.sseTracker = NewSSETracker(
 		&http.Client{},
 		&testLogger{},
-		func(sandboxID, sessionID string) {},
+		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
+	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
 		return "pw", nil
 	})
-	handler.sseTracker.SetPodIPResolver(func(sandboxID string) string { return "10.0.0.1" })
+	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	handler.sseTracker.EnsureWatching("ws-1")
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount())
 
-	sb := makeSandboxCRD("ws-1", "10.0.0.1", phaseRunning, "ws-1")
+	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
 
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
@@ -1268,7 +1269,7 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1281,7 +1282,7 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
@@ -1322,7 +1323,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
-	llmMock.On("Sandboxes", "default").Return(sbMock)
+	llmMock.On("Workspacees", "default").Return(sbMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1335,7 +1336,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
@@ -1370,35 +1371,16 @@ func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
 	handler.onSessionIdle("ws-1", "s1")
 
 	assert.Equal(t, 0, tracker.PendingCount(),
-		"activity should not be recorded when wsConfig cache is absent (sandbox evicted)")
+		"activity should not be recorded when wsConfig cache is absent (workspace evicted)")
 	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
 		"session should still be removed from active set even when cache is absent")
 }
 
-func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Workspace {
-	return &v1.Workspace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			Labels: map[string]string{
-				"user-id":                    "test-user",
-				"llmsafespace.dev/workspace": workspaceRef,
-			},
-		},
-		Spec: v1.WorkspaceSpec{
-			Runtime:      "python",
-		},
-		Status: v1.WorkspaceStatus{
-			Phase: v1.WorkspacePhase(phase),
-			PodIP: podIP,
-		},
-	}
-}
 
-func makePasswordSecret(sandboxID, password string) *corev1.Secret {
+func makePasswordSecret(workspaceID, password string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("sandbox-pw-%s", sandboxID),
+			Name:      fmt.Sprintf("workspace-pw-%s", workspaceID),
 			Namespace: "default",
 		},
 		Data: map[string][]byte{
@@ -1415,6 +1397,21 @@ func makeWorkspaceCRD(name string, maxActiveSessions int) *v1.Workspace {
 		},
 		Spec: v1.WorkspaceSpec{
 			MaxActiveSessions: int32(maxActiveSessions),
+		},
+	}
+}
+
+func makeWorkspaceCRDWithStatus(name, podIP, phase, _ string) *v1.Workspace {
+	return &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: v1.WorkspaceSpec{
+			Owner:             v1.WorkspaceOwner{UserID: "user-1"},
+			Runtime:           "python:3.11",
+			MaxActiveSessions: 5,
+		},
+		Status: v1.WorkspaceStatus{
+			Phase: v1.WorkspacePhase(phase),
+			PodIP: podIP,
 		},
 	}
 }

@@ -53,7 +53,7 @@ func TestProxy_StripsPatchParts_FromMessageResponse(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -85,7 +85,7 @@ func TestProxy_VerboseFlag_KeepsPatchParts(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -118,7 +118,7 @@ func TestProxy_StripsPatchParts_FromHistoryResponse(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeHistoryBody))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -148,7 +148,7 @@ func TestProxy_VerboseFlag_FalseStillStripsParts(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(opencodeMessageBody))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -176,7 +176,7 @@ func TestProxy_StripDoesNotApplyToSessionList(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(body))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -194,7 +194,7 @@ func TestProxy_StripPreservesNonJSONResponses(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not json {{{"))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
@@ -211,7 +211,7 @@ func TestProxy_StripPreservesNon200Responses(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"bad request"}`))
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupWorkspacePodWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
 	env.setupPasswordWithT(t, "sb-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 

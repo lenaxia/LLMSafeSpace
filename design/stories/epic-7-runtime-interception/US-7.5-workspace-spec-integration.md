@@ -71,41 +71,66 @@ One line. The runtime class must exist in the cluster (not validated by the cont
 
 #### Security Context Changes
 
-The controller must update the pod security context to support the daemon model:
+The controller updates the main container's security context to allow writable rootfs (for pip/npm installs) while keeping non-root:
 
 ```go
-// Before (current):
+// Main container (workspace):
 SecurityContext: &corev1.SecurityContext{
-    ReadOnlyRootFilesystem:   &trueVal,
     RunAsNonRoot:             &trueVal,
     AllowPrivilegeEscalation: &falseVal,
     Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+    SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+    // NOTE: No ReadOnlyRootFilesystem — agent needs to pip/npm install
 }
-
-// After:
-SecurityContext: &corev1.SecurityContext{
-    AllowPrivilegeEscalation: &falseVal,
-    Capabilities: &corev1.Capabilities{
-        Drop: []corev1.Capability{"ALL"},
-        Add:  []corev1.Capability{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"},
-    },
-    SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-}
-// Remove: ReadOnlyRootFilesystem, RunAsNonRoot
-// Remove: pod-level RunAsUser/RunAsGroup (daemon is root, drops to 1000 internally)
 ```
 
-#### Entrypoint Change
+Remove: `ReadOnlyRootFilesystem: true` (agent needs writable paths for package installs).
+Keep: `RunAsNonRoot: true`, drop all caps, seccomp.
+
+#### Sidecar Container
+
+When sentinel is active (always in K8s), the controller adds the daemon sidecar:
 
 ```go
-// Before:
-Command: []string{"/usr/local/bin/entrypoint-opencode.sh"},
-
-// After:
-Command: []string{"/usr/local/bin/system-daemon"},
+sidecar := corev1.Container{
+    Name:    "system-daemon",
+    Image:   runtimeImage, // same base image
+    Command: []string{"/usr/local/bin/system-daemon"},
+    SecurityContext: &corev1.SecurityContext{
+        RunAsUser:                ptr(int64(0)),
+        AllowPrivilegeEscalation: &falseVal,
+        Capabilities: &corev1.Capabilities{
+            Drop: []corev1.Capability{"ALL"},
+            Add:  []corev1.Capability{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"},
+        },
+        SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+    },
+    VolumeMounts: []corev1.VolumeMount{
+        {Name: "daemon-socket", MountPath: "/run/llmsafespace"},
+        {Name: "policies", MountPath: "/etc/llmsafespace", ReadOnly: true},
+        {Name: "daemon-log", MountPath: "/var/log/llmsafespace"},
+    },
+}
 ```
 
-The daemon handles starting opencode internally.
+Shared volumes added to pod:
+```go
+volumes = append(volumes,
+    corev1.Volume{Name: "daemon-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+    corev1.Volume{Name: "daemon-log", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+)
+```
+
+Main container gets additional volume mount:
+```go
+{Name: "daemon-socket", MountPath: "/run/llmsafespace"},
+```
+
+#### Entrypoint
+
+Main container entrypoint stays as `entrypoint-opencode.sh` (unchanged). The daemon runs in its own sidecar container with its own entrypoint (`/usr/local/bin/system-daemon`).
+
+The sentinel file (`/etc/llmsafespace/mode`) is mounted into the main container via the policies ConfigMap. Wrappers check for it to decide whether to enforce policy and talk to the daemon socket.
 
 ### Webhook Validation
 
