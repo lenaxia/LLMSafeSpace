@@ -22,7 +22,12 @@ export function Sidebar() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (params: { name: string }) => workspacesApi.create(params),
+    mutationFn: async (params: { name: string }) => {
+      const ws = await workspacesApi.create(params);
+      // Auto-create a sandbox attached to the workspace
+      await workspacesApi.createSandbox(ws.id);
+      return ws;
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowNewWorkspace(false);
