@@ -36,6 +36,13 @@ spec:
                   type: integer
                   format: int64
                   description: "Incremented by the API to request a pod restart. Controller acts when spec > status.observedRestartGeneration."
+                maxRetries:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  maximum: 10
+                  default: 3
+                  description: "Maximum times a Failed sandbox can be retried via POST /retry."
                 securityLevel:
                   type: string
                   enum: ["standard", "high", "custom"]
