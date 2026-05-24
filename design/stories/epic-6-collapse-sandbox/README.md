@@ -54,6 +54,56 @@ Timeout           -> Pod deleted, PVC kept, phase: Suspending → Suspended
 Delete            -> Everything gone, phase: Terminating → Terminated
 ```
 
+## User Interaction Scenarios
+
+All user-facing flows after this epic. Every scenario must work end-to-end.
+
+### Browser (Human) Flows
+
+| # | Scenario | Steps | Key Endpoints |
+|---|----------|-------|---------------|
+| H1 | First-time user | Register → login → create workspace → auto-session → chat | `POST /auth/register`, `POST /workspaces`, `POST /workspaces/:id/sessions/new` |
+| H2 | Return to active workspace | Login → select workspace → select session → view history → send message | `GET /workspaces`, `GET /workspaces/:id/sessions`, `GET /workspaces/:id/sessions/:sid/message`, `POST .../message` |
+| H3 | Return to suspended workspace | Login → select workspace → see "Suspended" → click Activate → wait → chat | `POST /workspaces/:id/activate`, poll `GET /workspaces/:id/status` |
+| H4 | Create new session | Click "+" → EnsureSession → navigate to new session | `POST /workspaces/:id/sessions/new` |
+| H5 | Workspace in Creating/Resuming | See spinner → poll status → auto-enable when Active | `GET /workspaces/:id/status` |
+| H6 | Restart workspace | Settings → restart → pod recreated → reconnect | `POST /workspaces/:id/restart` |
+| H7 | Delete workspace | Settings → delete → removed from list | `DELETE /workspaces/:id` |
+| H8 | Set credentials | Settings → add LLM API key → saved to K8s Secret | `PUT /workspaces/:id/credentials` |
+| H9 | SSE real-time events | While chatting, receive session status updates | `GET /workspaces/:id/events` (EventSource) |
+| H10 | Tab close during stream | sendBeacon fires abort | `POST /workspaces/:id/sessions/:sid/abort` |
+
+### Programmatic (MCP Client) Flows
+
+| # | Scenario | Steps | Key Endpoints |
+|---|----------|-------|---------------|
+| P1 | Create + use workspace | `workspace_create` → `workspace_activate` → `session_create` → `session_message` | `POST /workspaces`, `POST /workspaces/:id/activate`, `POST /workspaces/:id/sessions`, `POST .../prompt` + SSE |
+| P2 | Resume suspended workspace | `workspace_activate` → `session_create` → `session_message` | `POST /workspaces/:id/activate`, `POST /workspaces/:id/sessions` |
+| P3 | Read history | `session_history` | `GET /workspaces/:id/sessions/:sid/message` |
+| P4 | Stop workspace | `workspace_stop` | `POST /workspaces/:id/suspend` |
+| P5 | Set credentials programmatically | REST `PUT /workspaces/:id/credentials` with API key auth | Direct REST call |
+
+### REST API (SDK/Script) Flows
+
+| # | Scenario | Key Endpoints |
+|---|----------|---------------|
+| R1 | Full lifecycle | `POST /workspaces` → poll status → `POST /workspaces/:id/sessions` → `POST .../message` → `DELETE /workspaces/:id` |
+| R2 | Credential rotation | `PUT /workspaces/:id/credentials` → pod auto-restarts (credential hash change) |
+| R3 | Workspace restart | `POST /workspaces/:id/restart` → poll status until Active |
+| R4 | List workspaces | `GET /workspaces?limit=20&offset=0` |
+| R5 | Session management | `GET /workspaces/:id/sessions`, `PUT /workspaces/:id/sessions/:sid/title` |
+
+### Controller (Internal) Flows
+
+| # | Scenario | Trigger | Behavior |
+|---|----------|---------|----------|
+| C1 | Workspace created | CRD created | PVC → password secret → pod → Active |
+| C2 | Pod crash | Pod disappears | Transient recovery up to MaxRetries → recreate pod |
+| C3 | Idle timeout | No activity for N seconds | Phase → Suspending → delete pod → Suspended |
+| C4 | TTL expiry | Suspended for N seconds | Phase → Terminating → delete PVC → Terminated |
+| C5 | Credential change | `workspace-creds-*` secret updated | Bump restart generation → pod recreated |
+| C6 | Restart requested | `spec.RestartGeneration` bumped | Delete pod → Creating → Active |
+
 ## Story List
 
 | Story | Title | Scope |
@@ -61,11 +111,11 @@ Delete            -> Everything gone, phase: Terminating → Terminated
 | US-6.0 | Fix CORS | Add `safespace.thekao.cloud` to allowed origins |
 | US-6.1 | Rewrite Workspace CRD Types | Add Creating phase; pod-level fields; SecurityContext |
 | US-6.2 | Workspace Reconciler Owns Pod | Absorb sandbox reconciler pod lifecycle |
-| US-6.3 | API Workspace Service Changes | Add RestartWorkspace; remove sandbox methods; update status response |
+| US-6.3 | API Workspace Service Changes | RestartWorkspace; rewrite EnsureSession; remove sandbox methods |
 | US-6.4 | Remove Sandbox CRD, Controller, Service | Delete everything sandbox-specific + DB migration |
 | US-6.5 | Proxy Rekeyed to Workspace ID | All routes and lookups use workspace ID + WorkspaceWatcher |
-| US-6.6 | Frontend Simplification | Remove all sandbox awareness |
-| US-6.7 | MCP Client + Scripts Update | Rewrite MCP client, test scripts |
+| US-6.6 | Frontend Simplification | Remove all sandbox awareness from React app |
+| US-6.7 | MCP Client + Scripts Update | Rewrite MCP client paths, test scripts |
 | US-6.8 | Helm Chart Cleanup | RBAC, CRDs, webhooks |
 
 ## Dependency Graph
@@ -91,13 +141,13 @@ US-6.5, US-6.6, US-6.7, US-6.8 can run in parallel after US-6.4.
 |-------|-----------|-----------|-----------------|
 | US-6.1 | Unit | Go testing | Webhook validation for every new field |
 | US-6.2 | Unit + envtest | controller-runtime envtest | Every phase transition happy path + 3 error paths per phase |
-| US-6.3 | Unit | Go testing + mocks | Every new/modified service method happy + error path |
+| US-6.3 | Unit + integration | Go testing + mocks | Every new/modified service method happy + error path; EnsureSession with suspended/active/creating workspace |
 | US-6.4 | N/A (deletion) | Build + grep | `make build` passes; zero sandbox references in Go code |
 | US-6.5 | Unit + integration | Go testing | Every proxy route with mock K8s client; workspace CRD with PodIP set/not set |
-| US-6.6 | Build | npm | `npm run build` passes; zero sandbox references in frontend |
-| US-6.7 | Unit | Go testing | MCP client path construction for every method |
+| US-6.6 | Build + unit | vitest + npm build | `npm run build` passes; `npm run test` passes; zero sandbox references in frontend |
+| US-6.7 | Unit | Go testing | MCP client path construction for every method; integration test with mock server |
 | US-6.8 | Unit | helm lint + helm template | Zero sandbox references in rendered output |
-| All | E2E | Manual on cluster | Create workspace → pod starts → session → message → suspend → resume → delete |
+| All | E2E | Manual on cluster + `local/test.sh` | Create workspace → pod starts → session → message → suspend → resume → delete |
 
 ## Estimated Impact
 
@@ -105,3 +155,20 @@ US-6.5, US-6.6, US-6.7, US-6.8 can run in parallel after US-6.4.
 - ~2000 lines modified/added
 - Net ~2500 line reduction
 - 2 fewer CRDs (Sandbox, SandboxProfile), 1 fewer controller, 1 fewer API service
+
+## Deployment Strategy
+
+**Hard cut** — this project is not live. No zero-downtime migration needed.
+
+Pre-deploy steps:
+```bash
+kubectl delete sandboxes --all -A
+kubectl delete sandboxprofiles --all -A
+kubectl delete crd sandboxes.llmsafespace.dev sandboxprofiles.llmsafespace.dev
+```
+
+Then deploy new images + Helm chart. All existing workspace PVCs are preserved. Users will need to create new sessions (existing session state was in sandbox pods, which are deleted).
+
+Data loss accepted:
+- `execution_history`, `file_operations`, `package_installations` DB tables dropped (sandbox-keyed, no migration value)
+- Sandbox pod state lost (expected — PVC data preserved via workspace)

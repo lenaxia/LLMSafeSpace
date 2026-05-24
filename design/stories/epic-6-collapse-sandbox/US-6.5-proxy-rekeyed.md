@@ -103,14 +103,52 @@ freshWorkspace, _ := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(wo
 
 `maxConnectionsPerSandbox` → `maxConnectionsPerWorkspace`
 
+### Remove `workspaceConfig` struct and `getWorkspaceConfig()`
+
+The `workspaceConfig` struct exists to cache the workspace ID resolved from `sandbox.Spec.WorkspaceRef`. After collapse, the workspace ID IS the route parameter — no resolution needed. `maxActiveSessions` is read directly from the workspace CRD.
+
+```go
+// DELETE this struct entirely:
+type workspaceConfig struct {
+    workspaceID       string
+    maxActiveSessions int
+}
+
+// REPLACE getWorkspaceConfig() with direct CRD read:
+maxSessions := int(workspace.Spec.MaxActiveSessions)
+if maxSessions == 0 { maxSessions = defaultMaxActiveSessions }
+```
+
+### SSE Tracker rekeying
+
+`SSETracker.EnsureWatching(sandboxID)` → `SSETracker.EnsureWatching(workspaceID)`
+`SSETracker.StopWatching(sandboxID)` → `SSETracker.StopWatching(workspaceID)`
+`SetPodIPResolver` callback: reads workspace CRD PodIP instead of sandbox CRD.
+
+### `onPhaseChange` callback
+
+```go
+// BEFORE: receives *v1.Sandbox
+func (h *ProxyHandler) onPhaseChange(sandbox *v1.Sandbox) { ... }
+
+// AFTER: receives *v1.Workspace
+func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
+    if workspace.Status.Phase == v1.WorkspacePhaseSuspending || ... {
+        h.invalidateCaches(workspace.Name)
+        if h.sseTracker != nil { h.sseTracker.StopWatching(workspace.Name) }
+    }
+}
+```
+
 ## Files Modified
 
 | File | Change |
 |------|--------|
-| `api/internal/handlers/proxy.go` | Major rewrite — all sandbox lookups → workspace |
-| `api/internal/handlers/crd_watcher.go` | Rewrite `SandboxWatcher` → `WorkspaceWatcher` |
+| `api/internal/handlers/proxy.go` | Major rewrite — remove `workspaceConfig` struct, `getWorkspaceConfig()`, `GetSandboxCRD()`; all sandbox lookups → workspace; rekey all maps; rename constants |
+| `api/internal/handlers/crd_watcher.go` | Rewrite `SandboxWatcher` → `WorkspaceWatcher`; `PhaseChangeCallback` takes `*v1.Workspace` |
 | `api/internal/handlers/crd_watcher_test.go` | Rewrite all 25 tests for workspace type |
-| `api/internal/server/router.go` | Route group `/sandboxes` → `/workspaces` |
+| `api/internal/handlers/proxy_test.go` | Update all proxy tests to use workspace CRD instead of sandbox |
+| `api/internal/server/router.go` | Route group `/sandboxes` → `/workspaces` for proxy routes |
 
 ## Acceptance Criteria
 
@@ -122,6 +160,8 @@ freshWorkspace, _ := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(wo
 6. Session index keyed by workspaceID
 7. SSE works with workspace-scoped watching
 8. Connection retry uses fresh workspace CRD
-9. Activity tracking records by workspaceID directly
+9. Activity tracking records by workspaceID directly (no `workspaceConfig` indirection)
 10. Old `/sandboxes/:id` routes do not exist
-11. E2E: create workspace → session → message → response → abort
+11. `workspaceConfig` struct deleted
+12. `getWorkspaceConfig()` method deleted
+13. E2E: create workspace → session → message → response → abort
