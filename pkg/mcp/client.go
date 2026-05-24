@@ -172,12 +172,8 @@ func (c *HTTPClient) SuspendWorkspace(ctx context.Context, workspaceID string) e
 
 // CreateSession resolves workspace → sandbox, then creates a session via the proxy.
 func (c *HTTPClient) CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error) {
-	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
 	var resp SessionResp
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/sandboxes/"+sandboxID+"/sessions", nil, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/sessions", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -187,12 +183,8 @@ func (c *HTTPClient) GetHistory(ctx context.Context, workspaceID, sessionID stri
 	if err := validateID(sessionID, "session_id"); err != nil {
 		return nil, err
 	}
-	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
 	var msgs []Message
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/sandboxes/"+sandboxID+"/sessions/"+sessionID+"/message", nil, &msgs); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workspaces/"+workspaceID+"/sessions/"+sessionID+"/message", nil, &msgs); err != nil {
 		return nil, err
 	}
 	return msgs, nil
@@ -208,14 +200,10 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		return "", fmt.Errorf("message too large (%d bytes, max %d)", len(message), maxMessageSize)
 	}
 
-	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
-	if err != nil {
-		return "", err
-	}
 
 	// 1. Fire prompt_async
 	body := map[string]string{"message": message}
-	path := fmt.Sprintf("/api/v1/sandboxes/%s/sessions/%s/prompt", sandboxID, sessionID)
+	path := fmt.Sprintf("/api/v1/workspaces/%s/sessions/%s/prompt", workspaceID, sessionID)
 	if err := c.doJSON(ctx, http.MethodPost, path, body, nil); err != nil {
 		return "", err
 	}
@@ -224,7 +212,7 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 	sseCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	eventsURL := fmt.Sprintf("%s/api/v1/sandboxes/%s/events", c.BaseURL, sandboxID)
+	eventsURL := fmt.Sprintf("%s/api/v1/workspaces/%s/events", c.BaseURL, workspaceID)
 	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, eventsURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create SSE request: %w", err)
@@ -237,7 +225,7 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		// SSE failed or timed out — fall back to polling history
-		return c.fallbackHistory(ctx, sandboxID, sessionID)
+		return c.fallbackHistory(ctx, workspaceID, sessionID)
 	}
 	defer resp.Body.Close()
 
@@ -273,12 +261,12 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 	}
 
 	// Fallback: poll history (using parent context, not the timed-out SSE context)
-	return c.fallbackHistory(ctx, sandboxID, sessionID)
+	return c.fallbackHistory(ctx, workspaceID, sessionID)
 }
 
-func (c *HTTPClient) fallbackHistory(ctx context.Context, sandboxID, sessionID string) (string, error) {
+func (c *HTTPClient) fallbackHistory(ctx context.Context, workspaceID, sessionID string) (string, error) {
 	var msgs []Message
-	histPath := fmt.Sprintf("/api/v1/sandboxes/%s/sessions/%s/message", sandboxID, sessionID)
+	histPath := fmt.Sprintf("/api/v1/workspaces/%s/sessions/%s/message", workspaceID, sessionID)
 	if err := c.doJSON(ctx, http.MethodGet, histPath, nil, &msgs); err != nil {
 		return "", fmt.Errorf("fallback history fetch: %w", err)
 	}
@@ -288,19 +276,3 @@ func (c *HTTPClient) fallbackHistory(ctx context.Context, sandboxID, sessionID s
 	return "", nil
 }
 
-// resolveSandbox finds the active sandbox for a workspace via GET /workspaces/:id/sandboxes.
-func (c *HTTPClient) resolveSandbox(ctx context.Context, workspaceID string) (string, error) {
-	if err := validateID(workspaceID, "workspace_id"); err != nil {
-		return "", err
-	}
-	var sandboxes []struct {
-		ID string `json:"id"`
-	}
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workspaces/"+workspaceID+"/sandboxes", nil, &sandboxes); err != nil {
-		return "", fmt.Errorf("resolve sandbox for workspace %s: %w", workspaceID, err)
-	}
-	if len(sandboxes) == 0 {
-		return "", fmt.Errorf("workspace %s has no active sandbox — call workspace_activate first", workspaceID)
-	}
-	return sandboxes[0].ID, nil
-}
