@@ -75,69 +75,6 @@ func TestActivateWorkspace_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// --- GET /api/v1/workspaces/:id/sandboxes ---
-
-func TestListWorkspaceSandboxes_Success(t *testing.T) {
-	router, svc := newRouterFixture(t)
-
-	svc.workspace.On("ListWorkspaceSandboxes", mock.Anything, "test-user", "ws-1").Return(
-		[]types.SandboxListItem{
-			{ID: "sb-1", UserID: "test-user", Status: "Running"},
-		}, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sandboxes", nil)
-	req.Header.Set("Authorization", "Bearer token")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	var items []types.SandboxListItem
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
-	assert.Len(t, items, 1)
-	assert.Equal(t, "sb-1", items[0].ID)
-}
-
-func TestListWorkspaceSandboxes_EmptyList(t *testing.T) {
-	router, svc := newRouterFixture(t)
-
-	svc.workspace.On("ListWorkspaceSandboxes", mock.Anything, "test-user", "ws-1").Return(
-		[]types.SandboxListItem{}, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sandboxes", nil)
-	req.Header.Set("Authorization", "Bearer token")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	var items []types.SandboxListItem
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
-	assert.Empty(t, items)
-}
-
-func TestListWorkspaceSandboxes_NotFound(t *testing.T) {
-	router, svc := newRouterFixture(t)
-
-	svc.workspace.On("ListWorkspaceSandboxes", mock.Anything, "test-user", "ws-missing").Return(
-		nil, apierrors.NewNotFoundError("workspace", "ws-missing", nil))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-missing/sandboxes", nil)
-	req.Header.Set("Authorization", "Bearer token")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestListWorkspaceSandboxes_Unauthorized(t *testing.T) {
-	router, _ := newRouterFixture(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sandboxes", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-}
-
 // --- GET /api/v1/workspaces/:id/sessions ---
 
 func TestListWorkspaceSessions_Success(t *testing.T) {
@@ -281,8 +218,8 @@ func TestEnsureSession_Route_Success(t *testing.T) {
 
 	svc.workspace.On("EnsureSession", mock.Anything, "test-user", "ws-1").Return(
 		&types.EnsureSessionResponse{
-			SandboxID:    "sb-1",
-			SandboxPhase: "Running",
+			WorkspaceID:    "sb-1",
+			WorkspacePhase: "Active",
 			SessionID:    "sess-abc",
 			Resumed:      false,
 		}, nil)
@@ -295,7 +232,7 @@ func TestEnsureSession_Route_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var resp types.EnsureSessionResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "sb-1", resp.SandboxID)
+	assert.Equal(t, "sb-1", resp.WorkspaceID)
 	assert.Equal(t, "sess-abc", resp.SessionID)
 	assert.False(t, resp.Resumed)
 }
@@ -305,8 +242,8 @@ func TestEnsureSession_Route_Resumed(t *testing.T) {
 
 	svc.workspace.On("EnsureSession", mock.Anything, "test-user", "ws-2").Return(
 		&types.EnsureSessionResponse{
-			SandboxID:    "sb-new",
-			SandboxPhase: "Running",
+			WorkspaceID:    "sb-new",
+			WorkspacePhase: "Active",
 			SessionID:    "sess-xyz",
 			Resumed:      true,
 		}, nil)

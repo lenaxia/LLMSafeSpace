@@ -101,16 +101,8 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 				return
 			}
 			workspaceID := c.Param("id")
-			// Get sandboxes for this workspace to find the sandbox ID
-			sandboxes, err := services.GetWorkspace().ListWorkspaceSandboxes(c.Request.Context(), userID, workspaceID)
-			if err != nil {
-				respondWithError(c, err)
-				return
-			}
-			var active []string
-			for _, sb := range sandboxes {
-				active = append(active, proxyHandler.GetActiveSessions(sb.ID)...)
-			}
+			// Get active sessions keyed by workspace ID directly.
+			active := proxyHandler.GetActiveSessions(workspaceID)
 			if active == nil {
 				active = []string{}
 			}
@@ -493,20 +485,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			return
 		}
 		c.JSON(http.StatusOK, resp)
-	})
-
-	rg.GET("/:id/sandboxes", func(c *gin.Context) {
-		userID := authSvc.GetUserID(c)
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-			return
-		}
-		sandboxes, err := wsSvc.ListWorkspaceSandboxes(c.Request.Context(), userID, c.Param("id"))
-		if err != nil {
-			respondWithError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, sandboxes)
 	})
 
 	rg.GET("/:id/sessions", func(c *gin.Context) {

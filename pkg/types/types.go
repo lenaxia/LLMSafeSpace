@@ -703,13 +703,13 @@ type ActivateWorkspaceResponse struct {
 }
 
 // EnsureSessionResponse is returned by POST /workspaces/:id/sessions/new.
-// It guarantees the workspace is active and a sandbox exists, returning the
-// sandbox ID and its current phase so the frontend can poll until Running.
+// It guarantees the workspace is active with a running pod, returning the
+// workspace ID and session ID for immediate use.
 type EnsureSessionResponse struct {
-	SandboxID    string `json:"sandboxId"`
-	SandboxPhase string `json:"sandboxPhase"`
-	SessionID    string `json:"sessionId"`
-	Resumed      bool   `json:"resumed"`
+	WorkspaceID    string `json:"workspaceId"`
+	WorkspacePhase string `json:"workspacePhase"`
+	SessionID      string `json:"sessionId"`
+	Resumed        bool   `json:"resumed"`
 }
 
 // SessionListItem is sidebar metadata for a session (NOT message bodies).
