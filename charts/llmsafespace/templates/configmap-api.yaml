@@ -49,3 +49,9 @@ data:
           requests: {{ $limit.requests }}
           window: {{ $limit.window }}
         {{- end }}
+    security:
+      allowedOrigins:
+        {{- range .Values.api.config.security.allowedOrigins }}
+        - {{ . | quote }}
+        {{- end }}
+      allowCredentials: {{ .Values.api.config.security.allowCredentials }}

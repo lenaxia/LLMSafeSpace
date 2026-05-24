@@ -105,6 +105,11 @@ api:
           requests: 500
           window: 1h
 
+    security:
+      allowedOrigins:
+        - "https://safespace.thekao.cloud"
+      allowCredentials: false
+
   # Liveness / readiness probes hit /livez and /readyz.
   # /livez always returns 200 if the process is responsive.
   # /readyz pings Postgres and Redis; returns 503 if either is down.
