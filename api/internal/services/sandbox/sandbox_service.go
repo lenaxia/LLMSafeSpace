@@ -140,6 +140,23 @@ func (s *Service) CreateSandbox(ctx context.Context, req *types.CreateSandboxReq
 		}
 	}
 
+	// Fix #4: if the runtime requires credentials, reject auto-workspace-creation.
+	// When workspaceRef is empty, the workspace is auto-created without credentials,
+	// which would leave the sandbox unable to function. Users must explicitly create
+	// a workspace, set credentials, then create the sandbox with workspaceRef.
+	if req.WorkspaceRef == "" {
+		if rte, err := s.k8sClient.LlmsafespaceV1().RuntimeEnvironments("").Get(req.Runtime, metav1.GetOptions{}); err == nil {
+			if rte.Spec.RequiresCredentials {
+				return nil, &apierrors.APIError{
+					Type:    apierrors.ErrorTypeConflict,
+					Code:    "credentials_required",
+					Message: fmt.Sprintf("runtime %q requires credentials; create a workspace, set credentials via PUT /workspaces/:id/credentials, then create a sandbox with workspaceRef", req.Runtime),
+					Err:     errors.New("runtime requires credentials but no workspace specified"),
+				}
+			}
+		}
+	}
+
 	crd := buildCRDFromRequest(req, workspaceID, s.config.Namespace)
 
 	s.logger.Debug("Creating sandbox in Kubernetes", "namespace", crd.Namespace, "generateName", crd.GenerateName)
