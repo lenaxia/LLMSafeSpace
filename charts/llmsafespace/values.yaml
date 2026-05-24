@@ -395,3 +395,27 @@ frontend:
     tls: false
     tlsSecret: ""
     annotations: {}
+
+mcp:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: llmsafespace/mcp
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Transport mode: "sse" for HTTP SSE server, "stdio" for sidecar/subprocess use
+  transport: "sse"
+  service:
+    type: ClusterIP
+    port: 3001
+  # API base URL the MCP server calls (typically the in-cluster API service)
+  apiBaseUrl: "http://{{ .Release.Name }}-api:8080"
+  # Timeout for session_message (waiting for agent response)
+  timeout: "300s"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

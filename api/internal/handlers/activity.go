@@ -22,6 +22,7 @@ type ActivityTracker struct {
 	namespace string
 	stopCh    chan struct{}
 	stopOnce  sync.Once
+	done      chan struct{}
 }
 
 func NewActivityTracker(
@@ -36,6 +37,7 @@ func NewActivityTracker(
 		logger:    logger,
 		namespace: namespace,
 		stopCh:    make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -48,6 +50,7 @@ func (t *ActivityTracker) Stop() error {
 	t.stopOnce.Do(func() {
 		close(t.stopCh)
 	})
+	<-t.done
 	return nil
 }
 
@@ -93,6 +96,7 @@ func (t *ActivityTracker) PendingCount() int {
 }
 
 func (t *ActivityTracker) runFlushLoop() {
+	defer close(t.done)
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 	for {
