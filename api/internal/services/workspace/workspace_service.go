@@ -28,7 +28,6 @@ type Service struct {
 	cacheService   apiinterfaces.CacheService
 	metricsService apiinterfaces.MetricsService
 	sessionIndex   apiinterfaces.SessionIndexService
-	sandboxService apiinterfaces.SandboxService
 	config         *Config
 }
 
@@ -76,10 +75,6 @@ func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
 	s.sessionIndex = si
 }
 
-// SetSandboxService injects the sandbox service for auto-sandbox creation on workspace create.
-func (s *Service) SetSandboxService(sb apiinterfaces.SandboxService) {
-	s.sandboxService = sb
-}
 
 func (s *Service) Start() error {
 	s.logger.Info("Starting workspace service")
@@ -157,25 +152,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		Phase:       string(created.Status.Phase),
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
-	}
-
-	// Auto-create a sandbox so the user can start chatting immediately.
-	if s.sandboxService != nil {
-		runtime := req.Runtime
-		if runtime == "" {
-			runtime = "base"
-		}
-		sb, err := s.sandboxService.CreateSandbox(ctx, &types.CreateSandboxRequest{
-			Runtime:      runtime,
-			UserID:       userID,
-			WorkspaceRef: ws.ID,
-		})
-		if err != nil {
-			s.logger.Warn("Failed to auto-create sandbox for workspace", "workspaceID", ws.ID, "error", err)
-		} else {
-			ws.SandboxID = sb.ID
-			s.logger.Info("Auto-created sandbox for workspace", "workspaceID", ws.ID, "sandboxID", sb.ID)
-		}
 	}
 
 	return ws, nil
@@ -576,109 +552,63 @@ func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string)
 			map[string]interface{}{"phase": string(crd.Status.Phase)},
 			fmt.Errorf("workspace %s is in %s phase", workspaceID, crd.Status.Phase),
 		)
-	case v1.WorkspacePhasePending, v1.WorkspacePhaseActive, v1.WorkspacePhaseSuspending, v1.WorkspacePhaseResuming:
-		// These are fine — sandbox creation will proceed and wait.
+	case v1.WorkspacePhasePending, v1.WorkspacePhaseCreating, v1.WorkspacePhaseActive, v1.WorkspacePhaseResuming:
+		// Will wait for Active below.
 	}
 
-	// Find or create sandbox for this workspace.
-	sandboxID, err := s.ensureSandbox(ctx, userID, workspaceID, crd.Spec.Runtime)
+	// Wait for workspace to reach Active with PodIP.
+	podIP, err := s.waitForWorkspaceActive(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Wait for sandbox to reach Running state.
-	podIP, err := s.waitForSandboxRunning(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create session on the running sandbox.
-	sessionID, err := s.createSessionOnSandbox(ctx, sandboxID, podIP)
+	// Create session directly on workspace pod.
+	sessionID, err := s.createSessionOnWorkspace(ctx, workspaceID, podIP)
 	if err != nil {
 		return nil, err
 	}
 
 	return &types.EnsureSessionResponse{
-		SandboxID:    sandboxID,
-		SandboxPhase: "Running",
-		SessionID:    sessionID,
-		Resumed:      resumed,
+		WorkspaceID:    workspaceID,
+		WorkspacePhase: "Active",
+		SessionID:      sessionID,
+		Resumed:        resumed,
 	}, nil
 }
 
-// ensureSandbox finds an existing sandbox for the workspace or creates one.
-func (s *Service) ensureSandbox(ctx context.Context, userID, workspaceID, runtime string) (string, error) {
-	sandboxes, err := s.ListWorkspaceSandboxes(ctx, userID, workspaceID)
-	if err != nil {
-		return "", err
-	}
-
-	// Prefer a Running sandbox, then any non-terminated one.
-	for _, sb := range sandboxes {
-		if sb.Status == "Running" {
-			return sb.ID, nil
-		}
-	}
-	for _, sb := range sandboxes {
-		if sb.Status != "Terminated" && sb.Status != "Failed" {
-			return sb.ID, nil
-		}
-	}
-
-	// No usable sandbox — create one.
-	if s.sandboxService == nil {
-		return "", apierrors.NewInternalError("sandbox_service_unavailable", fmt.Errorf("sandbox service not configured"))
-	}
-	if runtime == "" {
-		runtime = "base"
-	}
-	sb, err := s.sandboxService.CreateSandbox(ctx, &types.CreateSandboxRequest{
-		Runtime:      runtime,
-		UserID:       userID,
-		WorkspaceRef: workspaceID,
-	})
-	if err != nil {
-		return "", err
-	}
-	return sb.ID, nil
-}
-
-// waitForSandboxRunning polls the sandbox CRD until it reaches Running or the
-// context is cancelled. Returns the pod IP.
-func (s *Service) waitForSandboxRunning(ctx context.Context, sandboxID string) (string, error) {
+// waitForWorkspaceActive polls the workspace CRD until it reaches Active with
+// a PodIP, or the context is cancelled. Returns the pod IP.
+func (s *Service) waitForWorkspaceActive(ctx context.Context, workspaceID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	// Use a timeout if the context doesn't already have one.
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
 	for {
-		sb, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sandboxID, metav1.GetOptions{})
+		crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 		if err != nil {
-			return "", apierrors.NewInternalError("sandbox_get_failed", err)
+			return "", apierrors.NewInternalError("workspace_get_failed", err)
 		}
-		if string(sb.Status.Phase) == "Running" && sb.Status.PodIP != "" {
-			return sb.Status.PodIP, nil
+		if crd.Status.Phase == v1.WorkspacePhaseActive && crd.Status.PodIP != "" {
+			return crd.Status.PodIP, nil
 		}
-		if string(sb.Status.Phase) == "Failed" || string(sb.Status.Phase) == "Terminated" {
-			return "", apierrors.NewInternalError("sandbox_failed", fmt.Errorf("sandbox %s entered %s phase", sandboxID, sb.Status.Phase))
+		if crd.Status.Phase == v1.WorkspacePhaseFailed || crd.Status.Phase == v1.WorkspacePhaseTerminated {
+			return "", apierrors.NewInternalError("workspace_failed", fmt.Errorf("workspace %s entered %s phase", workspaceID, crd.Status.Phase))
 		}
-
 		select {
 		case <-ctx.Done():
-			return "", apierrors.NewInternalError("sandbox_timeout", fmt.Errorf("timed out waiting for sandbox %s to reach Running", sandboxID))
+			return "", apierrors.NewInternalError("workspace_timeout", fmt.Errorf("timed out waiting for workspace %s to reach Active", workspaceID))
 		case <-ticker.C:
 		}
 	}
 }
 
-// createSessionOnSandbox calls opencode's POST /session on the sandbox pod.
-func (s *Service) createSessionOnSandbox(ctx context.Context, sandboxID, podIP string) (string, error) {
-	secretName := fmt.Sprintf("sandbox-pw-%s", sandboxID)
+// createSessionOnWorkspace calls opencode's POST /session on the workspace pod.
+func (s *Service) createSessionOnWorkspace(ctx context.Context, workspaceID, podIP string) (string, error) {
+	secretName := fmt.Sprintf("workspace-pw-%s", workspaceID)
 	secret, err := s.k8sClient.Clientset().CoreV1().Secrets(s.config.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return "", apierrors.NewInternalError("sandbox_password_failed", err)
+		return "", apierrors.NewInternalError("workspace_password_failed", err)
 	}
 	password := string(secret.Data["password"])
 
@@ -727,32 +657,6 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	return &types.ActivateWorkspaceResponse{
 		Resumed: workspaceID,
 	}, nil
-}
-
-// ListWorkspaceSandboxes returns sandboxes attached to a workspace via label selector.
-func (s *Service) ListWorkspaceSandboxes(ctx context.Context, userID, workspaceID string) ([]types.SandboxListItem, error) {
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
-		return nil, err
-	}
-
-	namespace := s.config.Namespace
-	opts := metav1.ListOptions{
-		LabelSelector: "llmsafespace.dev/workspace=" + workspaceID,
-	}
-	list, err := s.k8sClient.LlmsafespaceV1().Sandboxes(namespace).List(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
-	}
-
-	items := make([]types.SandboxListItem, 0, len(list.Items))
-	for _, sb := range list.Items {
-		items = append(items, types.SandboxListItem{
-			ID:     sb.Name,
-			UserID: sb.Labels["user-id"],
-			Status: string(sb.Status.Phase),
-		})
-	}
-	return items, nil
 }
 
 // ListWorkspaceSessions returns session index entries for a workspace.
