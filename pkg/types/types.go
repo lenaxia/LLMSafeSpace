@@ -598,6 +598,7 @@ type Workspace struct {
 	StorageSize string            `json:"storageSize"`
 	Phase       string            `json:"phase"`
 	PVCName     string            `json:"pvcName,omitempty"`
+	SandboxID   string            `json:"sandboxId,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	CreatedAt   time.Time         `json:"createdAt"`
 	UpdatedAt   time.Time         `json:"updatedAt"`
@@ -699,6 +700,16 @@ type AuthConfig struct {
 type ActivateWorkspaceResponse struct {
 	Resumed   string `json:"resumed"`
 	Suspended string `json:"suspended,omitempty"`
+}
+
+// EnsureSessionResponse is returned by POST /workspaces/:id/sessions/new.
+// It guarantees the workspace is active and a sandbox exists, returning the
+// sandbox ID and its current phase so the frontend can poll until Running.
+type EnsureSessionResponse struct {
+	SandboxID    string `json:"sandboxId"`
+	SandboxPhase string `json:"sandboxPhase"`
+	SessionID    string `json:"sessionId"`
+	Resumed      bool   `json:"resumed"`
 }
 
 // SessionListItem is sidebar metadata for a session (NOT message bodies).

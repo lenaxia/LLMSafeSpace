@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,6 +28,7 @@ type Service struct {
 	cacheService   apiinterfaces.CacheService
 	metricsService apiinterfaces.MetricsService
 	sessionIndex   apiinterfaces.SessionIndexService
+	sandboxService apiinterfaces.SandboxService
 	config         *Config
 }
 
@@ -70,6 +73,11 @@ func New(
 // SetSessionIndex injects the session index service. Optional — nil disables session tracking.
 func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
 	s.sessionIndex = si
+}
+
+// SetSandboxService injects the sandbox service for auto-sandbox creation on workspace create.
+func (s *Service) SetSandboxService(sb apiinterfaces.SandboxService) {
+	s.sandboxService = sb
 }
 
 func (s *Service) Start() error {
@@ -139,7 +147,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
-	return &types.Workspace{
+	ws := &types.Workspace{
 		ID:          meta.ID,
 		Name:        meta.Name,
 		UserID:      meta.UserID,
@@ -148,7 +156,28 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		Phase:       string(created.Status.Phase),
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
-	}, nil
+	}
+
+	// Auto-create a sandbox so the user can start chatting immediately.
+	if s.sandboxService != nil {
+		runtime := req.Runtime
+		if runtime == "" {
+			runtime = "base"
+		}
+		sb, err := s.sandboxService.CreateSandbox(ctx, &types.CreateSandboxRequest{
+			Runtime:      runtime,
+			UserID:       userID,
+			WorkspaceRef: ws.ID,
+		})
+		if err != nil {
+			s.logger.Warn("Failed to auto-create sandbox for workspace", "workspaceID", ws.ID, "error", err)
+		} else {
+			ws.SandboxID = sb.ID
+			s.logger.Info("Auto-created sandbox for workspace", "workspaceID", ws.ID, "sandboxID", sb.ID)
+		}
+	}
+
+	return ws, nil
 }
 
 // GetWorkspace retrieves a workspace by ID, verifying owner.
@@ -518,6 +547,165 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 }
 
 // --- Frontend methods (Phase A) ---
+
+// EnsureSession guarantees the workspace has a Running sandbox and creates a
+// new session on it. If the workspace is suspended it resumes it; if no sandbox
+// exists it creates one. Blocks until the sandbox reaches Running, then creates
+// the session via opencode's POST /session endpoint.
+func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error) {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+
+	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return nil, apierrors.NewInternalError("workspace_get_failed", err)
+	}
+
+	resumed := false
+	switch crd.Status.Phase {
+	case v1.WorkspacePhaseSuspended:
+		if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
+			return nil, err
+		}
+		resumed = true
+	case v1.WorkspacePhaseTerminating, v1.WorkspacePhaseTerminated, v1.WorkspacePhaseFailed:
+		return nil, apierrors.NewValidationError(
+			"workspace is not usable",
+			map[string]interface{}{"phase": string(crd.Status.Phase)},
+			fmt.Errorf("workspace %s is in %s phase", workspaceID, crd.Status.Phase),
+		)
+	case v1.WorkspacePhasePending, v1.WorkspacePhaseActive, v1.WorkspacePhaseSuspending, v1.WorkspacePhaseResuming:
+		// These are fine — sandbox creation will proceed and wait.
+	}
+
+	// Find or create sandbox for this workspace.
+	sandboxID, err := s.ensureSandbox(ctx, userID, workspaceID, crd.Spec.DefaultRuntime)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wait for sandbox to reach Running state.
+	podIP, err := s.waitForSandboxRunning(ctx, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create session on the running sandbox.
+	sessionID, err := s.createSessionOnSandbox(ctx, sandboxID, podIP)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.EnsureSessionResponse{
+		SandboxID:    sandboxID,
+		SandboxPhase: "Running",
+		SessionID:    sessionID,
+		Resumed:      resumed,
+	}, nil
+}
+
+// ensureSandbox finds an existing sandbox for the workspace or creates one.
+func (s *Service) ensureSandbox(ctx context.Context, userID, workspaceID, runtime string) (string, error) {
+	sandboxes, err := s.ListWorkspaceSandboxes(ctx, userID, workspaceID)
+	if err != nil {
+		return "", err
+	}
+
+	// Prefer a Running sandbox, then any non-terminated one.
+	for _, sb := range sandboxes {
+		if sb.Phase == "Running" {
+			return sb.ID, nil
+		}
+	}
+	for _, sb := range sandboxes {
+		if sb.Phase != "Terminated" && sb.Phase != "Failed" {
+			return sb.ID, nil
+		}
+	}
+
+	// No usable sandbox — create one.
+	if s.sandboxService == nil {
+		return "", apierrors.NewInternalError("sandbox_service_unavailable", fmt.Errorf("sandbox service not configured"))
+	}
+	if runtime == "" {
+		runtime = "base"
+	}
+	sb, err := s.sandboxService.CreateSandbox(ctx, &types.CreateSandboxRequest{
+		Runtime:      runtime,
+		UserID:       userID,
+		WorkspaceRef: workspaceID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return sb.ID, nil
+}
+
+// waitForSandboxRunning polls the sandbox CRD until it reaches Running or the
+// context is cancelled. Returns the pod IP.
+func (s *Service) waitForSandboxRunning(ctx context.Context, sandboxID string) (string, error) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Use a timeout if the context doesn't already have one.
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	for {
+		sb, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sandboxID, metav1.GetOptions{})
+		if err != nil {
+			return "", apierrors.NewInternalError("sandbox_get_failed", err)
+		}
+		if string(sb.Status.Phase) == "Running" && sb.Status.PodIP != "" {
+			return sb.Status.PodIP, nil
+		}
+		if string(sb.Status.Phase) == "Failed" || string(sb.Status.Phase) == "Terminated" {
+			return "", apierrors.NewInternalError("sandbox_failed", fmt.Errorf("sandbox %s entered %s phase", sandboxID, sb.Status.Phase))
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", apierrors.NewInternalError("sandbox_timeout", fmt.Errorf("timed out waiting for sandbox %s to reach Running", sandboxID))
+		case <-ticker.C:
+		}
+	}
+}
+
+// createSessionOnSandbox calls opencode's POST /session on the sandbox pod.
+func (s *Service) createSessionOnSandbox(ctx context.Context, sandboxID, podIP string) (string, error) {
+	secretName := fmt.Sprintf("sandbox-pw-%s", sandboxID)
+	secret, err := s.k8sClient.Clientset().CoreV1().Secrets(s.config.Namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return "", apierrors.NewInternalError("sandbox_password_failed", err)
+	}
+	password := string(secret.Data["password"])
+
+	url := fmt.Sprintf("http://%s:4096/session", podIP)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return "", apierrors.NewInternalError("session_request_failed", err)
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", apierrors.NewInternalError("session_create_failed", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", apierrors.NewInternalError("session_create_failed", fmt.Errorf("opencode returned %d", resp.StatusCode))
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", apierrors.NewInternalError("session_decode_failed", err)
+	}
+	return result.ID, nil
+}
 
 // ActivateWorkspace resumes a workspace, suspending the stalest active one if at cap.
 func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error) {

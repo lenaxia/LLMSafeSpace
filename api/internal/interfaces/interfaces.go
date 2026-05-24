@@ -130,6 +130,7 @@ type WorkspaceService interface {
 	SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error
 	DeleteCredentials(ctx context.Context, userID, workspaceID string) error
 	ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error)
+	EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error)
 	ListWorkspaceSandboxes(ctx context.Context, userID, workspaceID string) ([]types.SandboxListItem, error)
 	ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error)
 	RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error
