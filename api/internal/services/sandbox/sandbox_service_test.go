@@ -59,10 +59,6 @@ func newFixture(t *testing.T) *fixture {
 	v1i.On("RuntimeEnvironments", "").Return(rte)
 	rte.On("Get", mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
 
-	rte := kmocks.NewMockRuntimeEnvironmentInterface()
-	rte.On("Get", mock.Anything, mock.Anything).Return((*v1.RuntimeEnvironment)(nil), errors.New("not found")).Maybe()
-	v1i.On("RuntimeEnvironments", mock.Anything).Return(rte).Maybe()
-
 	svc, err := New(log, k8s, db, cache, met, wsSvc, &Config{
 		Namespace:      "default",
 		DefaultTimeout: 300,
