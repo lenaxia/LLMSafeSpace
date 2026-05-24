@@ -142,6 +142,15 @@ type SandboxHandler interface {
 	HandleWebSocket(c *gin.Context)
 }
 
+type SessionIndexService interface {
+	RecordMessage(workspaceID, sessionID, title string, at time.Time)
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
+	DeleteByWorkspace(ctx context.Context, workspaceID string) error
+	UpsertTitle(ctx context.Context, workspaceID, sessionID, title string) error
+	Start() error
+	Stop() error
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService

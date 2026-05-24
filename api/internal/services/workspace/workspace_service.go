@@ -25,6 +25,7 @@ type Service struct {
 	dbService      apiinterfaces.DatabaseService
 	cacheService   apiinterfaces.CacheService
 	metricsService apiinterfaces.MetricsService
+	sessionIndex   apiinterfaces.SessionIndexService
 	config         *Config
 }
 
@@ -64,6 +65,11 @@ func New(
 		metricsService: metricsService,
 		config:         config,
 	}, nil
+}
+
+// SetSessionIndex injects the session index service. Optional — nil disables session tracking.
+func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
+	s.sessionIndex = si
 }
 
 func (s *Service) Start() error {
@@ -561,8 +567,10 @@ func (s *Service) ListWorkspaceSessions(ctx context.Context, userID, workspaceID
 	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return nil, err
 	}
-	// TODO: query session_index table once SessionIndexService is wired
-	return []types.SessionListItem{}, nil
+	if s.sessionIndex == nil {
+		return []types.SessionListItem{}, nil
+	}
+	return s.sessionIndex.ListByWorkspace(ctx, workspaceID)
 }
 
 // RenameSession updates the title of a session in the session index.
@@ -570,6 +578,8 @@ func (s *Service) RenameSession(ctx context.Context, userID, workspaceID, sessio
 	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return err
 	}
-	// TODO: upsert into session_index once SessionIndexService is wired
-	return nil
+	if s.sessionIndex == nil {
+		return nil
+	}
+	return s.sessionIndex.UpsertTitle(ctx, workspaceID, sessionID, title)
 }
