@@ -14,6 +14,10 @@ Delete everything sandbox-specific. Drop DB tables. Clean constants. No backward
 - `controller/internal/sandbox/` (entire directory — reconciler)
 - `controller/internal/webhooks/sandbox_webhook.go`
 - `controller/internal/webhooks/sandboxprofile_webhook.go`
+- `controller/internal/common/condition_adapter.go` (sandbox-specific; workspace has its own condition helpers)
+- `controller/internal/common/network_policy_manager.go` (takes `*v1.Sandbox`; workspace builds NetworkPolicy inline)
+- `controller/internal/common/pod_manager.go` (takes `*v1.Sandbox`; workspace builds pod inline)
+- `controller/internal/common/service_manager.go` (takes `*v1.Sandbox`; workspace uses PodIP directly, no Service)
 - `controller/examples/sandbox.yaml`
 - `controller/examples/sandboxprofile.yaml`
 - `controller/examples/test-sandbox.yaml`

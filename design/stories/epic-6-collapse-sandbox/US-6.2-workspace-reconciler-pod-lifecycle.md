@@ -91,7 +91,8 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 | File | Change |
 |------|--------|
 | `controller/internal/workspace/controller.go` | Major rewrite — absorb pod lifecycle |
-| `controller/internal/workspace/runtime_resolver.go` | New — moved from `sandbox/runtime_resolver.go` |
+| `controller/internal/workspace/runtime_resolver.go` | New — moved from `controller/internal/sandbox/runtime_resolver.go` (only imports `v1` + `client`, no circular dep) |
+| `controller/internal/workspace/constants.go` | New — `WorkspaceFinalizer`, `MaxTransientFailures`, `TransientFailureResetWindow` (moved from `common/constants.go`) |
 
 ## Acceptance Criteria
 

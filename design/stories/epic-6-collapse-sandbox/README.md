@@ -172,3 +172,72 @@ Then deploy new images + Helm chart. All existing workspace PVCs are preserved. 
 Data loss accepted:
 - `execution_history`, `file_operations`, `package_installations` DB tables dropped (sandbox-keyed, no migration value)
 - Sandbox pod state lost (expected — PVC data preserved via workspace)
+
+## Package Dependency Map (Post-Collapse)
+
+Import graph after epic completion. No circular dependencies.
+
+```
+pkg/apis/llmsafespace/v1/          ← LEAF (no internal imports)
+  workspace_types.go                  WorkspacePhase, WorkspaceSpec, WorkspaceCondition, PodSecurityContext
+  runtimeenvironment_types.go         RuntimeEnvironment (unchanged)
+
+pkg/interfaces/kubernetes.go       ← imports v1
+  LLMSafespaceV1Interface:            Workspaces(), RuntimeEnvironments()
+  WorkspaceInterface:                 CRUD + Watch
+  RuntimeEnvironmentInterface:        Get, List
+
+pkg/types/types.go                 ← LEAF (no internal imports)
+  API transfer objects only
+
+controller/internal/common/        ← imports v1, controller-runtime
+  utils.go:                           AddFinalizer, RemoveFinalizer, SetCondition, IsPodReady (GENERIC — keep)
+  leader_election.go:                 (GENERIC — keep)
+  metrics.go:                         (GENERIC — keep)
+  constants.go:                       REWRITE: remove all Sandbox*, keep generic labels/annotations
+  condition_adapter.go:               DELETE (sandbox-specific; workspace uses WorkspaceCondition directly)
+  network_policy_manager.go:          DELETE (sandbox-specific; workspace reconciler builds NetworkPolicy inline)
+  pod_manager.go:                     DELETE (sandbox-specific; workspace reconciler builds pod inline per US-6.2)
+  service_manager.go:                 DELETE (sandbox-specific; workspace pods don't need a Service — proxy uses PodIP)
+
+controller/internal/workspace/     ← imports common, v1, controller-runtime
+  controller.go:                      Reconciler (absorbs pod lifecycle from sandbox)
+  runtime_resolver.go:                MOVED from sandbox/ (imports only v1 + controller-runtime/client)
+  constants.go:                       NEW: WorkspaceFinalizer, MaxTransientFailures, TransientFailureResetWindow
+
+api/internal/handlers/             ← imports v1, pkg/interfaces, api/internal/interfaces
+  proxy.go:                           ProxyHandler (workspace-keyed)
+  crd_watcher.go:                     WorkspaceWatcher (watches v1.Workspace)
+  activity.go:                        ActivityTracker (workspace-keyed)
+  sse_tracker.go:                     SSETracker (workspace-keyed)
+
+api/internal/services/workspace/   ← imports v1, pkg/interfaces, api/internal/interfaces
+  workspace_service.go:               All workspace + session operations
+
+pkg/mcp/                           ← imports only net/http (talks to API via REST)
+  client.go:                          HTTPClient (workspace paths only)
+  server.go:                          MCP tool definitions
+```
+
+### Extraction Decisions
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| `runtime_resolver.go` | Move to `controller/internal/workspace/` | Only imports `v1` + `client`. No shared consumers after sandbox deletion. |
+| `MaxTransientFailures`, `TransientFailureResetWindow` | Move to `controller/internal/workspace/constants.go` | Only used by workspace reconciler after collapse. |
+| `common/utils.go` (AddFinalizer, SetCondition, IsPodReady) | Keep in `common/` | Generic utilities used by workspace reconciler and potentially future controllers. |
+| `common/condition_adapter.go` | Delete | Converts `v1.SandboxCondition` ↔ `metav1.Condition`. Workspace uses `WorkspaceCondition` with its own helpers. |
+| `common/pod_manager.go` | Delete | Builds sandbox pods. Workspace reconciler builds pods inline (different spec). |
+| `common/network_policy_manager.go` | Delete | Takes `*v1.Sandbox`. Workspace reconciler creates NetworkPolicy inline from `workspace.Spec.NetworkAccess`. |
+| `common/service_manager.go` | Delete | Creates K8s Service for sandbox. Workspace pods are accessed via PodIP directly (no Service needed). |
+| `common/metrics.go` | Keep in `common/` | Generic Prometheus metrics registration. |
+| `common/leader_election.go` | Keep in `common/` | Generic leader election setup. |
+
+### Circular Import Prevention
+
+No circular imports exist because:
+1. `pkg/apis/llmsafespace/v1/` is a leaf — imports only `k8s.io/apimachinery`
+2. `pkg/interfaces/` imports `v1` but nothing else internal
+3. `controller/internal/workspace/` imports `common` and `v1` — never the reverse
+4. `api/internal/handlers/` imports `v1` and `pkg/interfaces` — never controller packages
+5. `pkg/mcp/` imports nothing internal — communicates via HTTP only
