@@ -108,8 +108,11 @@ runtimeClassName: gvisor  # or kata, firecracker
 ### Docker Compatibility
 
 ```bash
-# Homelab — just works
+# Homelab — just works, no enforcement, root, full access
 docker run -v workspace:/workspace ghcr.io/lenaxia/llmsafespace/base
+
+# Homelab with security opt-in (empty sentinel = defaults)
+docker run -v workspace:/workspace -v ./mode:/etc/llmsafespace/mode ghcr.io/lenaxia/llmsafespace/base
 
 # docker-compose
 services:
@@ -120,6 +123,29 @@ services:
 ```
 
 No sidecars, no special runtime flags, no multi-container orchestration. Single image, single container.
+
+### Sentinel File: `/etc/llmsafespace/mode`
+
+The sentinel controls whether enforcement is active. One file, two behaviors:
+
+| Sentinel State | Behavior |
+|----------------|----------|
+| **Absent** | Docker mode. Daemon exec's opencode directly. Wrappers passthrough. No policy. No UID separation. |
+| **Present (empty)** | Full enforcement with defaults: daemon on socket, UID 1000, all policies active. |
+| **Present (with JSON)** | Full enforcement with custom config. |
+
+Sentinel JSON (all fields optional, shown with defaults):
+```json
+{
+  "enforcement": "full",
+  "daemon": true,
+  "dropToUser": 1000
+}
+```
+
+**Kubernetes**: Controller mounts sentinel as a ConfigMap key at `/etc/llmsafespace/mode`.
+**Docker (opt-in)**: User bind-mounts a file (even an empty one) to activate.
+**Docker (default)**: No sentinel. No enforcement. Agent runs as root with full access.
 
 ### Policy Activation
 
@@ -219,15 +245,16 @@ US-7.8 (delete legacy) ── independent
 
 ## Security Comparison
 
-| Property | Before (V1/current) | After (Epic 7) |
-|----------|---------------------|----------------|
-| Root in container | No | Yes (daemon only, PID 1) |
-| Agent runs as | UID 1000 | UID 1000 (same) |
-| Agent can write /usr/bin | No (read-only rootfs) | No (root-owned, UID 1000 can't write) |
-| Agent can apt install | No | Via daemon only (policy-gated) |
-| Agent can pip/npm install | To /workspace only | Anywhere UID 1000 can write |
-| Container escape risk | Low (non-root) | Medium (root exists) → mitigated by minimal caps + RuntimeClass |
-| Multi-tenant ready | Yes (but agent can't function) | Yes (add RuntimeClass: gvisor) |
+| Property | Before (V1/current) | After — Docker (no sentinel) | After — K8s (sentinel present) |
+|----------|---------------------|------------------------------|-------------------------------|
+| Root in container | No | Yes (everything) | Yes (daemon only, PID 1) |
+| Agent runs as | UID 1000 | root | UID 1000 |
+| Agent can write /usr/bin | No (read-only rootfs) | Yes (root) | No (root-owned, UID 1000 can't write) |
+| Agent can apt install | No | Yes (direct) | Via daemon only (policy-gated) |
+| Agent can pip/npm install | To /workspace only | Anywhere | Anywhere UID 1000 can write (policy-gated) |
+| Policy enforcement | None | None (opt-in via sentinel) | Full (wrappers active) |
+| Container escape risk | Low | N/A (homelab, trusted) | Medium → mitigated by RuntimeClass |
+| Multi-tenant ready | Yes (but agent can't function) | No | Yes (add RuntimeClass: gvisor) |
 
 ## Risks
 

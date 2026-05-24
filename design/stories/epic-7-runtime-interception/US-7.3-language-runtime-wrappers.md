@@ -92,38 +92,31 @@ Loaded from `/etc/llmsafespace/policies/<language>/config.json`. If the file doe
 
 ### No-Policy Passthrough
 
-If no policy config exists for a language, the wrapper does nothing — it immediately exec's the real binary. This is the "unsupported runtimes still work" guarantee.
+Two levels of passthrough:
+
+1. **No sentinel** (`/etc/llmsafespace/mode` absent) — Docker mode. Wrapper exec's real binary immediately. Zero policy enforcement.
+2. **Sentinel present but no policy for this language** — Wrapper exec's real binary. No restrictions for unsupported runtimes.
 
 ```go
-func main() {
-    lang := filepath.Base(os.Args[0]) // "python3", "node", "go"
-    realBin := filepath.Join("/opt/llmsafespace/.bin", lang)
+// Handled by multi-call binary (cmd/wrapper/main.go)
+// Language runtime dispatch:
+func handleLanguageRuntime(name string) {
+    realBin := filepath.Join("/opt/llmsafespace/.bin", name)
     
-    policy, err := loadPolicy(lang)
+    policy, err := loadPolicy(name)
     if err != nil || !policy.Enabled {
         // No policy or disabled — pure passthrough
         syscall.Exec(realBin, os.Args, os.Environ())
     }
     
-    args, env := applyPolicy(lang, policy, os.Args[1:], os.Environ())
-    syscall.Exec(realBin, append([]string{lang}, args...), env)
+    args, env := applyPolicy(name, policy, os.Args[1:], os.Environ())
+    syscall.Exec(realBin, append([]string{name}, args...), env)
 }
 ```
 
-### Same Multi-Call Binary as US-7.2
+### Shared Multi-Call Binary
 
-The wrapper binary from US-7.2 handles both package managers and language runtimes. Dispatch logic:
-
-```go
-func main() {
-    name := filepath.Base(os.Args[0])
-    if isPackageManager(name) {
-        handlePackageManager(name) // US-7.2 path
-    } else {
-        handleLanguageRuntime(name) // this story
-    }
-}
-```
+The wrapper binary from US-7.2 handles both package managers and language runtimes. The main dispatch in `cmd/wrapper/main.go` routes based on `argv[0]`. This story implements the `handleLanguageRuntime` path.
 
 ## Files Modified/Created
 

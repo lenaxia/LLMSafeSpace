@@ -99,7 +99,7 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 
 		cleanClose, err := w.watchOnce()
 		if err != nil {
-			w.logger.Warn("Sandbox watch error; will retry",
+			w.logger.Warn("Workspace watch error; will retry",
 				"error", err.Error(),
 				"backoff", backoff.String())
 			if !sleepCancellable(w.stopCh, backoff) {
@@ -113,7 +113,7 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 		// 5–10 minutes; this is normal. Reconnect immediately and reset
 		// backoff. Log at debug so it doesn't clutter normal operation.
 		if cleanClose {
-			w.logger.Debug("Sandbox watch closed cleanly, reconnecting")
+			w.logger.Debug("Workspace watch closed cleanly, reconnecting")
 			backoff = watchBackoffInitial
 		}
 	}
@@ -162,7 +162,7 @@ func (w *WorkspaceWatcher) watchOnce() (bool, error) {
 			return true, nil
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				w.logger.Debug("Sandbox watch channel closed",
+				w.logger.Debug("Workspace watch channel closed",
 					"livedFor", time.Since(startedAt).String(),
 					"eventCount", eventCount,
 					"resourceVersion", w.getResourceVersion())
@@ -221,10 +221,10 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 
 func (w *WorkspaceWatcher) handleWatchError(status *metav1.Status) {
 	if status == nil {
-		w.logger.Warn("Sandbox watch returned error event with nil status")
+		w.logger.Warn("Workspace watch returned error event with nil status")
 		return
 	}
-	w.logger.Warn("Sandbox watch returned error event",
+	w.logger.Warn("Workspace watch returned error event",
 		"reason", string(status.Reason),
 		"message", status.Message,
 		"code", status.Code)

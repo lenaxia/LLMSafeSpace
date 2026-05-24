@@ -6,38 +6,38 @@ import (
 )
 
 var (
-	// SandboxesCreated tracks the number of sandboxes created
-	SandboxesCreated = prometheus.NewCounterVec(
+	// WorkspaceesCreated tracks the number of workspacees created
+	WorkspaceesCreated = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_sandboxes_created_total",
-			Help: "Number of sandboxes created",
+			Name: "llmsafespace_workspacees_created_total",
+			Help: "Number of workspacees created",
 		},
 		[]string{"runtime", "security_level"},
 	)
 
-	// SandboxesDeleted tracks the number of sandboxes deleted
-	SandboxesDeleted = prometheus.NewCounterVec(
+	// WorkspaceesDeleted tracks the number of workspacees deleted
+	WorkspaceesDeleted = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_sandboxes_deleted_total",
-			Help: "Number of sandboxes deleted",
+			Name: "llmsafespace_workspacees_deleted_total",
+			Help: "Number of workspacees deleted",
 		},
 		[]string{"runtime", "security_level"},
 	)
 
-	// SandboxesRunning tracks the number of sandboxes currently running
-	SandboxesRunning = prometheus.NewGaugeVec(
+	// WorkspaceesRunning tracks the number of workspacees currently running
+	WorkspaceesRunning = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_sandboxes_running",
-			Help: "Number of sandboxes currently running",
+			Name: "llmsafespace_workspacees_running",
+			Help: "Number of workspacees currently running",
 		},
 		[]string{"runtime", "security_level"},
 	)
 
-	// SandboxCreationDuration tracks the time taken to create a sandbox
-	SandboxCreationDuration = prometheus.NewHistogramVec(
+	// WorkspaceCreationDuration tracks the time taken to create a workspace
+	WorkspaceCreationDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_sandbox_creation_duration_seconds",
-			Help:    "Time taken to create a sandbox",
+			Name:    "llmsafespace_workspace_creation_duration_seconds",
+			Help:    "Time taken to create a workspace",
 			Buckets: prometheus.ExponentialBuckets(0.1, 2, 10),
 		},
 		[]string{"runtime", "security_level"},
@@ -46,9 +46,9 @@ var (
 
 func init() {
 	metrics.Registry.MustRegister(
-		SandboxesCreated,
-		SandboxesDeleted,
-		SandboxesRunning,
-		SandboxCreationDuration,
+		WorkspaceesCreated,
+		WorkspaceesDeleted,
+		WorkspaceesRunning,
+		WorkspaceCreationDuration,
 	)
 }

@@ -142,7 +142,7 @@ func TestMockRuntimeEnvironmentInterface_List(t *testing.T) {
 
 func TestMockWatch_ResultChan_ReceivesEvent(t *testing.T) {
 	w := kmocks.NewMockWatch()
-	sb := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
+	sb := &v1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
 
 	go w.SendEvent(watch.Added, sb)
 
@@ -153,8 +153,8 @@ func TestMockWatch_ResultChan_ReceivesEvent(t *testing.T) {
 
 func TestMockWatch_ResultChan_MultipleEvents(t *testing.T) {
 	w := kmocks.NewMockWatch()
-	sb1 := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	sb2 := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-2"}}
+	sb1 := &v1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
+	sb2 := &v1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "sb-2"}}
 
 	go func() {
 		w.SendEvent(watch.Added, sb1)

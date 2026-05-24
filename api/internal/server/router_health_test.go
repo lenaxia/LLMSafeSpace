@@ -38,7 +38,6 @@ func (s *healthMockServices) GetCache() interfaces.CacheService {
 	return s.cache
 }
 func (s *healthMockServices) GetMetrics() interfaces.MetricsService { return s.metrics }
-func (s *healthMockServices) GetSandbox() interfaces.SandboxService { return nil }
 func (s *healthMockServices) GetWorkspace() interfaces.WorkspaceService {
 	return nil
 }

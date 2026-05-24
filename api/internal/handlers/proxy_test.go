@@ -74,7 +74,7 @@ type testEnv struct {
 	handler   *ProxyHandler
 	k8sMock   *k8smocks.MockKubernetesClient
 	llmMock   *k8smocks.MockLLMSafespaceV1Interface
-	sbMock    *k8smocks.MockSandboxInterface
+	sbMock    *k8smocks.MockWorkspaceInterface
 	wsMock    *k8smocks.MockWorkspaceInterface
 	clientset *k8sfake.Clientset
 	backend   *httptest.Server
@@ -110,7 +110,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -125,7 +125,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	require.NoError(t, err)
 
 	router := gin.New()
-	proxy := router.Group("/api/v1/sandboxes/:id")
+	proxy := router.Group("/api/v1/workspaces/:id")
 	{
 		proxy.POST("/sessions", handler.CreateSession)
 		proxy.GET("/sessions", handler.ListSessions)
@@ -149,7 +149,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	}
 }
 
-func (e *testEnv) setupSandboxMulti(sandboxID string, crds ...*v1.Sandbox) {
+func (e *testEnv) setupSandboxMulti(sandboxID string, crds ...*v1.Workspace) {
 	for _, crd := range crds {
 		e.sbMock.On("Get", sandboxID, metav1.GetOptions{}).Return(crd, nil).Once()
 	}
@@ -183,11 +183,11 @@ func (e *testEnv) doRequestWithT(t *testing.T, method, path string, body io.Read
 
 func TestProxy_ProxiesGETRequest(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
@@ -198,12 +198,12 @@ func TestProxy_ProxiesGETRequest(t *testing.T) {
 
 func TestProxy_ProxiesPOSTRequest(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
 	body := strings.NewReader(`{"message":"hello"}`)
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions", body)
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions", body)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
@@ -218,11 +218,11 @@ func TestProxy_SendsBasicAuth(t *testing.T) {
 		capturedUser, capturedPass, _ = r.BasicAuth()
 		w.WriteHeader(http.StatusOK)
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "my-secret-pw")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "my-secret-pw")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "opencode", capturedUser)
 	assert.Equal(t, "my-secret-pw", capturedPass)
@@ -230,11 +230,11 @@ func TestProxy_SendsBasicAuth(t *testing.T) {
 
 func TestProxy_ForwardsQueryParameters(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions?limit=10&offset=0", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions?limit=10&offset=0", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
@@ -253,11 +253,11 @@ func TestProxy_StreamingResponse(t *testing.T) {
 			flusher.Flush()
 		}
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/events", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
 	body := w.Body.String()
@@ -275,11 +275,11 @@ func TestProxy_SSEStreamPassthrough(t *testing.T) {
 		fmt.Fprintf(w, "event: session.status\ndata: {\"type\":\"session.status\",\"session_id\":\"s1\",\"status\":\"idle\"}\n\n")
 		flusher.Flush()
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/events", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "session.status")
 }
@@ -300,7 +300,7 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -310,12 +310,12 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	oldCRD := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	newCRD := makeSandboxCRD("sb-1", "10.0.0.2", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
+	oldCRD := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	newCRD := makeSandboxCRD("ws-1", "10.0.0.2", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
 
-	secret := makePasswordSecret("sb-1", "test-password")
+	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
@@ -327,10 +327,10 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/v1/sandboxes/:id/sessions", handler.ListSessions)
+	router.GET("/api/v1/workspaces/:id/sessions", handler.ListSessions)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -340,7 +340,7 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -350,11 +350,11 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	crd := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil)
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil)
+	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
-	secret := makePasswordSecret("sb-1", "test-password")
+	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
@@ -369,10 +369,10 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/v1/sandboxes/:id/sessions", handler.ListSessions)
+	router.GET("/api/v1/workspaces/:id/sessions", handler.ListSessions)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -396,10 +396,10 @@ func TestProxy_SandboxNotRunning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newTestEnv(t)
-			sb := makeSandboxCRD("sb-1", tt.podIP, tt.phase, "ws-1")
-			env.sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil).Once()
+			sb := makeSandboxCRD("ws-1", tt.podIP, tt.phase, "ws-1")
+			env.sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(sb, nil).Once()
 
-			w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+			w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 			assert.Equal(t, "10", w.Header().Get("Retry-After"))
 		})
@@ -410,65 +410,65 @@ func TestProxy_SandboxNotFound(t *testing.T) {
 	env := newTestEnv(t)
 	env.sbMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-missing/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/sb-missing/sessions", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestProxy_PasswordCachedAfterFirstRead(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w1 := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w1 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w2 := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w2 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w2.Code)
 
-	_, err := env.clientset.CoreV1().Secrets("default").Get(context.Background(), "sandbox-pw-sb-1", metav1.GetOptions{})
+	_, err := env.clientset.CoreV1().Secrets("default").Get(context.Background(), "sandbox-pw-ws-1", metav1.GetOptions{})
 	assert.NoError(t, err, "password should be read from cache on second request")
 }
 
 func TestProxy_SecretNotFound(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "failed to retrieve sandbox credentials")
 }
 
 func TestProxy_EmptyPasswordKey(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "sandbox-pw-sb-1", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sandbox-pw-ws-1", Namespace: "default"},
 		Data:       map[string][]byte{"password": {}},
 	}
 	_, err := env.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestProxy_ActiveSessionLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 2)
 
 	for i := 0; i < 2; i++ {
-		env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 		sid := fmt.Sprintf("session-%d", i)
-		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/sandboxes/sb-1/sessions/%s/message", sid), strings.NewReader(`{"msg":"hi"}`))
+		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{"msg":"hi"}`))
 		assert.Equal(t, http.StatusOK, w.Code, "session %s should succeed", sid)
 	}
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/session-2/message", strings.NewReader(`{"msg":"hi"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/session-2/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, "10", w.Header().Get("Retry-After"))
 
@@ -481,63 +481,63 @@ func TestProxy_ActiveSessionLimit(t *testing.T) {
 
 func TestProxy_AlreadyActiveSessionSucceeds(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w1 := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w2 := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{"msg":"hi2"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w2 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi2"}`))
 	assert.Equal(t, http.StatusOK, w2.Code, "same session should not be double-counted")
 }
 
 func TestProxy_ReadOnlyBypassesSessionLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w1 := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w2 := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions/s1/message", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w2 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", nil)
 	assert.Equal(t, http.StatusOK, w2.Code, "read-only GET history should bypass limit")
 }
 
 func TestProxy_CreateSessionBypassesLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 0)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions", strings.NewReader(`{}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code, "create session should bypass limit")
 }
 
 func TestProxy_AbortBypassesLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 0)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/abort", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", nil)
 	assert.Equal(t, http.StatusOK, w.Code, "abort should bypass limit")
 }
 
 func TestProxy_PromptAsyncEnforcesLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w1 := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/prompt", strings.NewReader(`{"prompt":"hi"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w1 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", strings.NewReader(`{"prompt":"hi"}`))
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w2 := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s2/prompt", strings.NewReader(`{"prompt":"hi"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w2 := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s2/prompt", strings.NewReader(`{"prompt":"hi"}`))
 	assert.Equal(t, http.StatusTooManyRequests, w2.Code, "prompt_async should enforce session limit")
 }
 
@@ -547,36 +547,36 @@ func TestProxy_ConnectionCeiling(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 100)
 
 	for i := 0; i < 10; i++ {
-		env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 	}
-	require.True(t, env.handler.acquireConnection("sb-1"))
+	require.True(t, env.handler.acquireConnection("ws-1"))
 
 	for i := 0; i < 9; i++ {
-		assert.True(t, env.handler.acquireConnection("sb-1"))
+		assert.True(t, env.handler.acquireConnection("ws-1"))
 	}
 
-	assert.False(t, env.handler.acquireConnection("sb-1"), "11th connection should be rejected")
+	assert.False(t, env.handler.acquireConnection("ws-1"), "11th connection should be rejected")
 
-	env.handler.releaseConnection("sb-1")
-	assert.True(t, env.handler.acquireConnection("sb-1"), "connection after release should succeed")
+	env.handler.releaseConnection("ws-1")
+	assert.True(t, env.handler.acquireConnection("ws-1"), "connection after release should succeed")
 }
 
 func TestProxy_ConnectionCeiling_Returns429(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 100)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 
 	env.handler.connMu.Lock()
-	env.handler.connCount["sb-1"] = 10
+	env.handler.connCount["ws-1"] = 10
 	env.handler.connMu.Unlock()
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Contains(t, w.Body.String(), "connection limit reached")
 }
@@ -588,13 +588,13 @@ func TestProxy_EndpointMapping(t *testing.T) {
 		path           string
 		expectedTarget string
 	}{
-		{"create session", "POST", "/api/v1/sandboxes/sb-1/sessions", "/session"},
-		{"list sessions", "GET", "/api/v1/sandboxes/sb-1/sessions", "/session"},
-		{"send message", "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", "/session/s1/message"},
-		{"prompt async", "POST", "/api/v1/sandboxes/sb-1/sessions/s1/prompt", "/session/s1/prompt_async"},
-		{"get history", "GET", "/api/v1/sandboxes/sb-1/sessions/s1/message", "/session/s1/message"},
-		{"abort", "POST", "/api/v1/sandboxes/sb-1/sessions/s1/abort", "/session/s1/abort"},
-		{"events", "GET", "/api/v1/sandboxes/sb-1/events", "/event"},
+		{"create session", "POST", "/api/v1/workspaces/ws-1/sessions", "/session"},
+		{"list sessions", "GET", "/api/v1/workspaces/ws-1/sessions", "/session"},
+		{"send message", "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
+		{"prompt async", "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", "/session/s1/prompt_async"},
+		{"get history", "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
+		{"abort", "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", "/session/s1/abort"},
+		{"events", "GET", "/api/v1/workspaces/ws-1/events", "/event"},
 	}
 
 	for _, tt := range tests {
@@ -605,8 +605,8 @@ func TestProxy_EndpointMapping(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path})
 			})
-			env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-			env.setupPasswordWithT(t, "sb-1", "test-password")
+			env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+			env.setupPasswordWithT(t, "ws-1", "test-password")
 			env.setupWorkspaceWithT(t, "ws-1", 5)
 
 			w := env.doRequestWithT(t, tt.method, tt.path, nil)
@@ -650,35 +650,35 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 			flusher.Flush()
 		}
 	})
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions", strings.NewReader(`{"runtime":"python"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions", strings.NewReader(`{"runtime":"python"}`))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/sess-1/message", strings.NewReader(`{"content":"hello"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/message", strings.NewReader(`{"content":"hello"}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/sess-1/prompt", strings.NewReader(`{"prompt":"do something"}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/prompt", strings.NewReader(`{"prompt":"do something"}`))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions/sess-1/message", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/sess-1/message", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/sess-1/abort", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/abort", nil)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/events", nil)
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	expected := []string{
@@ -698,41 +698,41 @@ func TestProxy_E2E_MultipleSandboxIsolation(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	env.setupPasswordWithT(t, "sb-1", "pw-1")
+	env.setupPasswordWithT(t, "ws-1", "pw-1")
 	env.setupPasswordWithT(t, "sb-2", "pw-2")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 	env.setupWorkspaceWithT(t, "ws-1", 1)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	env.setupSandboxWithT(t, "sb-2", "10.0.0.2", "Running", "ws-1")
-	w = env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-2/sessions/s2/message", strings.NewReader(`{}`))
+	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/sb-2/sessions/s2/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusOK, w.Code, "different sandbox should have independent session tracking")
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w = env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s3/message", strings.NewReader(`{}`))
-	assert.Equal(t, http.StatusTooManyRequests, w.Code, "sb-1 should be at limit")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s3/message", strings.NewReader(`{}`))
+	assert.Equal(t, http.StatusTooManyRequests, w.Code, "ws-1 should be at limit")
 }
 
 func TestProxy_WorkspaceNotFound_UsesDefaults(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-missing")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	for i := 0; i < 6; i++ {
 		env.wsMock.On("Get", "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 	}
 
 	for i := 0; i < 5; i++ {
-		env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-missing")
+		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
 		sid := fmt.Sprintf("s%d", i)
-		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/sandboxes/sb-1/sessions/%s/message", sid), strings.NewReader(`{}`))
+		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{}`))
 		assert.Equal(t, http.StatusOK, w.Code, "session %s with default limit 5 should succeed", sid)
 	}
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-missing")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s6/message", strings.NewReader(`{}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-missing")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s6/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code, "6th session with default limit 5 should be rejected")
 }
 
@@ -741,11 +741,11 @@ func TestProxy_BackendErrorPassthrough(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal opencode error"})
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "internal opencode error")
 }
@@ -755,11 +755,11 @@ func TestProxy_Backend404Passthrough(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "session not found"})
 	})
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions/missing/message", nil)
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/missing/message", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -767,31 +767,31 @@ func TestProxy_CacheInvalidation(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
 
 	handler.pwCacheMu.Lock()
-	handler.pwCache["sb-1"] = "old-password"
+	handler.pwCache["ws-1"] = "old-password"
 	handler.pwCacheMu.Unlock()
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["sb-1"] = workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	handler.activeMu.Lock()
-	handler.activeSess["sb-1"] = map[string]bool{"s1": true}
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
 	handler.activeMu.Unlock()
 
-	handler.invalidateCaches("sb-1")
+	handler.invalidateCaches("ws-1")
 
 	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["sb-1"]
+	_, pwOk := handler.pwCache["ws-1"]
 	handler.pwCacheMu.RUnlock()
 	assert.False(t, pwOk, "password cache should be cleared")
 
 	handler.wsConfigMu.RLock()
-	_, wsOk := handler.wsConfig["sb-1"]
+	_, wsOk := handler.wsConfig["ws-1"]
 	handler.wsConfigMu.RUnlock()
 	assert.False(t, wsOk, "workspace config cache should be cleared")
 
 	handler.activeMu.Lock()
-	_, sessOk := handler.activeSess["sb-1"]
+	_, sessOk := handler.activeSess["ws-1"]
 	handler.activeMu.Unlock()
 	assert.False(t, sessOk, "active sessions should be cleared")
 }
@@ -800,21 +800,21 @@ func TestProxy_PhaseChangeCallback(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
 
 	handler.pwCacheMu.Lock()
-	handler.pwCache["sb-1"] = "password"
+	handler.pwCache["ws-1"] = "password"
 	handler.pwCacheMu.Unlock()
 
 	handler.activeMu.Lock()
-	handler.activeSess["sb-1"] = map[string]bool{"s1": true}
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
 	handler.activeMu.Unlock()
 
 	phases := []string{phaseSuspending, phaseSuspended, phaseTerminating, phaseTerminated}
 	for _, phase := range phases {
-		sb := makeSandboxCRD("sb-1", "10.0.0.1", phase, "ws-1")
+		sb := makeSandboxCRD("ws-1", "10.0.0.1", phase, "ws-1")
 		handler.onPhaseChange(sb)
 	}
 
 	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["sb-1"]
+	_, pwOk := handler.pwCache["ws-1"]
 	handler.pwCacheMu.RUnlock()
 	assert.False(t, pwOk, "phase change to %s should invalidate password cache")
 }
@@ -823,53 +823,34 @@ func TestProxy_PhaseChange_RunningNoInvalidation(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
 
 	handler.pwCacheMu.Lock()
-	handler.pwCache["sb-1"] = "password"
+	handler.pwCache["ws-1"] = "password"
 	handler.pwCacheMu.Unlock()
 
-	sb := makeSandboxCRD("sb-1", "10.0.0.1", phaseRunning, "ws-1")
+	sb := makeSandboxCRD("ws-1", "10.0.0.1", phaseRunning, "ws-1")
 	handler.onPhaseChange(sb)
 
 	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["sb-1"]
+	_, pwOk := handler.pwCache["ws-1"]
 	handler.pwCacheMu.RUnlock()
 	assert.True(t, pwOk, "phase change to Running should NOT invalidate cache")
 }
 
-func TestProxy_NoWorkspaceRef(t *testing.T) {
-	env := newTestEnv(t)
-	sb := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "")
-	env.sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil).Once()
-	env.setupPasswordWithT(t, "sb-1", "test-password")
-
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
-	assert.Equal(t, http.StatusOK, w.Code, "no workspaceRef should use default limit")
-}
-
-func TestProxy_NilRequestBody(t *testing.T) {
-	env := newTestEnv(t)
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	env.setupPasswordWithT(t, "sb-1", "test-password")
-	env.setupWorkspaceWithT(t, "ws-1", 5)
-
-	w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 func TestProxy_ConcurrentRequests(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	for i := 0; i < 5; i++ {
 		env.setupWorkspaceWithT(t, "ws-1", 100)
-		env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 	}
 
 	results := make(chan int, 5)
 	for i := 0; i < 5; i++ {
 		go func() {
-			w := env.doRequestWithT(t, "GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+			w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 			results <- w.Code
 		}()
 	}
@@ -886,18 +867,18 @@ func TestProxy_ConcurrentRequests(t *testing.T) {
 
 func TestProxy_E2E_MaxActiveSessionsCustom(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 3)
 
 	for i := 0; i < 3; i++ {
-		env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+		env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 		sid := fmt.Sprintf("s%d", i)
-		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/sandboxes/sb-1/sessions/%s/message", sid), strings.NewReader(`{}`))
+		w := env.doRequestWithT(t, "POST", fmt.Sprintf("/api/v1/workspaces/ws-1/sessions/%s/message", sid), strings.NewReader(`{}`))
 		assert.Equal(t, http.StatusOK, w.Code)
 	}
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s3/message", strings.NewReader(`{}`))
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s3/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
@@ -905,17 +886,17 @@ func TestProxy_RemoveActiveSession(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
 
 	handler.activeMu.Lock()
-	handler.activeSess["sb-1"] = map[string]bool{"s1": true, "s2": true}
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
 	handler.activeMu.Unlock()
 
-	handler.removeActiveSession("sb-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("sb-1"))
+	handler.removeActiveSession("ws-1", "s1")
+	assert.Equal(t, 1, handler.activeSessionCount("ws-1"))
 
-	handler.removeActiveSession("sb-1", "s2")
-	assert.Equal(t, 0, handler.activeSessionCount("sb-1"))
+	handler.removeActiveSession("ws-1", "s2")
+	assert.Equal(t, 0, handler.activeSessionCount("ws-1"))
 
 	handler.activeMu.Lock()
-	_, exists := handler.activeSess["sb-1"]
+	_, exists := handler.activeSess["ws-1"]
 	handler.activeMu.Unlock()
 	assert.False(t, exists, "empty session set should be cleaned up")
 }
@@ -934,7 +915,7 @@ func TestIsConnectionError(t *testing.T) {
 		isConn bool
 	}{
 		{"connection refused", fmt.Errorf("dial tcp 10.0.0.1:4096: connection refused"), true},
-		{"no such host", fmt.Errorf("dial tcp: lookup sb-1.default.svc: no such host"), true},
+		{"no such host", fmt.Errorf("dial tcp: lookup ws-1.default.svc: no such host"), true},
 		{"connection reset", fmt.Errorf("read tcp: connection reset by peer"), true},
 		{"i/o timeout", fmt.Errorf("dial tcp 10.0.0.1:4096: i/o timeout"), true},
 		{"EOF", fmt.Errorf("unexpected EOF"), true},
@@ -990,15 +971,15 @@ func TestProxy_CustomHTTPClient(t *testing.T) {
 func TestProxy_ConnectionCountTracking(t *testing.T) {
 	h, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
 
-	assert.Equal(t, 0, h.connectionCount("sb-1"))
-	h.acquireConnection("sb-1")
-	assert.Equal(t, 1, h.connectionCount("sb-1"))
-	h.acquireConnection("sb-1")
-	assert.Equal(t, 2, h.connectionCount("sb-1"))
-	h.releaseConnection("sb-1")
-	assert.Equal(t, 1, h.connectionCount("sb-1"))
-	h.releaseConnection("sb-1")
-	assert.Equal(t, 0, h.connectionCount("sb-1"))
+	assert.Equal(t, 0, h.connectionCount("ws-1"))
+	h.acquireConnection("ws-1")
+	assert.Equal(t, 1, h.connectionCount("ws-1"))
+	h.acquireConnection("ws-1")
+	assert.Equal(t, 2, h.connectionCount("ws-1"))
+	h.releaseConnection("ws-1")
+	assert.Equal(t, 1, h.connectionCount("ws-1"))
+	h.releaseConnection("ws-1")
+	assert.Equal(t, 0, h.connectionCount("ws-1"))
 }
 
 func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
@@ -1029,7 +1010,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -1039,7 +1020,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	secret := makePasswordSecret("sb-1", "test-password")
+	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
@@ -1049,8 +1030,8 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
 	require.NoError(t, err)
 
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"), nil,
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
 	)
 
 	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
@@ -1060,42 +1041,42 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	proxy := router.Group("/api/v1/sandboxes/:id")
+	proxy := router.Group("/api/v1/workspaces/:id")
 	proxy.POST("/sessions/:sessionId/message", handler.SendMessage)
 
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"), nil,
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
 	)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
+	req := httptest.NewRequest("POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 1, handler.activeSessionCount("sb-1"), "session s1 should be active")
+	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "session s1 should be active")
 
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"), nil,
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
 	)
 
 	w2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("POST", "/api/v1/sandboxes/sb-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
+	req2 := httptest.NewRequest("POST", "/api/v1/workspaces/ws-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
 	router.ServeHTTP(w2, req2)
 	assert.Equal(t, http.StatusTooManyRequests, w2.Code, "limit of 1 should reject second session")
 
 	idleSignal <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		return handler.activeSessionCount("sb-1") == 0
+		return handler.activeSessionCount("ws-1") == 0
 	}, 3*time.Second, 50*time.Millisecond, "SSE idle event should clear session s1")
 
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(
-		makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1"), nil,
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+		makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1"), nil,
 	)
 
-	handler.sseTracker.StopWatching("sb-1")
+	handler.sseTracker.StopWatching("ws-1")
 
 	w3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest("POST", "/api/v1/sandboxes/sb-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
+	req3 := httptest.NewRequest("POST", "/api/v1/workspaces/ws-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
 	router.ServeHTTP(w3, req3)
 	assert.Equal(t, http.StatusOK, w3.Code, "after SSE idle, new session should succeed")
 }
@@ -1105,41 +1086,41 @@ func TestProxy_E2E_SSEBusyEventAddsActiveSession(t *testing.T) {
 	require.NoError(t, err)
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["sb-1"] = workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
-	handler.onSessionActive("sb-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("sb-1"), "busy event should add session s1")
+	handler.onSessionActive("ws-1", "s1")
+	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "busy event should add session s1")
 
-	handler.onSessionActive("sb-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("sb-1"), "duplicate busy should not double-count")
+	handler.onSessionActive("ws-1", "s1")
+	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "duplicate busy should not double-count")
 
-	handler.onSessionActive("sb-1", "s2")
-	assert.Equal(t, 2, handler.activeSessionCount("sb-1"), "second busy session should be counted")
+	handler.onSessionActive("ws-1", "s2")
+	assert.Equal(t, 2, handler.activeSessionCount("ws-1"), "second busy session should be counted")
 }
 
 func TestProxy_SessionLeak_NotOnConnectionCeilingReject(t *testing.T) {
 	env := newTestEnv(t)
-	env.setupPasswordWithT(t, "sb-1", "test-password")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.setupSandboxWithT(t, "sb-1", "10.0.0.1", "Running", "ws-1")
+	env.setupSandboxWithT(t, "ws-1", "10.0.0.1", "Running", "ws-1")
 
 	env.handler.connMu.Lock()
-	env.handler.connCount["sb-1"] = 10
+	env.handler.connCount["ws-1"] = 10
 	env.handler.connMu.Unlock()
 
-	w := env.doRequestWithT(t, "POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{}`))
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-	assert.Equal(t, 0, env.handler.activeSessionCount("sb-1"),
+	assert.Equal(t, 0, env.handler.activeSessionCount("ws-1"),
 		"session should not leak into active set when connection ceiling rejects")
 }
 
 func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -1149,15 +1130,15 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	secret := makePasswordSecret("sb-1", "test-password")
+	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil)
+	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
@@ -1167,57 +1148,57 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/api/v1/sandboxes/:id/sessions/:sessionId/message", handler.SendMessage)
+	router.POST("/api/v1/workspaces/:id/sessions/:sessionId/message", handler.SendMessage)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", strings.NewReader(`{}`))
+	req := httptest.NewRequest("POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, 0, handler.activeSessionCount("sb-1"),
+	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
 		"active session should be cleaned up when proxy fails with 503")
 }
 
 func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Sandboxes", "default").Return(sbMock)
 
-	crd := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil).Once()
+	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
 	require.NoError(t, err)
 
-	ip := handler.getPodIPForSSE("sb-1")
+	ip := handler.getPodIPForSSE("ws-1")
 	assert.Equal(t, "10.0.0.1", ip)
 }
 
 func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Sandboxes", "default").Return(sbMock)
 
-	crd := makeSandboxCRD("sb-1", "", "Suspended", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil).Once()
+	crd := makeSandboxCRD("ws-1", "", "Suspended", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
 	require.NoError(t, err)
 
-	ip := handler.getPodIPForSSE("sb-1")
+	ip := handler.getPodIPForSSE("ws-1")
 	assert.Equal(t, "", ip)
 }
 
 func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Sandboxes", "default").Return(sbMock)
@@ -1244,13 +1225,13 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 	})
 	handler.sseTracker.SetPodIPResolver(func(sandboxID string) string { return "10.0.0.1" })
 
-	handler.sseTracker.EnsureWatching("sb-1")
+	handler.sseTracker.EnsureWatching("ws-1")
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount())
 
 	phases := []string{phaseSuspending, phaseSuspended, phaseTerminating, phaseTerminated}
 	for _, phase := range phases {
-		handler.sseTracker.EnsureWatching("sb-1")
-		sb := makeSandboxCRD("sb-1", "10.0.0.1", phase, "ws-1")
+		handler.sseTracker.EnsureWatching("ws-1")
+		sb := makeSandboxCRD("ws-1", "10.0.0.1", phase, "ws-1")
 		handler.onPhaseChange(sb)
 		assert.Equal(t, 0, handler.sseTracker.SubscriptionCount(),
 			"SSE subscription should be stopped on phase %s", phase)
@@ -1270,10 +1251,10 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 	})
 	handler.sseTracker.SetPodIPResolver(func(sandboxID string) string { return "10.0.0.1" })
 
-	handler.sseTracker.EnsureWatching("sb-1")
+	handler.sseTracker.EnsureWatching("ws-1")
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount())
 
-	sb := makeSandboxCRD("sb-1", "10.0.0.1", phaseRunning, "ws-1")
+	sb := makeSandboxCRD("ws-1", "10.0.0.1", phaseRunning, "ws-1")
 	handler.onPhaseChange(sb)
 
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
@@ -1283,7 +1264,7 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -1293,15 +1274,15 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	secret := makePasswordSecret("sb-1", "test-password")
+	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil)
+	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
@@ -1314,10 +1295,10 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/v1/sandboxes/:id/sessions", handler.ListSessions)
+	router.GET("/api/v1/workspaces/:id/sessions", handler.ListSessions)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -1337,7 +1318,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -1347,15 +1328,15 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
-	secret := makePasswordSecret("sb-1", "test-pw")
+	secret := makePasswordSecret("ws-1", "test-pw")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	crd := makeSandboxCRD("sb-1", "10.0.0.1", "Running", "ws-1")
-	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(crd, nil)
+	crd := makeSandboxCRD("ws-1", "10.0.0.1", "Running", "ws-1")
+	sbMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
 	require.NoError(t, err)
@@ -1365,10 +1346,10 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/v1/sandboxes/:id/sessions", handler.ListSessions)
+	router.GET("/api/v1/workspaces/:id/sessions", handler.ListSessions)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1383,19 +1364,19 @@ func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
 	handler.activityTracker = tracker
 
 	handler.activeMu.Lock()
-	handler.activeSess["sb-1"] = map[string]bool{"s1": true}
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
 	handler.activeMu.Unlock()
 
-	handler.onSessionIdle("sb-1", "s1")
+	handler.onSessionIdle("ws-1", "s1")
 
 	assert.Equal(t, 0, tracker.PendingCount(),
 		"activity should not be recorded when wsConfig cache is absent (sandbox evicted)")
-	assert.Equal(t, 0, handler.activeSessionCount("sb-1"),
+	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
 		"session should still be removed from active set even when cache is absent")
 }
 
-func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Sandbox {
-	return &v1.Sandbox{
+func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Workspace {
+	return &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "default",
@@ -1404,12 +1385,11 @@ func makeSandboxCRD(name, podIP, phase, workspaceRef string) *v1.Sandbox {
 				"llmsafespace.dev/workspace": workspaceRef,
 			},
 		},
-		Spec: v1.SandboxSpec{
+		Spec: v1.WorkspaceSpec{
 			Runtime:      "python",
-			WorkspaceRef: workspaceRef,
 		},
-		Status: v1.SandboxStatus{
-			Phase: phase,
+		Status: v1.WorkspaceStatus{
+			Phase: v1.WorkspacePhase(phase),
 			PodIP: podIP,
 		},
 	}
