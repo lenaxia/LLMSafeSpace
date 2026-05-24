@@ -85,11 +85,16 @@ export function Sidebar() {
               <p className="text-xs font-medium text-muted-foreground">Sessions</p>
               <button
                 onClick={handleNewSession}
-                className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                disabled={createSessionMutation.isPending}
+                className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                 aria-label="New session"
                 title="New chat"
               >
-                <Plus className="h-3 w-3" />
+                {createSessionMutation.isPending ? (
+                  <span className="block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+                ) : (
+                  <Plus className="h-3 w-3" />
+                )}
               </button>
             </div>
             <WorkspaceSessionList
