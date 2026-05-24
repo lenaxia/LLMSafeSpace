@@ -1,11 +1,20 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { messagesApi } from "../api/messages";
+import { registerTabCloseAbort } from "../api/events";
 import type { Message } from "../api/types";
 
 export function useChatStream(sandboxId: string | undefined, sessionId: string | undefined) {
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const cleanupBeaconRef = useRef<(() => void) | null>(null);
+
+  // Clean up sendBeacon listener when streaming ends or component unmounts
+  useEffect(() => {
+    return () => {
+      cleanupBeaconRef.current?.();
+    };
+  }, []);
 
   const send = useCallback(
     async (text: string, onComplete: (msg: Message) => void) => {
@@ -13,6 +22,9 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
       setStreaming(true);
       setStreamedText("");
       abortRef.current = new AbortController();
+
+      // Register tab-close abort for the duration of streaming
+      cleanupBeaconRef.current = registerTabCloseAbort(sandboxId, sessionId);
 
       try {
         const res = await messagesApi.send(sandboxId, sessionId, {
@@ -43,6 +55,8 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
         setStreaming(false);
         setStreamedText("");
         abortRef.current = null;
+        cleanupBeaconRef.current?.();
+        cleanupBeaconRef.current = null;
       }
     },
     [sandboxId, sessionId],
