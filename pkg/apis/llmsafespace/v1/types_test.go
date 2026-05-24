@@ -408,7 +408,7 @@ func TestWorkspace_JSONRoundTrip(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
 		Spec: WorkspaceSpec{
 			Owner:          WorkspaceOwner{UserID: "user-1"},
-			DefaultRuntime: "python:3.11",
+			Runtime: "python:3.11",
 			SecurityLevel:  "standard",
 			Storage: WorkspaceStorageConfig{
 				Size:             "10Gi",

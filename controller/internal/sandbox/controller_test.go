@@ -402,7 +402,7 @@ func makeWorkspace(name, namespace, pvcName string) *v1.Workspace {
 		},
 		Spec: v1.WorkspaceSpec{
 			Owner:          v1.WorkspaceOwner{UserID: "user-1"},
-			DefaultRuntime: "python:3.11",
+			Runtime: "python:3.11",
 			Storage:        v1.WorkspaceStorageConfig{Size: "10Gi"},
 		},
 		Status: v1.WorkspaceStatus{
