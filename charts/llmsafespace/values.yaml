@@ -370,3 +370,28 @@ webhooks:
   failurePolicy: "Fail"
   # timeoutSeconds for webhook calls. Max 30s.
   timeoutSeconds: 10
+
+# --- Frontend (optional web UI) ---
+frontend:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: llmsafespace/frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  # API base URL injected at container start via docker-entrypoint.sh
+  apiBaseUrl: "/api/v1"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+  ingress:
+    enabled: false
+    className: ""
+    host: "safespace.example.com"
+    tls: false
+    tlsSecret: ""
+    annotations: {}
