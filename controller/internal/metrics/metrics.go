@@ -5,33 +5,33 @@ import (
 )
 
 var (
-	// Sandbox metrics
-	SandboxesCreatedTotal = prometheus.NewCounter(
+	// Workspace metrics
+	WorkspaceesCreatedTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_sandboxes_created_total",
-			Help: "Total number of sandboxes created",
+			Name: "llmsafespace_workspacees_created_total",
+			Help: "Total number of workspacees created",
 		},
 	)
 
-	SandboxesDeletedTotal = prometheus.NewCounter(
+	WorkspaceesDeletedTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_sandboxes_deleted_total",
-			Help: "Total number of sandboxes deleted",
+			Name: "llmsafespace_workspacees_deleted_total",
+			Help: "Total number of workspacees deleted",
 		},
 	)
 
-	SandboxesFailedTotal = prometheus.NewCounterVec(
+	WorkspaceesFailedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_sandboxes_failed_total",
-			Help: "Total number of sandboxes that failed to create",
+			Name: "llmsafespace_workspacees_failed_total",
+			Help: "Total number of workspacees that failed to create",
 		},
 		[]string{"reason"},
 	)
 
-	SandboxStartupDurationSeconds = prometheus.NewHistogramVec(
+	WorkspaceStartupDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_sandbox_startup_duration_seconds",
-			Help:    "Time taken for a sandbox to start up",
+			Name:    "llmsafespace_workspace_startup_duration_seconds",
+			Help:    "Time taken for a workspace to start up",
 			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60},
 		},
 		[]string{"runtime"},
@@ -65,10 +65,10 @@ var (
 // controller-runtime's metrics server for the same port and cause "bind:
 // address already in use" panics.
 func SetupMetrics() {
-	prometheus.MustRegister(SandboxesCreatedTotal)
-	prometheus.MustRegister(SandboxesDeletedTotal)
-	prometheus.MustRegister(SandboxesFailedTotal)
-	prometheus.MustRegister(SandboxStartupDurationSeconds)
+	prometheus.MustRegister(WorkspaceesCreatedTotal)
+	prometheus.MustRegister(WorkspaceesDeletedTotal)
+	prometheus.MustRegister(WorkspaceesFailedTotal)
+	prometheus.MustRegister(WorkspaceStartupDurationSeconds)
 	prometheus.MustRegister(ReconciliationDurationSeconds)
 	prometheus.MustRegister(ReconciliationErrorsTotal)
 }

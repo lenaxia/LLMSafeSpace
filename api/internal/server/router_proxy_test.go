@@ -43,7 +43,7 @@ func (t *proxyRedirectTransport) RoundTrip(req *http.Request) (*http.Response, e
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.Engine, *k8smocks.MockSandboxInterface, *k8sfake.Clientset) {
+func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.Engine, *k8smocks.MockWorkspaceInterface, *k8sfake.Clientset) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -52,7 +52,7 @@ func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	sbMock := k8smocks.NewMockSandboxInterface()
+	sbMock := k8smocks.NewMockWorkspaceInterface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
@@ -96,15 +96,14 @@ func newProxyRouterFixture(t *testing.T, backendHandler http.HandlerFunc) (*gin.
 	return router, sbMock, fakeClientset
 }
 
-func makeSandboxForProxy(sandboxID, userID, podIP, phase string) *v1.Sandbox {
-	return &v1.Sandbox{
+func makeSandboxForProxy(sandboxID, userID, podIP, phase string) *v1.Workspace {
+	return &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxID,
 			Namespace: "default",
 			Labels:    map[string]string{"user-id": userID},
 		},
-		Spec:   v1.SandboxSpec{WorkspaceRef: "ws-1"},
-		Status: v1.SandboxStatus{Phase: phase, PodIP: podIP},
+		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhase(phase), PodIP: podIP},
 	}
 }
 
@@ -125,13 +124,13 @@ var proxyRouteTable = []struct {
 	method string
 	path   string
 }{
-	{http.MethodPost, "/api/v1/sandboxes/sb-1/sessions"},
-	{http.MethodGet, "/api/v1/sandboxes/sb-1/sessions"},
-	{http.MethodPost, "/api/v1/sandboxes/sb-1/sessions/sess-1/message"},
-	{http.MethodPost, "/api/v1/sandboxes/sb-1/sessions/sess-1/prompt"},
-	{http.MethodGet, "/api/v1/sandboxes/sb-1/sessions/sess-1/message"},
-	{http.MethodPost, "/api/v1/sandboxes/sb-1/sessions/sess-1/abort"},
-	{http.MethodGet, "/api/v1/sandboxes/sb-1/events"},
+	{http.MethodPost, "/api/v1/workspaces/sb-1/sessions"},
+	{http.MethodGet, "/api/v1/workspaces/sb-1/sessions"},
+	{http.MethodPost, "/api/v1/workspaces/sb-1/sessions/sess-1/message"},
+	{http.MethodPost, "/api/v1/workspaces/sb-1/sessions/sess-1/prompt"},
+	{http.MethodGet, "/api/v1/workspaces/sb-1/sessions/sess-1/message"},
+	{http.MethodPost, "/api/v1/workspaces/sb-1/sessions/sess-1/abort"},
+	{http.MethodGet, "/api/v1/workspaces/sb-1/events"},
 }
 
 func TestProxyRoutes_Exist(t *testing.T) {
@@ -188,7 +187,7 @@ func TestProxyRoutes_OwnershipCheck_WrongUser_Returns403(t *testing.T) {
 	sb := makeSandboxForProxy("sb-1", "other-user", "10.0.0.1", "Running")
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -203,7 +202,7 @@ func TestProxyRoutes_OwnershipCheck_SandboxNotFound_Returns404(t *testing.T) {
 
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found"))
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -214,7 +213,7 @@ func TestProxyRoutes_OwnershipCheck_SandboxNotFound_Returns404(t *testing.T) {
 func TestProxyRoutes_NoProxyHandler_RoutesNotRegistered(t *testing.T) {
 	router, _ := newRouterFixture(t)
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -234,7 +233,7 @@ func TestProxyRoutes_E2E_ProxiesRequest(t *testing.T) {
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 	addProxyPasswordSecret(t, fakeClientset, "sb-1", "test-pw")
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -249,13 +248,13 @@ func TestProxyRoutes_E2E_EndpointMapping(t *testing.T) {
 		path           string
 		expectedTarget string
 	}{
-		{"POST", "/api/v1/sandboxes/sb-1/sessions", "/session"},
-		{"GET", "/api/v1/sandboxes/sb-1/sessions", "/session"},
-		{"POST", "/api/v1/sandboxes/sb-1/sessions/s1/message", "/session/s1/message"},
-		{"POST", "/api/v1/sandboxes/sb-1/sessions/s1/prompt", "/session/s1/prompt_async"},
-		{"GET", "/api/v1/sandboxes/sb-1/sessions/s1/message", "/session/s1/message"},
-		{"POST", "/api/v1/sandboxes/sb-1/sessions/s1/abort", "/session/s1/abort"},
-		{"GET", "/api/v1/sandboxes/sb-1/events", "/event"},
+		{"POST", "/api/v1/workspaces/sb-1/sessions", "/session"},
+		{"GET", "/api/v1/workspaces/sb-1/sessions", "/session"},
+		{"POST", "/api/v1/workspaces/sb-1/sessions/s1/message", "/session/s1/message"},
+		{"POST", "/api/v1/workspaces/sb-1/sessions/s1/prompt", "/session/s1/prompt_async"},
+		{"GET", "/api/v1/workspaces/sb-1/sessions/s1/message", "/session/s1/message"},
+		{"POST", "/api/v1/workspaces/sb-1/sessions/s1/abort", "/session/s1/abort"},
+		{"GET", "/api/v1/workspaces/sb-1/events", "/event"},
 	}
 
 	for _, tt := range tests {
@@ -302,18 +301,17 @@ func TestProxyRoutes_OwnershipCheck_MissingUserIDLabel_Returns403(t *testing.T) 
 		w.WriteHeader(http.StatusOK)
 	})
 
-	sb := &v1.Sandbox{
+	sb := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-1",
 			Namespace: "default",
 			Labels:    map[string]string{},
 		},
-		Spec:   v1.SandboxSpec{WorkspaceRef: "ws-1"},
-		Status: v1.SandboxStatus{Phase: "Running", PodIP: "10.0.0.1"},
+		Status: v1.WorkspaceStatus{Phase: "Running", PodIP: "10.0.0.1"},
 	}
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -326,18 +324,17 @@ func TestProxyRoutes_OwnershipCheck_NilLabels_Returns403(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	sb := &v1.Sandbox{
+	sb := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sb-1",
 			Namespace: "default",
 			Labels:    nil,
 		},
-		Spec:   v1.SandboxSpec{WorkspaceRef: "ws-1"},
-		Status: v1.SandboxStatus{Phase: "Running", PodIP: "10.0.0.1"},
+		Status: v1.WorkspaceStatus{Phase: "Running", PodIP: "10.0.0.1"},
 	}
 	sbMock.On("Get", "sb-1", metav1.GetOptions{}).Return(sb, nil)
 
-	req, _ := http.NewRequest("GET", "/api/v1/sandboxes/sb-1/sessions", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/workspaces/sb-1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

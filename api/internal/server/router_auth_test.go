@@ -31,7 +31,6 @@ func (s *authMockServices) GetAuth() interfaces.AuthService               { retu
 func (s *authMockServices) GetDatabase() interfaces.DatabaseService       { return s.database }
 func (s *authMockServices) GetCache() interfaces.CacheService             { return s.cache }
 func (s *authMockServices) GetMetrics() interfaces.MetricsService         { return s.metrics }
-func (s *authMockServices) GetSandbox() interfaces.SandboxService         { return nil }
 func (s *authMockServices) GetWorkspace() interfaces.WorkspaceService     { return nil }
 func (s *authMockServices) GetRateLimiter() interfaces.RateLimiterService { return nil }
 

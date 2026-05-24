@@ -3,7 +3,6 @@ package webhooks
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -96,16 +94,8 @@ func TestInjectDecoder(t *testing.T) {
 	s := newScheme(t)
 	dec := admission.NewDecoder(s)
 
-	t.Run("Sandbox", func(t *testing.T) {
-		require.NoError(t, v.InjectDecoder(dec))
-		assert.NotNil(t, v.Decoder)
-	})
 	t.Run("RuntimeEnvironment", func(t *testing.T) {
 		v := &RuntimeEnvironmentValidator{}
-		require.NoError(t, v.InjectDecoder(dec))
-		assert.NotNil(t, v.Decoder)
-	})
-	t.Run("SandboxProfile", func(t *testing.T) {
 		require.NoError(t, v.InjectDecoder(dec))
 		assert.NotNil(t, v.Decoder)
 	})

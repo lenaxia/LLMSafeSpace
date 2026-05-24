@@ -345,5 +345,3 @@ func TestList_DeepCopy(t *testing.T) {
 		assert.Equal(t, "r1", l.Items[0].Name)
 	})
 }
-	})
-}

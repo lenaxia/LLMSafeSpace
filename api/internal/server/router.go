@@ -118,11 +118,9 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	//   - List/Create have no :id yet
 	//   - Service-level methods perform their own ownership/permission checks
 	// The path prefix is shared with the proxy group; Gin dispatches by full
-	// Proxy routes — only registered when a ProxyHandler is provided
+	// Proxy routes — registered within workspace group when a ProxyHandler is provided
 	if proxyHandler != nil {
-		proxyGroup := router.Group("/api/v1/workspaces")
-		proxyGroup.Use(services.GetAuth().AuthMiddleware())
-		registerProxyRoutes(proxyGroup, proxyHandler)
+		registerProxyRoutes(workspaceGroup, proxyHandler)
 	}
 
 	// Metrics endpoint

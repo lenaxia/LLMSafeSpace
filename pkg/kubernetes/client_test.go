@@ -22,7 +22,7 @@ import (
 // conversion to the internal hub version when decoding. Our types have no
 // __internal version, so decoding fails with:
 //
-//	no kind "Sandbox" is registered for the internal version of group
+//	no kind "Workspace" is registered for the internal version of group
 //	"llmsafespace.dev" in scheme "pkg/runtime/scheme.go:100"
 //
 // The fix: use WithoutConversion(), which is the canonical pattern for CRD
@@ -38,7 +38,7 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 	// a Sandbox object with TypeMeta filled in.
 	payload := []byte(`{
 		"apiVersion": "llmsafespace.dev/v1",
-		"kind": "Sandbox",
+		"kind": "Workspace",
 		"metadata": {"name": "sb-1", "namespace": "default", "resourceVersion": "42"},
 		"spec": {"runtime": "base", "securityLevel": "standard", "timeout": 300},
 		"status": {"phase": "Running"}
@@ -56,10 +56,10 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 	obj, _, err := decoder.Decode(payload, nil, nil)
 	require.NoError(t, err, "Sandbox watch payload must decode without conversion errors")
 
-	sb, ok := obj.(*v1.Sandbox)
-	require.True(t, ok, "decoded object must be *v1.Sandbox, got %T", obj)
+	sb, ok := obj.(*v1.Workspace)
+	require.True(t, ok, "decoded object must be *v1.Workspace, got %T", obj)
 	assert.Equal(t, "sb-1", sb.Name)
-	assert.Equal(t, "Running", sb.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhase("Running"), sb.Status.Phase)
 	assert.Equal(t, "42", sb.ResourceVersion)
 }
 
@@ -91,7 +91,7 @@ func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 
 	payload := []byte(`{
 		"apiVersion": "llmsafespace.dev/v1",
-		"kind": "Sandbox",
+		"kind": "Workspace",
 		"metadata": {"name": "sb-1"}
 	}`)
 
@@ -105,11 +105,11 @@ func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 // client_crds.go. Without this registration, even WithoutConversion() codecs
 // can't recognize Sandbox objects.
 func TestSchemeRegisteredWithGroup(t *testing.T) {
-	gvk := schema.GroupVersionKind{Group: "llmsafespace.dev", Version: "v1", Kind: "Sandbox"}
+	gvk := schema.GroupVersionKind{Group: "llmsafespace.dev", Version: "v1", Kind: "Workspace"}
 	obj, err := scheme.Scheme.New(gvk)
 	require.NoError(t, err, "scheme must recognize Sandbox GVK after init()")
-	_, ok := obj.(*v1.Sandbox)
-	assert.True(t, ok, "scheme.New must return *v1.Sandbox, got %T", obj)
+	_, ok := obj.(*v1.Workspace)
+	assert.True(t, ok, "scheme.New must return *v1.Workspace, got %T", obj)
 
 	// metav1 types (Status, WatchEvent) must also be registered in our group
 	// for watch decoding.
