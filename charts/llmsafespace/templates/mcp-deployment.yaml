@@ -1,0 +1,51 @@
+{{- if .Values.mcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-mcp
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  replicas: {{ .Values.mcp.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "llmsafespace.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  template:
+    metadata:
+      labels:
+        {{- include "llmsafespace.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp
+    spec:
+      serviceAccountName: {{ include "llmsafespace.serviceAccountName" . }}
+      containers:
+        - name: mcp
+          image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          args:
+            - "--sse"
+            - "--addr=:{{ .Values.mcp.service.port }}"
+            - "--base-url={{ tpl .Values.mcp.apiBaseUrl . }}"
+            - "--timeout={{ .Values.mcp.timeout }}"
+          env:
+            - name: LLMSAFESPACE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespace.fullname" . }}-secret
+                  key: api-key
+                  optional: true
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /sse
+              port: mcp
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+{{- end }}
