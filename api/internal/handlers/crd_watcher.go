@@ -12,7 +12,7 @@ import (
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
-type PhaseChangeCallback func(sandbox *v1.Sandbox)
+type PhaseChangeCallback func(workspace *v1.Workspace)
 
 // Watch tuning. The apiserver enforces a max watch lifetime of about 60 minutes
 // (default). We pick a shorter explicit timeout so reconnects happen at
@@ -25,7 +25,7 @@ const (
 	watchBackoffMultiplier = 2
 )
 
-type SandboxWatcher struct {
+type WorkspaceWatcher struct {
 	k8sClient            pkginterfaces.KubernetesClient
 	logger               pkginterfaces.LoggerInterface
 	namespace            string
@@ -39,19 +39,19 @@ type SandboxWatcher struct {
 	lastResourceVersionM sync.Mutex
 }
 
-func NewSandboxWatcher(
+func NewWorkspaceWatcher(
 	k8sClient pkginterfaces.KubernetesClient,
 	logger pkginterfaces.LoggerInterface,
 	namespace string,
 	onPhaseChange PhaseChangeCallback,
-) (*SandboxWatcher, error) {
+) (*WorkspaceWatcher, error) {
 	if k8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client cannot be nil")
 	}
 	if onPhaseChange == nil {
 		return nil, fmt.Errorf("phase change callback cannot be nil")
 	}
-	return &SandboxWatcher{
+	return &WorkspaceWatcher{
 		k8sClient:     k8sClient,
 		logger:        logger,
 		namespace:     namespace,
@@ -61,18 +61,18 @@ func NewSandboxWatcher(
 	}, nil
 }
 
-func (w *SandboxWatcher) Start() error {
+func (w *WorkspaceWatcher) Start() error {
 	go w.runWatchLoop()
 	return nil
 }
 
-func (w *SandboxWatcher) Stop() {
+func (w *WorkspaceWatcher) Stop() {
 	w.stopOnce.Do(func() {
 		close(w.stopCh)
 	})
 }
 
-func (w *SandboxWatcher) GetKnownPhase(name string) (string, bool) {
+func (w *WorkspaceWatcher) GetKnownPhase(name string) (string, bool) {
 	w.knownPhasesMu.RLock()
 	defer w.knownPhasesMu.RUnlock()
 	phase, ok := w.knownPhases[name]
@@ -83,9 +83,9 @@ func (w *SandboxWatcher) GetKnownPhase(name string) (string, bool) {
 // lastResourceVersion, then loop calling watchOnce() and reconnecting on clean
 // close or error. Backoff is exponential on error and immediate on clean close
 // (apiserver-driven cycling is the common case and not an error).
-func (w *SandboxWatcher) runWatchLoop() {
+func (w *WorkspaceWatcher) runWatchLoop() {
 	if err := w.seedResourceVersion(); err != nil {
-		w.logger.Warn("Initial List for sandbox watcher failed; will rely on Watch alone",
+		w.logger.Warn("Initial List for workspace watcher failed; will rely on Watch alone",
 			"error", err.Error())
 	}
 
@@ -123,8 +123,8 @@ func (w *SandboxWatcher) runWatchLoop() {
 // the first Watch starts from a known position instead of replaying the world.
 // Failures here are non-fatal: a Watch with empty resourceVersion will still
 // work, it will just return an initial Added event for every existing object.
-func (w *SandboxWatcher) seedResourceVersion() error {
-	list, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).List(metav1.ListOptions{})
+func (w *WorkspaceWatcher) seedResourceVersion() error {
+	list, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).List(metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (w *SandboxWatcher) seedResourceVersion() error {
 // error): cleanClose==true means the channel closed without observing an
 // error event; error!=nil means the Watch couldn't start or an apiserver
 // error event was observed.
-func (w *SandboxWatcher) watchOnce() (bool, error) {
+func (w *WorkspaceWatcher) watchOnce() (bool, error) {
 	w.watchRestartMu.Lock()
 	defer w.watchRestartMu.Unlock()
 
@@ -149,9 +149,9 @@ func (w *SandboxWatcher) watchOnce() (bool, error) {
 	}
 
 	startedAt := time.Now()
-	watcher, err := w.k8sClient.LlmsafespaceV1().Sandboxes(w.namespace).Watch(opts)
+	watcher, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).Watch(opts)
 	if err != nil {
-		return false, fmt.Errorf("starting sandbox watch: %w", err)
+		return false, fmt.Errorf("starting workspace watch: %w", err)
 	}
 	defer watcher.Stop()
 
@@ -189,25 +189,25 @@ func (w *SandboxWatcher) watchOnce() (bool, error) {
 
 // handleEvent updates phase tracking. Bookmark events carry only
 // resourceVersion; we record it and otherwise skip them.
-func (w *SandboxWatcher) handleEvent(event watch.Event) {
+func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	if event.Type == watch.Bookmark {
-		if obj, ok := event.Object.(*v1.Sandbox); ok && obj.ResourceVersion != "" {
+		if obj, ok := event.Object.(*v1.Workspace); ok && obj.ResourceVersion != "" {
 			w.setResourceVersion(obj.ResourceVersion)
 		}
 		return
 	}
 
-	sandbox, ok := event.Object.(*v1.Sandbox)
+	workspace, ok := event.Object.(*v1.Workspace)
 	if !ok {
 		return
 	}
 
-	if sandbox.ResourceVersion != "" {
-		w.setResourceVersion(sandbox.ResourceVersion)
+	if workspace.ResourceVersion != "" {
+		w.setResourceVersion(workspace.ResourceVersion)
 	}
 
-	name := sandbox.Name
-	newPhase := sandbox.Status.Phase
+	name := workspace.Name
+	newPhase := string(workspace.Status.Phase)
 
 	w.knownPhasesMu.Lock()
 	oldPhase, existed := w.knownPhases[name]
@@ -215,11 +215,11 @@ func (w *SandboxWatcher) handleEvent(event watch.Event) {
 	w.knownPhasesMu.Unlock()
 
 	if existed && oldPhase != newPhase {
-		w.onPhaseChange(sandbox)
+		w.onPhaseChange(workspace)
 	}
 }
 
-func (w *SandboxWatcher) handleWatchError(status *metav1.Status) {
+func (w *WorkspaceWatcher) handleWatchError(status *metav1.Status) {
 	if status == nil {
 		w.logger.Warn("Sandbox watch returned error event with nil status")
 		return
@@ -230,13 +230,13 @@ func (w *SandboxWatcher) handleWatchError(status *metav1.Status) {
 		"code", status.Code)
 }
 
-func (w *SandboxWatcher) getResourceVersion() string {
+func (w *WorkspaceWatcher) getResourceVersion() string {
 	w.lastResourceVersionM.Lock()
 	defer w.lastResourceVersionM.Unlock()
 	return w.lastResourceVersion
 }
 
-func (w *SandboxWatcher) setResourceVersion(rv string) {
+func (w *WorkspaceWatcher) setResourceVersion(rv string) {
 	w.lastResourceVersionM.Lock()
 	defer w.lastResourceVersionM.Unlock()
 	w.lastResourceVersion = rv

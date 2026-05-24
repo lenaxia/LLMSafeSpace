@@ -21,9 +21,7 @@ import (
 var (
 	_ interfaces.KubernetesClient            = (*kmocks.MockKubernetesClient)(nil)
 	_ interfaces.LLMSafespaceV1Interface     = (*kmocks.MockLLMSafespaceV1Interface)(nil)
-	_ interfaces.SandboxInterface            = (*kmocks.MockSandboxInterface)(nil)
 	_ interfaces.RuntimeEnvironmentInterface = (*kmocks.MockRuntimeEnvironmentInterface)(nil)
-	_ interfaces.SandboxProfileInterface     = (*kmocks.MockSandboxProfileInterface)(nil)
 	_ watch.Interface                        = (*kmocks.MockWatch)(nil)
 )
 
@@ -83,13 +81,6 @@ func TestMockKubernetesClient_LlmsafespaceV1(t *testing.T) {
 
 // ===== MockLLMSafespaceV1Interface =====
 
-func TestMockLLMSafespaceV1_Sandboxes(t *testing.T) {
-	m := kmocks.NewMockLLMSafespaceV1Interface()
-	sb := kmocks.NewMockSandboxInterface()
-	m.On("Sandboxes", "default").Return(sb)
-	assert.Equal(t, sb, m.Sandboxes("default"))
-	m.AssertExpectations(t)
-}
 
 func TestMockLLMSafespaceV1_RuntimeEnvironments(t *testing.T) {
 	m := kmocks.NewMockLLMSafespaceV1Interface()
@@ -99,122 +90,18 @@ func TestMockLLMSafespaceV1_RuntimeEnvironments(t *testing.T) {
 	m.AssertExpectations(t)
 }
 
-func TestMockLLMSafespaceV1_SandboxProfiles(t *testing.T) {
-	m := kmocks.NewMockLLMSafespaceV1Interface()
-	sp := kmocks.NewMockSandboxProfileInterface()
-	m.On("SandboxProfiles", "default").Return(sp)
-	assert.Equal(t, sp, m.SandboxProfiles("default"))
-	m.AssertExpectations(t)
-}
 
-// ===== MockSandboxInterface =====
 
-func TestMockSandboxInterface_Create_Success(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	in := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	out := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1", ResourceVersion: "1"}}
-	m.On("Create", in).Return(out, nil)
 
-	got, err := m.Create(in)
-	assert.NoError(t, err)
-	assert.Equal(t, "1", got.ResourceVersion)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Create_Error(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	in := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	m.On("Create", in).Return((*v1.Sandbox)(nil), errors.New("already exists"))
 
-	got, err := m.Create(in)
-	assert.Nil(t, got)
-	assert.EqualError(t, err, "already exists")
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Update(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	sb := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	m.On("Update", sb).Return(sb, nil)
-	got, err := m.Update(sb)
-	assert.NoError(t, err)
-	assert.Equal(t, sb.Name, got.Name)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_UpdateStatus(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	sb := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	m.On("UpdateStatus", sb).Return(sb, nil)
-	got, err := m.UpdateStatus(sb)
-	assert.NoError(t, err)
-	assert.Equal(t, sb.Name, got.Name)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Delete_Success(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	m.On("Delete", "sb-1", mock.AnythingOfType("v1.DeleteOptions")).Return(nil)
-	assert.NoError(t, m.Delete("sb-1", metav1.DeleteOptions{}))
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Delete_Error(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	m.On("Delete", "sb-1", mock.Anything).Return(errors.New("not found"))
-	assert.EqualError(t, m.Delete("sb-1", metav1.DeleteOptions{}), "not found")
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Get_Success(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	sb := &v1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}
-	m.On("Get", "sb-1", mock.AnythingOfType("v1.GetOptions")).Return(sb, nil)
-	got, err := m.Get("sb-1", metav1.GetOptions{})
-	assert.NoError(t, err)
-	assert.Equal(t, "sb-1", got.Name)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_Get_Nil(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	m.On("Get", "missing", mock.Anything).Return((*v1.Sandbox)(nil), errors.New("not found"))
-	got, err := m.Get("missing", metav1.GetOptions{})
-	assert.Nil(t, got)
-	assert.Error(t, err)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxInterface_List_Success(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	list := &v1.SandboxList{Items: []v1.Sandbox{{ObjectMeta: metav1.ObjectMeta{Name: "sb-1"}}}}
-	m.On("List", mock.AnythingOfType("v1.ListOptions")).Return(list, nil)
-	got, err := m.List(metav1.ListOptions{})
-	assert.NoError(t, err)
-	assert.Len(t, got.Items, 1)
-	m.AssertExpectations(t)
-}
-
-func TestMockSandboxInterface_List_Nil(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	m.On("List", mock.Anything).Return((*v1.SandboxList)(nil), errors.New("timeout"))
-	got, err := m.List(metav1.ListOptions{})
-	assert.Nil(t, got)
-	assert.Error(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockSandboxInterface_Watch(t *testing.T) {
-	m := kmocks.NewMockSandboxInterface()
-	w := kmocks.NewMockWatch()
-	w.On("Stop").Return()
-	m.On("Watch", mock.Anything).Return(w, nil)
-	got, err := m.Watch(metav1.ListOptions{})
-	assert.NoError(t, err)
-	assert.NotNil(t, got)
-	got.Stop()
-	m.AssertExpectations(t)
-}
 
 // ===== MockRuntimeEnvironmentInterface =====
 
@@ -247,33 +134,9 @@ func TestMockRuntimeEnvironmentInterface_List(t *testing.T) {
 	m.AssertExpectations(t)
 }
 
-// ===== MockSandboxProfileInterface =====
 
-func TestMockSandboxProfileInterface_Create(t *testing.T) {
-	m := kmocks.NewMockSandboxProfileInterface()
-	sp := &v1.SandboxProfile{ObjectMeta: metav1.ObjectMeta{Name: "default-profile"}}
-	m.On("Create", sp).Return(sp, nil)
-	got, err := m.Create(sp)
-	assert.NoError(t, err)
-	assert.Equal(t, "default-profile", got.Name)
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxProfileInterface_Delete(t *testing.T) {
-	m := kmocks.NewMockSandboxProfileInterface()
-	m.On("Delete", "default-profile", mock.Anything).Return(nil)
-	assert.NoError(t, m.Delete("default-profile", metav1.DeleteOptions{}))
-	m.AssertExpectations(t)
-}
 
-func TestMockSandboxProfileInterface_Get_Nil(t *testing.T) {
-	m := kmocks.NewMockSandboxProfileInterface()
-	m.On("Get", "missing", mock.Anything).Return((*v1.SandboxProfile)(nil), errors.New("not found"))
-	got, err := m.Get("missing", metav1.GetOptions{})
-	assert.Nil(t, got)
-	assert.Error(t, err)
-	m.AssertExpectations(t)
-}
 
 // ===== MockWatch =====
 

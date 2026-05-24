@@ -47,11 +47,6 @@ type DatabaseService interface {
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
 	GetAPIKey(ctx context.Context, userID, keyID string) (*types.APIKey, error)
 	DeleteAPIKey(ctx context.Context, userID, keyID string) error
-	GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error)
-	CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error
-	UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error
-	DeleteSandbox(ctx context.Context, sandboxID string) error
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error)
 	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
 	CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
@@ -97,8 +92,6 @@ type RateLimiterService interface {
 
 type MetricsService interface {
 	RecordRequest(method, path string, status int, duration time.Duration, size int)
-	RecordSandboxCreation(runtime string, userID string)
-	RecordSandboxTermination(runtime, reason string)
 	RecordError(errorType, endpoint, code string)
 	IncrementActiveConnections(connType string, userID string)
 	DecrementActiveConnections(connType string, userID string)
@@ -107,17 +100,6 @@ type MetricsService interface {
 	Stop() error
 }
 
-type SandboxService interface {
-	CreateSandbox(ctx context.Context, req *types.CreateSandboxRequest) (*types.Sandbox, error)
-	GetSandbox(ctx context.Context, sandboxID string) (*types.Sandbox, error)
-	ListSandboxes(ctx context.Context, userID string, limit, offset int) (*types.SandboxListResult, error)
-	TerminateSandbox(ctx context.Context, sandboxID string) error
-	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
-	RestartSandbox(ctx context.Context, sandboxID string) error
-	RetrySandbox(ctx context.Context, sandboxID string) error
-	Start() error
-	Stop() error
-}
 
 type WorkspaceService interface {
 	CreateWorkspace(ctx context.Context, userID string, req types.CreateWorkspaceRequest) (*types.Workspace, error)
@@ -137,10 +119,6 @@ type WorkspaceService interface {
 	Stop() error
 }
 
-type SandboxHandler interface {
-	RegisterRoutes(router *gin.RouterGroup)
-	HandleWebSocket(c *gin.Context)
-}
 
 type SessionIndexService interface {
 	RecordMessage(workspaceID, sessionID, title string, at time.Time)
@@ -156,14 +134,11 @@ type Services interface {
 	GetDatabase() DatabaseService
 	GetCache() CacheService
 	GetMetrics() MetricsService
-	GetSandbox() SandboxService
 	GetWorkspace() WorkspaceService
 	GetRateLimiter() RateLimiterService
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient
 type LLMSafespaceV1Interface = k8sinterfaces.LLMSafespaceV1Interface
-type SandboxInterface = k8sinterfaces.SandboxInterface
 type RuntimeEnvironmentInterface = k8sinterfaces.RuntimeEnvironmentInterface
-type SandboxProfileInterface = k8sinterfaces.SandboxProfileInterface
 type WorkspaceInterface = k8sinterfaces.WorkspaceInterface
