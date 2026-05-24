@@ -15,6 +15,7 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // Service implements apiinterfaces.SandboxService.
@@ -365,10 +366,15 @@ func buildCRDFromRequest(req *types.CreateSandboxRequest, workspaceID, namespace
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sb-",
 			Namespace:    namespace,
+			// Runtime values are image-style identifiers like "python:3.11";
+			// the ':' is rejected by K8s label validation, so sanitize. The
+			// canonical (unsanitized) value still lives in spec.runtime; this
+			// label is only for grouping/filtering. See pkg/utilities/labels.go
+			// for the sanitization rules.
 			Labels: map[string]string{
 				"app":                        "llmsafespace",
 				"user-id":                    req.UserID,
-				"runtime":                    req.Runtime,
+				"runtime":                    utilities.SanitizeLabelValue(req.Runtime),
 				"llmsafespace.dev/workspace": workspaceID,
 			},
 			Annotations: map[string]string{
