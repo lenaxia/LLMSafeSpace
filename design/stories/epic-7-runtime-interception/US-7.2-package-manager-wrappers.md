@@ -139,6 +139,28 @@ This avoids needing root for global npm installs. The PATH in the container incl
 | `cmd/wrapper/policy.go` | Policy loading and checking (shared with US-7.3) |
 | `cmd/wrapper/exec.go` | Helper: exec real binary from /opt/llmsafespace/.bin/ |
 
+## Design Note: Wrapper Overwrite Protection
+
+When the daemon runs `apt install python3`, apt installs the real python3 to `/usr/bin/python3` — overwriting our wrapper. The daemon must restore wrappers after every apt operation:
+
+```go
+func (d *Daemon) postInstallRestore() {
+    for _, name := range knownWrappedBinaries {
+        path := canonicalPath(name) // e.g. /usr/bin/python3
+        if isOurWrapper(path) {
+            continue // still our wrapper, nothing to do
+        }
+        // apt overwrote it — relocate the new binary and restore wrapper
+        os.Rename(path, filepath.Join("/opt/llmsafespace/.bin", name))
+        os.Link("/opt/llmsafespace/wrapper", path)
+    }
+}
+```
+
+This runs synchronously after every apt command completes, before returning success to the client. The agent never sees the real binary at the wrapper path.
+
+Alternative (Dockerfile-level): Use `dpkg-divert` for known packages at build time. But this only covers packages known in advance — the post-install hook handles arbitrary packages.
+
 ## Acceptance Criteria
 
 1. `apt install python3` succeeds (forwarded to daemon, installed as root)

@@ -223,11 +223,9 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		return
 	}
 
-	wsCfg, err := h.getMaxSessions(c.Request.Context(), workspaceID, workspaceID)
-	if err != nil {
-		h.logger.Error("Failed to get workspace config", err, "workspaceID", workspaceID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve workspace configuration"})
-		return
+	maxSessions := int(workspace.Spec.MaxActiveSessions)
+	if maxSessions <= 0 {
+		maxSessions = defaultMaxActiveSessions
 	}
 
 	if !h.acquireConnection(workspaceID) {
@@ -241,12 +239,12 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	defer h.releaseConnection(workspaceID)
 
 	if isWriteOp && sessionID != "" {
-		if !h.checkAndAddActiveSession(workspaceID, sessionID, wsCfg.maxActiveSessions) {
+		if !h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions) {
 			h.releaseConnection(workspaceID)
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":             "active session limit reached",
-				"maxActiveSessions": wsCfg.maxActiveSessions,
+				"maxActiveSessions": maxSessions,
 				"retryAfter":        retryAfterSec,
 			})
 			return
@@ -294,13 +292,10 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		return
 	}
 
-	if h.activityTracker != nil && wsCfg.workspaceID != "" {
-		h.activityTracker.Record(wsCfg.workspaceID)
-	} else if h.activityTracker != nil && wsCfg.workspaceID == "" {
-		h.logger.Debug("Skipping activity tracking: workspace activity tracking skipped", "workspaceID", workspaceID)
+	if h.activityTracker != nil {
+		h.activityTracker.Record(workspaceID)
 	}
 }
-
 // doProxy sends the request to the sandbox and writes the response back to
 // the client. When stripPatch is true, JSON responses with status 2xx are
 // buffered in memory so parts of type=="patch" can be removed before being

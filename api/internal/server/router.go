@@ -529,8 +529,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 // registerProxyRoutes adds all /api/v1/sandboxes/:id proxy routes.
 // All routes require authentication and ownership check (applied on the group).
 func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
-	rg.POST("/:id/sessions", proxyHandler.CreateSession)
-	rg.GET("/:id/sessions", proxyHandler.ListSessions)
 	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
 	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
