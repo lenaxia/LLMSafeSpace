@@ -844,6 +844,23 @@ List every file created or modified in this session.
 4. **Write a worklog entry** (see [Worklog Requirements](#worklog-requirements))
 5. Commit everything
 
+### Go module downloads in restricted environments
+
+If `proxy.golang.org` is unreachable (common in sandboxed/air-gapped dev environments), use `GOPROXY=direct` to download modules directly from source repositories (GitHub, etc.):
+
+```bash
+# Download all modules (bypassing proxy.golang.org and sum.golang.org)
+GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go mod download
+
+# Run tests with direct proxy
+GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go test -timeout 120s -short ./...
+
+# Build with direct proxy
+GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go build ./...
+```
+
+This works whenever the source repos (e.g. github.com) are reachable even if the Go module proxy is not.
+
 ---
 
 ## Multi-Agent Workflow
