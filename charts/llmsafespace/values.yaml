@@ -397,7 +397,7 @@ frontend:
     annotations: {}
 
 mcp:
-  enabled: false
+  enabled: true
   replicaCount: 1
   image:
     repository: llmsafespace/mcp
