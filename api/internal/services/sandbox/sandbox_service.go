@@ -533,3 +533,51 @@ func crdResourceStatusToAPI(r *v1.ResourceStatus) *types.ResourceStatus {
 	}
 	return &types.ResourceStatus{CPUUsage: r.CPUUsage, MemoryUsage: r.MemoryUsage}
 }
+
+// RestartSandbox triggers a graceful pod restart by incrementing the CRD's
+// Spec.RestartGeneration. The controller observes the change and recycles
+// the pod. Only works when the sandbox is in Running phase.
+func (s *Service) RestartSandbox(ctx context.Context, sandboxID string) error {
+	start := time.Now()
+	defer func() {
+		s.metricsService.RecordRequest("RestartSandbox", "", 0, time.Since(start), 0)
+	}()
+
+	userID := userIDFromContext(ctx)
+	if userID == "" {
+		return apierrors.NewForbiddenError("User authentication required", fmt.Errorf("no user ID in context"))
+	}
+
+	// Get the CRD directly (not the DB metadata) since we need to patch spec.
+	crd, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return apierrors.NewNotFoundError("sandbox", sandboxID, err)
+	}
+
+	// Ownership check: sandbox must belong to the requesting user.
+	if owner := crd.Labels["user-id"]; owner != "" && owner != userID {
+		return apierrors.NewNotFoundError("sandbox", sandboxID, fmt.Errorf("not found"))
+	}
+
+	// Only Running sandboxes can be restarted.
+	if crd.Status.Phase != "Running" {
+		return &apierrors.APIError{
+			Type:    apierrors.ErrorTypeConflict,
+			Code:    "invalid_phase",
+			Message: fmt.Sprintf("sandbox is in phase %q; restart requires Running", crd.Status.Phase),
+			Err:     fmt.Errorf("invalid phase for restart: %s", crd.Status.Phase),
+		}
+	}
+
+	// Increment RestartGeneration. The controller will observe the change.
+	crd.Spec.RestartGeneration = time.Now().UnixNano()
+
+	if _, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Update(crd); err != nil {
+		s.logger.Error("Failed to update sandbox for restart", err, "sandboxID", sandboxID)
+		return apierrors.NewInternalError("restart_update_failed", err)
+	}
+
+	s.logger.Info("Sandbox restart requested", "sandboxID", sandboxID, "userID", userID,
+		"restartGeneration", crd.Spec.RestartGeneration)
+	return nil
+}

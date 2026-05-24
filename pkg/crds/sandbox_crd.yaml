@@ -32,6 +32,10 @@ spec:
                 workspaceRef:
                   type: string
                   description: "Name of the Workspace this sandbox is attached to (same namespace). Empty means ephemeral storage only."
+                restartGeneration:
+                  type: integer
+                  format: int64
+                  description: "Incremented by the API to request a pod restart. Controller acts when spec > status.observedRestartGeneration."
                 securityLevel:
                   type: string
                   enum: ["standard", "high", "custom"]
@@ -222,6 +226,10 @@ spec:
                   type: string
                   format: date-time
                   description: "Wall-clock time of the most recent transient pod-loss recovery. Used to compute the reset window. Nil when no transient failure has occurred."
+                observedRestartGeneration:
+                  type: integer
+                  format: int64
+                  description: "Last spec.restartGeneration value the controller acted on. Restart triggered when spec > status."
       additionalPrinterColumns:
         - name: Runtime
           type: string

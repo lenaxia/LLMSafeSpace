@@ -43,6 +43,10 @@ func (m *MockSandboxService) TerminateSandbox(ctx context.Context, sandboxID str
 	return m.Called(ctx, sandboxID).Error(0)
 }
 
+func (m *MockSandboxService) RestartSandbox(ctx context.Context, sandboxID string) error {
+	return m.Called(ctx, sandboxID).Error(0)
+}
+
 func (m *MockSandboxService) GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error) {
 	args := m.Called(ctx, sandboxID)
 	if args.Get(0) == nil {
