@@ -23,11 +23,11 @@ import (
 
 const (
 	defaultMaxActiveSessions = 5
-	maxConnectionsPerSandbox = 10
+	maxConnectionsPerWorkspace = 10
 	opencodePort             = 4096
 	retryAfterSec            = 10
 
-	phaseRunning     = "Running"
+	phaseActive = v1.WorkspacePhaseActive
 	phaseSuspending  = "Suspending"
 	phaseSuspended   = "Suspended"
 	phaseTerminating = "Terminating"
@@ -148,69 +148,69 @@ func (h *ProxyHandler) Stop() error {
 }
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
-	h.proxyToSandbox(c, "/session", false, "", false)
+	h.proxyToWorkspace(c, "/session", false, "", false)
 }
 
 func (h *ProxyHandler) ListSessions(c *gin.Context) {
-	h.proxyToSandbox(c, "/session", false, "", false)
+	h.proxyToWorkspace(c, "/session", false, "", false)
 }
 
 func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/message", true, sid, true)
+	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid, true)
 }
 
 func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/prompt_async", true, sid, false)
+	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid, false)
 }
 
 func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/message", false, sid, true)
+	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid, true)
 }
 
 func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToSandbox(c, "/session/"+sid+"/abort", false, sid, false)
+	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid, false)
 }
 
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {
-	h.proxyToSandbox(c, "/event", false, "", false)
+	h.proxyToWorkspace(c, "/event", false, "", false)
 }
 
-// proxyToSandbox forwards the incoming request to the sandbox pod's opencode
+// proxyToWorkspace forwards the incoming request to the workspace pod's opencode
 // server. When filterParts is true and ?verbose=true is NOT set, response
 // parts of type=="patch" are stripped before sending to the client.
-func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWriteOp bool, sessionID string, filterParts bool) {
+func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string, filterParts bool) {
 	workspaceID := c.Param("id")
 	if workspaceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "sandbox ID required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace ID required"})
 		return
 	}
 
-	var sandbox *v1.Workspace
-	// Reuse sandbox CRD if already fetched by ownership middleware (avoids double read)
-	if cached, exists := c.Get("sandbox"); exists {
+	var workspace *v1.Workspace
+	// Reuse workspace CRD if already fetched by ownership middleware (avoids double read)
+	if cached, exists := c.Get("workspace"); exists {
 		if sb, ok := cached.(*v1.Workspace); ok {
-			sandbox = sb
+			workspace = sb
 		}
 	}
-	if sandbox == nil {
+	if workspace == nil {
 		var err error
-		sandbox, err = h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+		workspace, err = h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 		if err != nil {
-			h.logger.Error("Failed to get sandbox CRD", err, "workspaceID", workspaceID)
-			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
+			h.logger.Error("Failed to get workspace CRD", err, "workspaceID", workspaceID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
 			return
 		}
 	}
 
-	if sandbox.Status.Phase != phaseRunning || sandbox.Status.PodIP == "" {
+	if workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
 		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":      "sandbox not ready",
-			"phase":      sandbox.Status.Phase,
+			"error":      "workspace not ready",
+			"phase":      workspace.Status.Phase,
 			"retryAfter": retryAfterSec,
 		})
 		return
@@ -218,12 +218,12 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 
 	password, err := h.getPassword(c.Request.Context(), workspaceID)
 	if err != nil {
-		h.logger.Error("Failed to get sandbox password", err, "workspaceID", workspaceID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve sandbox credentials"})
+		h.logger.Error("Failed to get workspace password", err, "workspaceID", workspaceID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve workspace credentials"})
 		return
 	}
 
-	wsCfg, err := h.getWorkspaceConfig(c.Request.Context(), workspaceID, workspaceID)
+	wsCfg, err := h.getMaxSessions(c.Request.Context(), workspaceID, workspaceID)
 	if err != nil {
 		h.logger.Error("Failed to get workspace config", err, "workspaceID", workspaceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve workspace configuration"})
@@ -268,16 +268,16 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 		}
 	}
 
-	podIP := sandbox.Status.PodIP
+	podIP := workspace.Status.PodIP
 	verbose := c.Query("verbose") == "true"
 	stripPatch := filterParts && !verbose
 	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
 	if proxyErr != nil && isConnectionError(proxyErr) {
-		freshSandbox, getErr := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
-		if getErr == nil && freshSandbox.Status.PodIP != "" && freshSandbox.Status.PodIP != podIP && freshSandbox.Status.Phase == phaseRunning {
-			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshSandbox.Status.PodIP)
-			proxyErr = h.doProxy(c, freshSandbox.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
+		freshWS, getErr := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
+			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
+			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
 		}
 	}
 
@@ -288,7 +288,7 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 		}
 		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":      "sandbox connection failed",
+			"error":      "workspace connection failed",
 			"retryAfter": retryAfterSec,
 		})
 		return
@@ -297,7 +297,7 @@ func (h *ProxyHandler) proxyToSandbox(c *gin.Context, targetPath string, isWrite
 	if h.activityTracker != nil && wsCfg.workspaceID != "" {
 		h.activityTracker.Record(wsCfg.workspaceID)
 	} else if h.activityTracker != nil && wsCfg.workspaceID == "" {
-		h.logger.Debug("Skipping activity tracking: sandbox has no workspaceRef", "workspaceID", workspaceID)
+		h.logger.Debug("Skipping activity tracking: workspace activity tracking skipped", "workspaceID", workspaceID)
 	}
 }
 
@@ -332,7 +332,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("proxy request to sandbox: %w", err)
+		return fmt.Errorf("proxy request to workspace: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -345,7 +345,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	if shouldFilter {
 		raw, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return fmt.Errorf("reading sandbox response: %w", readErr)
+			return fmt.Errorf("reading workspace response: %w", readErr)
 		}
 		filtered, filterErr := stripPatchParts(raw)
 		if filterErr != nil {
@@ -493,7 +493,7 @@ func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (str
 	}
 	h.pwCacheMu.RUnlock()
 
-	secretName := fmt.Sprintf("sandbox-pw-%s", workspaceID)
+	secretName := fmt.Sprintf("workspace-pw-%s", workspaceID)
 	secret, err := h.k8sClient.Clientset().CoreV1().Secrets(h.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("reading password secret %s: %w", secretName, err)
@@ -511,7 +511,7 @@ func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (str
 	return pw, nil
 }
 
-func (h *ProxyHandler) getWorkspaceConfig(ctx context.Context, workspaceID, workspaceRef string) (workspaceConfig, error) {
+func (h *ProxyHandler) getMaxSessions(ctx context.Context, workspaceID, workspaceRef string) (workspaceConfig, error) {
 	h.wsConfigMu.RLock()
 	if cfg, ok := h.wsConfig[workspaceID]; ok {
 		h.wsConfigMu.RUnlock()
@@ -592,7 +592,7 @@ func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
 func (h *ProxyHandler) acquireConnection(workspaceID string) bool {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
-	if h.connCount[workspaceID] >= maxConnectionsPerSandbox {
+	if h.connCount[workspaceID] >= maxConnectionsPerWorkspace {
 		return false
 	}
 	h.connCount[workspaceID]++
@@ -630,18 +630,18 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 	h.activeMu.Unlock()
 }
 
-func (h *ProxyHandler) onPhaseChange(sandbox *v1.Workspace) {
-	phase := sandbox.Status.Phase
+func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
+	phase := workspace.Status.Phase
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
-		h.invalidateCaches(sandbox.Name)
+		h.invalidateCaches(workspace.Name)
 		if h.sseTracker != nil {
-			h.sseTracker.StopWatching(sandbox.Name)
+			h.sseTracker.StopWatching(workspace.Name)
 		}
 		return
 	}
-	if phase == phaseRunning {
+	if phase == phaseActive {
 		h.wsConfigMu.Lock()
-		delete(h.wsConfig, sandbox.Name)
+		delete(h.wsConfig, workspace.Name)
 		h.wsConfigMu.Unlock()
 	}
 }
@@ -667,7 +667,7 @@ func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
 	h.sessionIndex = si
 }
 
-// GetActiveSessions returns the active session IDs for a sandbox.
+// GetActiveSessions returns the active session IDs for a workspace.
 // This is a per-replica view (not globally consistent across API replicas).
 func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
 	h.activeMu.Lock()
@@ -695,19 +695,19 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
-	sandbox, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return ""
 	}
-	if sandbox.Status.Phase != phaseRunning {
+	if workspace.Status.Phase != phaseActive {
 		return ""
 	}
-	return sandbox.Status.PodIP
+	return workspace.Status.PodIP
 }
 
-// GetSandboxCRD retrieves a Sandbox CRD by name. Used by the ownership
+// GetWorkspaceCRD retrieves a Workspace CRD by name. Used by the ownership
 // middleware in the router to verify sandbox ownership before proxying.
-func (h *ProxyHandler) GetSandboxCRD(workspaceID string) (*v1.Workspace, error) {
+func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
 	return h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 }
 

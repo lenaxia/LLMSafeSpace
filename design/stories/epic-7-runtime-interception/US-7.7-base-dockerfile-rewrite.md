@@ -17,19 +17,17 @@ Rewrite `runtimes/base/Dockerfile` to include the system daemon, wrapper binary,
 ```json
 {
   "enforcement": "full",
-  "daemon": true,
-  "dropToUser": 1000
+  "daemon": "/run/llmsafespace/system.sock"
 }
 ```
 
 If the file exists but is empty, defaults apply:
 - `enforcement`: `"full"` (all wrappers enforce policy)
-- `daemon`: `true` (system daemon listens on socket, handles apt)
-- `dropToUser`: `1000` (daemon forks opencode as this UID)
+- `daemon`: `"/run/llmsafespace/system.sock"` (apt wrapper connects here)
 
 If the file does not exist:
 - Wrappers are pure passthrough (exec real binary immediately)
-- Daemon exec's entrypoint-opencode.sh directly as current user (no socket, no forking)
+- No daemon expected (Docker mode — apt works directly as root)
 
 ### Deployment Modes
 
@@ -79,7 +77,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install base tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git jq unzip gosu \
+    bash ca-certificates curl git jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install opencode (existing logic)
@@ -142,47 +140,18 @@ RUN useradd -u 1000 -m -s /bin/bash sandbox
 
 # NOTE: No sentinel file (/etc/llmsafespace/mode) by default.
 # Docker: runs as root, wrappers passthrough, no daemon.
-# Kubernetes: controller mounts sentinel via ConfigMap → full enforcement.
+# Kubernetes: controller mounts sentinel via ConfigMap → wrappers activate.
+#             controller adds daemon sidecar container separately.
 
 WORKDIR /workspace
-ENTRYPOINT ["/usr/local/bin/system-daemon"]
+ENTRYPOINT ["/usr/local/bin/entrypoint-opencode.sh"]
 ```
 
-### Daemon Behavior Based on Sentinel
+### Entrypoint
 
-```go
-// cmd/system-daemon/main.go
-func main() {
-    cfg := loadMode() // reads /etc/llmsafespace/mode
-    
-    if cfg == nil {
-        // No sentinel — Docker mode. Exec opencode directly.
-        syscall.Exec("/usr/local/bin/entrypoint-opencode.sh",
-            []string{"entrypoint-opencode.sh"}, os.Environ())
-    }
-    
-    // Sentinel present — full daemon mode.
-    startSocket(cfg)
-    forkChild(cfg.DropToUser)
-    acceptLoop()
-}
+In Docker: entrypoint runs opencode directly as root. No sentinel, no daemon, no wrappers active.
 
-func loadMode() *ModeConfig {
-    data, err := os.ReadFile("/etc/llmsafespace/mode")
-    if os.IsNotExist(err) {
-        return nil
-    }
-    if len(bytes.TrimSpace(data)) == 0 {
-        return &ModeConfig{Enforcement: "full", Daemon: true, DropToUser: 1000}
-    }
-    var cfg ModeConfig
-    json.Unmarshal(data, &cfg)
-    // Apply defaults for missing fields
-    if cfg.Enforcement == "" { cfg.Enforcement = "full" }
-    if cfg.DropToUser == 0 { cfg.DropToUser = 1000 }
-    return &cfg
-}
-```
+In Kubernetes: same entrypoint runs opencode as UID 1000 (pod security context sets RunAsUser). Wrappers detect sentinel and enforce policy. Daemon is a separate sidecar container.
 
 ### Wrapper Behavior Based on Sentinel
 
@@ -245,10 +214,11 @@ sandbox    1000 /home/sandbox             (writable)
 ## Acceptance Criteria
 
 1. `docker build` succeeds, image <250MB
-2. **Docker mode** (no sentinel): `docker run` → opencode starts as root, `apt install python3` works directly
-3. **K8s mode** (sentinel present): daemon starts, socket created, opencode runs as UID 1000
-4. Wrappers exist at `/usr/bin/apt`, `/usr/bin/python3`, etc.
-5. Real apt binary at `/opt/llmsafespace/.bin/apt` (not accessible to UID 1000 in K8s mode)
+2. **Docker mode** (no sentinel): `docker run` → opencode starts as root, `apt install python3` works directly (wrapper passthrough)
+3. **K8s mode** (sentinel mounted): wrappers enforce policy, apt wrapper connects to daemon socket
+4. Wrappers exist at `/usr/bin/apt`, `/usr/bin/python3`, etc. (hard links to multi-call binary)
+5. Real apt binary at `/opt/llmsafespace/.bin/apt` (root:root 750)
 6. `python3` wrapper with no sentinel → passthrough (or "not installed" if python3 isn't installed)
 7. `python3` wrapper with sentinel → policy enforcement
 8. Image works identically with `docker run`, `docker-compose`, and Kubernetes
+9. System daemon binary exists at `/usr/local/bin/system-daemon` (used by sidecar in K8s)
