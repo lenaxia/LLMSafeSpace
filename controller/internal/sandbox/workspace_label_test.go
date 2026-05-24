@@ -72,9 +72,14 @@ func TestHandleRunning_PodGone_WorkspaceSuspending_SetsSuspended(t *testing.T) {
 }
 
 // Pod NotFound when the parent workspace is NOT suspending → still Failed.
-// This is the regression check that the suspend-aware path doesn't break
-// the legitimate "pod crashed unexpectedly" case.
-func TestHandleRunning_PodGone_WorkspaceActive_StillFailed(t *testing.T) {
+// This is the regression check that the suspend-aware path doesn't conflate
+// active-workspace pod-loss with workspace-driven pod deletion.
+//
+// Post-fix #2 the first occurrence reverts to Pending (not Failed). Multi-loss
+// terminal failure is covered in transient_failure_test.go. The point of this
+// test in the workspace-label suite is to confirm an Active parent workspace
+// does NOT take the suspend-precedence branch.
+func TestHandleRunning_PodGone_WorkspaceActive_FirstTransient_RevertsToPending(t *testing.T) {
 	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-act", Namespace: "default"},
 		Spec: v1.WorkspaceSpec{
@@ -97,8 +102,10 @@ func TestHandleRunning_PodGone_WorkspaceActive_StillFailed(t *testing.T) {
 	updated := &v1.Sandbox{}
 	require.NoError(t, r.Get(context.Background(),
 		types.NamespacedName{Name: "sb-crashed", Namespace: "default"}, updated))
-	assert.Equal(t, common.SandboxPhaseFailed, updated.Status.Phase,
-		"missing-pod under an Active workspace must remain Failed")
+	assert.Equal(t, common.SandboxPhasePending, updated.Status.Phase,
+		"missing-pod under an Active workspace must self-heal to Pending (fix #2), not Failed nor Suspended")
+	assert.Equal(t, int32(1), updated.Status.TransientFailureCount,
+		"transient counter must increment on first occurrence")
 	_ = corev1.PodRunning // keep import
 }
 

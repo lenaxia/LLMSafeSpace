@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -195,6 +196,10 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 			// pod was deleted intentionally by the workspace controller.
 			// Mark the sandbox Suspended so it can be resumed cleanly,
 			// rather than Failed (which would require manual recovery).
+			//
+			// This branch takes precedence over transient-failure recovery:
+			// a workspace-driven pod absence is not "transient", it's
+			// expected. We must not consume a transient-retry slot.
 			if r.parentWorkspaceIsSuspending(ctx, sandbox) {
 				logger.Info("Pod not found and parent workspace is suspending; marking Sandbox Suspended")
 				sandbox.Status.Phase = common.SandboxPhaseSuspended
@@ -205,19 +210,16 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 				return ctrl.Result{}, nil
 			}
 
-			logger.Info("Pod not found, marking sandbox as failed")
-			sandbox.Status.Phase = common.SandboxPhaseFailed
-
-			conditions := sandbox.Status.Conditions
-			common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False", common.ReasonPodNotRunning, "Pod not found")
-			common.SetSandboxCondition(&conditions, common.ConditionReady, "False", common.ReasonPodNotRunning, "Sandbox failed")
-			sandbox.Status.Conditions = conditions
-
-			if err := r.Status().Update(ctx, sandbox); err != nil {
-				logger.Error(err, "Failed to update Sandbox status to Failed")
-				return ctrl.Result{}, err
+			// Fix #2: transient pod absence — self-heal up to MaxTransientFailures
+			// times by reverting to Pending (which causes handlePending to
+			// create a fresh pod). Only the Nth occurrence is terminal.
+			//
+			// At the threshold, mark Failed; recovery requires explicit
+			// POST /sandboxes/:id/retry (fix #5).
+			if sandbox.Status.TransientFailureCount+1 < int32(common.MaxTransientFailures) {
+				return r.recoverFromTransientPodLoss(ctx, sandbox, logger)
 			}
-			return ctrl.Result{}, nil
+			return r.markPodPersistentLossFailed(ctx, sandbox, logger)
 		}
 		logger.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
@@ -253,6 +255,13 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 		return ctrl.Result{}, nil
 	}
 
+	// Fix #2: pod is healthy. If we previously self-healed transient
+	// failures, check whether the recovery-stable window has elapsed and
+	// reset the transient counter. This prevents long-lived sandboxes from
+	// accumulating false "near-failed" state across unrelated incidents
+	// hours or days apart.
+	r.maybeResetTransientCounter(sandbox)
+
 	if sandbox.Spec.Timeout > 0 && sandbox.Status.StartTime != nil {
 		timeout := time.Duration(sandbox.Spec.Timeout) * time.Second
 		if time.Since(sandbox.Status.StartTime.Time) > timeout {
@@ -274,6 +283,101 @@ func (r *SandboxReconciler) handleRunningSandbox(ctx context.Context, sandbox *v
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// recoverFromTransientPodLoss reverts a Running sandbox whose pod has
+// disappeared back to Pending so that handlePending can create a fresh pod.
+// It increments the transient-failure counter and the cumulative restart
+// counter, records the wall-clock time of this loss, and clears stale
+// pod-tracking fields so the next reconcile starts clean.
+//
+// This is the self-heal branch of fix #2. Applies up to
+// MaxTransientFailures-1 times consecutively before
+// markPodPersistentLossFailed takes over.
+func (r *SandboxReconciler) recoverFromTransientPodLoss(ctx context.Context, sandbox *v1.Sandbox, logger logr.Logger) (ctrl.Result, error) {
+	now := metav1.Now()
+	sandbox.Status.Phase = common.SandboxPhasePending
+	sandbox.Status.TransientFailureCount++
+	sandbox.Status.RestartCount++
+	sandbox.Status.LastTransientFailureAt = &now
+
+	// Clear stale pod fields. handlePendingSandbox will create a new pod
+	// and populate them.
+	sandbox.Status.PodName = ""
+	sandbox.Status.PodNamespace = ""
+	sandbox.Status.PodIP = ""
+
+	conditions := sandbox.Status.Conditions
+	common.SetSandboxCondition(&conditions, common.ConditionReady, "False",
+		common.ReasonPodTransientLoss,
+		fmt.Sprintf("Pod missing; self-healing (%d/%d transient retries used)",
+			sandbox.Status.TransientFailureCount, common.MaxTransientFailures))
+	sandbox.Status.Conditions = conditions
+
+	logger.Info("Pod missing while Running; reverting to Pending for self-heal",
+		"transientFailureCount", sandbox.Status.TransientFailureCount,
+		"restartCount", sandbox.Status.RestartCount,
+		"maxTransientFailures", common.MaxTransientFailures)
+
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to update Sandbox status to Pending (transient recovery)")
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+// markPodPersistentLossFailed transitions a sandbox to Failed after the
+// transient-retry threshold has been exhausted. This is the terminal branch
+// of fix #2; recovery requires explicit POST /sandboxes/:id/retry (fix #5).
+func (r *SandboxReconciler) markPodPersistentLossFailed(ctx context.Context, sandbox *v1.Sandbox, logger logr.Logger) (ctrl.Result, error) {
+	sandbox.Status.Phase = common.SandboxPhaseFailed
+	sandbox.Status.TransientFailureCount++
+
+	conditions := sandbox.Status.Conditions
+	common.SetSandboxCondition(&conditions, common.ConditionPodRunning, "False",
+		common.ReasonPodPersistentLoss, "Pod not found after transient-retry threshold exhausted")
+	common.SetSandboxCondition(&conditions, common.ConditionReady, "False",
+		common.ReasonPodPersistentLoss,
+		fmt.Sprintf("Sandbox failed after %d transient pod-loss events; retry via POST /sandboxes/:id/retry",
+			sandbox.Status.TransientFailureCount))
+	sandbox.Status.Conditions = conditions
+
+	logger.Info("Pod missing and transient-retry threshold reached; marking Failed",
+		"transientFailureCount", sandbox.Status.TransientFailureCount,
+		"restartCount", sandbox.Status.RestartCount)
+
+	if err := r.Status().Update(ctx, sandbox); err != nil {
+		logger.Error(err, "Failed to update Sandbox status to Failed (persistent loss)")
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+// maybeResetTransientCounter clears the running transient-failure counter
+// when the sandbox has been continuously healthy for at least
+// TransientFailureResetWindow seconds since the last transient event.
+//
+// This decouples unrelated incidents: two transient losses 12 hours apart
+// should not look like a near-failed sandbox. The counter only matters for
+// rapid sequential failures.
+//
+// Idempotent. Safe to call on every Running reconcile.
+func (r *SandboxReconciler) maybeResetTransientCounter(sandbox *v1.Sandbox) {
+	if sandbox.Status.TransientFailureCount == 0 {
+		return
+	}
+	if sandbox.Status.LastTransientFailureAt == nil {
+		// Defensive: counter > 0 but no timestamp means the controller
+		// missed setting it on a prior recovery (or the field was added
+		// after that recovery). Clear the counter to avoid stuck state.
+		sandbox.Status.TransientFailureCount = 0
+		return
+	}
+	elapsed := time.Since(sandbox.Status.LastTransientFailureAt.Time)
+	if elapsed >= time.Duration(common.TransientFailureResetWindow)*time.Second {
+		sandbox.Status.TransientFailureCount = 0
+		sandbox.Status.LastTransientFailureAt = nil
+	}
 }
 
 func (r *SandboxReconciler) handleSuspendingSandbox(ctx context.Context, sandbox *v1.Sandbox) (ctrl.Result, error) {

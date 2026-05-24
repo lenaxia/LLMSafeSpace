@@ -206,6 +206,22 @@ spec:
                     memoryUsage:
                       type: string
                       description: "Current memory usage"
+                lastActivityAt:
+                  type: string
+                  format: date-time
+                  description: "Timestamp of the most recent API activity. Updated by the API service (not the controller)."
+                restartCount:
+                  type: integer
+                  format: int32
+                  description: "Cumulative pod restarts (any cause) over the sandbox lifetime. Surfaced as a metric/debug aid; never resets."
+                transientFailureCount:
+                  type: integer
+                  format: int32
+                  description: "Running count of consecutive transient pod-loss events the controller has self-healed (fix #2). Resets to 0 after stable Running. Hits MaxTransientFailures (3) → next loss is terminal."
+                lastTransientFailureAt:
+                  type: string
+                  format: date-time
+                  description: "Wall-clock time of the most recent transient pod-loss recovery. Used to compute the reset window. Nil when no transient failure has occurred."
       additionalPrinterColumns:
         - name: Runtime
           type: string
