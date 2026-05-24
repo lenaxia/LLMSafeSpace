@@ -510,3 +510,66 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 		Spec: spec,
 	}
 }
+
+// --- Frontend methods (Phase A) ---
+
+// ActivateWorkspace resumes a workspace, suspending the stalest active one if at cap.
+func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error) {
+	// Verify ownership
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+
+	// Resume the target workspace
+	if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+
+	return &types.ActivateWorkspaceResponse{
+		Resumed: workspaceID,
+	}, nil
+}
+
+// ListWorkspaceSandboxes returns sandboxes attached to a workspace via label selector.
+func (s *Service) ListWorkspaceSandboxes(ctx context.Context, userID, workspaceID string) ([]types.SandboxListItem, error) {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+
+	namespace := s.config.Namespace
+	opts := metav1.ListOptions{
+		LabelSelector: "llmsafespace.dev/workspace=" + workspaceID,
+	}
+	list, err := s.k8sClient.LlmsafespaceV1().Sandboxes(namespace).List(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	items := make([]types.SandboxListItem, 0, len(list.Items))
+	for _, sb := range list.Items {
+		items = append(items, types.SandboxListItem{
+			ID:     sb.Name,
+			UserID: sb.Labels["user-id"],
+			Status: string(sb.Status.Phase),
+		})
+	}
+	return items, nil
+}
+
+// ListWorkspaceSessions returns session index entries for a workspace.
+func (s *Service) ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error) {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+	// TODO: query session_index table once SessionIndexService is wired
+	return []types.SessionListItem{}, nil
+}
+
+// RenameSession updates the title of a session in the session index.
+func (s *Service) RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return err
+	}
+	// TODO: upsert into session_index once SessionIndexService is wired
+	return nil
+}
