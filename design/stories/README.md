@@ -13,6 +13,13 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 4 | MCP server for external LLM tools | 7-8 |
 | 5 | Helm chart | 8-9 |
 
+## V2 Scope (Post-Foundation)
+
+| Epic | Goal | Depends On |
+|------|------|------------|
+| 6 | Collapse Sandbox into Workspace | Epics 1-5 |
+| 7 | Runtime Interception Layer — system daemon, shadow PATH wrappers, RuntimePolicy CRD | Epic 6 |
+
 ## V2.1 (Deferred)
 
 | Story | Reason |
