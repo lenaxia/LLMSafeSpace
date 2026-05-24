@@ -47,6 +47,14 @@ type SandboxSpec struct {
 	// controller compares this to Status.ObservedRestartGeneration; when
 	// spec > status, it gracefully deletes the pod and reverts to Pending.
 	RestartGeneration int64 `json:"restartGeneration,omitempty"`
+
+	// MaxRetries is the maximum number of times a Failed sandbox can be
+	// retried via POST /sandboxes/:id/retry. Default 3. After this many
+	// retries, further retry attempts are rejected with 409.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=3
+	MaxRetries int32 `json:"maxRetries,omitempty"`
 }
 
 // ResourceRequirements defines compute resource requirements.

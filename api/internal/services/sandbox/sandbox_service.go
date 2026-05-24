@@ -581,3 +581,63 @@ func (s *Service) RestartSandbox(ctx context.Context, sandboxID string) error {
 		"restartGeneration", crd.Spec.RestartGeneration)
 	return nil
 }
+
+// RetrySandbox resets a Failed sandbox back to Pending so the controller
+// recreates the pod. Bounded by Spec.MaxRetries (default 3).
+func (s *Service) RetrySandbox(ctx context.Context, sandboxID string) error {
+	start := time.Now()
+	defer func() {
+		s.metricsService.RecordRequest("RetrySandbox", "", 0, time.Since(start), 0)
+	}()
+
+	userID := userIDFromContext(ctx)
+	if userID == "" {
+		return apierrors.NewForbiddenError("User authentication required", fmt.Errorf("no user ID in context"))
+	}
+
+	crd, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).Get(sandboxID, metav1.GetOptions{})
+	if err != nil {
+		return apierrors.NewNotFoundError("sandbox", sandboxID, err)
+	}
+
+	if owner := crd.Labels["user-id"]; owner != "" && owner != userID {
+		return apierrors.NewNotFoundError("sandbox", sandboxID, fmt.Errorf("not found"))
+	}
+
+	if crd.Status.Phase != "Failed" {
+		return &apierrors.APIError{
+			Type:    apierrors.ErrorTypeConflict,
+			Code:    "invalid_phase",
+			Message: fmt.Sprintf("sandbox is in phase %q; retry requires Failed", crd.Status.Phase),
+			Err:     fmt.Errorf("invalid phase for retry: %s", crd.Status.Phase),
+		}
+	}
+
+	maxRetries := crd.Spec.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 3 // default
+	}
+	if crd.Status.RestartCount >= maxRetries {
+		return &apierrors.APIError{
+			Type:    apierrors.ErrorTypeConflict,
+			Code:    "max_retries_exceeded",
+			Message: fmt.Sprintf("sandbox has reached maximum retries (%d/%d)", crd.Status.RestartCount, maxRetries),
+			Err:     fmt.Errorf("max retries exceeded"),
+		}
+	}
+
+	// Reset to Pending. The controller will create a fresh pod.
+	crd.Status.Phase = "Pending"
+	crd.Status.TransientFailureCount = 0
+	crd.Status.PodName = ""
+	crd.Status.PodNamespace = ""
+	crd.Status.PodIP = ""
+
+	if _, err := s.k8sClient.LlmsafespaceV1().Sandboxes(s.config.Namespace).UpdateStatus(crd); err != nil {
+		s.logger.Error("Failed to update sandbox status for retry", err, "sandboxID", sandboxID)
+		return apierrors.NewInternalError("retry_update_failed", err)
+	}
+
+	s.logger.Info("Sandbox retry requested", "sandboxID", sandboxID, "userID", userID)
+	return nil
+}

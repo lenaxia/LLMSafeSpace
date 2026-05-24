@@ -109,6 +109,7 @@ type SandboxService interface {
 	TerminateSandbox(ctx context.Context, sandboxID string) error
 	GetSandboxStatus(ctx context.Context, sandboxID string) (*types.SandboxStatus, error)
 	RestartSandbox(ctx context.Context, sandboxID string) error
+	RetrySandbox(ctx context.Context, sandboxID string) error
 	Start() error
 	Stop() error
 }
