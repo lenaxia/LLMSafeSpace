@@ -88,40 +88,14 @@ func TestHTTPClient_SuspendWorkspace_HappyPath(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// ===== resolveSandbox =====
 
-func TestHTTPClient_ResolveSandbox_HappyPath(t *testing.T) {
-	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/workspaces/ws-1/sandboxes", r.URL.Path)
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	}))
-	defer ts.Close()
 
-	id, err := client.resolveSandbox(context.Background(), "ws-1")
-	require.NoError(t, err)
-	assert.Equal(t, "sb-99", id)
-}
-
-func TestHTTPClient_ResolveSandbox_NoActiveSandbox(t *testing.T) {
-	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{})
-	}))
-	defer ts.Close()
-
-	_, err := client.resolveSandbox(context.Background(), "ws-1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no active sandbox")
-	assert.Contains(t, err.Error(), "workspace_activate")
-}
 
 // ===== CreateSession =====
 
 func TestHTTPClient_CreateSession_HappyPath(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		json.NewEncoder(w).Encode(SessionResp{ID: "sess-1"})
 	})
@@ -134,25 +108,12 @@ func TestHTTPClient_CreateSession_HappyPath(t *testing.T) {
 	assert.Equal(t, "sess-1", resp.ID)
 }
 
-func TestHTTPClient_CreateSession_WorkspaceNotActive(t *testing.T) {
-	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{})
-	}))
-	defer ts.Close()
-
-	_, err := client.CreateSession(context.Background(), "ws-1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no active sandbox")
-}
 
 // ===== GetHistory =====
 
 func TestHTTPClient_GetHistory_HappyPath(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		json.NewEncoder(w).Encode([]Message{
 			{Role: "user", Content: "hi"},
@@ -173,14 +134,11 @@ func TestHTTPClient_GetHistory_HappyPath(t *testing.T) {
 
 func TestHTTPClient_SendMessage_SSEResponse(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		fmt.Fprintf(w, "data: {\"type\":\"content\",\"content\":\"Hello \"}\n\n")
@@ -201,17 +159,14 @@ func TestHTTPClient_SendMessage_SSEResponse(t *testing.T) {
 
 func TestHTTPClient_SendMessage_FallbackToHistory(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
 		// SSE stream closes immediately without session.idle
 		w.Header().Set("Content-Type", "text/event-stream")
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]Message{
 			{Role: "user", Content: "hi"},
 			{Role: "assistant", Content: "fallback response"},
@@ -228,10 +183,7 @@ func TestHTTPClient_SendMessage_FallbackToHistory(t *testing.T) {
 
 func TestHTTPClient_SendMessage_PromptReturns429(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"error":"active session limit reached"}`))
 	})
@@ -246,18 +198,15 @@ func TestHTTPClient_SendMessage_PromptReturns429(t *testing.T) {
 
 func TestHTTPClient_SendMessage_Timeout(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
 		// Block until context cancelled (simulates timeout)
 		w.Header().Set("Content-Type", "text/event-stream")
 		<-r.Context().Done()
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]Message{{Role: "assistant", Content: "timeout fallback"}})
 	})
 
@@ -302,13 +251,10 @@ func TestHTTPClient_MalformedJSONResponse(t *testing.T) {
 
 func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/workspaces/ws-1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]struct{ ID string }{{ID: "sb-99"}})
-	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/api/v1/sandboxes/sb-99/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		// Real SSE streams have comments, retry directives, and event types
@@ -334,29 +280,6 @@ func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
 
 // ===== Input validation (path traversal) =====
 
-func TestHTTPClient_InvalidWorkspaceID(t *testing.T) {
-	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}
-
-	// Path traversal attempt
-	_, err := client.ActivateWorkspace(context.Background(), "../../admin")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid characters")
-
-	// Empty
-	_, err = client.ActivateWorkspace(context.Background(), "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "required")
-
-	// Slashes
-	err = client.SuspendWorkspace(context.Background(), "ws-1/../../hack")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid characters")
-
-	// Valid ID passes validation (will fail on network, but that's fine)
-	_, err = client.resolveSandbox(context.Background(), "ws-valid-123")
-	assert.Error(t, err) // network error, not validation error
-	assert.NotContains(t, err.Error(), "invalid characters")
-}
 
 func TestHTTPClient_InvalidSessionID(t *testing.T) {
 	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}
