@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { messagesApi } from "../api/messages";
 import { registerTabCloseAbort } from "../api/events";
+import { extractStreamText, parseCompleteStream } from "../lib/stream";
 import type { Message } from "../api/types";
 
 export function useChatStream(sandboxId: string | undefined, sessionId: string | undefined) {
@@ -9,11 +10,8 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
   const abortRef = useRef<AbortController | null>(null);
   const cleanupBeaconRef = useRef<(() => void) | null>(null);
 
-  // Clean up sendBeacon listener when streaming ends or component unmounts
   useEffect(() => {
-    return () => {
-      cleanupBeaconRef.current?.();
-    };
+    return () => { cleanupBeaconRef.current?.(); };
   }, []);
 
   const send = useCallback(
@@ -22,8 +20,6 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
       setStreaming(true);
       setStreamedText("");
       abortRef.current = new AbortController();
-
-      // Register tab-close abort for the duration of streaming
       cleanupBeaconRef.current = registerTabCloseAbort(sandboxId, sessionId);
 
       try {
@@ -42,13 +38,21 @@ export function useChatStream(sandboxId: string | undefined, sessionId: string |
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
           accumulated += chunk;
-          setStreamedText(accumulated);
+
+          // Extract displayable text from the accumulated buffer
+          const { displayText } = extractStreamText(accumulated);
+          if (displayText) {
+            setStreamedText(displayText);
+          }
         }
+
+        // Parse the complete response to get final text
+        const finalText = parseCompleteStream(accumulated);
 
         const msg: Message = {
           id: `msg-${Date.now()}`,
           role: "assistant",
-          parts: [{ type: "text", text: accumulated }],
+          parts: [{ type: "text", text: finalText }],
         };
         onComplete(msg);
       } finally {
