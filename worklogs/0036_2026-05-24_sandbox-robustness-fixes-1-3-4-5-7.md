@@ -135,3 +135,27 @@ cd local && ./test.sh
 - `api/internal/services/sandbox/sandbox_service.go` — RestartSandbox, RetrySandbox, requiresCredentials check
 - `api/internal/server/router.go` — POST /:id/restart, POST /:id/retry
 - `local/test.sh` — Tests 10-12 (robustness probes)
+
+
+---
+
+## Addendum: Revalidation Pass (same session)
+
+After completing the 7 planned fixes, performed a full revalidation of all integration points. Found and fixed 3 bugs + added 1 robustness improvement:
+
+### Bug 1: Fix #3 status/spec split (commit 830cc2c)
+- `checkCredentialSecretChanged` called `r.Update()` for both `Spec.RestartGeneration` and `Status.CredentialSecretHash`. With the status subresource enabled, `r.Update()` only persists spec+metadata — the hash would be silently dropped, causing infinite restart loops.
+- Fix: split into `r.Update()` for spec, then `r.Status().Update()` for status.
+
+### Bug 2: Fix #4 runtime name resolution (commit 830cc2c)
+- `Get(req.Runtime, ...)` with names like `python:3.11` always fails (colons invalid in K8s names). The `requiresCredentials` check would never trigger.
+- Fix: added `lookupRuntimeEnvironment()` helper mirroring the controller's resolution strategy (exact name → colon-to-dash).
+
+### Bug 3: AlreadyExists on pod create after restart (commit 5d4edb6)
+- Pod names are deterministic (`sandbox-name-uid8`). After `handleRestartRequest` gracefully deletes a pod, the old pod may still be in Terminating when the immediate requeue tries to create a new one with the same name.
+- Fix: catch `AlreadyExists` in `createSandboxPod` and requeue after 3s.
+
+### Improvement: Liveness/readiness probes (commit ba873ee)
+- Added HTTP probes to `GET :4096/global/health` (opencode's health endpoint per EVOLUTION-V2.md).
+- Readiness: 5s initial, 10s period, 3 failures. Liveness: 15s initial, 30s period, 3 failures.
+- If opencode hangs, kubelet restarts the container; transient-failure handler tracks it.
