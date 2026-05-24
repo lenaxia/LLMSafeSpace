@@ -30,6 +30,11 @@ type RuntimeEnvironmentSpec struct {
 	// ResourceRequirements describes the recommended resource requirements
 	// for this runtime.
 	ResourceRequirements *RuntimeResourceRequirements `json:"resourceRequirements,omitempty"`
+
+	// RequiresCredentials indicates that this runtime needs LLM provider
+	// credentials to function. When true, sandbox creation rejects requests
+	// where the workspace has no credential secret set.
+	RequiresCredentials bool `json:"requiresCredentials,omitempty"`
 }
 
 // RuntimeResourceRequirements defines resource requirements for a runtime.
