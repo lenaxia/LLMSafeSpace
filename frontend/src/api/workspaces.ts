@@ -16,6 +16,8 @@ export const workspacesApi = {
       runtime: params.runtime || "base",
       storageSize: "5Gi",
     }),
+  createSandbox: (workspaceId: string, runtime = "base") =>
+    api.post<{ id: string }>("/sandboxes", { runtime, workspaceRef: workspaceId }),
   getStatus: (id: string) => api.get<WorkspaceStatus>(`/workspaces/${id}/status`),
   activate: (id: string) => api.post<ActivateWorkspaceResponse>(`/workspaces/${id}/activate`),
   suspend: (id: string) => api.post<void>(`/workspaces/${id}/suspend`),
