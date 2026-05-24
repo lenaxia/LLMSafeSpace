@@ -13,7 +13,7 @@ export const workspacesApi = {
   create: (params: { name: string; runtime?: string }) =>
     api.post<{ id: string; name: string }>("/workspaces", {
       name: params.name,
-      runtime: params.runtime || "python:3.11",
+      runtime: params.runtime || "base",
       storageSize: "5Gi",
     }),
   getStatus: (id: string) => api.get<WorkspaceStatus>(`/workspaces/${id}/status`),

@@ -371,6 +371,14 @@ webhooks:
   # timeoutSeconds for webhook calls. Max 30s.
   timeoutSeconds: 10
 
+
+# --- Runtime Environments (seeded CRDs) ---
+runtimeEnvironments:
+  base:
+    image:
+      repository: ghcr.io/lenaxia/llmsafespace/base
+      tag: ""
+
 # --- Frontend (optional web UI) ---
 frontend:
   enabled: false
