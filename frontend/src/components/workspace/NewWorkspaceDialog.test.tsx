@@ -5,31 +5,21 @@ import { render } from "../../test/utils";
 import { NewWorkspaceDialog } from "./NewWorkspaceDialog";
 
 describe("NewWorkspaceDialog", () => {
-  it("renders name input and runtime select", () => {
+  it("renders create and cancel buttons", () => {
     render(<NewWorkspaceDialog onCreate={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByPlaceholderText("Workspace name")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
   });
 
-  it("calls onCreate with name and runtime", async () => {
-    const user = userEvent.setup();
-    const onCreate = vi.fn();
-    render(<NewWorkspaceDialog onCreate={onCreate} onCancel={vi.fn()} />);
-
-    await user.type(screen.getByPlaceholderText("Workspace name"), "my-project");
-    await user.click(screen.getByRole("button", { name: /create/i }));
-
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: "my-project" }));
-  });
-
-  it("does not submit with empty name", async () => {
+  it("calls onCreate with auto-generated name on create click", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn();
     render(<NewWorkspaceDialog onCreate={onCreate} onCancel={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: /create/i }));
-    expect(onCreate).not.toHaveBeenCalled();
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: expect.any(String) }));
+    expect(onCreate.mock.calls[0]![0].name.length).toBeGreaterThan(5);
   });
 
   it("calls onCancel when cancel clicked", async () => {
@@ -39,5 +29,10 @@ describe("NewWorkspaceDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("disables create button when loading", () => {
+    render(<NewWorkspaceDialog onCreate={vi.fn()} onCancel={vi.fn()} loading />);
+    expect(screen.getByRole("button", { name: /creating/i })).toBeDisabled();
   });
 });

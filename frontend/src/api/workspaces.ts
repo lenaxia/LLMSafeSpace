@@ -10,7 +10,7 @@ import type {
 
 export const workspacesApi = {
   list: () => api.get<WorkspaceListResponse>("/workspaces"),
-  create: (params: { name: string; runtime: string }) =>
+  create: (params: { name: string; runtime?: string }) =>
     api.post<{ id: string; name: string }>("/workspaces", params),
   getStatus: (id: string) => api.get<WorkspaceStatus>(`/workspaces/${id}/status`),
   activate: (id: string) => api.post<ActivateWorkspaceResponse>(`/workspaces/${id}/activate`),

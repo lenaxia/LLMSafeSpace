@@ -21,7 +21,7 @@ export function Sidebar() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (params: { name: string; runtime: string }) => workspacesApi.create(params),
+    mutationFn: (params: { name: string }) => workspacesApi.create(params),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowNewWorkspace(false);

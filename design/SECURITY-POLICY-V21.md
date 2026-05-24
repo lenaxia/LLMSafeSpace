@@ -1100,9 +1100,19 @@ status:
     redaction:
       enabled: true
       failMode: "closed"
+      maxInputBytes: 1048576
+      disableBuiltin: ["long-base64"]
+      customPatterns:
+        - pattern: "CORP-[A-Z0-9]{24}"
+          replacement: "[REDACTED-CORP-KEY]"
+          name: "corp-key"
     injectionDetection:
       enabled: true
       action: "log"
+      customPatterns:
+        - pattern: "(?i)run\\s+as\\s+root"
+          name: "root-escalation"
+          severity: "high"
     # Only redaction + injection fields needed by proxy; network/pathShadowing/admission are controller-only
   conditions:
     - type: SecurityPolicyApplied
