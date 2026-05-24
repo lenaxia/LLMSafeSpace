@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,6 +226,21 @@ func TestSessionMessage_MissingMessage(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "message")
+}
+
+func TestSessionMessage_TooLarge(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	bigMsg := strings.Repeat("x", maxMessageSize+1)
+	result, err := h.sessionMessage(context.Background(), makeReq("session_message", map[string]any{
+		"workspace_id": "ws-123",
+		"session_id":   "sess-456",
+		"message":      bigMsg,
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "too large")
 }
 
 func TestSessionMessage_APIError(t *testing.T) {

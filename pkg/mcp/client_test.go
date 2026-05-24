@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,4 +330,87 @@ func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
 	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "hi", 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, "answer", resp)
+}
+
+// ===== Input validation (path traversal) =====
+
+func TestHTTPClient_InvalidWorkspaceID(t *testing.T) {
+	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}
+
+	// Path traversal attempt
+	_, err := client.ActivateWorkspace(context.Background(), "../../admin")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid characters")
+
+	// Empty
+	_, err = client.ActivateWorkspace(context.Background(), "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "required")
+
+	// Slashes
+	err = client.SuspendWorkspace(context.Background(), "ws-1/../../hack")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid characters")
+
+	// Valid ID passes validation (will fail on network, but that's fine)
+	_, err = client.resolveSandbox(context.Background(), "ws-valid-123")
+	assert.Error(t, err) // network error, not validation error
+	assert.NotContains(t, err.Error(), "invalid characters")
+}
+
+func TestHTTPClient_InvalidSessionID(t *testing.T) {
+	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}
+
+	_, err := client.GetHistory(context.Background(), "ws-1", "../../../etc/passwd")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid characters")
+}
+
+// ===== Message size limit =====
+
+func TestHTTPClient_MessageTooLarge(t *testing.T) {
+	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}
+
+	bigMessage := strings.Repeat("x", maxMessageSize+1)
+	_, err := client.SendMessage(context.Background(), "ws-1", "sess-1", bigMessage, 5*time.Second)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "message too large")
+}
+
+// ===== Response body size limit =====
+
+func TestHTTPClient_HugeResponseTruncated(t *testing.T) {
+	// Server returns a response larger than maxResponseBody
+	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Write valid JSON start, then pad with spaces (won't parse as valid WorkspaceResp)
+		w.Write([]byte(`{"id":"ws-1","runtime":"python:3.10","phase":"Active","name":"`))
+		// Write enough to exceed limit
+		for i := 0; i < maxResponseBody/1024; i++ {
+			w.Write(bytes.Repeat([]byte("x"), 1024))
+		}
+		w.Write([]byte(`"}`))
+	}))
+	defer ts.Close()
+
+	_, err := client.CreateWorkspace(context.Background(), CreateWorkspaceReq{Runtime: "python:3.10"})
+	// Should fail with decode error (truncated JSON) rather than OOM
+	assert.Error(t, err)
+}
+
+// ===== Error message sanitization =====
+
+func TestHTTPClient_LongErrorTruncated(t *testing.T) {
+	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		// Simulate a stack trace leak
+		w.Write([]byte(strings.Repeat("internal error details with paths /var/lib/secrets ", 100)))
+	}))
+	defer ts.Close()
+
+	_, err := client.CreateWorkspace(context.Background(), CreateWorkspaceReq{Runtime: "python:3.10"})
+	assert.Error(t, err)
+	// Error should be truncated, not contain the full 5000+ char body
+	assert.Less(t, len(err.Error()), 600)
+	assert.Contains(t, err.Error(), "truncated")
 }

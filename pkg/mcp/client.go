@@ -9,9 +9,37 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
+
+const (
+	// maxResponseBody limits API response reads to 10MB to prevent OOM.
+	maxResponseBody = 10 * 1024 * 1024
+	// maxSSELineSize limits individual SSE event lines to 1MB.
+	maxSSELineSize = 1 * 1024 * 1024
+	// maxSSETotal limits total accumulated SSE content to 50MB.
+	maxSSETotal = 50 * 1024 * 1024
+	// requestTimeout is the default per-request timeout for non-SSE API calls.
+	requestTimeout = 30 * time.Second
+	// maxMessageSize limits the message body sent to session_message.
+	maxMessageSize = 1 * 1024 * 1024 // 1MB
+)
+
+// validID matches safe Kubernetes-style identifiers (alphanumeric, hyphens, dots, max 253 chars).
+var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-]{0,252}$`)
+
+// validateID checks that an ID is safe to embed in a URL path.
+func validateID(id, fieldName string) error {
+	if id == "" {
+		return fmt.Errorf("%s is required", fieldName)
+	}
+	if !validID.MatchString(id) {
+		return fmt.Errorf("%s contains invalid characters", fieldName)
+	}
+	return nil
+}
 
 // APIClient defines the interface for calling the LLMSafeSpace REST API.
 // All operations are workspace-centric — the sandbox layer is internal.
@@ -64,6 +92,13 @@ type HTTPClient struct {
 }
 
 func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body any, result any) error {
+	// Apply per-request timeout if context has no deadline
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+	}
+
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -88,13 +123,21 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	defer resp.Body.Close()
 
+	// Limit response body reads to prevent OOM
+	limited := io.LimitReader(resp.Body, maxResponseBody)
+
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		respBody, _ := io.ReadAll(limited)
+		// Sanitize: truncate long error bodies to avoid leaking internal details
+		errMsg := string(respBody)
+		if len(errMsg) > 512 {
+			errMsg = errMsg[:512] + "...(truncated)"
+		}
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, errMsg)
 	}
 
 	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		if err := json.NewDecoder(limited).Decode(result); err != nil {
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}
@@ -110,6 +153,9 @@ func (c *HTTPClient) CreateWorkspace(ctx context.Context, req CreateWorkspaceReq
 }
 
 func (c *HTTPClient) ActivateWorkspace(ctx context.Context, workspaceID string) (*ActivateResp, error) {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return nil, err
+	}
 	var resp ActivateResp
 	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/activate", nil, &resp); err != nil {
 		return nil, err
@@ -118,6 +164,9 @@ func (c *HTTPClient) ActivateWorkspace(ctx context.Context, workspaceID string) 
 }
 
 func (c *HTTPClient) SuspendWorkspace(ctx context.Context, workspaceID string) error {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return err
+	}
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/suspend", nil, nil)
 }
 
@@ -135,6 +184,9 @@ func (c *HTTPClient) CreateSession(ctx context.Context, workspaceID string) (*Se
 }
 
 func (c *HTTPClient) GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error) {
+	if err := validateID(sessionID, "session_id"); err != nil {
+		return nil, err
+	}
 	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -149,6 +201,13 @@ func (c *HTTPClient) GetHistory(ctx context.Context, workspaceID, sessionID stri
 // SendMessage sends a prompt via prompt_async, then subscribes to SSE events
 // until session.idle is received or timeout expires.
 func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error) {
+	if err := validateID(sessionID, "session_id"); err != nil {
+		return "", err
+	}
+	if len(message) > maxMessageSize {
+		return "", fmt.Errorf("message too large (%d bytes, max %d)", len(message), maxMessageSize)
+	}
+
 	sandboxID, err := c.resolveSandbox(ctx, workspaceID)
 	if err != nil {
 		return "", err
@@ -183,8 +242,14 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineSize)
+
 	var response strings.Builder
 	for scanner.Scan() {
+		// Guard against unbounded accumulation
+		if response.Len() > maxSSETotal {
+			break
+		}
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
@@ -225,6 +290,9 @@ func (c *HTTPClient) fallbackHistory(ctx context.Context, sandboxID, sessionID s
 
 // resolveSandbox finds the active sandbox for a workspace via GET /workspaces/:id/sandboxes.
 func (c *HTTPClient) resolveSandbox(ctx context.Context, workspaceID string) (string, error) {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return "", err
+	}
 	var sandboxes []struct {
 		ID string `json:"id"`
 	}
