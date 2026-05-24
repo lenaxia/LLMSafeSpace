@@ -1,0 +1,1314 @@
+# Frontend Design — LLMSafeSpace V2 Chat Portal ("Safe Space")
+
+**Version:** 4.0 (third revalidation; targeted corrections only)
+**Last Updated:** 2026-05-23
+**Status:** Approved — implementation pending
+**Supersedes:** v3.0 (2026-05-23) of this document
+**Authoritative scope:** Web UI ("Safe Space"), the Helm-optional frontend deployment, the API surface additions required to support it, and the auth model migration to HttpOnly cookies. Does not alter backend CRD schema, controller behavior, sandbox lifecycle, or proxy semantics — those remain as defined in `EVOLUTION-V2.md`.
+
+**Change log v3.0 → v4.0** (changes applied only where benefit was proven and no negative impact was demonstrable):
+- **§0 (assumptions):** added N12-N18 covering implementation details that v3.0 assumed but did not validate (canonical sandbox-by-workspace label; per-replica `activeSess`; absence of CSRF middleware; absence of HTTP server timeouts; Postgres UPSERT availability; sandbox `Sandboxes(ns).List(opts)` accepts label selectors).
+- **§5.2 (ListWorkspaces N+1 fix):** specified the implementation as a **single label-selected `Workspaces.List(LabelSelector: "user-id=<userID>")`** call, validated against `workspace_service.go:484`. Avoids N+1 against the apiserver.
+- **§5.3 (register cookie):** the register router handler also sets the cookie (was an oversight in v3.0; otherwise post-register UX requires a separate login round-trip).
+- **§5.4 (`/workspaces/{id}/sandboxes`):** pinned canonical label `llmsafespace.dev/workspace=<id>` (validated against `sandbox_service.go:372` and `controller.go:508,555`).
+- **§5.5 (UPSERT SQL):** pinned the Postgres `INSERT ... ON CONFLICT (workspace_id, session_id) DO UPDATE` shape so the implementation isn't ambiguous.
+- **§5.4/§9.5 (per-replica `/sessions/active`):** documented honestly. The proxy's `activeSess` map is per-replica (same nuance as `connCount`, N11). The endpoint returns the replica's view; the SSE event stream remains authoritative once the user has the workspace open. Clarifying note added in both sections.
+- **§7.3 (activate, no long-held handler):** removed the 30s in-handler poll for Suspending→Suspended. Activate now returns 503 + `Retry-After` immediately if the target is mid-transition, and the frontend retries. Avoids holding the API request open past Ingress write timeouts.
+- **§7.3 (activate stalest-finder):** specified single label-selected list (`Workspaces.List(LabelSelector: "user-id=<userID>")` filtered in-memory by phase==Active) instead of the v3.0 phrasing that implied per-workspace CRD reads.
+- **§8.1 (deps):** added `react-markdown` + `rehype-sanitize` (resolved a v3.0 inconsistency: §14.1 cited `react-markdown` but §8.1 didn't list it).
+- **§10/§14:** added per-replica caveat for the 429 active-session cap (existing pre-V2 behavior; design surfaces it explicitly so operators can size capacity).
+- **§14.2 (CSRF):** specified that `SameSite=Lax` is the primary CSRF defense for the default same-origin deployment, no new middleware needed. An Origin/Referer-check middleware is required only for `SameSite=None` cross-origin deployments and is deferred to V1.1.
+- **§22:** marked the future `Workspace.Status.ActiveSessions` rename as a **breaking change for external `kubectl` consumers**, requiring CRD versioning.
+
+---
+
+## 0. Assumptions and Validation
+
+This section is authoritative. Every assumption the rest of this document depends on is enumerated here, with a citation to the code that validated (or refuted) it. Anything marked **REFUTED** triggered a design change in v2.0.
+
+| # | Assumption | Status | Citation | Design impact |
+|---|---|---|---|---|
+| A1 | `auth.Service.Login` can be modified to set the cookie itself | **REFUTED** | `api/internal/services/auth/auth.go:384-426`. `Login(ctx, req) (*AuthResponse, error)` — no `gin.Context`. | Cookie-setting moved to the **router handler** (`registerAuthRoutes` in `api/internal/server/router.go`). Service stays HTTP-agnostic. SOLID/SRP preserved. |
+| A2 | The token extractor supports cookies without rewriting it | **VALIDATED** | `api/internal/utilities/token_extractor.go:67-71`. `TokenExtractorConfig.CookieName` is honored. | We pass `CookieName: "lsp_session"` from `AuthMiddleware`. |
+| A3 | `/me` can avoid a DB hit | **REFUTED** | `auth.go:201-215, 218-293`. JWT carries only `sub` (userID). Username/email require `database.GetUser`. | `/me` calls `database.GetUser`, **cached in Redis 15 minutes** keyed by userID using existing `cacheService`. |
+| A4 | `Workspace.Status.LastActivityAt` exists | **VALIDATED** | `controller/internal/resources/workspace_types.go:152`, `pkg/apis/llmsafespace/v1/types.go:253`, populated in `api/internal/handlers/activity.go:116`. | Used for stalest-workspace selection. |
+| A5 | `WorkspaceService.SuspendWorkspace`/`ResumeWorkspace` exist and verify ownership | **VALIDATED** | `api/internal/interfaces/interfaces.go:115-127`, impl `api/internal/services/workspace/workspace_service.go:259-294, 296-...`. | Used directly by activate handler. |
+| A6 | Proxy `SendMessage` has a clean post-completion hook | **REFUTED** | `api/internal/handlers/proxy.go:156-159, 183-388`. `proxyToSandbox` is a streaming pass-through; no completion callback. | **Use the existing `SSETracker`** which already observes `session.status: idle` per sandbox. Add a session-index update path triggered from `onSessionIdle` (debounced). This is more reliable because it works for both `POST /message` (HTTP streaming) and `POST /prompt_async` (SSE-only) paths. See §5.6. |
+| A7 | `pkg/redact` exposes a Go API | **VALIDATED** | `pkg/redact/redact.go:90`. `func Redact(input string) (string, error)`. |
+| A8 | opencode auto-supplies a session title | **REFUTED** | V2 §7.1a documents `POST /session` body `{"title":"..."}` as caller-supplied. No verification of auto-generation. | Title is treated as **best-effort**. Index column is nullable. UI renders `Session at HH:MM` when null. Frontend offers a "Rename" action that sets the title via `POST /session` (or via a future opencode `PATCH /session`; deferred). |
+| A9 | opencode `GET /session/{id}/message` supports pagination params | **NOT VERIFIED** | Source code in another repo; V2 §7.1a documents the endpoint but not pagination params. | V1 design is **client-side pagination only**: fetch full history, render last 50 + load older on scroll up. This works because opencode stores history as plain JSON files; the API call returns the entire array. Acceptable for sessions up to ~hundreds of messages. Server-side pagination is a V1.1 follow-up if needed. |
+| A10 | `MaxActiveSessions` bounds | **VALIDATED with caveat** | `controller/internal/resources/workspace_types.go:103-106`. Range is `1..20` (kubebuilder validation). | UI's "edit cap" picker MUST clamp to `1..20`. Documented as a constraint. |
+| A11 | Sandbox CRDs carry `user-id` label | **VALIDATED** | `api/internal/services/workspace/workspace_service.go:484` — `"user-id": userID`. Existing `sandboxOwnershipMiddleware` (router.go:420-440) reads it. |
+| A12 | CORS is wired through `SecurityMiddleware`, not standalone `CORSMiddleware` | **VALIDATED** | `api/internal/server/router.go:75` calls `middleware.SecurityMiddleware`, NOT `CORSMiddleware`. The standalone `cors.go` exists but is unused. | We configure CORS via `SecurityConfig.AllowedOrigins` + `SecurityConfig.AllowCredentials`. |
+| A13 | Existing Ingress template uses path-based routing | **VALIDATED** | `charts/llmsafespace/templates/api-ingress.yaml`. | Frontend Ingress can extend the same template OR introduce a sibling. Design uses a sibling for separation. |
+| A14 | Swagger annotations exist on existing handlers | **REFUTED** | `api/internal/docs/swagger.go:80` — `"paths": {}`. No `@Router`/`@Summary`/`@Tags` annotations on any handler. `make openapi` would emit an empty spec. | **Major design change.** Type sharing is now done by **hand-written TypeScript types** committed to `frontend/src/api/types.ts`, with a **CI-enforced contract test** that asserts every shared type matches a Go-side fixture. Swagger annotations may be backfilled in V1.1+. |
+| A15 | `Services` container exposes the dependencies a new `SessionIndexService` needs | **VALIDATED** | `api/internal/interfaces/interfaces.go:134-142`. | New service injected via the same container; new method `GetSessionIndex()`. |
+| A16 | Redis is available for an activate-lock | **VALIDATED** | `services.go` initializes `cache` service before `auth` and `workspace`. | Used for activate concurrency control. |
+| A17 | `cacheService.Set` supports SETNX semantics | **REFUTED** | `interfaces.go:67-79`. `Set` is unconditional. | Add `SetNX(ctx, key, value, ttl) (acquired bool, err error)` to `CacheService` interface and its Redis implementation. Used to lock per-user activate. |
+| A18 | Sandbox→Workspace lookup at proxy | **VALIDATED** | `proxy.go:224` — uses `sandbox.Spec.WorkspaceRef`. |
+| A19 | Listing sandboxes filtered by workspace | **REFUTED** | `database.go:502, 530` — `ListSandboxes` only accepts `userID`, not `workspaceID`. | **Add** filter parameter end-to-end (DB → Service → Handler) OR add new endpoint `GET /workspaces/{id}/sandboxes`. Design picks the latter — composable, no breaking change to existing list. |
+| A20 | Session IDs stable across suspend/resume | **VALIDATED** | V2 §6.5 + §7.1a (storage at `/workspace/.local/opencode/storage/`, PVC retained on suspend). |
+| A21 | `User` type exists with `PasswordHash json:"-"` | **VALIDATED** | `pkg/types/types.go:480-489`. |
+| A22 | `WorkspaceListItem` includes phase/active count | **REFUTED** | `pkg/types/types.go:694-704`. Has `ID/Name/UserID/Runtime/StorageSize/CreatedAt/UpdatedAt`. No phase, no activeSessions. | **Extend** `WorkspaceListItem` and `Service.ListWorkspaces` with `Phase` and `MaxActiveSessions` only (additive, `omitempty`). Avoids N+1 status fetches in the sidebar. **Active-session count is fetched separately** via the dedicated `/sessions/active` endpoint because the controller's `Status.ActiveSessions` field counts sandboxes, not opencode sessions (see N4). |
+| A23 | `database.GetUser` exists for `/me` | **VALIDATED** | `interfaces.go:39`, `database.go:78`. |
+| A24 | Build passes today | **VALIDATED** | `go build ./...` — no errors. (LSP transient errors observed during the v1.0 session were stale-cache artifacts.) |
+| A25 | `maxConnectionsPerSandbox = 10` per-sandbox limit | **VALIDATED** | `proxy.go:25`. | Frontend MUST share connections across browser tabs (BroadcastChannel) to avoid hitting this in real use. See §10.5. |
+| A26 | The existing kubebuilder default for MaxActiveSessions matches our default | **VALIDATED** | `workspace_types.go:105` — kubebuilder default 5. | Our `frontend.config` default is also 5. No conflict. |
+| A27 | Workspace activate must enforce ownership | **VALIDATED implicit** | All workspace ops use `verifyOwner` (workspace_service.go:240, 267, 305, 341). | New `ActivateWorkspace` method follows the same pattern. |
+| A28 | A workspace cannot be resumed while not in `Suspended` phase | **VALIDATED** | `workspace_service.go:314-319` — explicit phase check. | Activate handler must wait for `Suspending` to settle before calling Resume. See §7.5 edge cases. |
+| N1 | Adding `SetNX` to `CacheService` interface impacts mocks | **VALIDATED** | `api/internal/mocks/cache.go:18` — `var _ interfaces.CacheService = (*MockCacheService)(nil)`. Compile-time assert; mock must gain the method. | Mock update is a one-line addition included in Phase A. |
+| N2 | `RateLimiterService.Increment` cannot substitute for `SetNX` | **VALIDATED** | `api/internal/services/ratelimit/ratelimit.go:41-53` — implemented as Get-then-Set, **not atomic**. TOCTOU race. | `SetNX` interface addition is justified; no simpler alternative exists in the existing codebase. |
+| N3 | `go-redis/v8.SetNX` is available natively | **VALIDATED** | `api/internal/services/cache/cache.go:9` imports `redis/v8`. SetNX is a standard method on `redis.Client`. | Backing implementation is one line. |
+| N4 | Controller-tracked `Workspace.Status.ActiveSessions` represents the count opencode would call "active sessions" | **REFUTED** | `controller/internal/workspace/controller.go:266` — `workspace.Status.ActiveSessions = int32(len(sandboxes))`. Counts **sandboxes attached** to the workspace, not opencode sessions. Under V2's RWO model this value is 0 or 1. | Triggered §5.2 design fix: `WorkspaceListItem` does NOT carry `ActiveSessions`. Use the dedicated `GET /workspaces/{id}/sessions/active` endpoint, which reads the proxy's in-memory active set (the only authoritative source). Field rename of the controller status field tracked in §22. |
+| N5 | `Workspace.Status.ActiveSessions` is currently a misleading name in the codebase | **VALIDATED (and undesirable)** | Same citation as N4. | Tracked as deferred follow-up in §22: rename to `SandboxCount` to remove the naming hazard. Out of scope for V1. |
+| N6 | One opencode `session.status: busy → idle` cycle equals exactly one user-message + one assistant-response exchange | **NOT VERIFIED — treat as approximation** | `api/internal/handlers/proxy_test.go:275, 1014`, `session_tracker_test.go:38, 96, 162` — tests verify transition handling but do not verify cardinality of events per exchange. Opencode source is in another repo. | `message_count` in `session_index` is documented as **best-effort / approximate** (§5.6, §6.2). Exact counting is not required for sidebar metadata; users see "12 messages" and treating it as approximate is acceptable. |
+| N7 | `ProxyHandler.onSessionIdle` callback can read `workspaceID` for an inbound `sandboxID` | **VALIDATED** | `proxy.go:647-657`. Already does this for `activityTracker.Record`. Same lookup pattern used for new SessionIndex update. |
+| N8 | `verifyOwner` helper is reusable from new `ActivateWorkspace` method | **VALIDATED** | `workspace_service.go:463`. |
+| N9 | No existing handler sets `Set-Cookie` | **VALIDATED** | `grep -rn "c.SetCookie\|Set-Cookie" api/` returns no non-test hits. New cookie issuance does not collide. |
+| N10 | The `Services` lifecycle order accommodates a new `SessionIndexService` between Cache and Auth (or between Auth and Sandbox) | **VALIDATED** | `api/internal/services/services.go:124-165`. Order is Metrics → Database → Cache → Auth → Sandbox → Workspace. SessionIndex needs Database; placed after Cache, before Auth. |
+| N11 | `connCount` in `ProxyHandler` is per-API-replica, not global | **VALIDATED** | `proxy.go:56-99` — in-memory map per `ProxyHandler` instance. Each replica has its own. Documented in §10.3. |
+| N12 | `activeSess` in `ProxyHandler` is also per-API-replica | **VALIDATED** | `proxy.go:53-54` — same in-process map shape as `connCount`. Implication: `/sessions/active` endpoint returns one replica's view. SSE event stream is authoritative once a user has the workspace open. Documented in §5.4 and §9.5. |
+| N13 | The 429 active-session cap (proxy.go:242) is enforced per-replica | **VALIDATED** | Same citation as N12 — the cap reads `activeSess[sandboxID]` which is per-replica. With multi-replica API, total per-sandbox active sessions can briefly exceed `MaxActiveSessions` × replicas. **Pre-existing V2 behavior, not introduced by this design.** Documented in §10. |
+| N14 | Sandbox CRDs are labeled `llmsafespace.dev/workspace=<workspaceID>` for cross-cutting selection | **VALIDATED** | `api/internal/services/sandbox/sandbox_service.go:372` sets the label. `controller/internal/workspace/controller.go:508,555` already uses `client.MatchingLabels{"llmsafespace.dev/workspace": workspace.Name}` to select sandboxes. The new endpoint reuses the canonical label. |
+| N15 | Workspace CRDs are labeled `user-id=<userID>` for per-user listing | **VALIDATED** | `api/internal/services/workspace/workspace_service.go:484` sets the label. A single `Workspaces.List(LabelSelector: "user-id=<userID>")` returns all of a user's workspaces — no N+1. Used by §5.2 and §7.3. |
+| N16 | `Sandboxes(ns).List(opts metav1.ListOptions)` accepts a `LabelSelector` | **VALIDATED** | `pkg/interfaces/kubernetes.go:37` — `List(opts metav1.ListOptions)`. Standard Kubernetes API contract; `metav1.ListOptions.LabelSelector` is honored. |
+| N17 | The API HTTP server has no `ReadTimeout`/`WriteTimeout` set today | **VALIDATED with caveat** | `api/internal/app/app.go:95-98` — `&http.Server{Addr, Handler}` with no timeouts. Default is zero (no timeout). However, **Ingress** typically enforces a 30-60s timeout; long synchronous handlers risk being cut off there. Triggered §7.3 redesign: activate handler returns immediately on transient state (no in-handler polling). |
+| N18 | No CSRF middleware exists in the API today | **VALIDATED** | `ls api/internal/middleware/` — no csrf.go. Origin checking exists in `security.go:142-174` but only for CORS header emission, not for blocking. Implication: with `SameSite=Lax` cookies (default), browser-enforced cross-site protection is sufficient. With `SameSite=None` (cross-origin frontend), an explicit middleware is required — deferred to V1.1 (§14.2). |
+
+**Anything not listed above is not assumed by this design.** If a question arises during implementation that depends on an unlisted assumption, it must be validated in code (or in design correspondence) before proceeding.
+
+---
+
+## Table of Contents
+
+1. [Goals and Non-Goals](#1-goals-and-non-goals)
+2. [Personas](#2-personas)
+3. [Architectural Decisions (Locked)](#3-architectural-decisions-locked)
+4. [Resource Model Refresher](#4-resource-model-refresher)
+5. [Backend Changes](#5-backend-changes)
+6. [Database Schema Additions](#6-database-schema-additions)
+7. [Workspace Activate Flow](#7-workspace-activate-flow)
+8. [Frontend Repository Layout](#8-frontend-repository-layout)
+9. [Page-by-Page UX](#9-page-by-page-ux)
+10. [Active-Session Resource Pressure Model](#10-active-session-resource-pressure-model)
+11. [Suspended-Workspace History Strategy](#11-suspended-workspace-history-strategy)
+12. [Theming, Responsiveness, Accessibility](#12-theming-responsiveness-accessibility)
+13. [PWA, Bundle Budgets, Performance Gates](#13-pwa-bundle-budgets-performance-gates)
+14. [Security Considerations](#14-security-considerations)
+15. [Containerization and Deployment](#15-containerization-and-deployment)
+16. [GitOps and CI/CD](#16-gitops-and-cicd)
+17. [Type Synchronization](#17-type-synchronization)
+18. [Testing Strategy](#18-testing-strategy)
+19. [SOLID Audit](#19-solid-audit)
+20. [Implementation Phases](#20-implementation-phases)
+21. [Risks and Mitigations](#21-risks-and-mitigations)
+22. [Deferred to V1.1+](#22-deferred-to-v11)
+
+---
+
+## 1. Goals and Non-Goals
+
+### Goals
+
+- **G1.** Authenticated web UI ("Safe Space") for chatting with long-running agents in LLMSafeSpace workspaces.
+- **G2.** Group chats by workspace, with active/suspended status surfaced and a one-click activate flow.
+- **G3.** Display the most recent conversation history for the selected session, with scroll-up to load older.
+- **G4.** Mobile and desktop responsive; touch and mouse first-class.
+- **G5.** Native light and dark themes, including system-preference following.
+- **G6.** Settings page for managing API keys, with scaffolding for future areas.
+- **G7.** Registration and login pages backed by simple username/password auth, with feature-flagged self-registration.
+- **G8.** Frontend is **optional**: every action available in the UI is also available via REST API. Clusters can deploy backend-only with no functional loss.
+- **G9.** GitOps-friendly: shipped as an OCI image, deployed via Helm with a single `frontend.enabled` toggle, integrated with the existing CI tag scheme.
+- **G10.** OIDC migration path is preserved.
+
+### Non-Goals
+
+- **NG1.** Server-side rendering. Authenticated long-session app; SSR's first-paint advantage is not justified given the framework lock-in cost.
+- **NG2.** Multi-tenant org separation in the UI.
+- **NG3.** Caching message bodies in PostgreSQL. Hard rule.
+- **NG4.** Collaborative editing or shared session views.
+- **NG5.** Admin console for managing other users.
+- **NG6.** Marketplace UI for MCP servers, runtimes, presets — placeholders only.
+
+---
+
+## 2. Personas
+
+- **P1: Interactive Developer** — primary user. Logs in from desktop or mobile browser, picks a workspace, opens a session, sends prompts, sees streamed responses.
+- **P2: Cluster Operator** — deploys via Helm, decides `frontend.enabled`, registration policy, default caps.
+- **P3: API/MCP-Only Consumer** — uses REST or MCP exclusively. Must remain fully functional whether or not the frontend is deployed.
+
+---
+
+## 3. Architectural Decisions (Locked)
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| AD1 | **Vite + React 18 + TypeScript + Tailwind + shadcn/ui (SPA)** | Maximum two-way-door reversibility. No SSR coupling. shadcn primitives are copied into the repo so the component library is also not a lock-in. |
+| AD2 | **Static assets served by Nginx, separate Deployment + Service + Ingress** | Optional via `frontend.enabled`. No Node runtime. |
+| AD3 | **HttpOnly Secure SameSite cookie for JWT, set by the router handler** | Best XSS posture. **Service layer stays HTTP-agnostic** (cookie-setting is the router's responsibility). |
+| AD4 | **HTTP streaming for chat send + SSE for `/events` side channel** | Mirrors verified opencode contract (V2 §7.1a). Browser-native; no WebSocket complexity. |
+| AD5 | **Sidebar hierarchy: Workspace → Session(s); sandbox layer hidden** | Matches user mental model. |
+| AD6 | **`POST /workspaces/{id}/activate` is server-side atomic** with per-user Redis lock | Enforces fairness for CLI/MCP clients too. |
+| AD7 | **Default caps: `maxActiveWorkspacesPerUser=5`, `maxActiveSessions=5` per workspace (CRD ceiling 20)** | Bounded resource use. |
+| AD8 | **Settings v1 = API Keys + Appearance only**; Profile, MCP, Presets, Permissions are scaffold-only `<ComingSoonTab>` | IA locks early without scope creep. |
+| AD9 | **Public registration disabled by default**, gated by Helm + `GET /auth/config` feature flag | Safer default. |
+| AD10 | **Suspended-workspace history → resume-on-read.** Index stores ONLY redacted titles + timestamps + counts. No message bodies in PostgreSQL ever. | User-stated security requirement. |
+| AD11 | **Full PWA: manifest + service worker + offline shell + add-to-home-screen** | Best mobile experience. |
+| AD12 | **Bundle budgets enforced in CI**: 200KB initial JS gz, 250KB chat chunk, 30KB CSS. **Lighthouse mobile thresholds**: Perf ≥ 85, A11y ≥ 95, BP ≥ 95, PWA ≥ 90 | Quantitative regression gates. |
+| AD13 | **Hand-written TypeScript types with CI-enforced Go↔TS contract test** | Swagger annotations not present in current API; backfilling is out of scope for V1. Drift detection via test, not generation. (See §17.) |
+| AD14 | **Playwright E2E**, gated by `make test-e2e` | Critical-path coverage. |
+| AD15 | **Frontend lives at `frontend/`** | Mirrors `api/`, `controller/`, `runtimes/`. |
+| AD16 | **Browser tabs share SSE event stream via BroadcastChannel** | Avoids exhausting the proxy's `maxConnectionsPerSandbox = 10`. |
+| AD17 | **Session-index updates triggered by SSE `session.status: idle` events**, not by post-stream callbacks | Reliable across both message and prompt_async paths. Decouples index writer from proxy hot path. |
+| AD18 | **Login response includes both cookie (browsers) and `Token` field (back-compat for SDK callers)** | Single endpoint serves both audiences; SPA ignores the body token. |
+
+---
+
+## 4. Resource Model Refresher
+
+Canonical source: `EVOLUTION-V2.md` §5–§7. Reproduced for completeness.
+
+```
+User
+└── Workspace (Active or Suspended) ← suspend/resume targets this layer
+    └── Sandbox (1, hidden from UI; exists iff workspace is Active)
+        └── Session (many — opencode JSON files on the workspace PVC)
+```
+
+| Concept | Source of truth | UI surfacing |
+|---|---|---|
+| **Workspace** | K8s Workspace CRD (phase, lastActivityAt, activeSessions); PostgreSQL (name, userID) | Top-level sidebar item with Active/Suspended badge |
+| **Sandbox** | K8s Sandbox CRD (phase, podIP, lastActivityAt) | **Hidden from UI** |
+| **Session** | opencode JSON files on PVC; sidebar metadata mirrored in PostgreSQL `session_index` | Child of workspace in sidebar, with idle/active dot |
+
+Two distinct "active" concepts:
+- **Workspace active** → pod is running.
+- **Session active** → opencode is currently processing this conversation in memory (in proxy's `activeSess` set, bounded by `MaxActiveSessions`).
+
+---
+
+## 5. Backend Changes
+
+### 5.1 New types in `pkg/types/types.go`
+
+```go
+// Auth
+type AuthConfig struct {
+    RegistrationEnabled bool     `json:"registrationEnabled"`
+    OIDCEnabled         bool     `json:"oidcEnabled"`
+    SSOProviders        []string `json:"ssoProviders,omitempty"`
+}
+
+// Activate
+type ActivateWorkspaceResponse struct {
+    Resumed   string `json:"resumed"`
+    Suspended string `json:"suspended,omitempty"` // empty if cap not hit
+}
+
+// Sessions (sidebar metadata, NOT message bodies)
+type SessionListItem struct {
+    ID            string     `json:"id"`
+    Title         string     `json:"title,omitempty"`         // redacted, may be empty
+    LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
+    MessageCount  int        `json:"messageCount"`
+    Status        string     `json:"status"`                  // "active" | "idle"
+}
+
+type ActiveSessionsResponse struct {
+    Active    []string `json:"active"`
+    MaxActive int      `json:"maxActive"`
+}
+```
+
+### 5.2 Extension to `WorkspaceListItem` (validation A22, corrected per N4)
+
+```go
+// pkg/types/types.go (modify existing struct)
+type WorkspaceListItem struct {
+    ID                string    `json:"id"`
+    Name              string    `json:"name"`
+    UserID            string    `json:"userId"`
+    Runtime           string    `json:"runtime"`
+    StorageSize       string    `json:"storageSize"`
+    CreatedAt         time.Time `json:"createdAt"`
+    UpdatedAt         time.Time `json:"updatedAt"`
+    // NEW (additive — `omitempty`, no breaking change for existing CLI/SDK consumers):
+    Phase             string    `json:"phase,omitempty"`             // from CRD Status.Phase
+    MaxActiveSessions int       `json:"maxActiveSessions,omitempty"` // from CRD Spec.MaxActiveSessions
+}
+```
+
+`WorkspaceService.ListWorkspaces` is updated to merge these two CRD fields into each item. **Implementation:** issue a single `Workspaces.List(LabelSelector: "user-id=<userID>")` call (one round-trip; per N15 the label is set on creation), build a `map[name]*v1.Workspace` keyed by ID, and merge into the `WorkspaceListItem` slice as it's built from the DB metadata. **No N+1.** If the CRD list call fails, fall back to DB-only data with `Phase` empty — degraded but not a hard failure.
+
+**Intentionally NOT included** (per N4): `ActiveSessions`. The controller-tracked `Workspace.Status.ActiveSessions` field counts sandboxes attached, not opencode sessions in the proxy's busy set, and is therefore not the number the sidebar wants to display. The sidebar gets the active-session count via the dedicated `GET /workspaces/{id}/sessions/active` endpoint (see §5.4) which reads the proxy's authoritative `activeSess` map.
+
+**Intentionally NOT included** (per audit): `LastActivityAt`. Not required by V1 sidebar UX (no recency-sort feature). Adding it pre-emptively would expand the JSON contract for no V1 benefit.
+
+This keeps the extension minimal — two new fields, both `omitempty` — and avoids surfacing a misleading number.
+
+### 5.3 Auth endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/auth/config` | Public, 20/min/IP | Feature flags |
+| POST | `/api/v1/auth/register` *(modified)* | Public (gated by `auth.registrationEnabled`) | **Router handler also sets `lsp_session` cookie** on success, mirroring login. Avoids forcing a separate login round-trip after registration. Body unchanged for back-compat. |
+| POST | `/api/v1/auth/login` *(modified)* | Public | **Router handler sets `Set-Cookie: lsp_session=<jwt>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400`.** Body unchanged for back-compat (Token + User). SPA ignores `Token`. |
+| POST | `/api/v1/auth/logout` *(new)* | Public/auth-tolerant | Sets `Set-Cookie: lsp_session=; Max-Age=0`. Returns 204. Idempotent. |
+| GET | `/api/v1/auth/me` *(new)* | Required | Returns `User` from cache (15min) or DB. |
+
+The auth service does not gain new methods. New behavior is in the router (`api/internal/server/router.go`) — preserves SOLID/SRP because the service layer is HTTP-agnostic.
+
+#### `AuthMiddleware` change
+
+`auth.Service.AuthMiddleware` (line 510 of `auth.go`) currently calls `extractToken(c)` which uses default config (header-only). Change: pass an explicit `TokenExtractorConfig{HeaderName:"Authorization", TokenType:"Bearer", CookieName:s.config.Auth.CookieName}` so cookies are honored. Cookie name is configurable so OIDC migration can rename without code changes.
+
+### 5.4 Workspace endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/workspaces/{id}/activate` *(new)* | See §7. |
+| GET | `/api/v1/workspaces/{id}/sessions` *(new)* | Workspace-scoped session list from `session_index`, merged with live opencode list when workspace is `Active`. **Trade-off (per §11):** sessions freshly created via `POST /session` but never messaged appear here only when the workspace is Active (live merge); under suspend they remain invisible until first message. Acceptable: empty sessions have no content to display. |
+| GET | `/api/v1/workspaces/{id}/sessions/active` *(new)* | `ActiveSessionsResponse`. Reads from the proxy's in-process `activeSess` map via a thread-safe accessor on `ProxyHandler`. **Per-replica view (per N12).** Returns the active set as known to the replica handling the request. The frontend uses this for initial sidebar render only; live updates flow through the SSE event stream once the user has the workspace open. Cross-replica consistency is a deferred V1.1 item (Redis-backed active set). |
+| GET | `/api/v1/workspaces/{id}/sandboxes` *(new)* | Returns the (zero or one) sandbox attached to this workspace, by listing Sandbox CRDs with **`LabelSelector: "llmsafespace.dev/workspace=<workspaceID>"`** (canonical label per N14). Returns `[]` (empty) if no sandbox exists, NOT 404 — empty is a valid state for a Pending or Suspended workspace. |
+
+Existing endpoints `GET/POST/DELETE /workspaces`, `/{id}/suspend`, `/{id}/resume`, `/{id}/status`, `/{id}/credentials` are unchanged.
+
+### 5.5 New service: `SessionIndexService`
+
+```go
+// api/internal/services/session_index/service.go
+type Service struct {
+    db     interfaces.DatabaseService
+    logger *logger.Logger
+    queue  chan recordEvent          // bounded, drop-oldest
+    closeC chan struct{}
+}
+
+type recordEvent struct {
+    workspaceID string
+    sessionID   string
+    title       string  // already redacted by caller
+    at          time.Time
+}
+
+// Public API:
+func (s *Service) RecordMessage(workspaceID, sessionID, title string, at time.Time)
+func (s *Service) ListByWorkspace(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
+func (s *Service) DeleteByWorkspace(ctx context.Context, workspaceID string) error
+func (s *Service) Start() error
+func (s *Service) Stop() error
+```
+
+- `RecordMessage` is **non-blocking**: pushes to a bounded channel (default 1024). If full, oldest is dropped and a `session_index_dropped_total` Prometheus counter increments.
+- A single goroutine drains the channel and writes to PostgreSQL with **debounce** (per `(workspace_id, session_id)`, max 1 write/second).
+- The drainer issues this canonical UPSERT (Postgres-only syntax, matches existing migrations):
+
+  ```sql
+  INSERT INTO session_index
+      (workspace_id, session_id, last_message_at, message_count, updated_at)
+  VALUES
+      ($1, $2, $3, 1, NOW())
+  ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+      last_message_at = EXCLUDED.last_message_at,
+      message_count   = session_index.message_count + 1,
+      updated_at      = NOW();
+  ```
+
+  Title-only updates (from the rename endpoint, §5.7) use a parallel UPSERT that sets `title` and leaves the count alone.
+
+- `ListByWorkspace` is a single SQL query ordered `last_message_at DESC NULLS LAST` with `LIMIT 100`.
+- `DeleteByWorkspace` is called from `WorkspaceService.DeleteWorkspace` via dependency injection.
+
+#### Defined as an interface in `api/internal/interfaces/interfaces.go`:
+
+```go
+type SessionIndexService interface {
+    RecordMessage(workspaceID, sessionID, title string, at time.Time)
+    ListByWorkspace(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
+    DeleteByWorkspace(ctx context.Context, workspaceID string) error
+    Start() error
+    Stop() error
+}
+
+// And added to Services container:
+type Services interface {
+    // ...existing...
+    GetSessionIndex() SessionIndexService
+}
+```
+
+### 5.6 Wiring SessionIndex into the proxy
+
+We do NOT add a post-stream callback to `proxyToSandbox`. Instead, we hook the **existing `SSETracker`** (`api/internal/handlers/session_tracker.go:217`):
+
+```go
+// In ProxyHandler.Start (proxy.go:103+):
+h.sseTracker = NewSSETracker(h.httpClient, h.logger, h.onSessionIdle)
+h.sseTracker.SetOnSessionActive(h.onSessionActive)
+```
+
+Piggy-back on `onSessionIdle` (which already reads `wsConfig[sandboxID]` to derive `workspaceID` for the activity tracker — see `proxy.go:651`):
+
+1. Read the workspace ID from `wsConfig[sandboxID]` (existing pattern).
+2. Increment the in-memory `messageCount` cache by 1 (one busy→idle cycle ≈ 1 message exchange).
+3. Call `sessionIndexService.RecordMessage(workspaceID, sessionID, "", time.Now())` — title stays blank; opencode does not auto-supply one (per A8).
+
+#### Approximation note (per N6)
+
+`message_count` is **best-effort**, not exact. Counting busy→idle transitions assumes exactly one transition per user-message + assistant-response exchange. This assumption is **not verified** against the opencode source code (which lives in another repository). If opencode emits multiple idle events per exchange (e.g., on tool-call boundaries) or coalesces them, the count will deviate from the actual message count.
+
+This is an acceptable trade-off because:
+- The field is shown only as sidebar metadata ("12 messages") — informational, not load-bearing.
+- A deterministic alternative (hooking `proxyToSandbox` post-stream completion) would not work for the `prompt_async` path, which returns 204 immediately and only emits results via SSE.
+- A user-facing exact count is not a stated goal.
+
+If exact counts become required later, the path forward is to count completions on the opencode side (out of scope for V1). The field name `message_count` is preserved for forward-compat.
+
+For title backfill, the frontend may issue `PUT /workspaces/{id}/sessions/{sessionId}/title` (added below) with a user-provided title that is `redact.Redact()`-sanitized server-side before persistence.
+
+### 5.7 New endpoint for title rename
+
+```
+PUT /api/v1/workspaces/{id}/sessions/{sessionId}/title
+Body: {"title": "Refactor auth flow"}
+```
+
+Server `redact.Redact`s the title (truncates to 200 chars), upserts into `session_index`. Returns 204.
+
+### 5.8 New cache method (`SetNX`)
+
+```go
+// api/internal/interfaces/interfaces.go (extend CacheService):
+type CacheService interface {
+    // ...existing...
+    SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
+}
+```
+
+Backed by Redis `SET key value NX EX <ttl>`. Used by activate handler (§7).
+
+### 5.9 Config additions
+
+`api/config/config.yaml`:
+
+```yaml
+auth:
+  jwtSecret: ""
+  tokenDuration: 24h
+  apiKeyPrefix: "lsp_"
+  registrationEnabled: false       # NEW
+  cookieName: "lsp_session"        # NEW
+  cookieDomain: ""                 # NEW
+  cookieSecure: true               # NEW (set false for local http://)
+  cookieSameSite: "Lax"            # NEW: "Lax" | "None" | "Strict"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  shutdownTimeout: 30s
+  allowedOrigins: []               # NEW; populated for cross-origin frontend deployments
+
+workspaces:
+  maxActiveWorkspacesPerUser: 5    # NEW
+```
+
+`api/internal/config/config.go` gains the corresponding fields. `SecurityMiddleware` is invoked from `app.go` with `AllowedOrigins: cfg.Server.AllowedOrigins` and `AllowCredentials: true` (when origins is non-empty).
+
+---
+
+## 6. Database Schema Additions
+
+### 6.1 Migration `api/migrations/000003_session_index.up.sql`
+
+```sql
+CREATE TABLE session_index (
+    workspace_id     TEXT NOT NULL,
+    session_id       TEXT NOT NULL,
+    title            TEXT,                 -- redacted via pkg/redact before insert
+    last_message_at  TIMESTAMPTZ,
+    message_count    INTEGER NOT NULL DEFAULT 0,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (workspace_id, session_id)
+);
+CREATE INDEX idx_session_index_workspace_recent
+    ON session_index (workspace_id, last_message_at DESC NULLS LAST);
+```
+
+### 6.2 What is stored
+
+| Column | Source | Sensitivity |
+|---|---|---|
+| `workspace_id` | Workspace CRD UID | None |
+| `session_id` | opencode session ID | None |
+| `title` | User-supplied via the rename endpoint, **always passed through `pkg/redact`** before persistence; truncated to 200 chars; nullable | Low (redacted; even raw user input never persists) |
+| `last_message_at` | `time.Now()` at SSE busy→idle transition | None |
+| `message_count` | Incremented on each busy→idle transition. **Approximate** (see §5.6 / N6) — not a billing-grade or audit-grade number. | None |
+
+**No message bodies. No previews. Ever.**
+
+### 6.3 Privacy verification (test requirement)
+
+A unit test asserts that titles containing each of the 16 `pkg/redact` patterns are redacted before insertion. A second test asserts the schema has no other columns that accept user-content (column whitelist hard-coded in test).
+
+### 6.4 Cleanup
+
+`SessionIndexService.DeleteByWorkspace(workspaceID)` is invoked from `WorkspaceService.DeleteWorkspace` after the CRD delete + `dbService.DeleteWorkspace` succeed.
+
+---
+
+## 7. Workspace Activate Flow
+
+### 7.1 Endpoint
+
+```
+POST /api/v1/workspaces/{id}/activate
+```
+
+Auth required. No body. Response: `ActivateWorkspaceResponse`.
+
+### 7.2 New service method
+
+```go
+// api/internal/services/workspace/workspace_service.go
+func (s *Service) ActivateWorkspace(
+    ctx context.Context, userID, workspaceID string,
+) (*types.ActivateWorkspaceResponse, error)
+```
+
+### 7.3 Algorithm
+
+```
+1. verifyOwner(userID, workspaceID)  // existing helper
+2. Acquire per-user Redis lock:
+       acquired, _ := cache.SetNX(ctx, "activate-lock:"+userID, "1", 10*time.Second)
+       if !acquired:
+           return 429 {error:"concurrent_activation_in_progress"}
+   defer cache.Delete(ctx, "activate-lock:"+userID)
+
+3. Get target workspace CRD.
+4. If target.phase == Active: return 200 {resumed: id, suspended: ""} (idempotent).
+5. If target.phase ∈ {Suspending, Resuming, Pending}:
+       return 503 {error:"workspace_in_transition", phase:<phase>, retryAfter:5}
+   (Frontend retries after Retry-After. We do NOT poll inside the handler — keeps
+    request short and safe under typical Ingress timeouts (per N17).)
+
+6. List user's workspaces with a SINGLE label-selected CRD list call:
+       Workspaces.List(LabelSelector: "user-id=<userID>")
+   Filter in-memory to phase==Active. (Per N15; no N+1.)
+
+7. cap := config.Workspaces.MaxActiveWorkspacesPerUser
+
+8. If len(activeWorkspaces) >= cap:
+       Sort activeWorkspaces by:
+           (status.lastActivityAt asc, treating nil as zero time) THEN
+           (metadata.creationTimestamp asc)
+       stalest := activeWorkspaces[0]
+       err := s.SuspendWorkspace(ctx, userID, stalest.ID)
+       if err: return 500 {error:"failed_to_suspend_stalest"}
+       suspendedID = stalest.ID
+   else:
+       suspendedID = ""
+
+9. err := s.ResumeWorkspace(ctx, userID, workspaceID)
+   if err is "phase != Suspended": return 503 + Retry-After (target was Suspended
+       at step 4, but a controller race could change it; let frontend retry)
+   if other err: return mapped error
+
+10. Return 200 {resumed: workspaceID, suspended: suspendedID}
+```
+
+### 7.4 Frontend behavior
+
+- Calls `POST /workspaces/{id}/activate` when user clicks "Resume to chat".
+- On 200 with non-empty `suspended`, shows toast: `Suspended "X" to make room (max 5 active workspaces).`
+- Polls `GET /workspaces/{id}/status` every 1s up to 60s waiting for `phase==Active`. When reached, unmounts `<SuspendedBanner>` and mounts `<Composer>` + `<MessageList>`.
+
+### 7.5 Edge cases
+
+| Case | Handling |
+|---|---|
+| Target is `Pending` | 503 + `Retry-After: 5`, body `{error:"workspace_in_transition", phase:"Pending"}`. Frontend retries. |
+| Target is `Suspending` or `Resuming` (transient) | 503 + `Retry-After: 5`. Same retry pattern. |
+| Target is `Failed` | 422 `workspace_failed` with the CRD's `Message` field. |
+| Target is `Terminating`/`Terminated` | 410 `workspace_terminated`. |
+| Stalest workspace transitions out from under us | `SuspendWorkspace` returns error from its own phase check; activate returns 500; user retries (lock auto-expires after 10s). |
+| Resume fails after suspend succeeded | Return 500 with `suspended` populated and `resumed` empty; frontend toast asks user to retry. The cap is now under-utilized which is acceptable. |
+| Two simultaneous activate calls for two workspaces by the same user | The Redis `SetNX` lock serializes them. Second call gets 429 `concurrent_activation_in_progress` immediately (does not block-wait). |
+
+### 7.6 Audit log
+
+Every activate that suspends a stalest workspace is logged at INFO with `userID`, `resumedID`, `suspendedID`, `lastActivityAt of stalest`. Useful for diagnosing user complaints ("why did my workspace shut down?").
+
+---
+
+## 8. Frontend Repository Layout
+
+```
+frontend/
+├─ Makefile                              # build/dev/lint/test/docker targets
+├─ Dockerfile                            # multi-stage: node:22-bookworm-slim → nginx:1.27-alpine
+├─ nginx.conf                            # SPA fallback, gzip, security headers
+├─ docker-entrypoint.sh                  # envsubst on env.json at boot
+├─ package.json
+├─ pnpm-lock.yaml
+├─ tsconfig.json
+├─ tsconfig.node.json
+├─ vite.config.ts                        # dev proxy, code splitting, vite-plugin-pwa
+├─ tailwind.config.ts
+├─ postcss.config.js
+├─ .eslintrc.cjs
+├─ .prettierrc
+├─ bundlesize.json                       # CI bundle budgets
+├─ lighthouserc.json                     # Lighthouse CI thresholds
+├─ playwright.config.ts
+├─ index.html
+├─ public/
+│   ├─ favicon.svg
+│   ├─ icon-192.png  icon-512.png  icon-maskable-512.png  apple-touch-icon.png
+│   └─ offline.html
+├─ src/
+│   ├─ main.tsx
+│   ├─ App.tsx
+│   ├─ pwa.ts
+│   ├─ vite-env.d.ts
+│   ├─ env.ts                            # reads /env.json injected at container start
+│   ├─ api/
+│   │   ├─ client.ts                     # fetch wrapper (credentials:'include', retry, error mapping)
+│   │   ├─ auth.ts
+│   │   ├─ workspaces.ts
+│   │   ├─ sessions.ts
+│   │   ├─ messages.ts
+│   │   ├─ events.ts                     # SSE client + BroadcastChannel multiplex
+│   │   ├─ apiKeys.ts
+│   │   ├─ types.ts                      # hand-written, contract-tested
+│   │   └─ schemas.ts                    # zod runtime validators per endpoint
+│   ├─ hooks/
+│   │   ├─ useAuth.ts
+│   │   ├─ useTheme.ts
+│   │   ├─ useWorkspaces.ts
+│   │   ├─ useSessions.ts
+│   │   ├─ useMessageHistory.ts
+│   │   ├─ useChatStream.ts
+│   │   ├─ useEventStream.ts
+│   │   ├─ useActivateWorkspace.ts
+│   │   └─ useMediaQuery.ts
+│   ├─ components/
+│   │   ├─ ui/                           # shadcn primitives, copied in
+│   │   ├─ layout/
+│   │   │   ├─ AppShell.tsx, Sidebar.tsx, TopBar.tsx, EmptyState.tsx, UpdateAvailableToast.tsx
+│   │   ├─ workspace/
+│   │   │   ├─ WorkspaceList.tsx, WorkspaceItem.tsx, NewWorkspaceDialog.tsx, WorkspaceContextMenu.tsx
+│   │   ├─ session/
+│   │   │   ├─ SessionList.tsx, SessionItem.tsx, NewSessionButton.tsx, AbortSessionButton.tsx, RenameSessionDialog.tsx
+│   │   ├─ chat/
+│   │   │   ├─ ChatView.tsx, MessageList.tsx, MessageBubble.tsx, MessagePart.tsx,
+│   │   │   ├─ Composer.tsx, StreamingIndicator.tsx, AtCapBanner.tsx, SuspendedBanner.tsx, TransitioningBanner.tsx
+│   │   ├─ auth/
+│   │   │   ├─ AuthCard.tsx, LoginForm.tsx, RegisterForm.tsx
+│   │   └─ settings/
+│   │       ├─ SettingsLayout.tsx, ApiKeysTab.tsx, AppearanceTab.tsx, ComingSoonTab.tsx
+│   ├─ pages/
+│   │   ├─ LoginPage.tsx, RegisterPage.tsx, ChatPage.tsx, SettingsPage.tsx, NotFoundPage.tsx
+│   ├─ router.tsx
+│   ├─ providers/
+│   │   ├─ AuthProvider.tsx, ThemeProvider.tsx, QueryClientProvider.tsx, ToastProvider.tsx
+│   ├─ lib/
+│   │   ├─ stream.ts                     # ReadableStream + SSE parsers
+│   │   ├─ time.ts, classnames.ts, retry.ts
+│   ├─ styles/
+│   │   ├─ index.css, tokens.css
+│   └─ test/
+│       ├─ setup.ts
+│       ├─ msw/handlers.ts
+│       └─ utils.tsx
+└─ tests/
+    └─ e2e/
+        ├─ login.spec.ts, chat-send-receive.spec.ts, suspend-resume.spec.ts, at-cap-banner.spec.ts
+```
+
+### 8.1 Locked dependencies
+
+`react`, `react-dom` 18 · `react-router-dom` 6 · `@tanstack/react-query` 5 · `@tanstack/react-virtual` 3 · `tailwindcss` 3 + `@tailwindcss/typography` · `tailwind-merge` + `clsx` · `lucide-react` · `shiki` 1 (lazy-loaded) · `react-markdown` 9 + `rehype-sanitize` 6 (sanitized markdown rendering for assistant messages; resolves §14.1 — never `dangerouslySetInnerHTML`) · `zod` 3 · `vite` 5 · `vite-plugin-pwa` 0.20 · `vitest` + `@testing-library/react` + `msw` · `playwright` 1.
+
+shadcn/ui primitives are **copied** into `src/components/ui/`.
+
+---
+
+## 9. Page-by-Page UX
+
+### 9.1 `/login`
+
+- Centered card, email + password, "Sign in" button.
+- "Create account" link rendered only when `authConfig.registrationEnabled === true`.
+- On 200, navigates to last-visited route or `/chat`.
+- Generic error message ("invalid email or password") — no enumeration.
+
+### 9.2 `/register` (gated)
+
+- Username (3-64), email, password (≥ 8). On 201, auto-logs-in and lands on `/chat`.
+- If feature is disabled and user navigates here, redirect to `/login` with a toast.
+
+### 9.3 `/chat` (no session)
+
+- Empty state: "Pick a workspace from the sidebar, or [Create new workspace]".
+
+### 9.4 `/chat/:workspaceId/:sessionId`
+
+State matrix:
+
+| Workspace phase | Session in active set | Renders | Behavior on send |
+|---|---|---|---|
+| `Active` | Not yet active OR room available | `<Composer>` | Streams via `POST .../message` |
+| `Active` | At cap | `<AtCapBanner>` (composer disabled) | Banner with `Retry-After` countdown; auto-restores via SSE idle event |
+| `Suspending`/`Resuming` | — | `<TransitioningBanner>` | "Workspace is {phase}…" |
+| `Suspended` | — | `<SuspendedBanner>` | "Resume to chat" → `POST /workspaces/{id}/activate` |
+| `Failed`/`Terminated`/`Terminating` | — | `<ErrorBanner>` | Read-only |
+
+### 9.5 Sidebar
+
+```
+┌─ Sidebar ─────────────────────────────┐
+│  + New workspace                      │
+│                                       │
+│  ▼ alpha          Active   3/5        │
+│      • Refactor auth flow      ●      │
+│      • Terraform review        ●      │
+│      • Docs cleanup            ●      │
+│      • Brainstorm Q3 roadmap   ○      │
+│      + New session                    │
+│                                       │
+│  ▶ ml-experiments  Suspended          │
+│  ▼ scratch         Active   0/5       │
+│      + New session                    │
+│                                       │
+│  ───────────────────────              │
+│  Settings    Logout    user@ex.com    │
+└───────────────────────────────────────┘
+```
+
+- Workspace list backed by `GET /api/v1/workspaces` (returns `Phase` + `MaxActiveSessions` inline per §5.2).
+- Active-session count `N` (the numerator in `N/M active`) is fetched lazily per visible workspace via `GET /workspaces/{id}/sessions/active`. **This is a per-replica view (per N12) and may briefly show 0 when the user has just landed on a different replica than the one holding the SSE subscription. Once the user opens the workspace, the SSE event stream becomes authoritative and the count corrects in real time.**
+- Session list lazy-loaded on workspace expand via `GET /workspaces/{id}/sessions`.
+- Session row dot:
+  - `○` grey — idle.
+  - `●` blue — currently active (in opencode busy set).
+- Right-click / long-press → context menu (rename, suspend, resume, delete).
+- Mobile: slide-in `<Sheet>`. Auto-close after selecting a session.
+
+### 9.6 Settings
+
+- `/settings/api-keys` — list + create + delete with one-time-reveal modal.
+- `/settings/appearance` — Light / Dark / System radio.
+- `/settings/{profile,mcp,presets,permissions}` — `<ComingSoonTab>` placeholders.
+
+---
+
+## 10. Active-Session Resource Pressure Model
+
+### 10.1 Bounds (existing)
+
+`MaxActiveSessions` per workspace is bounded `1..20` by the CRD (default 5). The proxy enforces it at write time (`proxy.go:242`).
+
+**Pre-existing per-replica caveat (per N12/N13):** the active-session set (`activeSess`) is an in-process map per `ProxyHandler` instance, so the cap is enforced per API replica. With multi-replica API and round-robin load balancing, total in-flight sessions for a given sandbox can transiently exceed the configured cap by up to a factor of (replica count). This is an existing V2 behavior, not introduced by this design. Documented for operator awareness; cross-replica accounting (Redis-backed active set) is a deferred follow-up (§22).
+
+### 10.2 What the frontend does
+
+1. **Visualize** `N/M active` next to each active workspace in the sidebar.
+2. **Per-session badge** updated live from SSE.
+3. **429 handling** — `<AtCapBanner>` with countdown; auto-restore on session.status.idle.
+4. **Per-session abort** — `POST /sessions/{id}/abort` to free a slot deliberately.
+5. **Cap is editable** in workspace context menu, clamped to 1..20.
+
+### 10.3 Connection-budget management (A25, clarified per N11)
+
+`maxConnectionsPerSandbox = 10` (`proxy.go:25`) is hardcoded. **Important nuance:** this counter is **per API replica, not global** — each `ProxyHandler` instance maintains its own in-memory `connCount` map (`proxy.go:56-99`). Under V2's stateless multi-replica API model, a user's connections may be spread across replicas behind the load balancer.
+
+The cap exists primarily to **protect the opencode pod** (single sandbox = single pod = bounded socket budget), not the API replica. Whether or not connections are concentrated in one replica or spread across many, the same number of TCP connections terminate at the opencode pod.
+
+For the browser side, the practical concern is: a single user with many tabs can pin many connections to one sandbox. **Solution:** the frontend uses a `BroadcastChannel` named `lsp:sse:<sandboxId>` to multiplex SSE event consumption across tabs. The first tab to mount `useEventStream(sandboxId)` opens the SSE; subsequent tabs subscribe to the BroadcastChannel and never open their own connection. The leader tab maintains the connection; if it closes (`pagehide`), an election picks a successor among remaining tabs.
+
+For chat streaming (`POST .../message`), each in-flight stream consumes one connection slot. The frontend disables the Send button on a session when its `connectionCount` heuristic (tracked client-side from in-flight requests) reaches `maxConnectionsPerSandbox - 2` (reserves 2 for SSE + a manual abort). Server-side enforcement via 429 is the safety net.
+
+**Operator note:** because the cap is per-replica, scaling out the API beyond 1 replica effectively raises the user-visible cap. This is acceptable today but should be revisited if a global cap is ever required (would require Redis-backed accounting, out of scope for V1).
+
+### 10.4 Tab-close cleanup
+
+On `pagehide`/`beforeunload` during streaming, the frontend issues a `POST .../abort` (via `navigator.sendBeacon`) to release the slot promptly. The proxy already releases on connection drop, but explicit abort is cleaner.
+
+### 10.5 Clean disconnection on session-store deletion
+
+Sessions deleted via opencode's storage (today: not exposed in our API; manual PVC manipulation only — out of scope) must not leave dangling rows in `session_index`. Mitigation: `session_index` rows are best-effort metadata; orphans don't hurt anything except sidebar display. A V1.1 reconciler can prune.
+
+---
+
+## 11. Suspended-Workspace History Strategy
+
+**Decision: resume-on-read.** No message bodies in PostgreSQL. Sidebar metadata in `session_index`.
+
+### 11.1 UX flow
+
+```
+User clicks "Refactor auth" in suspended workspace "alpha"
+  → ChatView renders, fetches GET /workspaces/alpha/status → phase: Suspended
+  → Renders <SuspendedBanner>: "This workspace is suspended."  [Resume to view]
+  → User clicks Resume
+  → POST /workspaces/alpha/activate
+  → On 200, frontend polls /status every 1s up to 60s
+  → On phase==Active:
+      → GET /workspaces/alpha/sandboxes → returns the sandbox ID
+      → GET /sandboxes/<sb>/sessions/<session>/message → message history
+      → MessageList populates
+```
+
+### 11.2 Trade-offs
+
+| Pro | Con |
+|---|---|
+| Zero new caching surface | Browsing history requires a full resume cycle (~3s + pod resources) |
+| No message content in DB ever | Users who scrub through old chats burn pod time |
+
+The auto-suspend timer (existing controller behavior) handles the "user stopped reading" case automatically.
+
+---
+
+## 12. Theming, Responsiveness, Accessibility
+
+Same as v1.0 design. Highlights:
+
+- Tailwind `darkMode: 'class'`; CSS variables in `tokens.css`; theme persisted in `localStorage`.
+- Breakpoints `< 768px` mobile (Sheet sidebar), `≥ 768px` tablet, `≥ 1024px` desktop (resizable).
+- All targets ≥ 44×44 CSS pixels. Visible focus rings.
+- ARIA labels on icon-only buttons. `aria-live="polite"` on streaming response.
+- `axe-core` integrated into Vitest; tests fail on critical/serious violations.
+- Lighthouse Accessibility ≥ 95.
+- Branding default: **"Safe Space"**. Helm: `frontend.config.branding.productName`. Logo path also configurable.
+
+---
+
+## 13. PWA, Bundle Budgets, Performance Gates
+
+### 13.1 PWA (`vite-plugin-pwa`, generateSW strategy)
+
+- Manifest with name "Safe Space" (or Helm-overridden), icons (192/512/maskable), `display: standalone`.
+- Caching:
+  - `/assets/*` → CacheFirst, 1y immutable.
+  - `/index.html` → NetworkFirst, 5s timeout, fallback to cache.
+  - **`/api/v1/*` → NetworkOnly. Never cache. No exceptions.**
+  - **`/env.json` → NetworkOnly.** (Runtime config; could change between deploys.)
+  - `/livez`, `/readyz`, `/metrics` → NetworkOnly.
+- Update flow: SW detects new bundle → `<UpdateAvailableToast>` ("Reload to update"). No silent reload.
+- Offline fallback: `/offline.html` for navigation requests when offline and not yet cached.
+
+### 13.2 Bundle budgets (`bundlesize.json`)
+
+```json
+[
+  { "path": "./dist/assets/index-*.js",    "maxSize": "200 kB", "compression": "gzip" },
+  { "path": "./dist/assets/chat-*.js",     "maxSize": "250 kB", "compression": "gzip" },
+  { "path": "./dist/assets/settings-*.js", "maxSize": "100 kB", "compression": "gzip" },
+  { "path": "./dist/assets/auth-*.js",     "maxSize": "60 kB",  "compression": "gzip" },
+  { "path": "./dist/assets/*.css",         "maxSize": "30 kB",  "compression": "gzip" }
+]
+```
+
+CI fails if any file exceeds its budget.
+
+### 13.3 Lighthouse CI (`lighthouserc.json`)
+
+```json
+{
+  "ci": {
+    "collect": {
+      "startServerCommand": "pnpm preview --port 4173",
+      "url": ["http://localhost:4173/login"],
+      "settings": { "preset": "mobile" },
+      "numberOfRuns": 3
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance":   ["error", { "minScore": 0.85 }],
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "categories:best-practices":["error", { "minScore": 0.95 }],
+        "categories:pwa":           ["error", { "minScore": 0.90 }]
+      }
+    }
+  }
+}
+```
+
+---
+
+## 14. Security Considerations
+
+### 14.1 XSS
+
+- HttpOnly cookie ⇒ JS cannot read the JWT.
+- CSP from existing `SecurityMiddleware` already restrictive (`security.go:66`). For cross-origin frontend, the CSP `connect-src` must include the API origin — Helm-templated.
+- No `dangerouslySetInnerHTML` anywhere; markdown renders via a safe markdown library (e.g. `react-markdown` with sanitization).
+
+### 14.2 CSRF
+
+CSRF defense depends on the cookie's `SameSite` attribute, which is configurable per deployment (§14.5):
+
+- **`SameSite=Lax` (default, same-origin deployment):** the browser blocks cross-site POSTs from carrying the cookie. **No additional middleware required.** This is the V1 default and the only mode V1 ships with first-party defense for.
+- **`SameSite=None` (cross-origin deployment, requires `Secure`):** browser-level CSRF protection is gone. The deployment requires either an explicit CSRF token mechanism OR a server-side `Origin`/`Referer` allowlist middleware. **Both are deferred to V1.1.** Cross-origin frontend deployment is therefore explicitly NOT recommended for V1; documented in `frontend.config.apiBaseUrl` Helm value with a warning.
+- **`SameSite=Strict`:** even more restrictive; supported via config but breaks bookmarked-link login (a Strict cookie isn't sent on top-level cross-site navigation). Not recommended.
+
+The existing `SecurityMiddleware` already enforces `Origin` allow-list checking (`security.go:142-174`) but does NOT abort on mismatch — it only suppresses the CORS reflect-header. That's adequate for CORS but not for CSRF defense; a future PR for cross-origin support would extend it to abort on POST/PUT/DELETE/PATCH with disallowed `Origin`.
+
+### 14.3 Secrets in titles
+
+`PUT /workspaces/{id}/sessions/{sessionId}/title` runs `redact.Redact(title)` server-side **before** persistence. Test asserts every pattern in `pkg/redact` is stripped.
+
+### 14.4 Token in login response body
+
+The cookie carries the JWT. The body still includes `Token` for back-compat (existing CLI/SDK consumers). The SPA explicitly ignores it — it does not store the token anywhere. Accepted: we tolerate the body field redundancy in V1; revisit after CLI/SDK consumers migrate to a separate `POST /auth/token` endpoint (V1.1).
+
+### 14.5 Cookie attributes
+
+| Attribute | Default | Configurable |
+|---|---|---|
+| `HttpOnly` | true | No |
+| `Secure` | true | Yes (`auth.cookieSecure`) — set false only for local http:// dev |
+| `SameSite` | `Lax` | Yes (`auth.cookieSameSite: Lax|None|Strict`) |
+| `Path` | `/` | No |
+| `Max-Age` | matches `auth.tokenDuration` (24h) | Inherited |
+| `Domain` | host-only by default | Yes (`auth.cookieDomain`) for subdomain sharing |
+
+When `cookieSameSite: None`, `cookieSecure: true` is enforced (browsers reject otherwise). Documented loudly.
+
+### 14.6 PWA service worker scope
+
+SW scope is the entire origin. We never cache `/api/v1/*` (NetworkOnly) so authenticated responses cannot be replayed by the SW. SW is not granted permissions for push notifications or background sync in V1.
+
+### 14.7 CORS
+
+Default deployment is **same-origin** (unified Ingress; one host). `server.allowedOrigins=[]` and CORS not active. Cross-origin deployments require explicit allowlist.
+
+---
+
+## 15. Containerization and Deployment
+
+### 15.1 `frontend/Dockerfile`
+
+```dockerfile
+FROM node:22-bookworm-slim AS build
+WORKDIR /src
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM nginx:1.27-alpine
+COPY --from=build /src/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh && \
+    mkdir -p /var/cache/nginx /var/run /tmp/nginx && \
+    chown -R 101:101 /var/cache/nginx /var/run /tmp/nginx /usr/share/nginx/html
+USER 101
+EXPOSE 8080
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+`docker-entrypoint.sh` writes `/usr/share/nginx/html/env.json` from the env vars `LSP_API_BASE`, `LSP_PRODUCT_NAME`, `LSP_LOGO_URL`, `LSP_PWA_THEME_COLOR`, etc. The SPA fetches `/env.json` on app boot before any other request.
+
+### 15.2 `nginx.conf`
+
+```nginx
+server {
+    listen 8080;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 256;
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+    location = /index.html { add_header Cache-Control "no-cache, no-store, must-revalidate"; }
+    location = /sw.js      { add_header Cache-Control "no-cache, no-store, must-revalidate"; }
+    location = /env.json   { add_header Cache-Control "no-cache, no-store, must-revalidate"; }
+
+    location / { try_files $uri $uri/ /index.html; }
+
+    location = /livez { return 200 'ok'; add_header Content-Type text/plain; }
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+}
+```
+
+### 15.3 Helm
+
+New templates under `charts/llmsafespace/templates/`:
+- `frontend-deployment.yaml`
+- `frontend-service.yaml`
+- `frontend-configmap.yaml`
+- `frontend-ingress.yaml` (sibling Ingress when `frontend.enabled` AND a host is configured)
+
+`values.yaml` additions (delta-only, not full):
+
+```yaml
+frontend:
+  enabled: false
+  replicaCount: 2
+  image: { repository: llmsafespace/frontend, tag: "", pullPolicy: IfNotPresent }
+  service: { type: ClusterIP, port: 8080 }
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+  podSecurityContext: { runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, seccompProfile: { type: RuntimeDefault } }
+  containerSecurityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+  config:
+    apiBaseUrl: ""
+    branding: { productName: "Safe Space", logoUrl: "" }
+    pwa: { themeColor: "#0a0a0a", backgroundColor: "#0a0a0a" }
+  ingress:
+    enabled: false
+    className: ""
+    hosts: []
+    tls: []
+
+api:
+  config:
+    auth:
+      registrationEnabled: false
+      cookieName: "lsp_session"
+      cookieSecure: true
+      cookieSameSite: "Lax"
+      cookieDomain: ""
+    server:
+      allowedOrigins: []
+    workspaces:
+      maxActiveWorkspacesPerUser: 5
+```
+
+When `frontend.enabled=false`, no frontend resources render; backend behavior is unchanged.
+
+When both Ingresses are enabled on the same host, the `pathType: Prefix` rules must be ordered so `/api`, `/livez`, `/readyz`, `/metrics` route to the API Service and `/` (catch-all) routes to the frontend Service. The Helm chart documents this ordering.
+
+---
+
+## 16. GitOps and CI/CD
+
+### 16.1 New workflow `.github/workflows/build-frontend.yml`
+
+Triggers: `push` and `pull_request` on paths `frontend/**`, `pkg/types/**` (so contract tests rerun if Go types change), `charts/llmsafespace/templates/frontend-*.yaml`.
+
+Steps:
+1. Setup Node 22 + pnpm.
+2. `pnpm install --frozen-lockfile`.
+3. `pnpm typecheck` (`tsc --noEmit`).
+4. `pnpm lint`.
+5. `pnpm test --run` (Vitest) — includes the **Go↔TS contract test** (§17).
+6. `pnpm build`.
+7. `npx bundlesize` — fails on budget overrun.
+8. `npx vite-bundle-visualizer --json > bundle-report.json` — uploaded as artifact.
+9. `npx playwright install --with-deps chromium`.
+10. `pnpm test:e2e`.
+11. `npx @lhci/cli autorun` — fails on threshold misses.
+12. Docker build and push with `ts-<unix>`, `sha-<commit>`, `dev` (main only), and semver if a `v*.*.*` tag was pushed.
+
+Rationale for keeping it a separate workflow: frontend changes don't gate backend releases; backend changes that touch shared types do retrigger frontend tests.
+
+### 16.2 Root `Makefile` additions
+
+```makefile
+.PHONY: frontend-build frontend-lint frontend-test frontend-image frontend-contract-test
+
+frontend-build:
+	cd frontend && pnpm install --frozen-lockfile && pnpm build
+
+frontend-lint:
+	cd frontend && pnpm lint
+
+frontend-test:
+	cd frontend && pnpm test --run
+
+frontend-contract-test:
+	cd frontend && pnpm test --run -- src/api/__contract__
+
+frontend-image:
+	docker build -t llmsafespace/frontend:dev frontend/
+```
+
+### 16.3 Local dev story
+
+- `cd frontend && pnpm dev` — Vite on `http://localhost:5173` with proxy to `http://localhost:8080/api/*`.
+- `make local-up` (existing) starts the API + cluster.
+- API config for local: `auth.cookieSecure: false`, `auth.cookieSameSite: Lax`, `server.allowedOrigins: ["http://localhost:5173"]`.
+
+---
+
+## 17. Type Synchronization
+
+### 17.1 Decision (revised — A14)
+
+Swagger annotations are **not present** in the existing API. Backfilling them is out of scope for V1.
+
+**V1 approach: hand-written TypeScript types in `frontend/src/api/types.ts`, with a CI-enforced contract test.**
+
+### 17.2 Contract test design
+
+For every API endpoint the frontend calls, a Go-side test serializes a sample of the response type to JSON and writes it under `frontend/src/api/__fixtures__/<endpoint>.json`. The frontend's contract test reads each fixture and validates it against the corresponding Zod schema in `frontend/src/api/schemas.ts`. Schema and TS type are co-derived (`z.infer<typeof xSchema>`).
+
+If a Go type changes, the Go test regenerates the fixture, and the frontend test fails on schema mismatch. Fixing the schema (and thereby the type) makes the test pass.
+
+```
+api/internal/contract_test.go        // Go: writes fixtures
+frontend/src/api/__fixtures__/       // committed JSON snapshots
+frontend/src/api/__contract__/       // TS: Zod schemas + assertions
+frontend/src/api/types.ts            // hand-written; derived from schemas via z.infer
+frontend/src/api/schemas.ts          // zod schemas
+```
+
+### 17.3 Runtime validation
+
+API client wrappers run the corresponding Zod schema on every response. Mismatches log + show a generic toast to the user. This catches drift even between fixture regenerations.
+
+### 17.4 V1.1+ migration
+
+When Swagger annotations are added across the API, `make openapi` + `openapi-typescript` will produce `types.gen.ts`. The hand-written `types.ts` will be removed; schemas will reference generated types.
+
+---
+
+## 18. Testing Strategy
+
+| Layer | Tool | Coverage Target | Examples |
+|---|---|---|---|
+| Component | Vitest + RTL | ≥ 80% on `components/` | MessageBubble all part types; SuspendedBanner copy + CTA |
+| Hook | Vitest | All custom hooks | useChatStream handles partial chunks, abort, 429 |
+| API client | Vitest + msw | All endpoints | login → cookie set; 401 triggers redirect |
+| Contract | Vitest + JSON fixtures | Every shared type | See §17.2 |
+| Integration | Vitest + msw | Happy + 429 + suspend flows | Send message hits cap → AtCapBanner shows |
+| E2E | Playwright | Critical paths | Login → create workspace → send → suspend → resume |
+| Backend (Go) | testify + miniredis + sqlmock | TDD per repo standard | session_index redaction; activate atomicity; cookie auth |
+
+TDD is mandatory per `README-LLM.md` §0.
+
+---
+
+## 19. SOLID Audit
+
+| Principle | How design honors it |
+|---|---|
+| **SRP** | `auth.Service` does auth logic only; cookie issuance lives in the router (HTTP concern). `SessionIndexService` does indexing only — read separate from write only if size demands; one service is fine for V1. |
+| **OCP** | New auth providers (OIDC) plug in by introducing a new service that satisfies the existing `AuthService` interface — no changes to consumers. The cookie name/attributes are configurable. |
+| **LSP** | All new mocks satisfy the existing interfaces (`DatabaseService`, `CacheService`, `Services`). The `SetNX` addition extends `CacheService` for everyone, no caller breaks. |
+| **ISP** | `SessionIndexService` is a small, focused interface (5 methods). It is added to the `Services` container alongside existing services — the container is already a god-interface; this is a known pattern in the repo and we don't worsen it. |
+| **DIP** | Every new dependency is injected via interfaces (`SessionIndexService`, extended `CacheService`, `WorkspaceService.ActivateWorkspace`). Handlers depend on interfaces, not on concrete types. |
+
+---
+
+## 20. Implementation Phases
+
+### Phase A — Backend prerequisites (3-4 days)
+
+1. `pkg/types/types.go`: add `AuthConfig`, `ActivateWorkspaceResponse`, `SessionListItem`, `ActiveSessionsResponse`. Extend `WorkspaceListItem` with `Phase` and `MaxActiveSessions` only (per §5.2 / N4).
+2. `interfaces.go`: extend `CacheService` (`SetNX`); add `SessionIndexService` interface and `Services.GetSessionIndex()`.
+3. Cache implementation: add `SetNX` (Redis `SET … NX EX`).
+4. Migration `api/migrations/000003_session_index.up.sql` and `.down.sql`.
+5. New service `api/internal/services/session_index/` — `RecordMessage` (non-blocking, bounded queue, debounce, drop-oldest with metric), `ListByWorkspace`, `DeleteByWorkspace`.
+6. Wire `SessionIndexService` into `WorkspaceService.DeleteWorkspace` (cleanup) and into `ProxyHandler.SSETracker.onSessionIdle` callback (writes).
+7. Workspace service: `ListWorkspaces` merges CRD status into `WorkspaceListItem`. `ActivateWorkspace(ctx, userID, workspaceID)` with Redis lock + stalest-suspend logic. New endpoint `GET /workspaces/{id}/sandboxes`. Title rename `PUT /workspaces/{id}/sessions/{sessionId}/title`.
+8. Auth: extend `AuthMiddleware` to read cookie. Router handler for `/auth/login` sets cookie. New routes: `GET /auth/config`, `POST /auth/logout`, `GET /auth/me`.
+9. `ProxyHandler` extension: thread-safe `GetActiveSessions(sandboxID)` for `GET /workspaces/{id}/sessions/active`.
+10. `api/config/config.yaml` + Helm values: new auth/server/workspaces fields.
+11. `app.go`: pass `cfg.Server.AllowedOrigins`, `AllowCredentials: len(allowedOrigins)>0`, and dev-mode flag into `SecurityMiddleware`.
+12. Backend contract test: write fixtures for every endpoint the frontend will call.
+13. Go tests for everything new (TDD).
+14. Worklog entry.
+
+### Phase B — Frontend foundation (3-4 days)
+
+1. Scaffold `frontend/` (Vite, TS, Tailwind, shadcn init, ESLint, Prettier, Vitest, Playwright).
+2. `Dockerfile`, `nginx.conf`, `docker-entrypoint.sh`, `env.json` runtime injection.
+3. Helm scaffolding (deployment, service, configmap, ingress; `frontend.enabled` gating).
+4. AuthProvider, ThemeProvider, QueryClient, ToastProvider, Router, AppShell.
+5. LoginPage, RegisterPage (gated), SettingsPage shell with API Keys + Appearance + 4× ComingSoon.
+6. Sidebar with workspace + session list (no chat surface yet); Workspace context menu; New session button.
+7. `vite-plugin-pwa` config, manifest, icons, offline.html, UpdateAvailableToast.
+8. `bundlesize.json` + `lighthouserc.json`.
+9. Contract test infrastructure (consume Go-emitted fixtures).
+10. GHA workflow `build-frontend.yml`.
+11. Worklog entry.
+
+### Phase C — Chat surface (3-4 days)
+
+1. ChatPage with virtualized MessageList, MessageBubble, MessagePart variants.
+2. Composer with HTTP streaming send (`useChatStream`).
+3. SuspendedBanner + activate flow (calls `/activate`, polls `/status`).
+4. AtCapBanner + 429 handling with Retry-After countdown.
+5. AbortSessionButton + tab-close abort via sendBeacon.
+6. Event stream subscription (`useEventStream`) with BroadcastChannel multiplex.
+7. RenameSessionDialog → calls title endpoint.
+8. Worklog entry.
+
+### Phase D — Polish and ship (2-3 days)
+
+1. Mobile responsive pass; touch targets; composer behavior.
+2. Light/dark mode pass on every component.
+3. Accessibility pass (axe-core; keyboard nav).
+4. Helm install in test cluster — verify Ingress routing both with and without frontend enabled.
+5. Playwright E2E suite green.
+6. Lighthouse CI green at thresholds; tune as needed.
+7. `local/test-frontend.sh` shell E2E paralleling `local/test.sh`.
+8. Documentation: `frontend/README.md`, root `README.md`, `README-LLM.md` updates.
+9. Worklog entry.
+
+**Revised total estimate:** **11-15 working days** (was 10-13; Phase A grew due to the corrections).
+
+---
+
+## 21. Risks and Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Mobile bundle exceeds budget | Medium | Performance regression | Budgets gate CI; `vite-bundle-visualizer` artifact; route-based code splitting mandatory. |
+| Type drift between Go and TS | High | Runtime errors | Contract tests via JSON fixtures + Zod schemas (§17); CI run on every change to `pkg/types`. |
+| `session_index` queue grows under load | Low | Memory pressure | Bounded channel (1024) with drop-oldest; `session_index_dropped_total` metric. |
+| HttpOnly cookie + cross-origin deployment misconfigured | Medium | Cookie not sent / CSRF | Default same-origin via unified Ingress. Cross-origin requires explicit `cookieDomain` + `allowedOrigins`. Helm values documented loudly. |
+| Browser tabs exhaust `maxConnectionsPerSandbox=10` | Medium | 429 on Send button | BroadcastChannel-multiplexed SSE (§10.3); client-side soft throttle on Send. |
+| `pkg/redact` misses a credential pattern | Low | Title leak | Same pipeline that protects logs/proxy responses. Adding a rule there protects everything at once. |
+| Activate races past cap | Low | Brief over-cap | Redis `SetNX` lock per user (§7.3). |
+| User pastes secret as a session title | Low | Self-inflicted leak | `redact.Redact` is the safety net. Title input has a "do not paste secrets" hint. |
+| Lighthouse CI flakiness | Medium | CI noise | `numberOfRuns: 3`, median scoring. Document acceptable variance. |
+| OIDC migration breaks cookie shape | Low | Forced re-login | Cookie name + auth config are configurable. Swap the issuer; cookie payload stays a JWT. |
+| PWA cache holds stale JS after deploy | Low | Stale UI | `<UpdateAvailableToast>` prompts explicit reload. `index.html` is NetworkFirst with 5s timeout. |
+| Browser does not preserve cookie on cross-tab logout | Low | Stale auth state in old tab | `useAuth` polls `/auth/me` on focus regain; 401 triggers redirect. |
+| `LastActivityAt` is nil for stalest-selection | Low | Wrong workspace suspended | Fallback ordering: nil → use `metadata.creationTimestamp`. Documented. |
+| opencode title is not auto-supplied | High | Sidebar shows blank titles | UI fallback: "Session at HH:MM" when title null. Explicit rename action available. |
+| Migration `000003` collides with future schema work | Low | Conflict | Numbering follows existing `000001`, `000002` convention. Visible in PR review. |
+| `/sessions/active` returns wrong replica's view in multi-replica deployment | Medium | Sidebar `N/M active` initially wrong | Documented in §5.4 / §9.5 / N12. SSE event stream corrects it once the user has the workspace open. Cross-replica fix (Redis-backed) is a deferred V1.1 item (§22). |
+| Per-replica 429 cap allows transient over-cap with multi-replica API | Low | Resource pressure if cluster sized assuming hard cap | Pre-existing V2 behavior; documented in §10.1. Operators size capacity assuming `cap × replica_count`. |
+| Newly-created session with no messages is invisible in suspended workspace | Low | UX surprise | Documented in §5.4 trade-off. Live opencode merge handles the Active case; suspended-and-just-created-empty is acceptable corner. |
+| Activate handler held open past Ingress timeout | Was a v3.0 risk; eliminated | — | v4.0 §7.3 returns 503 + `Retry-After` immediately on transient phase; frontend retries. |
+| `message_count` deviates from actual count (per N6) | Medium | Cosmetic — sidebar number off by N | Documented as approximate (§5.6). Field is informational, not load-bearing. Path forward (count on opencode side) deferred. |
+| `SessionIndexService` single-drainer goroutine bottlenecks at very high write rate | Low | Index lag during traffic spike; oldest writes dropped | Bounded channel + drop-oldest + `session_index_dropped_total` metric (§5.5). At V1 expected load (≤10 msg/s typical) the single drainer is far from saturated. Multi-drainer pool is a V1.1+ option if metrics show drops. |
+| Operator misreads `maxConnectionsPerSandbox=10` as a global cap | Low | Wrong capacity-planning expectations | Documented in §10.3 as **per-replica**. |
+
+---
+
+## 22. Deferred to V1.1+
+
+- Per-user activity caps stored on the User table (currently global Helm config).
+- Profile, MCP, Presets, Permissions settings tabs (designs TBD).
+- OIDC integration (slot ready in `AuthConfig`).
+- True offline-browse for suspended workspaces (history reader Job).
+- Logo/brand assets.
+- Admin console (manage other users, force-suspend).
+- Server-side message-history pagination (depends on opencode contract verification).
+- Swagger annotations across all handlers + `make openapi` codegen replacing the contract-test approach.
+- `POST /auth/token` separate endpoint for SDK consumers (so `/auth/login` body can drop the `Token` field).
+- `session_index` reconciler (prune orphans).
+- BroadcastChannel-leader election fallback for browsers without BroadcastChannel (Safari < 15.4) — currently each tab opens its own SSE there.
+- **Rename `Workspace.Status.ActiveSessions` → `SandboxCount`** (per N4/N5). The current name is a naming hazard: it suggests "opencode active sessions" but actually counts attached sandboxes. **This is a CRD status field rename and therefore a breaking change for external consumers** (any `kubectl get workspace -o jsonpath` or similar dashboard). Doing it cleanly requires a CRD version bump (`v1` → `v2`) with a conversion webhook, OR documenting it as a breaking change at the next major version. Out of scope for V1; tracked here so a future epic picks it up. The frontend works around the issue by NOT consuming this field (§5.2).
+- `WorkspaceListItem.LastActivityAt` (deferred from v3.0). Add when a sidebar recency-sort feature is requested.
+- Multi-drainer goroutine pool for `SessionIndexService` if production metrics show non-trivial `session_index_dropped_total`.
+- **Redis-backed cross-replica `activeSess`** (per N12/N13). Today the proxy's active-session set is per-replica. Real cross-replica accounting requires moving the set to Redis with atomic `INCR`/`DECR` (or `SADD`/`SREM`) and updating the SSE-driven idle handler accordingly. Significant change; affects the existing proxy hot path. Defer until production multi-replica deployments hit the per-replica cap drift.
+- **CSRF Origin/Referer-check middleware** for cross-origin frontend deployments using `SameSite=None` cookies (per N18). With the default same-origin deployment using `SameSite=Lax`, this middleware is unnecessary; cross-origin support requires it before `cookieSameSite: "None"` can be safely enabled in production.
+
+---
+
+## Appendix A: Trace — "send first message in suspended workspace"
+
+```
+[User clicks session "Refactor auth" in workspace "alpha" (Suspended)]
+
+Browser → GET /api/v1/workspaces/alpha
+         ← 200 {phase: "Suspended", maxActiveSessions: 5, ...}
+
+Browser → GET /api/v1/workspaces/alpha/sessions
+         ← 200 [{id: "sess1", title: "Refactor auth flow", lastMessageAt: "...", messageCount: 12, status: "idle"}, ...]
+
+[ChatPage renders <SuspendedBanner>]
+
+[User clicks "Resume to chat"]
+
+Browser → POST /api/v1/workspaces/alpha/activate
+         ← 200 {resumed: "alpha", suspended: "ml-experiments"}
+
+[Toast: "Resuming alpha (5/5 active workspaces — suspended ml-experiments)"]
+
+Browser → GET /api/v1/workspaces/alpha/status   (poll every 1s, max 60s)
+         ← 200 {phase: "Resuming", ...}
+         ...
+         ← 200 {phase: "Active", ...}
+
+Browser → GET /api/v1/workspaces/alpha/sandboxes
+         ← 200 [{id: "sb-xyz", phase: "Running", podIP: "...", ...}]
+
+[Composer mounts; MessageList mounts]
+
+Browser → GET /api/v1/sandboxes/sb-xyz/sessions/sess1/message
+         ← 200 [...full message history...]
+
+[BroadcastChannel leader opens SSE]
+Browser (leader) → GET /api/v1/sandboxes/sb-xyz/events
+                 ← stream of session.status events
+
+[User types and clicks Send]
+
+Browser → POST /api/v1/sandboxes/sb-xyz/sessions/sess1/message
+              body: {"parts":[{"type":"text","text":"..."}]}
+         ← HTTP 200 streamed body
+
+[Tokens append to placeholder assistant <MessageBubble>]
+
+[On busy→idle SSE event:
+   ProxyHandler.onSessionIdle calls
+   sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())]
+
+[Sidebar's session row dot transitions blue → grey via SSE event]
+```
+
+---
+
+## Appendix B: Sample API shapes
+
+```jsonc
+// GET /api/v1/auth/config
+{ "registrationEnabled": false, "oidcEnabled": false, "ssoProviders": [] }
+
+// POST /api/v1/auth/login (body — token kept for back-compat; SPA ignores it)
+// Response also carries Set-Cookie: lsp_session=<jwt>; HttpOnly; Secure; SameSite=Lax
+{ "token": "<jwt>", "user": { "id": "u-123", "username": "alice", "email": "alice@example.com", "role": "user", "active": true, "createdAt": "..." } }
+
+// GET /api/v1/auth/me
+{ "id": "u-123", "username": "alice", "email": "alice@example.com", "role": "user", "active": true, "createdAt": "..." }
+
+// GET /api/v1/workspaces (extended WorkspaceListItem — Phase + MaxActiveSessions only; per §5.2)
+{
+  "items": [
+    { "id": "ws-alpha", "name": "alpha", "userId": "u-123", "runtime": "python:3.11",
+      "storageSize": "5Gi", "createdAt": "...", "updatedAt": "...",
+      "phase": "Active", "maxActiveSessions": 5 }
+  ],
+  "pagination": { "limit": 20, "offset": 0, "total": 1 }
+}
+
+// GET /api/v1/workspaces/ws-alpha/sessions
+[
+  { "id": "sess1", "title": "Refactor auth flow",
+    "lastMessageAt": "2026-05-23T14:32:00Z",
+    "messageCount": 12, "status": "active" }
+]
+
+// GET /api/v1/workspaces/ws-alpha/sessions/active
+{ "active": ["sess1", "sess2"], "maxActive": 5 }
+
+// GET /api/v1/workspaces/ws-alpha/sandboxes
+[ { "id": "sb-xyz", "phase": "Running", "podIP": "10.0.0.1", "workspaceRef": "ws-alpha", ... } ]
+
+// POST /api/v1/workspaces/ws-alpha/activate
+{ "resumed": "ws-alpha", "suspended": "ws-ml-experiments" }
+```
