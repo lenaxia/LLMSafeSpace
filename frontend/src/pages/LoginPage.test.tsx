@@ -27,7 +27,7 @@ describe("LoginPage", () => {
   it("renders sign in form", async () => {
     renderLoginPage();
     await waitFor(() => expect(screen.getByText("Welcome back")).toBeInTheDocument());
-    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
   });
 

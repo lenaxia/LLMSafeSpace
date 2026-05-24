@@ -20,7 +20,7 @@ export function LoginForm({ onSubmit }: Props) {
     try {
       await onSubmit(username, password);
     } catch (err) {
-      setError(err instanceof ApiClientError ? "Invalid username or password" : "Something went wrong");
+      setError(err instanceof ApiClientError ? "Invalid email or password" : "Something went wrong");
     } finally {
       setLoading(false);
     }
@@ -30,12 +30,12 @@ export function LoginForm({ onSubmit }: Props) {
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       {error && <p className="text-sm text-destructive">{error}</p>}
       <Input
-        type="text"
-        placeholder="Username"
+        type="email"
+        placeholder="Email"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         required
-        autoComplete="username"
+        autoComplete="email"
       />
       <Input
         type="password"

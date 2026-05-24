@@ -7,7 +7,7 @@ import { LoginForm } from "./LoginForm";
 describe("LoginForm", () => {
   it("renders username and password fields", () => {
     render(<LoginForm onSubmit={vi.fn()} />);
-    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
   });
 
@@ -21,11 +21,11 @@ describe("LoginForm", () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(<LoginForm onSubmit={onSubmit} />);
 
-    await user.type(screen.getByPlaceholderText("Username"), "alice");
+    await user.type(screen.getByPlaceholderText("Email"), "alice@test.com");
     await user.type(screen.getByPlaceholderText("Password"), "secret123");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(onSubmit).toHaveBeenCalledWith("alice", "secret123");
+    expect(onSubmit).toHaveBeenCalledWith("alice@test.com", "secret123");
   });
 
   it("shows loading state during submission", async () => {
@@ -33,7 +33,7 @@ describe("LoginForm", () => {
     const onSubmit = vi.fn((): Promise<void> => new Promise(() => {})); // never resolves
     render(<LoginForm onSubmit={onSubmit} />);
 
-    await user.type(screen.getByPlaceholderText("Username"), "alice");
+    await user.type(screen.getByPlaceholderText("Email"), "alice@test.com");
     await user.type(screen.getByPlaceholderText("Password"), "pass");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -48,12 +48,12 @@ describe("LoginForm", () => {
     );
     render(<LoginForm onSubmit={onSubmit} />);
 
-    await user.type(screen.getByPlaceholderText("Username"), "alice");
+    await user.type(screen.getByPlaceholderText("Email"), "alice@test.com");
     await user.type(screen.getByPlaceholderText("Password"), "wrong");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Invalid username or password")).toBeInTheDocument();
+      expect(screen.getByText("Invalid email or password")).toBeInTheDocument();
     });
   });
 
@@ -61,7 +61,7 @@ describe("LoginForm", () => {
     const onSubmit = vi.fn();
     render(<LoginForm onSubmit={onSubmit} />);
     // Fields are required, browser prevents submission
-    expect(screen.getByPlaceholderText("Username")).toBeRequired();
+    expect(screen.getByPlaceholderText("Email")).toBeRequired();
     expect(screen.getByPlaceholderText("Password")).toBeRequired();
   });
 });
