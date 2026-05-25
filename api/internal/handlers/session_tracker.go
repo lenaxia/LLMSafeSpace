@@ -112,6 +112,8 @@ func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
 
 		if err := t.connectAndRead(ctx, workspaceID); err != nil {
 			t.logger.Debug("SSE subscription ended", "error", err, "workspaceID", workspaceID)
+		} else {
+			backoff = 2 * time.Second
 		}
 
 		select {
