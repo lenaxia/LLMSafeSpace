@@ -20,6 +20,8 @@ export function ChatPage() {
   const [atCap, setAtCap] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
+  useEffect(() => { setLocalMessages([]); }, [sessionId]);
+
   const { data: status } = useWorkspaceStatus(workspaceId);
   const activateMutation = useActivateWorkspace();
 
