@@ -11,6 +11,12 @@ export class ApiClientError extends Error {
   }
 }
 
+async function handleUnauthorized(status: number): Promise<void> {
+  if (status === 401 && !window.location.pathname.startsWith("/login")) {
+    window.location.href = "/login";
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -28,6 +34,7 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
+    await handleUnauthorized(res.status);
     throw new ApiClientError(res.status, body);
   }
 
@@ -62,6 +69,7 @@ export async function streamRequest(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
+    await handleUnauthorized(res.status);
     throw new ApiClientError(res.status, err);
   }
   return res;
