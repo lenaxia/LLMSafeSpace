@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
@@ -9,16 +9,40 @@ export function AppShell() {
   const location = useLocation();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
 
-  // Close sidebar on route change (mobile)
   useEffect(() => {
     setSidebarOpen(false);
     mainRef.current?.focus();
   }, [location.pathname]);
 
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  }, []);
+
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (!isMobile) return;
+      const dx = e.changedTouches[0].clientX - touchStartX.current;
+      const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
+      if (dy > Math.abs(dx)) return;
+      if (touchStartX.current < 30 && dx > 60) {
+        setSidebarOpen(true);
+      } else if (sidebarOpen && dx < -60) {
+        setSidebarOpen(false);
+      }
+    },
+    [isMobile, sidebarOpen],
+  );
+
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Skip to content link */}
+    <div
+      className="flex h-screen overflow-hidden"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-background focus:p-2 focus:text-foreground"
@@ -26,7 +50,6 @@ export function AppShell() {
         Skip to content
       </a>
 
-      {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/50"
@@ -35,7 +58,6 @@ export function AppShell() {
         />
       )}
 
-      {/* Sidebar */}
       <div
         className={
           isMobile
@@ -43,12 +65,10 @@ export function AppShell() {
             : "relative"
         }
       >
-        <Sidebar />
+        <Sidebar onNavigate={() => setSidebarOpen(false)} />
       </div>
 
-      {/* Main content */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Mobile top bar */}
         {isMobile && (
           <div className="flex items-center border-b border-border px-3 py-2">
             <button
