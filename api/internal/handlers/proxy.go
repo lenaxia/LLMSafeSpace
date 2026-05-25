@@ -86,7 +86,7 @@ func NewProxyHandler(
 			Transport: &http.Transport{
 				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 120 * time.Second,
+				ResponseHeaderTimeout: 300 * time.Second,
 			},
 		}
 	}
