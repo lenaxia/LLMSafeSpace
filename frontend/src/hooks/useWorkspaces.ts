@@ -8,16 +8,18 @@ export function useWorkspaces() {
   });
 }
 
+/**
+ * Fetches the current workspace status once. Does not poll.
+ *
+ * Updates are driven by SSE: when the backend emits a workspace.phase event,
+ * ChatPage invalidates ["workspace-status", workspaceId], which triggers a
+ * fresh fetch. staleTime: 0 ensures invalidation always causes a re-fetch.
+ */
 export function useWorkspaceStatus(workspaceId: string | undefined) {
   return useQuery({
     queryKey: ["workspace-status", workspaceId],
     queryFn: () => workspacesApi.getStatus(workspaceId!),
     enabled: !!workspaceId,
-    refetchInterval: (query) => {
-      const phase = query.state.data?.phase;
-      if (!phase || phase === "Pending" || phase === "Resuming" || phase === "Suspending" || phase === "Creating") return 2000;
-      return false;
-    },
+    staleTime: 0,
   });
 }
-
