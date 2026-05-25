@@ -31,8 +31,8 @@ export function ChatPage() {
     mutationFn: (wsId: string) => sessionsApi.create(wsId, "New chat"),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (workspaceId) {
-        navigate(`/chat/${workspaceId}/${data.id}`, { replace: true });
+      if (workspaceId && data.sessionId) {
+        navigate(`/chat/${workspaceId}/${data.sessionId}`, { replace: true });
       }
     },
   });
@@ -45,7 +45,7 @@ export function ChatPage() {
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
-  const { send, abort, streaming, streamedText } = useChatStream(activeWorkspaceId, sessionId);
+  const { send, abort, streaming, streamedText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
 
   // SSE event stream
   const handleSSEEvent = useCallback((data: unknown) => {
@@ -102,6 +102,13 @@ export function ChatPage() {
 
       {atCap !== null && (
         <AtCapBanner retryAfter={atCap} onRetry={() => setAtCap(null)} />
+      )}
+
+      {chatError && (
+        <div className="flex items-center justify-between gap-2 border-b border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <span>{chatError}</span>
+          <button onClick={clearError} className="underline hover:no-underline">Dismiss</button>
+        </div>
       )}
 
       {historyLoading || createSessionMutation.isPending ? (

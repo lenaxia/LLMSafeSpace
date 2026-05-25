@@ -7,6 +7,7 @@ import type { Message } from "../api/types";
 export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined) {
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cleanupBeaconRef = useRef<(() => void) | null>(null);
 
@@ -19,6 +20,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
       if (!workspaceId || !sessionId) return;
       setStreaming(true);
       setStreamedText("");
+      setError(null);
       abortRef.current = new AbortController();
       cleanupBeaconRef.current = registerTabCloseAbort(workspaceId, sessionId);
 
@@ -39,14 +41,12 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           const chunk = decoder.decode(value, { stream: true });
           accumulated += chunk;
 
-          // Extract displayable text from the accumulated buffer
           const { displayText } = extractStreamText(accumulated);
           if (displayText) {
             setStreamedText(displayText);
           }
         }
 
-        // Parse the complete response to get final text
         const finalText = parseCompleteStream(accumulated);
 
         const msg: Message = {
@@ -55,6 +55,9 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           parts: [{ type: "text", text: finalText }],
         };
         onComplete(msg);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Failed to send message";
+        setError(message);
       } finally {
         setStreaming(false);
         setStreamedText("");
@@ -70,5 +73,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
     abortRef.current?.abort();
   }, []);
 
-  return { send, abort, streaming, streamedText };
+  const clearError = useCallback(() => setError(null), []);
+
+  return { send, abort, streaming, streamedText, error, clearError };
 }
