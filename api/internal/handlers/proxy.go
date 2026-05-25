@@ -22,12 +22,12 @@ import (
 )
 
 const (
-	defaultMaxActiveSessions = 5
+	defaultMaxActiveSessions   = 5
 	maxConnectionsPerWorkspace = 10
-	opencodePort             = 4096
-	retryAfterSec            = 10
+	opencodePort               = 4096
+	retryAfterSec              = 10
 
-	phaseActive = v1.WorkspacePhaseActive
+	phaseActive      = v1.WorkspacePhaseActive
 	phaseSuspending  = "Suspending"
 	phaseSuspended   = "Suspended"
 	phaseTerminating = "Terminating"
@@ -295,7 +295,12 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	if h.activityTracker != nil {
 		h.activityTracker.Record(workspaceID)
 	}
+
+	if h.sessionIndex != nil && sessionID != "" {
+		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+	}
 }
+
 // doProxy sends the request to the sandbox and writes the response back to
 // the client. When stripPatch is true, JSON responses with status 2xx are
 // buffered in memory so parts of type=="patch" can be removed before being
