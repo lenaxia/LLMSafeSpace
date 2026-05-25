@@ -405,7 +405,9 @@ func (s *Service) SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pv
 		"UPDATE workspaces SET phase = $1, pvc_state = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
 		phase, pvcState, workspaceID)
 	if err != nil {
-		s.Logger.Error("failed to sync workspace phase to DB", err, "workspaceID", workspaceID, "phase", phase)
+		if s.Logger != nil {
+			s.Logger.Error("failed to sync workspace phase to DB", err, "workspaceID", workspaceID, "phase", phase)
+		}
 	}
 }
 
@@ -418,7 +420,9 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 		"UPDATE workspaces SET deleted_at = NOW(), phase = 'Deleted', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
 		workspaceID)
 	if err != nil {
-		s.Logger.Error("failed to mark workspace deleted in DB", err, "workspaceID", workspaceID)
+		if s.Logger != nil {
+			s.Logger.Error("failed to mark workspace deleted in DB", err, "workspaceID", workspaceID)
+		}
 	}
 }
 
