@@ -15,8 +15,7 @@ export function useWorkspaceStatus(workspaceId: string | undefined) {
     enabled: !!workspaceId,
     refetchInterval: (query) => {
       const phase = query.state.data?.phase;
-      // Poll while transitioning
-      if (phase === "Resuming" || phase === "Suspending" || phase === "Creating") return 1000;
+      if (!phase || phase === "Pending" || phase === "Resuming" || phase === "Suspending" || phase === "Creating") return 2000;
       return false;
     },
   });

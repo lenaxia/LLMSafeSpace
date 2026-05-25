@@ -70,7 +70,8 @@ export function ChatPage() {
   }
 
   const isSuspended = status?.phase === "Suspended";
-  const isTransitioning = status?.phase === "Resuming" || status?.phase === "Creating";
+  const isTransitioning = !status?.phase || status?.phase === "Pending" || status?.phase === "Creating" || status?.phase === "Resuming" || status?.phase === "Suspending";
+  const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
     setAtCap(null);
@@ -98,7 +99,7 @@ export function ChatPage() {
       {isTransitioning && (
         <div className="flex items-center gap-2 border-b border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
           <Spinner size="sm" />
-          <span>Workspace is {status?.phase?.toLowerCase()}...</span>
+          <span>Workspace is {phaseLabel}...</span>
         </div>
       )}
 
