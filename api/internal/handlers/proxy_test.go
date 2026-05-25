@@ -151,7 +151,6 @@ func (e *testEnv) setupWorkspaceMulti(workspaceID string, crds ...*v1.Workspace)
 	}
 }
 
-
 func (e *testEnv) setupPasswordWithT(t *testing.T, workspaceID, password string) {
 	secret := makePasswordSecret(workspaceID, password)
 	_, err := e.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
@@ -239,46 +238,27 @@ func TestProxy_ForwardsQueryParameters(t *testing.T) {
 }
 
 func TestProxy_StreamingResponse(t *testing.T) {
-	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		require.True(t, ok)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		for i := 0; i < 3; i++ {
-			fmt.Fprintf(w, "data: chunk %d\n\n", i)
-			flusher.Flush()
-		}
-	})
+	// StreamEvents is now broker-based; it no longer proxies to the pod.
+	// Verify: with a broker attached, the endpoint sets SSE headers and returns 200.
+	env := newTestEnv(t)
+	env.handler.broker = NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	env.setupPasswordWithT(t, "ws-1", "test-password")
-	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
-	body := w.Body.String()
-	assert.Contains(t, body, "data: chunk 0")
-	assert.Contains(t, body, "data: chunk 1")
-	assert.Contains(t, body, "data: chunk 2")
+	cancel, body, header, code := doStreamingRequest(env.router, "/api/v1/workspaces/ws-1/events")
+	defer body.Close()
+
+	// Allow the handler to write response headers.
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+
+	assert.Equal(t, http.StatusOK, *code)
+	assert.Equal(t, "text/event-stream", header.Get("Content-Type"))
+	assert.Equal(t, "no-cache", header.Get("Cache-Control"))
 }
 
-func TestProxy_SSEStreamPassthrough(t *testing.T) {
-	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
-		flusher := w.(http.Flusher)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "event: session.status\ndata: {\"type\":\"session.status\",\"session_id\":\"s1\",\"status\":\"idle\"}\n\n")
-		flusher.Flush()
-	})
-	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	env.setupPasswordWithT(t, "ws-1", "test-password")
-	env.setupWorkspaceWithT(t, "ws-1", 5)
-
-	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "session.status")
-}
+// TestProxy_SSEStreamPassthrough previously tested transparent proxy forwarding
+// to the pod's /event endpoint. StreamEvents is now broker-based and no longer
+// proxies to the pod; passthrough behaviour is covered by stream_events_test.go.
 
 func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +566,8 @@ func TestProxy_EndpointMapping(t *testing.T) {
 		{"prompt async", "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", "/session/s1/prompt_async"},
 		{"get history", "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
 		{"abort", "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", "/session/s1/abort"},
-		{"events", "GET", "/api/v1/workspaces/ws-1/events", "/event"},
+		// NOTE: "events" is intentionally omitted — StreamEvents is broker-based
+		// and does not proxy to the pod; it is covered by stream_events_test.go.
 	}
 
 	for _, tt := range tests {
@@ -634,12 +615,7 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		case "/session/sess-1/abort":
 			w.WriteHeader(http.StatusAccepted)
-		case "/event":
-			flusher := w.(http.Flusher)
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "data: connected\n\n")
-			flusher.Flush()
+			// NOTE: /event is intentionally omitted — StreamEvents no longer proxies to the pod.
 		}
 	})
 	env.setupPasswordWithT(t, "ws-1", "test-password")
@@ -669,10 +645,6 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/abort", nil)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	w = env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-
 	expected := []string{
 		"POST /session",
 		"GET /session",
@@ -680,7 +652,6 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 		"POST /session/sess-1/prompt_async",
 		"GET /session/sess-1/message",
 		"POST /session/sess-1/abort",
-		"GET /event",
 	}
 	assert.Equal(t, expected, requests)
 }
@@ -826,7 +797,6 @@ func TestProxy_PhaseChange_RunningNoInvalidation(t *testing.T) {
 	handler.pwCacheMu.RUnlock()
 	assert.True(t, pwOk, "phase change to Running should NOT invalidate cache")
 }
-
 
 func TestProxy_ConcurrentRequests(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1358,7 +1328,6 @@ func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
 	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
 		"session should still be removed from active set even when cache is absent")
 }
-
 
 func makePasswordSecret(workspaceID, password string) *corev1.Secret {
 	return &corev1.Secret{
