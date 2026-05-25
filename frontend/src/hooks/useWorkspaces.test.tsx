@@ -94,8 +94,8 @@ describe("useWorkspaceStatus", () => {
 
       await new Promise((r) => setTimeout(r, 150));
 
-      expect((workspacesApi.getStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCount,
-        `hook should not poll when phase is ${phase}`);
+      const callsAfterWait = (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfterWait).toBe(callCount); // hook should not poll when phase is ${phase}
 
       unmount();
     }

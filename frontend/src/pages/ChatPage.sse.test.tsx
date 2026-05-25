@@ -12,7 +12,7 @@
  *    handler must use event.type, not event.session.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, waitFor, act } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
