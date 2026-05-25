@@ -23,6 +23,7 @@ spec:
               type: object
               required:
                 - owner
+                - runtime
                 - storage
               properties:
                 owner:
@@ -32,7 +33,13 @@ spec:
                   properties:
                     userID:
                       type: string
-                      description: "User ID of the workspace owner"
+                runtime:
+                  type: string
+                  description: "Runtime environment (e.g. python:3.11)"
+                securityLevel:
+                  type: string
+                  enum: ["standard", "high"]
+                  default: "standard"
                 storage:
                   type: object
                   required:
@@ -41,23 +48,12 @@ spec:
                     size:
                       type: string
                       pattern: "^[0-9]+(Gi|Mi)$"
-                      description: "PVC storage request (e.g. 10Gi)"
                     storageClassName:
                       type: string
-                      description: "StorageClass name; empty uses the cluster default"
                     accessMode:
                       type: string
                       enum: ["ReadWriteOnce", "ReadWriteMany"]
                       default: "ReadWriteOnce"
-                      description: "ReadWriteOnce = one sandbox at a time (default). ReadWriteMany = concurrent sandboxes."
-                defaultRuntime:
-                  type: string
-                  description: "Default runtime environment (e.g. python:3.11)"
-                securityLevel:
-                  type: string
-                  enum: ["standard", "high"]
-                  default: "standard"
-                  description: "Security level for sandbox pods"
                 networkAccess:
                   type: object
                   properties:
@@ -65,65 +61,92 @@ spec:
                       type: array
                       items:
                         type: object
-                        required:
-                          - domain
+                        required: [domain]
                         properties:
                           domain:
                             type: string
-                            description: "Domain allowed for egress"
                     ingress:
                       type: boolean
                       default: false
-                      description: "Allow ingress traffic to sandbox pods"
                 autoSuspend:
                   type: object
                   properties:
                     enabled:
                       type: boolean
                       default: false
-                      description: "Enable auto-suspension after idle"
                     idleTimeoutSeconds:
                       type: integer
                       minimum: 1
                       default: 3600
-                      description: "Idle period in seconds before auto-suspension"
                 ttlSecondsAfterSuspended:
                   type: integer
                   minimum: 0
                   default: 0
-                  description: "Seconds after suspension before auto-deletion; 0 = never"
                 packages:
                   type: array
-                  description: "Runtime-specific packages installed on every pod start"
                   items:
                     type: object
-                    required:
-                      - runtime
-                      - requirements
+                    required: [runtime, requirements]
                     properties:
                       runtime:
                         type: string
-                        description: "Runtime selector (e.g. python:3.11)"
                       requirements:
                         type: array
                         items:
                           type: string
-                        description: "Package identifiers (e.g. pip package names)"
                 initScript:
                   type: string
-                  description: "Shell script run by init container on every pod start"
                 maxActiveSessions:
                   type: integer
                   minimum: 1
                   maximum: 20
                   default: 5
-                  description: "Maximum concurrent active sessions"
                 credentials:
                   type: object
                   properties:
                     secretName:
                       type: string
-                      description: "Name of the Secret holding agent credentials"
+                timeout:
+                  type: integer
+                  minimum: 0
+                  maximum: 86400
+                  default: 0
+                  description: "Max pod lifetime in seconds. 0 = no limit."
+                resources:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                      default: "500m"
+                    memory:
+                      type: string
+                      default: "512Mi"
+                    ephemeralStorage:
+                      type: string
+                      default: "1Gi"
+                    cpuPinning:
+                      type: boolean
+                      default: false
+                restartGeneration:
+                  type: integer
+                  format: int64
+                  default: 0
+                maxRetries:
+                  type: integer
+                  minimum: 0
+                  maximum: 10
+                  default: 3
+                podSecurityContext:
+                  type: object
+                  properties:
+                    runAsUser:
+                      type: integer
+                      format: int64
+                    runAsGroup:
+                      type: integer
+                      format: int64
+                    seccompProfile:
+                      type: string
             status:
               type: object
               properties:
@@ -131,6 +154,7 @@ spec:
                   type: string
                   enum:
                     - "Pending"
+                    - "Creating"
                     - "Active"
                     - "Suspending"
                     - "Suspended"
@@ -138,56 +162,71 @@ spec:
                     - "Terminating"
                     - "Terminated"
                     - "Failed"
-                  description: "Current lifecycle phase of the workspace"
                 pvcName:
                   type: string
-                  description: "Name of the bound PersistentVolumeClaim"
                 activeSessions:
                   type: integer
-                  description: "Number of Sandbox resources currently referencing this Workspace"
                 lastActivityAt:
                   type: string
                   format: date-time
-                  description: "Timestamp of the most recent API activity"
                 suspendedAt:
                   type: string
                   format: date-time
-                  description: "Timestamp when the workspace last entered the Suspended phase"
                 conditions:
                   type: array
                   items:
                     type: object
-                    required:
-                      - type
-                      - status
+                    required: [type, status]
                     properties:
                       type:
                         type: string
-                        description: "Type of condition"
                       status:
                         type: string
                         enum: ["True", "False", "Unknown"]
-                        description: "Status of the condition"
                       lastTransitionTime:
                         type: string
                         format: date-time
-                        description: "Last time the condition transitioned"
                       reason:
                         type: string
-                        description: "Reason for the condition"
                       message:
                         type: string
-                        description: "Human-readable message explaining the condition"
                 message:
                   type: string
-                  description: "Human-readable description of the current state"
                 observedGeneration:
                   type: integer
-                  description: "Most recent generation the controller acted on"
+                  format: int64
+                podName:
+                  type: string
+                podNamespace:
+                  type: string
+                podIP:
+                  type: string
+                endpoint:
+                  type: string
+                startTime:
+                  type: string
+                  format: date-time
+                restartCount:
+                  type: integer
+                  format: int32
+                transientFailureCount:
+                  type: integer
+                  format: int32
+                lastTransientFailureAt:
+                  type: string
+                  format: date-time
+                observedRestartGeneration:
+                  type: integer
+                  format: int64
+                credentialSecretHash:
+                  type: string
       additionalPrinterColumns:
         - name: Phase
           type: string
           jsonPath: .status.phase
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
         - name: Storage
           type: string
           jsonPath: .spec.storage.size
