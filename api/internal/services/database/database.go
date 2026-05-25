@@ -542,7 +542,7 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 	}
 	defer rows.Close()
 
-	var items []types.SessionListItem
+	items := make([]types.SessionListItem, 0)
 	for rows.Next() {
 		var item types.SessionListItem
 		var title sql.NullString
