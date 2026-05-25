@@ -247,7 +247,6 @@ function WorkspaceGroup({
           onNewSession={onNewSession}
           creatingSession={creatingSession}
           isSuspended={isSuspended || isResuming}
-          isActive={isActive}
         />
       )}
     </div>
@@ -261,7 +260,6 @@ interface SessionListProps {
   onNewSession: () => void;
   creatingSession: boolean;
   isSuspended: boolean;
-  isActive: boolean;
 }
 
 function WorkspaceSessionList({
@@ -271,7 +269,6 @@ function WorkspaceSessionList({
   onNewSession,
   creatingSession,
   isSuspended,
-  isActive,
 }: SessionListProps) {
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions", workspaceId],
