@@ -11,7 +11,7 @@ import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { Spinner } from "../components/ui/Spinner";
 import { sessionsApi } from "../api/sessions";
-import type { Message } from "../api/types";
+import type { Message, WorkspaceStreamEvent } from "../api/types";
 
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
@@ -49,10 +49,18 @@ export function ChatPage() {
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, streamedText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
 
-  // SSE event stream
+  // SSE event stream — handles workspace phase changes and session status events.
   const handleSSEEvent = useCallback((data: unknown) => {
-    const event = data as { session?: { id: string; status: string } };
-    if (event.session && workspaceId) {
+    const event = data as WorkspaceStreamEvent;
+    if (!event?.type) return;
+
+    if (event.type === "workspace.phase" && workspaceId) {
+      // Phase changed: refresh both the sidebar list and the status query so the
+      // icon and the transitioning/suspended banners reflect the new state.
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
+    } else if (event.type === "session.status" && workspaceId) {
+      // Session idle/busy: refresh the session list so active indicators update.
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
     }
   }, [queryClient, workspaceId]);

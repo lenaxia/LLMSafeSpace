@@ -117,3 +117,23 @@ export interface ApiError {
   error: string;
   code?: string;
 }
+
+// --- Workspace SSE event types ---
+// These match the WorkspaceSSEEvent struct emitted by the backend broker.
+
+export interface WorkspacePhaseEvent {
+  type: "workspace.phase";
+  phase: string;
+}
+
+export interface SessionStatusEvent {
+  type: "session.status";
+  session_id: string;
+  status: "idle" | "busy";
+}
+
+/**
+ * Discriminated union of all event types delivered over the workspace SSE stream.
+ * Narrow on `type` to access type-specific fields.
+ */
+export type WorkspaceStreamEvent = WorkspacePhaseEvent | SessionStatusEvent;

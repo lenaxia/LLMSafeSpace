@@ -61,6 +61,7 @@ type ProxyHandler struct {
 	watcher         *WorkspaceWatcher
 	sseTracker      *SSETracker
 	sessionIndex    interfaces.SessionIndexService
+	broker          *WorkspaceEventBroker
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -105,6 +106,8 @@ func NewProxyHandler(
 func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
+		h.broker = NewWorkspaceEventBroker()
+
 		h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
 		if err := h.activityTracker.Start(); err != nil {
 			startErr = fmt.Errorf("starting activity tracker: %w", err)
@@ -175,8 +178,62 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid, false)
 }
 
+// StreamEvents opens a persistent SSE connection for the given workspace.
+// Events are sourced from the WorkspaceEventBroker: workspace phase changes
+// (from WorkspaceWatcher) and session status events (from SSETracker) are
+// both multiplexed onto this single stream.
+//
+// The connection terminates at the API server; the pod does not need to be
+// reachable for the browser to stay connected.
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {
-	h.proxyToWorkspace(c, "/event", false, "", false)
+	workspaceID := c.Param("id")
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace ID required"})
+		return
+	}
+
+	// Verify the workspace exists (but do not require it to be Active — the
+	// client may legitimately connect while the workspace is resuming).
+	_, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil {
+		h.logger.Error("Failed to get workspace CRD for SSE", err, "workspaceID", workspaceID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // disable nginx buffering when behind a proxy
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch := h.broker.Subscribe(workspaceID)
+	defer h.broker.Unsubscribe(workspaceID, ch)
+
+	ctx := c.Request.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, open := <-ch:
+			if !open {
+				return
+			}
+			data, err := json.Marshal(evt)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 // proxyToWorkspace forwards the incoming request to the workspace pod's opencode
@@ -632,6 +689,15 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	phase := workspace.Status.Phase
+
+	// Publish the phase change to all browser SSE subscribers.
+	if h.broker != nil {
+		h.broker.Publish(workspace.Name, WorkspaceSSEEvent{
+			Type:  "workspace.phase",
+			Phase: string(phase),
+		})
+	}
+
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
 		h.invalidateCaches(workspace.Name)
 		if h.sseTracker != nil {
@@ -648,6 +714,16 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 
 func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	h.removeActiveSession(workspaceID, sessionID)
+
+	// Publish session idle event to browser SSE subscribers.
+	if h.broker != nil {
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type:      "session.status",
+			SessionID: sessionID,
+			Status:    "idle",
+		})
+	}
+
 	if h.activityTracker != nil {
 		h.wsConfigMu.RLock()
 		cfg, ok := h.wsConfig[workspaceID]
@@ -692,6 +768,15 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 		maxSessions = cfg.maxActiveSessions
 	}
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
+
+	// Publish session busy event to browser SSE subscribers.
+	if h.broker != nil {
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type:      "session.status",
+			SessionID: sessionID,
+			Status:    "busy",
+		})
+	}
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
