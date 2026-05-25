@@ -33,7 +33,7 @@ type Service struct {
 
 // Config holds workspace service configuration.
 type Config struct {
-	Namespace   string
+	Namespace    string
 	OpencodePort int // Port for opencode on sandbox pods. Default: 4096.
 }
 
@@ -74,7 +74,6 @@ func New(
 func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
 	s.sessionIndex = si
 }
-
 
 func (s *Service) Start() error {
 	s.logger.Info("Starting workspace service")
@@ -506,6 +505,10 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 			StorageClassName: req.StorageClass,
 		},
 		Runtime: req.Runtime,
+		AutoSuspend: &v1.WorkspaceAutoSuspend{
+			Enabled:            true,
+			IdleTimeoutSeconds: 86400,
+		},
 	}
 
 	return &v1.Workspace{

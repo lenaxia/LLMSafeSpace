@@ -259,6 +259,23 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		}
 	}
 
+	// Check idle auto-suspend.
+	if workspace.Spec.AutoSuspend != nil && workspace.Spec.AutoSuspend.Enabled {
+		timeout := workspace.Spec.AutoSuspend.IdleTimeoutSeconds
+		if timeout <= 0 {
+			timeout = 86400
+		}
+		if workspace.Status.LastActivityAt != nil {
+			idle := time.Since(workspace.Status.LastActivityAt.Time)
+			if idle > time.Duration(timeout)*time.Second {
+				logger.Info("Workspace idle timeout exceeded; suspending",
+					"lastActivity", workspace.Status.LastActivityAt, "idle", idle, "timeout", time.Duration(timeout)*time.Second)
+				workspace.Status.Phase = v1.WorkspacePhaseSuspending
+				return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			}
+		}
+	}
+
 	// Reset transient failure counter if stable long enough.
 	r.maybeResetTransientCounter(workspace)
 
