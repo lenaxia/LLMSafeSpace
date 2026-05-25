@@ -214,7 +214,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
 		}
 		resp, err := authSvc.Register(c.Request.Context(), req)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondWithError(c, err)
 			return
 		}
 		setSessionCookie(c, resp.Token)
@@ -525,7 +525,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 	})
 }
 
-
 // registerProxyRoutes adds all /api/v1/sandboxes/:id proxy routes.
 // All routes require authentication and ownership check (applied on the group).
 func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
@@ -535,7 +534,6 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
 	rg.GET("/:id/events", proxyHandler.StreamEvents)
 }
-
 
 // respondWithError maps API errors to HTTP responses.
 func respondWithError(c *gin.Context, err error) {

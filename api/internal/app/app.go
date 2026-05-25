@@ -17,16 +17,17 @@ import (
 )
 
 type App struct {
-	config       *config.Config
-	logger       *logger.Logger
-	router       *gin.Engine
-	server       *http.Server
-	k8sClient    *kubernetes.Client
-	services     *services.Services
-	proxyHandler *handlers.ProxyHandler
-	shutdownCh   chan struct{}
-	ctx          context.Context
-	cancel       context.CancelFunc
+	config          *config.Config
+	logger          *logger.Logger
+	router          *gin.Engine
+	server          *http.Server
+	k8sClient       *kubernetes.Client
+	services        *services.Services
+	proxyHandler    *handlers.ProxyHandler
+	sessionIndexSvc *sessionindex.Service
+	shutdownCh      chan struct{}
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
@@ -107,16 +108,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	return &App{
-		config:       cfg,
-		logger:       log,
-		router:       router,
-		server:       httpServer,
-		k8sClient:    k8sClient,
-		services:     svc,
-		proxyHandler: proxyHandler,
-		shutdownCh:   make(chan struct{}),
-		ctx:          ctx,
-		cancel:       cancel,
+		config:          cfg,
+		logger:          log,
+		router:          router,
+		server:          httpServer,
+		k8sClient:       k8sClient,
+		services:        svc,
+		proxyHandler:    proxyHandler,
+		sessionIndexSvc: sessionIndexSvc,
+		shutdownCh:      make(chan struct{}),
+		ctx:             ctx,
+		cancel:          cancel,
 	}, nil
 }
 
@@ -134,6 +136,13 @@ func (a *App) Run() error {
 		a.k8sClient.Stop()
 		a.services.Stop()
 		return fmt.Errorf("failed to start proxy handler: %w", err)
+	}
+
+	if err := a.sessionIndexSvc.Start(); err != nil {
+		a.proxyHandler.Stop()
+		a.k8sClient.Stop()
+		a.services.Stop()
+		return fmt.Errorf("failed to start session index: %w", err)
 	}
 
 	a.logger.Info("Starting HTTP server", "address", a.server.Addr)
@@ -159,6 +168,10 @@ func (a *App) Shutdown() error {
 
 	if err := a.proxyHandler.Stop(); err != nil {
 		a.logger.Error("Proxy handler shutdown error", err)
+	}
+
+	if err := a.sessionIndexSvc.Stop(); err != nil {
+		a.logger.Error("Session index shutdown error", err)
 	}
 
 	a.k8sClient.Stop()
