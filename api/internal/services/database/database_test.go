@@ -297,7 +297,6 @@ func TestGetUser(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-
 func TestCreateWorkspace(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)
@@ -378,10 +377,10 @@ func TestGetWorkspace(t *testing.T) {
 		now := time.Now()
 		wsID := "ws-uuid-found"
 
-		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "created_at", "updated_at"}).
-			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", now, now)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "phase", "pvc_state", "created_at", "updated_at"}).
+			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "Active", "cluster", now, now)
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at FROM workspaces WHERE id = \\$1").
 			WithArgs(wsID).
 			WillReturnRows(rows)
 
@@ -402,7 +401,7 @@ func TestGetWorkspace(t *testing.T) {
 
 		ctx := context.Background()
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at FROM workspaces WHERE id = \\$1").
 			WithArgs("nonexistent").
 			WillReturnError(sql.ErrNoRows)
 
@@ -418,7 +417,7 @@ func TestGetWorkspace(t *testing.T) {
 
 		ctx := context.Background()
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at FROM workspaces WHERE id = \\$1").
 			WithArgs("ws-err").
 			WillReturnError(sql.ErrConnDone)
 
@@ -441,15 +440,15 @@ func TestListWorkspaces(t *testing.T) {
 		offset := 0
 		now := time.Now()
 
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL").
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "created_at", "updated_at"}).
-			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", now, now).
-			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", now.Add(-time.Hour), now)
+		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "phase", "pvc_state", "created_at", "updated_at"}).
+			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "Active", "cluster", now, now).
+			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "Suspended", "cluster", now.Add(-time.Hour), now)
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, created_at, updated_at FROM workspaces WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
+		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
 			WithArgs(userID, limit, offset).
 			WillReturnRows(wsRows)
 
@@ -469,7 +468,7 @@ func TestListWorkspaces(t *testing.T) {
 		ctx := context.Background()
 		userID := "user-empty"
 
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL").
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
@@ -806,7 +805,3 @@ func TestUpdateUser(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
-
-
-
-
