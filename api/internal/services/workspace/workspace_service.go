@@ -44,11 +44,25 @@ func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
 	case v1.WorkspacePhaseTerminating, v1.WorkspacePhaseTerminated, v1.WorkspacePhaseFailed:
 		pvcState = v1.PVCStateNone
 	}
-	go s.dbService.SyncWorkspacePhase(context.Background(), workspaceID, string(phase), string(pvcState))
+	db := s.dbService
+	if db == nil {
+		return
+	}
+	go func() {
+		defer func() { recover() }()
+		db.SyncWorkspacePhase(context.Background(), workspaceID, string(phase), string(pvcState))
+	}()
 }
 
 func (s *Service) markDeleted(workspaceID string) {
-	go s.dbService.MarkWorkspaceDeleted(context.Background(), workspaceID)
+	db := s.dbService
+	if db == nil {
+		return
+	}
+	go func() {
+		defer func() { recover() }()
+		db.MarkWorkspaceDeleted(context.Background(), workspaceID)
+	}()
 }
 
 // Config holds workspace service configuration.
