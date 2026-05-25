@@ -578,16 +578,16 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/global/health", Port: intstr.FromInt(4096), Scheme: corev1.URISchemeHTTP,
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt(4096),
 				},
 			},
 			InitialDelaySeconds: 5, PeriodSeconds: 10, TimeoutSeconds: 3, FailureThreshold: 3,
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/global/health", Port: intstr.FromInt(4096), Scheme: corev1.URISchemeHTTP,
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt(4096),
 				},
 			},
 			InitialDelaySeconds: 15, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 3,
