@@ -18,15 +18,20 @@ export function AppShell() {
   }, [location.pathname]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
+    const touch = e.touches[0];
+    if (touch) {
+      touchStartX.current = touch.clientX;
+      touchStartY.current = touch.clientY;
+    }
   }, []);
 
   const handleTouchEnd = useCallback(
     (e: React.TouchEvent) => {
       if (!isMobile) return;
-      const dx = e.changedTouches[0].clientX - touchStartX.current;
-      const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - touchStartX.current;
+      const dy = Math.abs(touch.clientY - touchStartY.current);
       if (dy > Math.abs(dx)) return;
       if (touchStartX.current < 30 && dx > 60) {
         setSidebarOpen(true);
