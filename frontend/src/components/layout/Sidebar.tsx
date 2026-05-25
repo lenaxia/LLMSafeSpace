@@ -3,18 +3,35 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
-import { WorkspaceList } from "../workspace/WorkspaceList";
-import { WorkspaceSessionList } from "../workspace/WorkspaceSessionList";
 import { NewWorkspaceDialog } from "../workspace/NewWorkspaceDialog";
-import { Settings, LogOut, Plus } from "lucide-react";
+import {
+  Settings,
+  LogOut,
+  Plus,
+  Circle,
+  MessageSquare,
+  ChevronRight,
+  ChevronDown,
+  Play,
+  Loader2,
+} from "lucide-react";
+import type { SessionListItem, WorkspaceListItem } from "../../api/types";
+import { formatRelativeTime } from "../../lib/time";
+import { cn } from "../../lib/utils";
 
-export function Sidebar() {
+interface Props {
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ onNavigate }: Props) {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId, sessionId } = useParams();
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
-  const [sessionError, setSessionError] = useState("");
+  const [expandedWs, setExpandedWs] = useState<Set<string>>(() =>
+    workspaceId ? new Set([workspaceId]) : new Set(),
+  );
 
   const { data: workspaces } = useQuery({
     queryKey: ["workspaces"],
@@ -24,33 +41,71 @@ export function Sidebar() {
   const createMutation = useMutation({
     mutationFn: async (params: { name: string }) => {
       const ws = await workspacesApi.create(params);
-      // Backend auto-creates workspace; now ensure session is ready.
+      const sessions = await workspacesApi.getSessions(ws.id);
+      if (sessions.length > 0) {
+        return { workspaceId: ws.id, sessionId: sessions[0].id };
+      }
       const session = await workspacesApi.ensureSession(ws.id);
       return { workspaceId: ws.id, sessionId: session.sessionId };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowNewWorkspace(false);
+      setExpandedWs((prev) => new Set(prev).add(data.workspaceId));
       navigate(`/chat/${data.workspaceId}/${data.sessionId}`);
+      onNavigate?.();
     },
   });
 
-  const newSessionMutation = useMutation({
-    mutationFn: (wsId: string) => workspacesApi.ensureSession(wsId),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (workspaceId) navigate(`/chat/${workspaceId}/${data.sessionId}`);
-    },
-    onError: () => {
-      setSessionError("Failed to create session");
-      setTimeout(() => setSessionError(""), 3000);
+  const activateMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.activate(wsId),
+    onSuccess: (_data, wsId) => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
+      queryClient.invalidateQueries({ queryKey: ["sessions", wsId] });
     },
   });
 
-  const handleNewSession = () => {
-    if (!workspaceId) return;
-    setSessionError("");
-    newSessionMutation.mutate(workspaceId);
+  const handleWorkspaceClick = (ws: WorkspaceListItem) => {
+    const isExpanded = expandedWs.has(ws.id);
+
+    if (ws.phase === "Suspended") {
+      activateMutation.mutate(ws.id);
+      setExpandedWs((prev) => new Set(prev).add(ws.id));
+      return;
+    }
+
+    setExpandedWs((prev) => {
+      const next = new Set(prev);
+      if (isExpanded) {
+        next.delete(ws.id);
+      } else {
+        next.add(ws.id);
+      }
+      return next;
+    });
+
+    if (!isExpanded) {
+      queryClient
+        .fetchQuery({
+          queryKey: ["sessions", ws.id],
+          queryFn: () => workspacesApi.getSessions(ws.id),
+        })
+        .then((sessions: SessionListItem[]) => {
+          if (sessionId && ws.id === workspaceId) return;
+          if (sessions.length > 0) {
+            navigate(`/chat/${ws.id}/${sessions[0].id}`);
+          } else {
+            navigate(`/chat/${ws.id}`);
+          }
+          onNavigate?.();
+        });
+    }
+  };
+
+  const handleSessionClick = (wsId: string, sid: string) => {
+    navigate(`/chat/${wsId}/${sid}`);
+    onNavigate?.();
   };
 
   return (
@@ -77,65 +132,178 @@ export function Sidebar() {
           </div>
         )}
 
-        <WorkspaceList
-          workspaces={workspaces?.items ?? []}
-          selectedId={workspaceId}
-          onSelect={(id) => navigate(`/chat/${id}`)}
-        />
-
-        {workspaceId && (
-          <div className="border-t border-border px-2 py-2">
-            <div className="flex items-center justify-between px-3 pb-1">
-              <p className="text-xs font-medium text-muted-foreground">Sessions</p>
-              <button
-                onClick={handleNewSession}
-                disabled={newSessionMutation.isPending}
-                className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                aria-label="New session"
-                title="New chat"
-              >
-                {newSessionMutation.isPending ? (
-                  <span className="block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
-                ) : (
-                  <Plus className="h-3 w-3" />
-                )}
-              </button>
-            </div>
-            <WorkspaceSessionList
-              workspaceId={workspaceId}
+        <nav className="flex flex-col gap-0.5 p-2" aria-label="Workspaces">
+          {(workspaces?.items ?? []).map((ws) => (
+            <WorkspaceGroup
+              key={ws.id}
+              workspace={ws}
+              expanded={expandedWs.has(ws.id)}
+              selectedWorkspaceId={workspaceId}
               selectedSessionId={sessionId}
-              onSelectSession={(sid) => navigate(`/chat/${workspaceId}/${sid}`)}
+              activating={activateMutation.isPending && activateMutation.variables === ws.id}
+              onToggle={() => handleWorkspaceClick(ws)}
+              onSelectSession={(sid) => handleSessionClick(ws.id, sid)}
             />
-            {sessionError && (
-              <p className="px-3 py-1 text-xs text-destructive">{sessionError}</p>
-            )}
-          </div>
-        )}
+          ))}
+          {((workspaces?.items ?? []).length === 0) && (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              No workspaces yet
+            </div>
+          )}
+        </nav>
       </div>
 
       <div className="border-t border-border p-2">
         <div className="flex items-center justify-between">
-          <span className="truncate px-2 text-xs text-muted-foreground">
-            {user?.username}
-          </span>
+          <span className="truncate px-2 text-xs text-muted-foreground">{user?.username}</span>
           <div className="flex gap-1">
-            <button
-              onClick={() => navigate("/settings")}
-              className="rounded p-1.5 hover:bg-accent"
-              aria-label="Settings"
-            >
+            <button onClick={() => { navigate("/settings"); onNavigate?.(); }} className="rounded p-1.5 hover:bg-accent" aria-label="Settings">
               <Settings className="h-4 w-4" />
             </button>
-            <button
-              onClick={logout}
-              className="rounded p-1.5 hover:bg-accent"
-              aria-label="Log out"
-            >
+            <button onClick={logout} className="rounded p-1.5 hover:bg-accent" aria-label="Log out">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
       </div>
     </aside>
+  );
+}
+
+interface WorkspaceGroupProps {
+  workspace: WorkspaceListItem;
+  expanded: boolean;
+  selectedWorkspaceId?: string;
+  selectedSessionId?: string;
+  activating: boolean;
+  onToggle: () => void;
+  onSelectSession: (sessionId: string) => void;
+}
+
+function WorkspaceGroup({
+  workspace,
+  expanded,
+  selectedWorkspaceId,
+  selectedSessionId,
+  activating,
+  onToggle,
+  onSelectSession,
+}: WorkspaceGroupProps) {
+  const isSelected = workspace.id === selectedWorkspaceId;
+  const isSuspended = workspace.phase === "Suspended";
+  const isResuming = workspace.phase === "Resuming";
+  const isActive = workspace.phase === "Active";
+
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+          isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+        )}
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+        )}
+        <Circle
+          className={cn(
+            "h-2 w-2 flex-shrink-0",
+            isActive
+              ? "fill-green-500 text-green-500"
+              : isSuspended
+                ? "fill-yellow-500 text-yellow-500"
+                : "fill-muted-foreground/40 text-muted-foreground/40",
+          )}
+        />
+        <span className="flex-1 truncate">{workspace.name}</span>
+        {activating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+        {isSuspended && !activating && (
+          <Play className="h-3 w-3 flex-shrink-0 text-yellow-500" />
+        )}
+        {!isActive && !isSuspended && !activating && workspace.phase && (
+          <span className="text-xs text-muted-foreground">{workspace.phase}</span>
+        )}
+      </button>
+
+      {expanded && (
+        <WorkspaceSessionList
+          workspaceId={workspace.id}
+          selectedSessionId={selectedSessionId}
+          onSelectSession={onSelectSession}
+          isSuspended={isSuspended || isResuming}
+        />
+      )}
+    </div>
+  );
+}
+
+interface SessionListProps {
+  workspaceId: string;
+  selectedSessionId?: string;
+  onSelectSession: (sessionId: string) => void;
+  isSuspended: boolean;
+}
+
+function WorkspaceSessionList({
+  workspaceId,
+  selectedSessionId,
+  onSelectSession,
+  isSuspended,
+}: SessionListProps) {
+  const { data: sessions, isLoading } = useQuery({
+    queryKey: ["sessions", workspaceId],
+    queryFn: () => workspacesApi.getSessions(workspaceId),
+    enabled: !!workspaceId,
+  });
+
+  if (isSuspended) {
+    return (
+      <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">
+        {isLoading ? "Checking..." : "Resuming workspace..."}
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">Loading...</div>
+    );
+  }
+
+  if (!sessions || sessions.length === 0) {
+    return (
+      <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">No sessions yet</div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5 ml-5 pl-2 border-l border-border">
+      {sessions.map((s) => {
+        const title =
+          s.title ||
+          `Chat ${s.lastMessageAt ? formatRelativeTime(s.lastMessageAt) : ""}`;
+        return (
+          <button
+            key={s.id}
+            onClick={() => onSelectSession(s.id)}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+              s.id === selectedSessionId
+                ? "bg-accent text-accent-foreground"
+                : "hover:bg-accent/50 text-muted-foreground",
+            )}
+          >
+            <MessageSquare className="h-3 w-3 flex-shrink-0" />
+            <span className="flex-1 truncate">{title}</span>
+            {s.status === "active" && (
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
