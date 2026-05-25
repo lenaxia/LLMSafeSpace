@@ -15,8 +15,8 @@ type Service struct {
 	requestDuration     *prometheus.HistogramVec
 	responseSize        *prometheus.HistogramVec
 	activeConnections   *prometheus.GaugeVec
-	sandboxesCreated    *prometheus.CounterVec
-	sandboxesTerminated *prometheus.CounterVec
+	workspacesCreated    *prometheus.CounterVec
+	workspacesTerminated *prometheus.CounterVec
 	errorsTotal         *prometheus.CounterVec
 	resourceUsage       *prometheus.GaugeVec
 }
@@ -60,18 +60,18 @@ func New(log pkginterfaces.LoggerInterface) *Service {
 		[]string{"type", "user_id"},
 	)
 
-	svc.sandboxesCreated = promauto.NewCounterVec(
+	svc.workspacesCreated = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "sandboxes_created_total",
-			Help: "Total number of sandboxes created",
+			Name: "workspaces_created_total",
+			Help: "Total number of workspaces created",
 		},
 		[]string{"runtime", "user_id"},
 	)
 
-	svc.sandboxesTerminated = promauto.NewCounterVec(
+	svc.workspacesTerminated = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "sandboxes_terminated_total",
-			Help: "Total number of sandboxes terminated",
+			Name: "workspaces_terminated_total",
+			Help: "Total number of workspaces terminated",
 		},
 		[]string{"runtime", "reason"},
 	)
@@ -86,10 +86,10 @@ func New(log pkginterfaces.LoggerInterface) *Service {
 
 	svc.resourceUsage = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "sandbox_resource_usage",
-			Help: "Resource usage by sandboxes",
+			Name: "workspace_resource_usage",
+			Help: "Resource usage by workspaces",
 		},
-		[]string{"sandbox_id", "resource_type"},
+		[]string{"workspace_id", "resource_type"},
 	)
 
 	return svc
@@ -111,21 +111,21 @@ func (s *Service) RecordRequest(method, path string, status int, duration time.D
 	s.responseSize.WithLabelValues(method, path).Observe(float64(size))
 }
 
-func (s *Service) RecordSandboxCreation(runtime, userID string) {
-	s.sandboxesCreated.WithLabelValues(runtime, userID).Inc()
+func (s *Service) RecordWorkspaceCreation(runtime, userID string) {
+	s.workspacesCreated.WithLabelValues(runtime, userID).Inc()
 }
 
-func (s *Service) RecordSandboxTermination(runtime, reason string) {
-	s.sandboxesTerminated.WithLabelValues(runtime, reason).Inc()
+func (s *Service) RecordWorkspaceTermination(runtime, reason string) {
+	s.workspacesTerminated.WithLabelValues(runtime, reason).Inc()
 }
 
 func (s *Service) RecordError(errorType, endpoint, code string) {
 	s.errorsTotal.WithLabelValues(errorType, endpoint, code).Inc()
 }
 
-func (s *Service) RecordResourceUsage(sandboxID string, cpu float64, memoryBytes int64) {
-	s.resourceUsage.WithLabelValues(sandboxID, "cpu").Set(cpu)
-	s.resourceUsage.WithLabelValues(sandboxID, "memory").Set(float64(memoryBytes))
+func (s *Service) RecordResourceUsage(workspaceID string, cpu float64, memoryBytes int64) {
+	s.resourceUsage.WithLabelValues(workspaceID, "cpu").Set(cpu)
+	s.resourceUsage.WithLabelValues(workspaceID, "memory").Set(float64(memoryBytes))
 }
 
 func (s *Service) IncrementActiveConnections(connType, userID string) {

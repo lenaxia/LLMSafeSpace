@@ -32,50 +32,10 @@ type contextKey string
 // always in sync.
 const ContextKeyUserID contextKey = "userID"
 
-// Sandbox is the API transfer object for a sandbox resource. It is NOT a
 // Kubernetes object — there is no TypeMeta or ObjectMeta embedding. The
 // service layer converts a v1.Sandbox CRD into one of these for client
 // responses.
-type Sandbox struct {
-	ID                string            `json:"id"`
-	Namespace         string            `json:"namespace,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	Annotations       map[string]string `json:"annotations,omitempty"`
-	CreationTimestamp time.Time         `json:"creationTimestamp,omitempty"`
 
-	Spec   SandboxSpec   `json:"spec"`
-	Status SandboxStatus `json:"status"`
-}
-
-// SandboxSpec defines the desired state of a Sandbox
-type SandboxSpec struct {
-	// Runtime environment (e.g., python:3.10)
-	Runtime string `json:"runtime"`
-
-	// Security level for the sandbox
-	SecurityLevel string `json:"securityLevel,omitempty"`
-
-	// Timeout in seconds for sandbox operations
-	Timeout int `json:"timeout,omitempty"`
-
-	// Resource requirements
-	Resources *ResourceRequirements `json:"resources,omitempty"`
-
-	// Network access configuration
-	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-
-	// Filesystem configuration
-	Filesystem *FilesystemConfig `json:"filesystem,omitempty"`
-
-	// Storage configuration
-	Storage *StorageConfig `json:"storage,omitempty"`
-
-	// Security context
-	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
-
-	// Reference to a SandboxProfile
-	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
-}
 
 // ResourceRequirements defines resource limits for a sandbox
 type ResourceRequirements struct {
@@ -164,44 +124,6 @@ type ProfileReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// SandboxStatus defines the observed state of a Sandbox
-type SandboxStatus struct {
-	// Current phase of the sandbox
-	Phase string `json:"phase,omitempty"`
-
-	// Conditions for the sandbox
-	Conditions []SandboxCondition `json:"conditions,omitempty"`
-
-	// Name of the pod running the sandbox
-	PodName string `json:"podName,omitempty"`
-
-	// Start time of the sandbox
-	StartTime *time.Time `json:"startTime,omitempty"`
-
-	// Resource usage
-	Resources *ResourceStatus `json:"resources,omitempty"`
-
-	// Pod status (from Kubernetes pod)
-	PodStatus string `json:"podStatus,omitempty"`
-
-	// Pod IP address
-	PodIP string `json:"podIP,omitempty"`
-
-	// Pod start time
-	PodStartTime *time.Time `json:"podStartTime,omitempty"`
-
-	// Node name where pod is running
-	NodeName string `json:"nodeName,omitempty"`
-
-	// Container statuses
-	ContainerStatuses []ContainerStatus `json:"containerStatuses,omitempty"`
-
-	// Network information
-	NetworkInfo *NetworkInfo `json:"networkInfo,omitempty"`
-
-	// Events related to this sandbox
-	Events []Event `json:"events,omitempty"`
-}
 
 // ContainerStateValue represents the state of a container
 type ContainerStateValue string
@@ -279,23 +201,6 @@ type Event struct {
 	Source string `json:"source,omitempty"`
 }
 
-// SandboxCondition defines a condition of a sandbox
-type SandboxCondition struct {
-	// Type of condition
-	Type string `json:"type"`
-
-	// Status of the condition (True, False, Unknown)
-	Status string `json:"status"`
-
-	// Reason for the condition
-	Reason string `json:"reason,omitempty"`
-
-	// Message regarding the condition
-	Message string `json:"message,omitempty"`
-
-	// Last transition time
-	LastTransitionTime *time.Time `json:"lastTransitionTime,omitempty"`
-}
 
 // ResourceStatus defines resource usage
 type ResourceStatus struct {
@@ -309,26 +214,6 @@ type ResourceStatus struct {
 	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
 }
 
-// SandboxMetadata represents metadata about a sandbox stored in the database
-type SandboxMetadata struct {
-	ID string `json:"id" db:"id"`
-
-	UserID string `json:"userId" db:"user_id"`
-
-	Runtime string `json:"runtime" db:"runtime"`
-
-	CreatedAt time.Time `json:"createdAt" db:"created_at"`
-
-	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
-
-	Status string `json:"status" db:"status"`
-
-	Name string `json:"name,omitempty" db:"name"`
-
-	Labels map[string]string `json:"labels,omitempty"`
-
-	WorkspaceID string `json:"workspaceId,omitempty" db:"workspace_id"`
-}
 
 // PaginationMetadata represents pagination metadata
 type PaginationMetadata struct {
@@ -348,51 +233,6 @@ type PaginationMetadata struct {
 	Offset int `json:"offset"`
 }
 
-// CreateSandboxRequest represents a request to create a sandbox
-type CreateSandboxRequest struct {
-	// Runtime environment (e.g., python:3.10)
-	Runtime string `json:"runtime"`
-
-	// Security level for the sandbox
-	SecurityLevel string `json:"securityLevel,omitempty"`
-
-	// Timeout in seconds for sandbox operations
-	Timeout int `json:"timeout,omitempty"`
-
-	// User ID
-	UserID string `json:"userId"`
-
-	// Resource requirements
-	Resources *ResourceRequirements `json:"resources,omitempty"`
-
-	// Network access configuration
-	NetworkAccess *NetworkAccess `json:"networkAccess,omitempty"`
-
-	// WorkspaceRef is an optional workspace ID to associate with the sandbox.
-	// When empty, a workspace is automatically created with defaults.
-	WorkspaceRef string `json:"workspaceRef,omitempty"`
-}
-
-// ExecuteRequest represents a request to execute code or a command
-type ExecuteRequest struct {
-	// Sandbox ID
-	SandboxID string `json:"sandboxId"`
-
-	// Type of execution (code or command)
-	Type string `json:"type"`
-
-	// Content to execute
-	Content string `json:"content"`
-
-	// Timeout in seconds
-	Timeout int `json:"timeout,omitempty"`
-
-	// Environment variables
-	Env map[string]string `json:"env,omitempty"`
-
-	// Working directory
-	WorkingDir string `json:"workingDir,omitempty"`
-}
 
 // ExecutionResult represents the result of an execution
 type ExecutionResult struct {
@@ -431,18 +271,6 @@ type FileInfo struct {
 
 	// Whether it's a directory
 	IsDir bool `json:"isDir"`
-}
-
-// InstallPackagesRequest represents a request to install packages
-type InstallPackagesRequest struct {
-	// Sandbox ID
-	SandboxID string `json:"sandboxId"`
-
-	// Packages to install
-	Packages []string `json:"packages"`
-
-	// Package manager to use
-	PackageManager string `json:"packageManager,omitempty"`
 }
 
 // WSConnection represents a WebSocket connection
@@ -523,32 +351,9 @@ type APIKey struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
-// SandboxListResult is the typed return value for ListSandboxes. It bundles
 // live Kubernetes status with database metadata and pagination so callers never
 // receive untyped maps.
-type SandboxListResult struct {
-	Items      []SandboxListItem   `json:"items"`
-	Pagination *PaginationMetadata `json:"pagination,omitempty"`
-}
 
-// SandboxListItem merges database metadata with live Kubernetes status.
-type SandboxListItem struct {
-	// Database fields
-	ID        string            `json:"id"`
-	UserID    string            `json:"userId"`
-	Runtime   string            `json:"runtime"`
-	CreatedAt time.Time         `json:"createdAt"`
-	UpdatedAt time.Time         `json:"updatedAt"`
-	Status    string            `json:"status"`
-	Name      string            `json:"name,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-
-	// Live Kubernetes status (best-effort; zero values when unavailable)
-	Phase       string     `json:"phase,omitempty"`
-	StartTime   *time.Time `json:"startTime,omitempty"`
-	CPUUsage    string     `json:"cpuUsage,omitempty"`
-	MemoryUsage string     `json:"memoryUsage,omitempty"`
-}
 
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
@@ -559,14 +364,8 @@ type UserUpdates struct {
 	Role     *string `json:"role,omitempty"`
 }
 
-// SandboxUpdates carries the fields that may be changed on a SandboxMetadata record.
 // All scalar fields are pointers — nil means "do not update this field".
 // Labels nil means "do not touch labels"; non-nil replaces the label set entirely.
-type SandboxUpdates struct {
-	Status *string           `json:"status,omitempty"`
-	Name   *string           `json:"name,omitempty"`
-	Labels map[string]string `json:"labels,omitempty"`
-}
 
 // CachedSession is the typed representation of a WebSocket session stored in
 // the cache. It replaces the previous map[string]interface{} bag.
@@ -581,13 +380,7 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-type SandboxNotFoundError struct {
-	ID string
-}
 
-func (e *SandboxNotFoundError) Error() string {
-	return fmt.Sprintf("sandbox %s not found", e.ID)
-}
 
 // Workspace is the API transfer object for a workspace resource.
 type Workspace struct {

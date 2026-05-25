@@ -11,16 +11,16 @@ type MockSession struct {
 	mock.Mock
 	ID        string
 	UserID    string
-	SandboxID string
+	WorkspaceID string
 	Conn      types.WSConnection
 }
 
 // NewMockSession creates a new mock session
-func NewMockSession(id, userId, sandboxId string) *MockSession {
+func NewMockSession(id, userId, workspaceId string) *MockSession {
 	return &MockSession{
 		ID:        id,
 		UserID:    userId,
-		SandboxID: sandboxId,
+		WorkspaceID: workspaceId,
 		Conn:      NewMockWSConnection(),
 	}
 }

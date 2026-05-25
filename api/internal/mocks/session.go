@@ -12,8 +12,8 @@ type MockSessionManager struct {
 	mock.Mock
 }
 
-func (m *MockSessionManager) CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error) {
-	args := m.Called(userID, sandboxID, conn)
+func (m *MockSessionManager) CreateSession(userID, workspaceID string, conn types.WSConnection) (*types.Session, error) {
+	args := m.Called(userID, workspaceID, conn)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

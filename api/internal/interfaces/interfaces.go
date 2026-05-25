@@ -10,7 +10,7 @@ import (
 )
 
 type SessionManager interface {
-	CreateSession(userID, sandboxID string, conn types.WSConnection) (*types.Session, error)
+	CreateSession(userID, workspaceID string, conn types.WSConnection) (*types.Session, error)
 	GetSession(sessionID string) (*types.Session, error)
 	CloseSession(sessionID string)
 	SetCancellationFunc(sessionID, executionID string, cancel context.CancelFunc)
@@ -95,7 +95,7 @@ type MetricsService interface {
 	RecordError(errorType, endpoint, code string)
 	IncrementActiveConnections(connType string, userID string)
 	DecrementActiveConnections(connType string, userID string)
-	RecordResourceUsage(sandboxID string, cpu float64, memoryBytes int64)
+	RecordResourceUsage(workspaceID string, cpu float64, memoryBytes int64)
 	Start() error
 	Stop() error
 }

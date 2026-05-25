@@ -24,8 +24,8 @@ func TestNew_AllCountersInitialised(t *testing.T) {
 	assert.NotNil(t, metricsService.requestDuration)
 	assert.NotNil(t, metricsService.responseSize)
 	assert.NotNil(t, metricsService.activeConnections)
-	assert.NotNil(t, metricsService.sandboxesCreated)
-	assert.NotNil(t, metricsService.sandboxesTerminated)
+	assert.NotNil(t, metricsService.workspacesCreated)
+	assert.NotNil(t, metricsService.workspacesTerminated)
 	assert.NotNil(t, metricsService.errorsTotal)
 	assert.NotNil(t, metricsService.resourceUsage)
 }
@@ -39,41 +39,27 @@ func TestStop(t *testing.T) {
 }
 
 func TestRecordRequest(t *testing.T) {
-	metricsService.RecordRequest("GET", "/api/v1/sandboxes", 200, 100*time.Millisecond, 1024)
+	metricsService.RecordRequest("GET", "/api/v1/workspaces", 200, 100*time.Millisecond, 1024)
 
-	metric, err := metricsService.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/sandboxes", "200")
+	metric, err := metricsService.requestCounter.GetMetricWithLabelValues("GET", "/api/v1/workspaces", "200")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, counterValue(metric))
 
-	obs, err := metricsService.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	obs, err := metricsService.requestDuration.GetMetricWithLabelValues("GET", "/api/v1/workspaces")
 	assert.NoError(t, err)
 	assert.InDelta(t, 0.1, histogramSum(obs.(prometheus.Histogram)), 0.01)
 
-	obs, err = metricsService.responseSize.GetMetricWithLabelValues("GET", "/api/v1/sandboxes")
+	obs, err = metricsService.responseSize.GetMetricWithLabelValues("GET", "/api/v1/workspaces")
 	assert.NoError(t, err)
 	assert.InDelta(t, 1024.0, histogramSum(obs.(prometheus.Histogram)), 0.1)
 }
 
-func TestRecordSandboxCreation(t *testing.T) {
-	metricsService.RecordSandboxCreation("python:3.10", "user-123")
 
-	metric, err := metricsService.sandboxesCreated.GetMetricWithLabelValues("python:3.10", "user-123")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, counterValue(metric))
-}
-
-func TestRecordSandboxTermination(t *testing.T) {
-	metricsService.RecordSandboxTermination("python:3.10", "timeout")
-
-	metric, err := metricsService.sandboxesTerminated.GetMetricWithLabelValues("python:3.10", "timeout")
-	assert.NoError(t, err)
-	assert.Equal(t, 1.0, counterValue(metric))
-}
 
 func TestRecordError(t *testing.T) {
-	metricsService.RecordError("api_error", "/api/v1/sandboxes", "404")
+	metricsService.RecordError("api_error", "/api/v1/workspaces", "404")
 
-	metric, err := metricsService.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/sandboxes", "404")
+	metric, err := metricsService.errorsTotal.GetMetricWithLabelValues("api_error", "/api/v1/workspaces", "404")
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, counterValue(metric))
 }
@@ -103,10 +89,10 @@ func TestIncrementDecrementActiveConnections(t *testing.T) {
 
 func TestRecordRequest_DifferentStatuses(t *testing.T) {
 	for _, status := range []int{200, 400, 500} {
-		metricsService.RecordRequest("POST", "/api/v1/sandboxes", status, time.Millisecond, 0)
+		metricsService.RecordRequest("POST", "/api/v1/workspaces", status, time.Millisecond, 0)
 	}
 	for _, status := range []string{"200", "400", "500"} {
-		m, err := metricsService.requestCounter.GetMetricWithLabelValues("POST", "/api/v1/sandboxes", status)
+		m, err := metricsService.requestCounter.GetMetricWithLabelValues("POST", "/api/v1/workspaces", status)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, counterValue(m), 1.0)
 	}

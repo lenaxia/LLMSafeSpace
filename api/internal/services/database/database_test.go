@@ -161,11 +161,11 @@ func TestCheckResourceOwnership(t *testing.T) {
 	// Test case: User owns the resource
 	userID := "user123"
 	resourceID := "resource456"
-	resourceType := "sandbox"
+	resourceType := "workspace"
 
 	// Set up expectations for owned resource
 	rows := sqlmock.NewRows([]string{"count"}).AddRow(1)
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM sandboxes WHERE id = \\$1 AND user_id = \\$2").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE id = \\$1 AND user_id = \\$2").
 		WithArgs(resourceID, userID).
 		WillReturnRows(rows)
 
@@ -181,7 +181,7 @@ func TestCheckResourceOwnership(t *testing.T) {
 	// Test case: User does not own the resource
 	otherUserID := "otheruser"
 	rows = sqlmock.NewRows([]string{"count"}).AddRow(0)
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM sandboxes WHERE id = \\$1 AND user_id = \\$2").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE id = \\$1 AND user_id = \\$2").
 		WithArgs(resourceID, otherUserID).
 		WillReturnRows(rows)
 
@@ -212,7 +212,7 @@ func TestCheckPermission(t *testing.T) {
 
 	// Test case: User has permission
 	userID := "user123"
-	resourceType := "sandbox"
+	resourceType := "workspace"
 	resourceID := "resource456"
 	action := "read"
 
@@ -297,63 +297,6 @@ func TestGetUser(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCreateSandbox(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		service, mock, cleanup := setupMockDB(t)
-		defer cleanup()
-		mock.MatchExpectationsInOrder(false)
-
-		ctx := context.Background()
-		sandbox := &types.SandboxMetadata{
-			ID:        "sandbox123",
-			UserID:    "user456",
-			Runtime:   "python:3.10",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-			Status:    "Running",
-			Name:      "Test Sandbox",
-			Labels:    map[string]string{"env": "test", "app": "demo"},
-		}
-
-		mock.ExpectBegin()
-		mock.ExpectExec("INSERT INTO sandboxes").
-			WithArgs(sandbox.ID, sandbox.UserID, sandbox.Runtime, sandbox.CreatedAt, sandbox.UpdatedAt, sandbox.Status, sandbox.Name, sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectExec("INSERT INTO sandbox_labels").
-			WithArgs(sandbox.ID, sqlmock.AnyArg(), sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectExec("INSERT INTO sandbox_labels").
-			WithArgs(sandbox.ID, sqlmock.AnyArg(), sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
-
-		assert.NoError(t, service.CreateSandbox(ctx, sandbox))
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("db_error_rolls_back", func(t *testing.T) {
-		service, mock, cleanup := setupMockDB(t)
-		defer cleanup()
-
-		ctx := context.Background()
-		errorSandbox := &types.SandboxMetadata{
-			ID:      "error_sandbox",
-			UserID:  "user456",
-			Runtime: "python:3.10",
-		}
-
-		mock.ExpectBegin()
-		mock.ExpectExec("INSERT INTO sandboxes").
-			WithArgs(errorSandbox.ID, errorSandbox.UserID, errorSandbox.Runtime, sqlmock.AnyArg(), sqlmock.AnyArg(), errorSandbox.Status, errorSandbox.Name, sqlmock.AnyArg()).
-			WillReturnError(sql.ErrConnDone)
-		mock.ExpectRollback()
-
-		err := service.CreateSandbox(ctx, errorSandbox)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to create sandbox")
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-}
 
 func TestCreateWorkspace(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
@@ -864,254 +807,6 @@ func TestUpdateUser(t *testing.T) {
 	})
 }
 
-func TestListSandboxes(t *testing.T) {
-	service, mock, cleanup := setupMockDB(t)
-	defer cleanup()
 
-	// Test case: List sandboxes
-	ctx := context.Background()
-	userID := "user123"
-	limit := 10
-	offset := 0
 
-	// Set up expectations for count query
-	countRows := sqlmock.NewRows([]string{"count"}).AddRow(2)
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM sandboxes WHERE user_id = \\$1").
-		WithArgs(userID).
-		WillReturnRows(countRows)
 
-	// Set up expectations for sandboxes query
-	now := time.Now()
-	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name", "workspace_id"}).
-		AddRow("sandbox1", userID, "python:3.10", now, now, "Running", "Test Sandbox 1", nil).
-		AddRow("sandbox2", userID, "nodejs:16", now.Add(-1*time.Hour), now, "Pending", "Test Sandbox 2", nil)
-
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE user_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
-		WithArgs(userID, limit, offset).
-		WillReturnRows(sandboxRows)
-
-	// Set up expectations for labels query - using pq.Array for the sandbox IDs
-	labelRows := sqlmock.NewRows([]string{"sandbox_id", "key", "value"}).
-		AddRow("sandbox1", "env", "test").
-		AddRow("sandbox1", "app", "demo").
-		AddRow("sandbox2", "env", "prod")
-
-	// Fix: Use a proper SQL query pattern that matches what the actual code will use
-	// The issue is with how we're mocking the ANY($1) part of the query
-	mock.ExpectQuery("SELECT sandbox_id, key, value FROM sandbox_labels WHERE sandbox_id IN \\('sandbox1','sandbox2'\\)").
-		WillReturnRows(labelRows)
-
-	// Call the method
-	sandboxes, pagination, err := service.ListSandboxes(ctx, userID, limit, offset)
-	assert.NoError(t, err)
-	assert.NotNil(t, sandboxes)
-	assert.Len(t, sandboxes, 2)
-
-	// Check first sandbox
-	assert.Equal(t, "sandbox1", sandboxes[0].ID)
-	assert.Equal(t, userID, sandboxes[0].UserID)
-	assert.Equal(t, "python:3.10", sandboxes[0].Runtime)
-	assert.Equal(t, "Running", sandboxes[0].Status)
-	assert.Equal(t, "Test Sandbox 1", sandboxes[0].Name)
-	assert.Equal(t, "test", sandboxes[0].Labels["env"])
-	assert.Equal(t, "demo", sandboxes[0].Labels["app"])
-
-	// Check second sandbox
-	assert.Equal(t, "sandbox2", sandboxes[1].ID)
-	assert.Equal(t, "nodejs:16", sandboxes[1].Runtime)
-	assert.Equal(t, "Pending", sandboxes[1].Status)
-	assert.Equal(t, "Test Sandbox 2", sandboxes[1].Name)
-	assert.Equal(t, "prod", sandboxes[1].Labels["env"])
-
-	// Check pagination
-	assert.NotNil(t, pagination)
-	assert.Equal(t, 2, pagination.Total)
-	assert.Equal(t, 0, pagination.Start)
-	assert.Equal(t, 2, pagination.End)
-	assert.Equal(t, 10, pagination.Limit)
-	assert.Equal(t, 0, pagination.Offset)
-
-	// Test case: Empty result
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM sandboxes WHERE user_id = \\$1").
-		WithArgs("empty_user").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-	// Call the method
-	sandboxes, pagination, err = service.ListSandboxes(ctx, "empty_user", limit, offset)
-	assert.NoError(t, err)
-	assert.NotNil(t, sandboxes)
-	assert.Len(t, sandboxes, 0)
-	assert.NotNil(t, pagination)
-	assert.Equal(t, 0, pagination.Total)
-
-	// Verify all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestGetSandbox(t *testing.T) {
-	service, mock, cleanup := setupMockDB(t)
-	defer cleanup()
-
-	// Test case: Get sandbox
-	ctx := context.Background()
-	sandboxID := "sandbox123"
-	userID := "user456"
-	runtime := "python:3.10"
-	now := time.Now()
-	status := "Running"
-	name := "Test Sandbox"
-
-	// Set up expectations for sandbox query
-	sandboxRows := sqlmock.NewRows([]string{"id", "user_id", "runtime", "created_at", "updated_at", "status", "name", "workspace_id"}).
-		AddRow(sandboxID, userID, runtime, now, now, status, name, nil)
-
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE id = \\$1").
-		WithArgs(sandboxID).
-		WillReturnRows(sandboxRows)
-
-	// Set up expectations for labels query
-	labelRows := sqlmock.NewRows([]string{"key", "value"}).
-		AddRow("env", "test").
-		AddRow("app", "demo")
-
-	mock.ExpectQuery("SELECT key, value FROM sandbox_labels WHERE sandbox_id = \\$1").
-		WithArgs(sandboxID).
-		WillReturnRows(labelRows)
-
-	// Call the method
-	sandbox, err := service.GetSandbox(ctx, sandboxID)
-	assert.NoError(t, err)
-	assert.NotNil(t, sandbox)
-	assert.Equal(t, sandboxID, sandbox.ID)
-	assert.Equal(t, userID, sandbox.UserID)
-	assert.Equal(t, runtime, sandbox.Runtime)
-	assert.Equal(t, status, sandbox.Status)
-	assert.Equal(t, name, sandbox.Name)
-	assert.Equal(t, "test", sandbox.Labels["env"])
-	assert.Equal(t, "demo", sandbox.Labels["app"])
-
-	// Test case: Sandbox not found
-	mock.ExpectQuery("SELECT id, user_id, runtime, created_at, updated_at, status, name, workspace_id FROM sandboxes WHERE id = \\$1").
-		WithArgs("nonexistent").
-		WillReturnError(sql.ErrNoRows)
-
-	// Call the method
-	sandbox, err = service.GetSandbox(ctx, "nonexistent")
-	assert.NoError(t, err)
-	assert.Nil(t, sandbox)
-
-	// Verify all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestDeleteSandbox(t *testing.T) {
-	service, mock, cleanup := setupMockDB(t)
-	defer cleanup()
-
-	// Test case: Delete sandbox
-	ctx := context.Background()
-	sandboxID := "sandbox123"
-
-	// Set up expectations for transaction
-	mock.ExpectBegin()
-
-	// Expect delete from labels table
-	mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
-		WithArgs(sandboxID).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-
-	// Expect delete from sandboxes table
-	mock.ExpectExec("DELETE FROM sandboxes WHERE id = \\$1").
-		WithArgs(sandboxID).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Expect commit
-	mock.ExpectCommit()
-
-	// Call the method
-	err := service.DeleteSandbox(ctx, sandboxID)
-	assert.NoError(t, err)
-
-	// Test case: Database error
-	// Set up expectations for transaction with error
-	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
-		WithArgs("error_sandbox").
-		WillReturnError(sql.ErrConnDone)
-
-	// Expect rollback
-	mock.ExpectRollback()
-
-	// Call the method
-	err = service.DeleteSandbox(ctx, "error_sandbox")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to delete sandbox labels")
-
-	// Verify all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestUpdateSandbox(t *testing.T) {
-	t.Run("status_and_name_with_labels", func(t *testing.T) {
-		service, mock, cleanup := setupMockDB(t)
-		defer cleanup()
-		mock.MatchExpectationsInOrder(false)
-
-		ctx := context.Background()
-		sandboxID := "sandbox123"
-		status := "Completed"
-		name := "Updated Sandbox"
-		updates := types.SandboxUpdates{
-			Status: &status,
-			Name:   &name,
-			Labels: map[string]string{"env": "prod", "app": "demo"},
-		}
-
-		mock.ExpectBegin()
-		mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\)").
-			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sandboxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("DELETE FROM sandbox_labels WHERE sandbox_id = \\$1").
-			WithArgs(sandboxID).
-			WillReturnResult(sqlmock.NewResult(0, 2))
-		mock.ExpectExec("INSERT INTO sandbox_labels").
-			WithArgs(sandboxID, sqlmock.AnyArg(), sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectExec("INSERT INTO sandbox_labels").
-			WithArgs(sandboxID, sqlmock.AnyArg(), sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
-
-		assert.NoError(t, service.UpdateSandbox(ctx, sandboxID, updates))
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("status_only", func(t *testing.T) {
-		service, mock, cleanup := setupMockDB(t)
-		defer cleanup()
-
-		ctx := context.Background()
-		sandboxID := "sandbox123"
-		status := "Running"
-		updates := types.SandboxUpdates{Status: &status}
-
-		mock.ExpectBegin()
-		mock.ExpectExec("UPDATE sandboxes SET updated_at = NOW\\(\\), status = \\$1 WHERE id = \\$2").
-			WithArgs("Running", sandboxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
-
-		assert.NoError(t, service.UpdateSandbox(ctx, sandboxID, updates))
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("no_fields_set_is_noop", func(t *testing.T) {
-		service, mock, cleanup := setupMockDB(t)
-		defer cleanup()
-
-		ctx := context.Background()
-		// No SQL expected — empty update is a no-op
-		assert.NoError(t, service.UpdateSandbox(ctx, "sandbox123", types.SandboxUpdates{}))
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-}

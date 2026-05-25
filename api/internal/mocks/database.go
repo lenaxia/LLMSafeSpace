@@ -82,39 +82,6 @@ func (m *MockDatabaseService) DeleteAPIKey(ctx context.Context, userID, keyID st
 	return m.Called(ctx, userID, keyID).Error(0)
 }
 
-func (m *MockDatabaseService) GetSandbox(ctx context.Context, sandboxID string) (*types.SandboxMetadata, error) {
-	args := m.Called(ctx, sandboxID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*types.SandboxMetadata), args.Error(1)
-}
-
-func (m *MockDatabaseService) CreateSandbox(ctx context.Context, sandbox *types.SandboxMetadata) error {
-	return m.Called(ctx, sandbox).Error(0)
-}
-
-func (m *MockDatabaseService) UpdateSandbox(ctx context.Context, sandboxID string, updates types.SandboxUpdates) error {
-	return m.Called(ctx, sandboxID, updates).Error(0)
-}
-
-func (m *MockDatabaseService) DeleteSandbox(ctx context.Context, sandboxID string) error {
-	return m.Called(ctx, sandboxID).Error(0)
-}
-
-func (m *MockDatabaseService) ListSandboxes(ctx context.Context, userID string, limit, offset int) ([]*types.SandboxMetadata, *types.PaginationMetadata, error) {
-	args := m.Called(ctx, userID, limit, offset)
-	var sandboxes []*types.SandboxMetadata
-	if args.Get(0) != nil {
-		sandboxes = args.Get(0).([]*types.SandboxMetadata)
-	}
-	var pagination *types.PaginationMetadata
-	if args.Get(1) != nil {
-		pagination = args.Get(1).(*types.PaginationMetadata)
-	}
-	return sandboxes, pagination, args.Error(2)
-}
-
 func (m *MockDatabaseService) GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
 	args := m.Called(ctx, workspaceID)
 	if args.Get(0) == nil {
