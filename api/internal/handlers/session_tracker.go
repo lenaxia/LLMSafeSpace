@@ -15,7 +15,7 @@ import (
 
 const sseIdleTimeout = 5 * time.Minute
 
-type SessionIdleCallback func(sandboxID, sessionID string)
+type SessionIdleCallback func(workspaceID, sessionID string)
 
 type sseEvent struct {
 	Type      string `json:"type"`
@@ -30,8 +30,8 @@ type SSETracker struct {
 	onSessionActive SessionIdleCallback
 	subscriptions   map[string]context.CancelFunc
 	subMu           sync.Mutex
-	passwordGetter  func(ctx context.Context, sandboxID string) (string, error)
-	podIPResolver   func(sandboxID string) string
+	passwordGetter  func(ctx context.Context, workspaceID string) (string, error)
+	podIPResolver   func(workspaceID string) string
 }
 
 func NewSSETracker(
@@ -47,11 +47,11 @@ func NewSSETracker(
 	}
 }
 
-func (t *SSETracker) SetPasswordGetter(getter func(ctx context.Context, sandboxID string) (string, error)) {
+func (t *SSETracker) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
 	t.passwordGetter = getter
 }
 
-func (t *SSETracker) SetPodIPResolver(resolver func(sandboxID string) string) {
+func (t *SSETracker) SetPodIPResolver(resolver func(workspaceID string) string) {
 	t.podIPResolver = resolver
 }
 
@@ -59,27 +59,27 @@ func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
 	t.onSessionActive = callback
 }
 
-func (t *SSETracker) EnsureWatching(sandboxID string) {
+func (t *SSETracker) EnsureWatching(workspaceID string) {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 
-	if _, exists := t.subscriptions[sandboxID]; exists {
+	if _, exists := t.subscriptions[workspaceID]; exists {
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.subscriptions[sandboxID] = cancel
+	t.subscriptions[workspaceID] = cancel
 
-	go t.subscribe(ctx, sandboxID)
+	go t.subscribe(ctx, workspaceID)
 }
 
-func (t *SSETracker) StopWatching(sandboxID string) {
+func (t *SSETracker) StopWatching(workspaceID string) {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 
-	if cancel, exists := t.subscriptions[sandboxID]; exists {
+	if cancel, exists := t.subscriptions[workspaceID]; exists {
 		cancel()
-		delete(t.subscriptions, sandboxID)
+		delete(t.subscriptions, workspaceID)
 	}
 }
 
@@ -99,7 +99,7 @@ func (t *SSETracker) SubscriptionCount() int {
 	return len(t.subscriptions)
 }
 
-func (t *SSETracker) subscribe(ctx context.Context, sandboxID string) {
+func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
 	backoff := 2 * time.Second
 	maxBackoff := 30 * time.Second
 
@@ -110,8 +110,8 @@ func (t *SSETracker) subscribe(ctx context.Context, sandboxID string) {
 		default:
 		}
 
-		if err := t.connectAndRead(ctx, sandboxID); err != nil {
-			t.logger.Error("SSE subscription error", err, "sandboxID", sandboxID)
+		if err := t.connectAndRead(ctx, workspaceID); err != nil {
+			t.logger.Error("SSE subscription error", err, "workspaceID", workspaceID)
 		}
 
 		select {
@@ -126,7 +126,7 @@ func (t *SSETracker) subscribe(ctx context.Context, sandboxID string) {
 	}
 }
 
-func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error {
+func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) error {
 	if t.passwordGetter == nil {
 		return fmt.Errorf("password getter not configured")
 	}
@@ -135,12 +135,12 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 		return fmt.Errorf("pod IP resolver not configured")
 	}
 
-	podIP := t.podIPResolver(sandboxID)
+	podIP := t.podIPResolver(workspaceID)
 	if podIP == "" {
-		return fmt.Errorf("no pod IP for sandbox %s", sandboxID)
+		return fmt.Errorf("no pod IP for workspace %s", workspaceID)
 	}
 
-	password, err := t.passwordGetter(ctx, sandboxID)
+	password, err := t.passwordGetter(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("getting password for SSE: %w", err)
 	}
@@ -182,18 +182,18 @@ func (t *SSETracker) connectAndRead(ctx context.Context, sandboxID string) error
 			eventData.WriteString(strings.TrimPrefix(line, "data: "))
 			eventData.WriteString("\n")
 		} else if line == "" && eventData.Len() > 0 {
-			t.processEvent(sandboxID, eventData.String())
+			t.processEvent(workspaceID, eventData.String())
 			eventData.Reset()
 		}
 	}
 
 	if idleCtx.Err() != nil {
-		return fmt.Errorf("SSE idle timeout for sandbox %s", sandboxID)
+		return fmt.Errorf("SSE idle timeout for workspace %s", workspaceID)
 	}
-	return fmt.Errorf("SSE stream ended for sandbox %s", sandboxID)
+	return fmt.Errorf("SSE stream ended for workspace %s", workspaceID)
 }
 
-func (t *SSETracker) processEvent(sandboxID, data string) {
+func (t *SSETracker) processEvent(workspaceID, data string) {
 	data = strings.TrimSpace(data)
 	if data == "" {
 		return
@@ -210,10 +210,10 @@ func (t *SSETracker) processEvent(sandboxID, data string) {
 
 	switch evt.Status {
 	case "idle":
-		t.onSessionIdle(sandboxID, evt.SessionID)
+		t.onSessionIdle(workspaceID, evt.SessionID)
 	case "busy":
 		if t.onSessionActive != nil {
-			t.onSessionActive(sandboxID, evt.SessionID)
+			t.onSessionActive(workspaceID, evt.SessionID)
 		}
 	}
 }

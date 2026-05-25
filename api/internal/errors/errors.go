@@ -181,10 +181,10 @@ func NewNotImplementedError(code string, message string, err error) *APIError {
 	}
 }
 
-// IsSandboxNotFoundError checks if the error is a SandboxNotFoundError
-func IsSandboxNotFoundError(err error) bool {
+// IsWorkspaceNotFoundError checks if the error is a SandboxNotFoundError
+func IsWorkspaceNotFoundError(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
-		return apiErr.Type == ErrorTypeNotFound && apiErr.Details["resourceType"] == "sandbox"
+		return apiErr.Type == ErrorTypeNotFound && apiErr.Details["resourceType"] == "workspace"
 	}
 	return false
 }

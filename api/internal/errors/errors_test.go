@@ -170,28 +170,28 @@ func TestStatusCode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// IsSandboxNotFoundError tests
+// IsWorkspaceNotFoundError tests
 // ---------------------------------------------------------------------------
 
-func TestIsSandboxNotFoundError_True(t *testing.T) {
-	e := NewNotFoundError("sandbox", "sb-001", nil)
-	assert.True(t, IsSandboxNotFoundError(e))
+func TestIsWorkspaceNotFoundError_True(t *testing.T) {
+	e := NewNotFoundError("workspace", "ws-001", nil)
+	assert.True(t, IsWorkspaceNotFoundError(e))
 }
 
-func TestIsSandboxNotFoundError_FalseWrongResourceType(t *testing.T) {
+func TestIsWorkspaceNotFoundError_FalseWrongResourceType(t *testing.T) {
 	e := NewNotFoundError("user", "u-001", nil)
-	assert.False(t, IsSandboxNotFoundError(e))
+	assert.False(t, IsWorkspaceNotFoundError(e))
 }
 
-func TestIsSandboxNotFoundError_FalseWrongErrorType(t *testing.T) {
+func TestIsWorkspaceNotFoundError_FalseWrongErrorType(t *testing.T) {
 	e := NewForbiddenError("forbidden", nil)
-	assert.False(t, IsSandboxNotFoundError(e))
+	assert.False(t, IsWorkspaceNotFoundError(e))
 }
 
-func TestIsSandboxNotFoundError_FalsePlainError(t *testing.T) {
-	assert.False(t, IsSandboxNotFoundError(errors.New("plain error")))
+func TestIsWorkspaceNotFoundError_FalsePlainError(t *testing.T) {
+	assert.False(t, IsWorkspaceNotFoundError(errors.New("plain error")))
 }
 
-func TestIsSandboxNotFoundError_FalseNil(t *testing.T) {
-	assert.False(t, IsSandboxNotFoundError(nil))
+func TestIsWorkspaceNotFoundError_FalseNil(t *testing.T) {
+	assert.False(t, IsWorkspaceNotFoundError(nil))
 }

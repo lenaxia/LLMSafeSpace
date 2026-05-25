@@ -24,11 +24,11 @@ func (m *MockMetricsService) RecordRequest(method, path string, status int, dura
 	m.Called(method, path, status, duration, size)
 }
 
-func (m *MockMetricsService) RecordSandboxCreation(runtime, userID string) {
+func (m *MockMetricsService) RecordWorkspaceCreation(runtime, userID string) {
 	m.Called(runtime, userID)
 }
 
-func (m *MockMetricsService) RecordSandboxTermination(runtime, reason string) {
+func (m *MockMetricsService) RecordWorkspaceTermination(runtime, reason string) {
 	m.Called(runtime, reason)
 }
 
@@ -36,8 +36,8 @@ func (m *MockMetricsService) RecordError(errorType, endpoint, code string) {
 	m.Called(errorType, endpoint, code)
 }
 
-func (m *MockMetricsService) RecordResourceUsage(sandboxID string, cpu float64, memoryBytes int64) {
-	m.Called(sandboxID, cpu, memoryBytes)
+func (m *MockMetricsService) RecordResourceUsage(workspaceID string, cpu float64, memoryBytes int64) {
+	m.Called(workspaceID, cpu, memoryBytes)
 }
 
 func (m *MockMetricsService) IncrementActiveConnections(connType, userID string) {
