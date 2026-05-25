@@ -50,7 +50,7 @@ export function Composer({ onSend, disabled, placeholder = "Type a message..." }
           disabled={disabled}
           rows={1}
           className={cn(
-            "min-h-[44px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+            "min-h-[44px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
           )}
         />
         <Button type="submit" size="icon" disabled={disabled || !text.trim()} className="min-h-[44px] min-w-[44px]">
