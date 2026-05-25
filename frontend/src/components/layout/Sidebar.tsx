@@ -291,7 +291,7 @@ function WorkspaceSessionList({
     <div className="ml-5 pl-2 border-l border-border">
       <div className="flex items-center justify-between px-2 py-1">
         <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Sessions</span>
-        {isActive && (
+        {!isSuspended && (
           <button
             onClick={onNewSession}
             disabled={creatingSession}
