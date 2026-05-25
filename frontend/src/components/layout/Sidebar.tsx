@@ -42,8 +42,9 @@ export function Sidebar({ onNavigate }: Props) {
     mutationFn: async (params: { name: string }) => {
       const ws = await workspacesApi.create(params);
       const sessions = await workspacesApi.getSessions(ws.id);
-      if (sessions.length > 0) {
-        return { workspaceId: ws.id, sessionId: sessions[0].id };
+      const firstSession = sessions.length > 0 ? sessions[0] : undefined;
+      if (firstSession) {
+        return { workspaceId: ws.id, sessionId: firstSession.id };
       }
       const session = await workspacesApi.ensureSession(ws.id);
       return { workspaceId: ws.id, sessionId: session.sessionId };
@@ -93,8 +94,9 @@ export function Sidebar({ onNavigate }: Props) {
         })
         .then((sessions: SessionListItem[]) => {
           if (sessionId && ws.id === workspaceId) return;
-          if (sessions.length > 0) {
-            navigate(`/chat/${ws.id}/${sessions[0].id}`);
+          const first = sessions.length > 0 ? sessions[0] : undefined;
+          if (first) {
+            navigate(`/chat/${ws.id}/${first.id}`);
           } else {
             navigate(`/chat/${ws.id}`);
           }
