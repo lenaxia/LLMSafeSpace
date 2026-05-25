@@ -8,7 +8,7 @@
 #   1. /livez and /readyz return expected codes
 #   2. CRDs are installed (workspaces, sandboxes, sandboxprofiles, runtimeenvironments)
 #   3. A Workspace can be created and reaches Phase=Active (PVC binds)
-#   4. A Sandbox can be created and reaches Phase=Running (pod schedules,
+#   4. A Workspace created and reaches Phase=Running (pod schedules,
 #      opencode serve responds to /global/health on port 4096 inside the pod)
 #   5. Sandbox CRUD endpoints (Create / List / Get / Status / Delete) work via API
 #   6. API proxy: session create + list + prompt round-trip with assistant reply
@@ -34,7 +34,7 @@ die()  { printf '%s ✗%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2; exit 1; }
 CLUSTER_NAME="${CLUSTER_NAME:-llmsafespace}"
 CTX="${CTX:-kind-${CLUSTER_NAME}}"
 NS="${NS:-llmsafespace}"
-SANDBOX_NAME="e2e-sandbox"
+WORKSPACE_NAME="e2e-workspace"
 WORKSPACE_NAME="e2e-workspace"
 USER_ID="e2e-user"
 PORTFWD_PORT="${PORTFWD_PORT:-18080}"
@@ -88,8 +88,8 @@ ok "/readyz returns 200 (Postgres + Redis reachable)"
 # Test 2: CRDs installed
 # -----------------------------------------------------------------------------
 log "Test 2/9 — CRDs registered"
-for crd in workspaces.llmsafespace.dev sandboxes.llmsafespace.dev \
-           sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev; do
+for crd in workspaces.llmsafespace.dev \
+           runtimeenvironments.llmsafespace.dev; do
     kc get crd "${crd}" >/dev/null \
         || die "CRD ${crd} not installed"
 done
@@ -167,15 +167,15 @@ ok "Workspace PVC ${PVC_NAME} bound"
 # -----------------------------------------------------------------------------
 # Test 4: Sandbox creation reaches Running, opencode serve responds
 # -----------------------------------------------------------------------------
-log "Test 5/9 — Sandbox lifecycle (create → Running → opencode responds)"
+log "Test 5/9 — Workspace lifecycle (create → Running → opencode responds)"
 
-kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
 cat <<EOF | kc -n "${NS}" apply -f -
 apiVersion: llmsafespace.dev/v1
-kind: Sandbox
+kind: Workspace
 metadata:
-  name: ${SANDBOX_NAME}
+  name: ${WORKSPACE_NAME}
   labels:
     user-id: ${USER_ID}
 spec:
@@ -186,19 +186,19 @@ spec:
     cpu: "500m"
     memory: "512Mi"
 EOF
-ok "Sandbox ${SANDBOX_NAME} created"
+ok "Workspace created"
 
-log "  waiting up to 180s for Sandbox phase=Running"
+log "  waiting up to 180s for Workspace phase=Running"
 for i in $(seq 1 60); do
-    PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
     if [[ "${PHASE}" == "Running" ]]; then
-        ok "Sandbox reached phase=Running after ~$((i*3))s"
+        ok "Workspace reached phase=Running after ~$((i*3))s"
         break
     fi
     if (( i == 60 )); then
-        warn "Sandbox did not reach Running. Current phase=${PHASE:-<empty>}"
-        kc -n "${NS}" describe sandbox "${SANDBOX_NAME}" || true
-        POD=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}' 2>/dev/null)
+        warn "Workspace did not reach Running. Current phase=${PHASE:-<empty>}"
+        kc -n "${NS}" describe workspace "${WORKSPACE_NAME}" || true
+        POD=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}' 2>/dev/null)
         if [[ -n "${POD}" ]]; then
             warn "Pod ${POD}:"
             kc -n "${NS}" describe pod "${POD}" || true
@@ -209,7 +209,7 @@ for i in $(seq 1 60); do
     sleep 3
 done
 
-POD=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+POD=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}')
 [[ -n "${POD}" ]] || die "Sandbox.status.podName is empty"
 ok "Sandbox pod: ${POD}"
 
@@ -219,7 +219,7 @@ ok "Sandbox pod: ${POD}"
 # the controller's credential-setup init container mounts at
 # /sandbox-cfg/password. We pull it from the K8s API for the test.
 log "  verifying opencode serve responds inside the sandbox pod"
-PW_SECRET="sandbox-pw-${SANDBOX_NAME}"
+PW_SECRET="sandbox-pw-${WORKSPACE_NAME}"
 OC_PASSWORD=$(kc -n "${NS}" get secret "${PW_SECRET}" -o jsonpath='{.data.password}' 2>/dev/null \
     | base64 -d 2>/dev/null || true)
 [[ -n "${OC_PASSWORD}" ]] || die "secret ${PW_SECRET} missing or empty (controller did not generate sandbox password)"
@@ -243,7 +243,7 @@ esac
 # -----------------------------------------------------------------------------
 # Drive the LLMSafeSpace API service end-to-end: insert a user + API key
 # directly into Postgres (no signup endpoint exists in V1), authenticate
-# against /api/v1/sandboxes/<id>/sessions, and verify the proxy correctly
+# against /api/v1/workspaces/<id>/sessions, and verify the proxy correctly
 # forwards to the in-pod opencode server.
 #
 # The session-ownership middleware checks Sandbox.metadata.labels["user-id"]
@@ -276,7 +276,7 @@ CREATE_RESP=$(curl -sfm 10 -X POST \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{}' \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
     -o /tmp/llmsafespace-create-session.json -w "%{http_code}" || true)
 case "${CREATE_RESP}" in
     200|201)
@@ -298,7 +298,7 @@ esac
 # ListSessions via the API. Should include the session we just created.
 LIST_RESP=$(curl -sfm 10 \
     -H "Authorization: Bearer ${API_KEY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
     -o /tmp/llmsafespace-list-sessions.json -w "%{http_code}" || true)
 case "${LIST_RESP}" in
     200)
@@ -324,16 +324,16 @@ esac
 # created via kubectl earlier (Test 5) so the API will see it via the live
 # K8s read. We exercise the read-only endpoints here; create/delete are
 # tested below using a separate disposable sandbox.
-log "  GET /api/v1/sandboxes/${SANDBOX_NAME} returns the sandbox"
+log "  GET /api/v1/workspaces/${WORKSPACE_NAME} returns the sandbox"
 GETSB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}" \
     -o /tmp/llmsafespace-getsb.json -w "%{http_code}" || true)
 [[ "${GETSB_CODE}" == "200" ]] || die "GET sandbox returned ${GETSB_CODE}"
 ok "GET sandbox returns 200"
 
-log "  GET /api/v1/sandboxes/${SANDBOX_NAME}/status returns Running"
+log "  GET /api/v1/workspaces/${WORKSPACE_NAME}/status returns Running"
 STATUS_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/status" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/status" \
     -o /tmp/llmsafespace-status.json -w "%{http_code}" || true)
 [[ "${STATUS_CODE}" == "200" ]] || die "GET status returned ${STATUS_CODE}"
 if grep -q '"phase":"Running"' /tmp/llmsafespace-status.json; then
@@ -343,15 +343,15 @@ else
     die "GET status did not return phase=Running"
 fi
 
-# Note: GET /api/v1/sandboxes (list) is currently unauthenticated by user-id
+# Note: GET /api/v1/workspaces (list) is currently unauthenticated by user-id
 # at the database layer when the row exists from a kubectl-created sandbox
 # (no metadata row). We still exercise the route to confirm it's wired.
 LIST_SB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes?limit=10" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces?limit=10" \
     -o /tmp/llmsafespace-listsb.json -w "%{http_code}" || true)
 case "${LIST_SB_CODE}" in
-    200) ok "GET /api/v1/sandboxes returns 200" ;;
-    *)   warn "GET /api/v1/sandboxes returned ${LIST_SB_CODE}: $(cat /tmp/llmsafespace-listsb.json | head -c 200)" ;;
+    200) ok "GET /api/v1/workspaces returns 200" ;;
+    *)   warn "GET /api/v1/workspaces returned ${LIST_SB_CODE}: $(cat /tmp/llmsafespace-listsb.json | head -c 200)" ;;
 esac
 
 # -----------------------------------------------------------------------------
@@ -398,14 +398,14 @@ print(json.dumps({'provider': 'litellm', 'config': json.loads(sys.argv[1])}))
 
     # opencode picks up credentials at process start. Restart the sandbox pod
     # by deleting it; the controller will recreate it with the new secret.
-    POD_BEFORE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+    POD_BEFORE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}')
     log "  recycling sandbox pod ${POD_BEFORE} so opencode reads new credentials"
     kc -n "${NS}" delete pod "${POD_BEFORE}" --wait=false >/dev/null 2>&1 || true
 
     log "  waiting up to 90s for sandbox phase=Running on new pod"
     for i in $(seq 1 30); do
-        POD_AFTER=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}' 2>/dev/null)
-        PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
+        POD_AFTER=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}' 2>/dev/null)
+        PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
         if [[ "${PHASE}" == "Running" && -n "${POD_AFTER}" && "${POD_AFTER}" != "${POD_BEFORE}" ]]; then
             ok "sandbox recycled, new pod=${POD_AFTER} reached phase=Running after ~$((i*3))s"
             break
@@ -424,7 +424,7 @@ print(json.dumps({'provider': 'litellm', 'config': json.loads(sys.argv[1])}))
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d '{}' \
-        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
         -o /tmp/llmsafespace-prompt-sess.json -w "%{http_code}" || true)
     [[ "${PROMPT_SESS_CODE}" == "200" || "${PROMPT_SESS_CODE}" == "201" ]] \
         || die "create-session-for-prompt failed: HTTP ${PROMPT_SESS_CODE}"
@@ -444,7 +444,7 @@ print(json.dumps({
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d "${PROMPT_BODY}" \
-        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SID}/message" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SID}/message" \
         -o /tmp/llmsafespace-prompt-resp.json -w "%{http_code}" || true)
     [[ "${PROMPT_CODE}" == "200" ]] \
         || { warn "prompt body: $(cat /tmp/llmsafespace-prompt-resp.json | head -c 500)"; die "prompt failed: HTTP ${PROMPT_CODE}"; }
@@ -478,7 +478,7 @@ print(json.dumps({
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d "${VERBOSE_BODY}" \
-        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SID}/message?verbose=true" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SID}/message?verbose=true" \
         -o /tmp/llmsafespace-verbose-resp.json -w "%{http_code}" || true)
     [[ "${VERBOSE_CODE}" == "200" ]] \
         || die "verbose prompt failed: HTTP ${VERBOSE_CODE}"
@@ -513,7 +513,7 @@ fi
 # Workspace CRD declares.
 log "Test 7/9 — Workspace suspend deletes sandbox pod, then resume"
 
-PRE_POD=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+PRE_POD=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}')
 [[ -n "${PRE_POD}" ]] || die "sandbox.status.podName missing before suspend"
 
 kc -n "${NS}" patch workspace "${WORKSPACE_NAME}" \
@@ -550,7 +550,7 @@ for i in $(seq 1 30); do
     sleep 3
 done
 
-SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}')
+SB_PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}')
 [[ "${SB_PHASE}" == "Suspended" ]] || warn "sandbox phase is ${SB_PHASE} (expected Suspended) — workspace suspend handler may not be patching dependent sandboxes; not failing the test"
 
 # Resume: status-patch the workspace back to Active. The workspace controller
@@ -578,7 +578,7 @@ done
 # Test 8: Sandbox CRUD via API (Create + Delete) and session history continuity
 # -----------------------------------------------------------------------------
 # Two assertions in this block:
-#   a) POST /api/v1/sandboxes creates a disposable sandbox; DELETE removes it.
+#   a) POST /api/v1/workspaces creates a disposable sandbox; DELETE removes it.
 #   b) When LLM creds were provided, session history is preserved across the
 #      suspend/resume cycle exercised in Test 7. We re-create a pod and ask
 #      opencode to recall the previous reply.
@@ -594,12 +594,12 @@ print(json.dumps({
     'resources': {'cpu': '200m', 'memory': '256Mi'}
 }))
 ")
-log "  POST /api/v1/sandboxes (create disposable sandbox)"
+log "  POST /api/v1/workspaces (create disposable sandbox)"
 CREATE_SB_CODE=$(curl -sm 15 -X POST \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d "${DISPOSABLE_SB_BODY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces" \
     -o /tmp/llmsafespace-create-sb.json -w "%{http_code}" || true)
 case "${CREATE_SB_CODE}" in
     200|201)
@@ -613,15 +613,15 @@ print(d.get('name') or d.get('metadata', {}).get('name', ''))
         ok "created disposable sandbox via API: ${DISPOSABLE_SB}"
         ;;
     *)
-        warn "POST /api/v1/sandboxes returned ${CREATE_SB_CODE}: $(cat /tmp/llmsafespace-create-sb.json | head -c 300)"
+        warn "POST /api/v1/workspaces returned ${CREATE_SB_CODE}: $(cat /tmp/llmsafespace-create-sb.json | head -c 300)"
         die "create-sandbox-via-API failed"
         ;;
 esac
 
-log "  DELETE /api/v1/sandboxes/${DISPOSABLE_SB}"
+log "  DELETE /api/v1/workspaces/${DISPOSABLE_SB}"
 DELETE_SB_CODE=$(curl -sm 10 -X DELETE \
     -H "Authorization: Bearer ${API_KEY}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${DISPOSABLE_SB}" \
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${DISPOSABLE_SB}" \
     -o /dev/null -w "%{http_code}" || true)
 case "${DELETE_SB_CODE}" in
     204) ok "DELETE sandbox returned 204" ;;
@@ -636,13 +636,13 @@ esac
 # the persistent /workspace, so prior sessions should still be visible.
 if [[ -n "${PROMPT_SESSION_ID:-}" ]]; then
     log "  recreating sandbox CRD (PVC retained → opencode session DB persists)"
-    kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+    kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
 
     cat <<EOF | kc -n "${NS}" apply -f - >/dev/null
 apiVersion: llmsafespace.dev/v1
-kind: Sandbox
+kind: Workspace
 metadata:
-  name: ${SANDBOX_NAME}
+  name: ${WORKSPACE_NAME}
   labels:
     user-id: ${USER_ID}
 spec:
@@ -656,7 +656,7 @@ EOF
 
     log "  waiting up to 180s for sandbox phase=Running on resumed pod"
     for i in $(seq 1 60); do
-        PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
+        PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
         if [[ "${PHASE}" == "Running" ]]; then
             ok "sandbox back to Running after ~$((i*3))s"
             break
@@ -674,7 +674,7 @@ EOF
     log "  GET /sessions/${PROMPT_SESSION_ID}/message — verify history persisted"
     HIST_CODE=$(curl -sm 15 \
         -H "Authorization: Bearer ${API_KEY}" \
-        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/sessions/${PROMPT_SESSION_ID}/message" \
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SESSION_ID}/message" \
         -o /tmp/llmsafespace-history.json -w "%{http_code}" || true)
     [[ "${HIST_CODE}" == "200" ]] || die "history fetch returned ${HIST_CODE}"
 
@@ -707,26 +707,26 @@ fi
 log "Test 10 — Sandbox restart API (fix #1)"
 
 # Re-create sandbox if it was deleted by earlier tests.
-SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+SB_PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
 if [[ "${SB_PHASE}" != "Running" ]]; then
     warn "sandbox not Running (phase=${SB_PHASE}); skipping restart probe"
 else
     RESTART_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Authorization: Bearer ${TOKEN}" \
-        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/restart")
+        "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/restart")
     if [[ "${RESTART_CODE}" == "202" ]]; then
         ok "POST /restart returned 202"
         # Wait for sandbox to return to Running (pod recycle).
         log "  waiting up to 60s for sandbox to return to Running after restart"
         for i in $(seq 1 20); do
-            SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            SB_PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
             if [[ "${SB_PHASE}" == "Running" ]]; then
                 ok "Sandbox returned to Running after restart (~$((i*3))s)"
                 break
             fi
             if (( i == 20 )); then
-                warn "Sandbox did not return to Running after restart (phase=${SB_PHASE})"
+                warn "Workspace did not return to Running after restart (phase=${SB_PHASE})"
             fi
             sleep 3
         done
@@ -741,18 +741,18 @@ fi
 # -----------------------------------------------------------------------------
 log "Test 11 — Transient pod-loss recovery (fix #2)"
 
-SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+SB_PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
 if [[ "${SB_PHASE}" != "Running" ]]; then
     warn "sandbox not Running (phase=${SB_PHASE}); skipping transient-loss probe"
 else
-    POD_NAME=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.podName}')
+    POD_NAME=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podName}')
     if [[ -n "${POD_NAME}" ]]; then
         log "  deleting pod ${POD_NAME} (graceful, no --force)"
         kc -n "${NS}" delete pod "${POD_NAME}" --wait=false >/dev/null 2>&1
         sleep 5
         # Sandbox should NOT be Failed — it should self-heal to Pending then Running.
         for i in $(seq 1 20); do
-            SB_PHASE=$(kc -n "${NS}" get sandbox "${SANDBOX_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            SB_PHASE=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
             if [[ "${SB_PHASE}" == "Running" ]]; then
                 ok "Sandbox self-healed to Running after pod deletion (~$((i*3+5))s)"
                 break
@@ -761,7 +761,7 @@ else
                 die "Sandbox went to Failed after single pod deletion (fix #2 regression)"
             fi
             if (( i == 20 )); then
-                warn "Sandbox did not return to Running (phase=${SB_PHASE})"
+                warn "Workspace did not return to Running (phase=${SB_PHASE})"
             fi
             sleep 3
         done
@@ -782,7 +782,7 @@ log "Test 12 — Retry from Failed (fix #5)"
 RETRY_CODE=$(curl -s -o /tmp/llmsafespace-retry.json -w "%{http_code}" \
     -X POST \
     -H "Authorization: Bearer ${TOKEN}" \
-    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/sandboxes/${SANDBOX_NAME}/retry")
+    "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/retry")
 if [[ "${RETRY_CODE}" == "409" ]]; then
     ok "POST /retry correctly returns 409 when sandbox is not Failed"
 elif [[ "${RETRY_CODE}" == "202" ]]; then
@@ -792,7 +792,7 @@ else
 fi
 
 log "Test 13/13 — cleanup"
-kc -n "${NS}" delete sandbox "${SANDBOX_NAME}" --wait=false >/dev/null
+kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --wait=false >/dev/null
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --wait=false >/dev/null
 ok "delete requested"
 
