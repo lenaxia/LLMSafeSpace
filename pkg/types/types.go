@@ -36,7 +36,6 @@ const ContextKeyUserID contextKey = "userID"
 // service layer converts a v1.Sandbox CRD into one of these for client
 // responses.
 
-
 // ResourceRequirements defines resource limits for a sandbox
 type ResourceRequirements struct {
 	// CPU resource limit
@@ -124,7 +123,6 @@ type ProfileReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-
 // ContainerStateValue represents the state of a container
 type ContainerStateValue string
 
@@ -201,7 +199,6 @@ type Event struct {
 	Source string `json:"source,omitempty"`
 }
 
-
 // ResourceStatus defines resource usage
 type ResourceStatus struct {
 	// Current CPU usage
@@ -213,7 +210,6 @@ type ResourceStatus struct {
 	// Current ephemeral storage usage
 	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
 }
-
 
 // PaginationMetadata represents pagination metadata
 type PaginationMetadata struct {
@@ -232,7 +228,6 @@ type PaginationMetadata struct {
 	// Offset
 	Offset int `json:"offset"`
 }
-
 
 // ExecutionResult represents the result of an execution
 type ExecutionResult struct {
@@ -354,7 +349,6 @@ type APIKey struct {
 // live Kubernetes status with database metadata and pagination so callers never
 // receive untyped maps.
 
-
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
 type UserUpdates struct {
@@ -379,8 +373,6 @@ type Message struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
 }
-
-
 
 // Workspace is the API transfer object for a workspace resource.
 type Workspace struct {
@@ -461,6 +453,8 @@ type WorkspaceMetadata struct {
 	Name        string    `json:"name" db:"name"`
 	Runtime     string    `json:"runtime" db:"runtime"`
 	StorageSize string    `json:"storageSize" db:"storage_size"`
+	Phase       string    `json:"phase" db:"phase"`
+	PVCState    string    `json:"pvcState" db:"pvc_state"`
 	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
 }
