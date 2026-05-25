@@ -27,7 +27,7 @@ type WorkspacePackageSet struct {
 
 // WorkspaceNetworkAccess defines network access rules for workspace pods.
 type WorkspaceNetworkAccess struct {
-	Egress  []WorkspaceEgressRule `json:"egress,omitempty"`
+	Egress []WorkspaceEgressRule `json:"egress,omitempty"`
 	// +kubebuilder:default=false
 	Ingress bool `json:"ingress,omitempty"`
 }
@@ -39,9 +39,9 @@ type WorkspaceEgressRule struct {
 
 // WorkspaceAutoSuspend configures automatic workspace suspension after idle.
 type WorkspaceAutoSuspend struct {
-	// +kubebuilder:default=false
+	// +kubebuilder:default=true
 	Enabled bool `json:"enabled,omitempty"`
-	// +kubebuilder:default=3600
+	// +kubebuilder:default=86400
 	// +kubebuilder:validation:Minimum=1
 	IdleTimeoutSeconds int64 `json:"idleTimeoutSeconds,omitempty"`
 }
@@ -90,8 +90,8 @@ type WorkspaceSpec struct {
 	// +kubebuilder:default=0
 	TTLSecondsAfterSuspended int64 `json:"ttlSecondsAfterSuspended,omitempty"`
 
-	Packages   []WorkspacePackageSet  `json:"packages,omitempty"`
-	InitScript string                 `json:"initScript,omitempty"`
+	Packages   []WorkspacePackageSet `json:"packages,omitempty"`
+	InitScript string                `json:"initScript,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=20
@@ -107,8 +107,8 @@ type WorkspaceSpec struct {
 	// +kubebuilder:validation:Maximum=86400
 	Timeout int `json:"timeout,omitempty"`
 
-	Resources          *ResourceRequirements `json:"resources,omitempty"`
-	RestartGeneration  int64                 `json:"restartGeneration,omitempty"`
+	Resources         *ResourceRequirements `json:"resources,omitempty"`
+	RestartGeneration int64                 `json:"restartGeneration,omitempty"`
 
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=10
@@ -145,7 +145,7 @@ const (
 
 // WorkspaceCondition describes a condition of a Workspace.
 type WorkspaceCondition struct {
-	Type               WorkspaceConditionType `json:"type"`
+	Type WorkspaceConditionType `json:"type"`
 	// +kubebuilder:validation:Enum=True;False;Unknown
 	Status             string      `json:"status"`
 	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
