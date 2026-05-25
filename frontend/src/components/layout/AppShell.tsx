@@ -4,6 +4,9 @@ import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
 
+const EDGE_ZONE = 30;
+const SWIPE_THRESHOLD = 60;
+
 export function AppShell() {
   const mainRef = useRef<HTMLElement>(null);
   const location = useLocation();
@@ -11,6 +14,7 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
+  const isEdgeSwipe = useRef(false);
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -19,11 +23,32 @@ export function AppShell() {
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
-    if (touch) {
-      touchStartX.current = touch.clientX;
-      touchStartY.current = touch.clientY;
-    }
+    if (!touch) return;
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    isEdgeSwipe.current = touch.clientX < EDGE_ZONE;
   }, []);
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!isMobile) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - touchStartX.current;
+      const dy = Math.abs(touch.clientY - touchStartY.current);
+
+      if (dy > Math.abs(dx)) return;
+
+      if (isEdgeSwipe.current && dx > 10) {
+        e.preventDefault();
+      }
+
+      if (sidebarOpen && dx < -10) {
+        e.preventDefault();
+      }
+    },
+    [isMobile, sidebarOpen],
+  );
 
   const handleTouchEnd = useCallback(
     (e: React.TouchEvent) => {
@@ -33,11 +58,12 @@ export function AppShell() {
       const dx = touch.clientX - touchStartX.current;
       const dy = Math.abs(touch.clientY - touchStartY.current);
       if (dy > Math.abs(dx)) return;
-      if (touchStartX.current < 30 && dx > 60) {
+      if (touchStartX.current < EDGE_ZONE && dx > SWIPE_THRESHOLD) {
         setSidebarOpen(true);
-      } else if (sidebarOpen && dx < -60) {
+      } else if (sidebarOpen && dx < -SWIPE_THRESHOLD) {
         setSidebarOpen(false);
       }
+      isEdgeSwipe.current = false;
     },
     [isMobile, sidebarOpen],
   );
@@ -46,6 +72,7 @@ export function AppShell() {
     <div
       className="flex h-screen overflow-hidden"
       onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       <a
