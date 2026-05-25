@@ -31,6 +31,26 @@ type Service struct {
 	config         *Config
 }
 
+func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
+	if phase == "" || workspaceID == "" {
+		return
+	}
+	pvcState := v1.PVCStateNone
+	switch phase {
+	case v1.WorkspacePhaseActive, v1.WorkspacePhaseCreating, v1.WorkspacePhaseResuming:
+		pvcState = v1.PVCStateCluster
+	case v1.WorkspacePhaseSuspended, v1.WorkspacePhaseSuspending:
+		pvcState = v1.PVCStateCluster
+	case v1.WorkspacePhaseTerminating, v1.WorkspacePhaseTerminated, v1.WorkspacePhaseFailed:
+		pvcState = v1.PVCStateNone
+	}
+	go s.dbService.SyncWorkspacePhase(context.Background(), workspaceID, string(phase), string(pvcState))
+}
+
+func (s *Service) markDeleted(workspaceID string) {
+	go s.dbService.MarkWorkspaceDeleted(context.Background(), workspaceID)
+}
+
 // Config holds workspace service configuration.
 type Config struct {
 	Namespace    string
@@ -142,6 +162,8 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
+	s.syncPhase(created.Name, created.Status.Phase)
+
 	ws := &types.Workspace{
 		ID:          meta.ID,
 		Name:        meta.Name,
@@ -182,8 +204,13 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
-		s.logger.Warn("Failed to get workspace CRD status", "error", err, "workspaceID", workspaceID)
-		crd = nil
+		if k8serrors.IsNotFound(err) {
+			s.markDeleted(workspaceID)
+			crd = nil
+		} else {
+			s.logger.Warn("Failed to get workspace CRD status", "error", err, "workspaceID", workspaceID)
+			crd = nil
+		}
 	}
 
 	ws := &types.Workspace{
@@ -192,12 +219,14 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 		UserID:      meta.UserID,
 		Runtime:     meta.Runtime,
 		StorageSize: meta.StorageSize,
+		Phase:       meta.Phase,
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
 	}
 	if crd != nil {
 		ws.Phase = string(crd.Status.Phase)
 		ws.PVCName = crd.Status.PVCName
+		s.syncPhase(workspaceID, crd.Status.Phase)
 	}
 
 	return ws, nil
@@ -231,6 +260,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			UserID:      m.UserID,
 			Runtime:     m.Runtime,
 			StorageSize: m.StorageSize,
+			Phase:       m.Phase,
 			CreatedAt:   m.CreatedAt,
 			UpdatedAt:   m.UpdatedAt,
 		})
@@ -252,15 +282,12 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		return err
 	}
 
-	if err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Delete(workspaceID, metav1.DeleteOptions{}); err != nil {
+	if err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Delete(workspaceID, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
 		s.logger.Error("Failed to delete workspace CRD", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_deletion_failed", err)
 	}
 
-	if err := s.dbService.DeleteWorkspace(ctx, workspaceID); err != nil {
-		s.logger.Error("Failed to delete workspace DB record", err, "workspaceID", workspaceID)
-		return apierrors.NewInternalError("workspace_deletion_failed", err)
-	}
+	s.markDeleted(workspaceID)
 
 	s.logger.Info("Workspace deleted", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -284,12 +311,10 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		return apierrors.NewInternalError("workspace_get_failed", err)
 	}
 
-	switch crd.Status.Phase {
-	case v1.WorkspacePhaseActive, v1.WorkspacePhaseResuming:
-	default:
-		return apierrors.NewValidationError(
-			"workspace cannot be suspended in current phase",
-			map[string]interface{}{"phase": string(crd.Status.Phase)},
+	if crd.Status.Phase != v1.WorkspacePhaseActive {
+		return apierrors.NewConflictError(
+			"workspace",
+			workspaceID,
 			fmt.Errorf("cannot suspend workspace in phase %q", crd.Status.Phase),
 		)
 	}
@@ -299,6 +324,8 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		s.logger.Error("Failed to update workspace status to Suspending", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_suspend_failed", err)
 	}
+
+	s.syncPhase(workspaceID, v1.WorkspacePhaseSuspending)
 
 	s.logger.Info("Workspace suspend initiated", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -323,9 +350,9 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	}
 
 	if crd.Status.Phase != v1.WorkspacePhaseSuspended {
-		return apierrors.NewValidationError(
-			"workspace cannot be resumed in current phase",
-			map[string]interface{}{"phase": string(crd.Status.Phase)},
+		return apierrors.NewConflictError(
+			"workspace",
+			workspaceID,
 			fmt.Errorf("cannot resume workspace in phase %q (must be Suspended)", crd.Status.Phase),
 		)
 	}
@@ -335,6 +362,8 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_resume_failed", err)
 	}
+
+	s.syncPhase(workspaceID, v1.WorkspacePhaseResuming)
 
 	s.logger.Info("Workspace resume initiated", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -355,6 +384,10 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			s.markDeleted(workspaceID)
+			return nil, apierrors.NewNotFoundError("workspace", workspaceID, err)
+		}
 		return nil, apierrors.NewInternalError("workspace_get_failed", err)
 	}
 
@@ -376,6 +409,8 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 			Message: c.Message,
 		})
 	}
+
+	s.syncPhase(workspaceID, crd.Status.Phase)
 
 	return result, nil
 }
@@ -593,6 +628,7 @@ func (s *Service) waitForWorkspaceActive(ctx context.Context, workspaceID string
 			return "", apierrors.NewInternalError("workspace_get_failed", err)
 		}
 		if crd.Status.Phase == v1.WorkspacePhaseActive && crd.Status.PodIP != "" {
+			s.syncPhase(workspaceID, crd.Status.Phase)
 			return crd.Status.PodIP, nil
 		}
 		if crd.Status.Phase == v1.WorkspacePhaseFailed || crd.Status.Phase == v1.WorkspacePhaseTerminated {

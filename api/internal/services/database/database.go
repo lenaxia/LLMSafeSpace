@@ -311,7 +311,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		return nil, nil
 	}
 	query := `
-        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at
         FROM workspaces
         WHERE id = $1
     `
@@ -322,6 +322,8 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.Name,
 		&ws.Runtime,
 		&ws.StorageSize,
+		&ws.Phase,
+		&ws.PVCState,
 		&ws.CreatedAt,
 		&ws.UpdatedAt,
 	)
@@ -393,10 +395,37 @@ func (s *Service) DeleteWorkspace(ctx context.Context, workspaceID string) error
 	return nil
 }
 
+// SyncWorkspacePhase updates the phase and pvc_state columns for a workspace.
+// This is fire-and-forget: errors are logged but not propagated.
+func (s *Service) SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pvcState string) {
+	if workspaceID == "" || phase == "" {
+		return
+	}
+	_, err := s.DB.ExecContext(ctx,
+		"UPDATE workspaces SET phase = $1, pvc_state = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
+		phase, pvcState, workspaceID)
+	if err != nil {
+		s.Logger.Error("failed to sync workspace phase to DB", err, "workspaceID", workspaceID, "phase", phase)
+	}
+}
+
+// MarkWorkspaceDeleted soft-deletes a workspace by setting deleted_at.
+func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) {
+	if workspaceID == "" {
+		return
+	}
+	_, err := s.DB.ExecContext(ctx,
+		"UPDATE workspaces SET deleted_at = NOW(), phase = 'Deleted', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+		workspaceID)
+	if err != nil {
+		s.Logger.Error("failed to mark workspace deleted in DB", err, "workspaceID", workspaceID)
+	}
+}
+
 // ListWorkspaces lists workspaces for a user with pagination.
 func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	var total int
-	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM workspaces WHERE user_id = $1", userID).Scan(&total); err != nil {
+	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM workspaces WHERE user_id = $1 AND deleted_at IS NULL", userID).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
 	}
 	pagination := &types.PaginationMetadata{
@@ -413,9 +442,9 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		return []*types.WorkspaceMetadata{}, pagination, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `
-        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at
         FROM workspaces
-        WHERE user_id = $1
+        WHERE user_id = $1 AND deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)
@@ -428,7 +457,8 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		var ws types.WorkspaceMetadata
 		if err := rows.Scan(
 			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
-			&ws.StorageSize, &ws.CreatedAt, &ws.UpdatedAt,
+			&ws.StorageSize, &ws.Phase, &ws.PVCState,
+			&ws.CreatedAt, &ws.UpdatedAt,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
 		}

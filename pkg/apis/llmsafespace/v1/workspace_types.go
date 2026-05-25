@@ -133,6 +133,14 @@ const (
 	WorkspacePhaseFailed      WorkspacePhase = "Failed"
 )
 
+type PVCState string
+
+const (
+	PVCStateNone    PVCState = ""        // no PVC yet
+	PVCStateCluster PVCState = "cluster" // PVC exists on cluster
+	PVCStateS3      PVCState = "s3"      // PVC offloaded to S3
+)
+
 // WorkspaceConditionType identifies a condition on a Workspace.
 type WorkspaceConditionType string
 

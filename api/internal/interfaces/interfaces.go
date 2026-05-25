@@ -52,6 +52,8 @@ type DatabaseService interface {
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
 	DeleteWorkspace(ctx context.Context, workspaceID string) error
 	ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
+	SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pvcState string)
+	MarkWorkspaceDeleted(ctx context.Context, workspaceID string)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
 	ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
@@ -100,7 +102,6 @@ type MetricsService interface {
 	Stop() error
 }
 
-
 type WorkspaceService interface {
 	CreateWorkspace(ctx context.Context, userID string, req types.CreateWorkspaceRequest) (*types.Workspace, error)
 	GetWorkspace(ctx context.Context, userID, workspaceID string) (*types.Workspace, error)
@@ -118,7 +119,6 @@ type WorkspaceService interface {
 	Start() error
 	Stop() error
 }
-
 
 type SessionIndexService interface {
 	RecordMessage(workspaceID, sessionID, title string, at time.Time)
