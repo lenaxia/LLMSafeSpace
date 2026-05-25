@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
@@ -334,7 +335,7 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 	}
 	if existing != nil {
 		s.logger.Warn("Register: duplicate email attempt", "email", req.Email)
-		return nil, errors.New("registration failed")
+		return nil, apierrors.NewConflictError("user", "email", fmt.Errorf("registration failed"))
 	}
 
 	// First user in a fresh installation is auto-promoted to admin so the

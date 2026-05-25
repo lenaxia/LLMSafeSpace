@@ -307,6 +307,9 @@ func (s *Service) CheckPermission(userID, resourceType, resourceID, action strin
 
 // GetWorkspace gets a workspace by ID.
 func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	if workspaceID == "" {
+		return nil, nil
+	}
 	query := `
         SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
         FROM workspaces

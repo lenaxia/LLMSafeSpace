@@ -11,6 +11,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 )
 
@@ -47,6 +49,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		cancel()
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
 	}
+
+	// Wire session index so sessions are tracked and listable.
+	sessionIndexSvc := sessionindex.New(svc.Database, log)
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc.SetSessionIndex(sessionIndexSvc)
+	}
+	proxyHandler.SetSessionIndex(sessionIndexSvc)
 
 	// In development mode, disable RequireHTTPS so the API works over plain
 	// HTTP via port-forward / local tooling. In production, set
