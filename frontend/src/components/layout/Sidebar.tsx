@@ -41,19 +41,13 @@ export function Sidebar({ onNavigate }: Props) {
   const createMutation = useMutation({
     mutationFn: async (params: { name: string }) => {
       const ws = await workspacesApi.create(params);
-      const sessions = await workspacesApi.getSessions(ws.id);
-      const firstSession = sessions.length > 0 ? sessions[0] : undefined;
-      if (firstSession) {
-        return { workspaceId: ws.id, sessionId: firstSession.id };
-      }
-      const session = await workspacesApi.ensureSession(ws.id);
-      return { workspaceId: ws.id, sessionId: session.sessionId };
+      return ws;
     },
-    onSuccess: (data) => {
+    onSuccess: (ws) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setShowNewWorkspace(false);
-      setExpandedWs((prev) => new Set(prev).add(data.workspaceId));
-      navigate(`/chat/${data.workspaceId}/${data.sessionId}`);
+      setExpandedWs((prev) => new Set(prev).add(ws.id));
+      navigate(`/chat/${ws.id}`);
       onNavigate?.();
     },
   });
@@ -64,6 +58,15 @@ export function Sidebar({ onNavigate }: Props) {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
       queryClient.invalidateQueries({ queryKey: ["sessions", wsId] });
+    },
+  });
+
+  const newSessionMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.ensureSession(wsId),
+    onSuccess: (data, wsId) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", wsId] });
+      navigate(`/chat/${wsId}/${data.sessionId}`);
+      onNavigate?.();
     },
   });
 
@@ -143,8 +146,10 @@ export function Sidebar({ onNavigate }: Props) {
               selectedWorkspaceId={workspaceId}
               selectedSessionId={sessionId}
               activating={activateMutation.isPending && activateMutation.variables === ws.id}
+              creatingSession={newSessionMutation.isPending && newSessionMutation.variables === ws.id}
               onToggle={() => handleWorkspaceClick(ws)}
               onSelectSession={(sid) => handleSessionClick(ws.id, sid)}
+              onNewSession={() => newSessionMutation.mutate(ws.id)}
             />
           ))}
           {((workspaces?.items ?? []).length === 0) && (
@@ -178,8 +183,10 @@ interface WorkspaceGroupProps {
   selectedWorkspaceId?: string;
   selectedSessionId?: string;
   activating: boolean;
+  creatingSession: boolean;
   onToggle: () => void;
   onSelectSession: (sessionId: string) => void;
+  onNewSession: () => void;
 }
 
 function WorkspaceGroup({
@@ -188,8 +195,10 @@ function WorkspaceGroup({
   selectedWorkspaceId,
   selectedSessionId,
   activating,
+  creatingSession,
   onToggle,
   onSelectSession,
+  onNewSession,
 }: WorkspaceGroupProps) {
   const isSelected = workspace.id === selectedWorkspaceId;
   const isSuspended = workspace.phase === "Suspended";
@@ -235,7 +244,10 @@ function WorkspaceGroup({
           workspaceId={workspace.id}
           selectedSessionId={selectedSessionId}
           onSelectSession={onSelectSession}
+          onNewSession={onNewSession}
+          creatingSession={creatingSession}
           isSuspended={isSuspended || isResuming}
+          isActive={isActive}
         />
       )}
     </div>
@@ -246,14 +258,20 @@ interface SessionListProps {
   workspaceId: string;
   selectedSessionId?: string;
   onSelectSession: (sessionId: string) => void;
+  onNewSession: () => void;
+  creatingSession: boolean;
   isSuspended: boolean;
+  isActive: boolean;
 }
 
 function WorkspaceSessionList({
   workspaceId,
   selectedSessionId,
   onSelectSession,
+  onNewSession,
+  creatingSession,
   isSuspended,
+  isActive,
 }: SessionListProps) {
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions", workspaceId],
@@ -269,43 +287,62 @@ function WorkspaceSessionList({
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">Loading...</div>
-    );
-  }
-
-  if (!sessions || sessions.length === 0) {
-    return (
-      <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">No sessions yet</div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-0.5 ml-5 pl-2 border-l border-border">
-      {sessions.map((s) => {
-        const title =
-          s.title ||
-          `Chat ${s.lastMessageAt ? formatRelativeTime(s.lastMessageAt) : ""}`;
-        return (
+    <div className="ml-5 pl-2 border-l border-border">
+      <div className="flex items-center justify-between px-2 py-1">
+        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Sessions</span>
+        {isActive && (
           <button
-            key={s.id}
-            onClick={() => onSelectSession(s.id)}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-              s.id === selectedSessionId
-                ? "bg-accent text-accent-foreground"
-                : "hover:bg-accent/50 text-muted-foreground",
-            )}
+            onClick={onNewSession}
+            disabled={creatingSession}
+            className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            aria-label="New chat"
+            title="New chat"
           >
-            <MessageSquare className="h-3 w-3 flex-shrink-0" />
-            <span className="flex-1 truncate">{title}</span>
-            {s.status === "active" && (
-              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            {creatingSession ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Plus className="h-3 w-3" />
             )}
           </button>
-        );
-      })}
+        )}
+      </div>
+
+      {isLoading && (
+        <div className="px-2 py-1 text-xs text-muted-foreground">Loading...</div>
+      )}
+
+      {!isLoading && (!sessions || sessions.length === 0) && (
+        <div className="px-2 py-1 text-xs text-muted-foreground">No sessions yet</div>
+      )}
+
+      {sessions && sessions.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {sessions.map((s) => {
+            const title =
+              s.title ||
+              `Chat ${s.lastMessageAt ? formatRelativeTime(s.lastMessageAt) : ""}`;
+            return (
+              <button
+                key={s.id}
+                onClick={() => onSelectSession(s.id)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                  s.id === selectedSessionId
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-accent/50 text-muted-foreground",
+                )}
+              >
+                <MessageSquare className="h-3 w-3 flex-shrink-0" />
+                <span className="flex-1 truncate">{title}</span>
+                {s.status === "active" && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
