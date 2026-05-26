@@ -102,14 +102,15 @@ COPY --chmod=755 runtimes/base/tools/smoke-test.sh /usr/local/bin/smoke-test.sh
 # MISE_GITHUB_ATTESTATIONS=0  — skip GitHub attestation checks (no outbound
 #                               OIDC calls in restricted build environments)
 RUN MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
-    mise use --system \
+    mise install --system \
         python@latest \
         node@lts \
         rust@stable \
         go@latest \
         java@lts \
         maven@latest \
-        gradle@latest
+        gradle@latest \
+    && mise reshim || true
 
 RUN /usr/local/bin/smoke-test.sh
 
