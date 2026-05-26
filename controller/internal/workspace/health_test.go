@@ -432,6 +432,60 @@ func TestCheckAgentHealth_UnhealthyBelowThreshold_NoRepair(t *testing.T) {
 	assert.Equal(t, int32(0), ws.Status.RestartCount)
 }
 
+func TestCheckAgentHealth_StaleFailuresResetOnNewPod(t *testing.T) {
+	opencode.Register()
+	r := reconcilerFor(t)
+	ws := makeWorkspace("ws-stale", "default", v1.WorkspacePhaseActive)
+	startTime := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	ws.Status.StartTime = &startTime
+	ws.Status.PodIP = "127.0.0.1"
+	ws.Status.ConsecutiveHealthFailures = 99
+	ws.Status.LastHealthCheckAt = &metav1.Time{Time: startTime.Add(-10 * time.Minute)}
+
+	origInterval := healthCheckInterval
+	origBackoff := healthCheckBackoffInterval
+	origPort := agentdPort
+	healthCheckInterval = 0
+	healthCheckBackoffInterval = 0
+	agentdPort = 1
+	defer func() {
+		healthCheckInterval = origInterval
+		healthCheckBackoffInterval = origBackoff
+		agentdPort = origPort
+	}()
+
+	r.checkAgentHealth(context.Background(), ws)
+	assert.Equal(t, int32(1), ws.Status.ConsecutiveHealthFailures,
+		"stale failures from before pod start should reset, then count new failure")
+}
+
+func TestCheckAgentHealth_NoResetWhenHealthCheckAfterStart(t *testing.T) {
+	opencode.Register()
+	r := reconcilerFor(t)
+	ws := makeWorkspace("ws-fresh", "default", v1.WorkspacePhaseActive)
+	startTime := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &startTime
+	ws.Status.PodIP = "127.0.0.1"
+	ws.Status.ConsecutiveHealthFailures = 5
+	ws.Status.LastHealthCheckAt = &metav1.Time{Time: startTime.Add(5 * time.Minute)}
+
+	origInterval := healthCheckInterval
+	origBackoff := healthCheckBackoffInterval
+	origPort := agentdPort
+	healthCheckInterval = 0
+	healthCheckBackoffInterval = 0
+	agentdPort = 1
+	defer func() {
+		healthCheckInterval = origInterval
+		healthCheckBackoffInterval = origBackoff
+		agentdPort = origPort
+	}()
+
+	r.checkAgentHealth(context.Background(), ws)
+	assert.Equal(t, int32(6), ws.Status.ConsecutiveHealthFailures,
+		"failures from current pod should be preserved and incremented")
+}
+
 func TestCheckAgentHealth_EmptyPodIP(t *testing.T) {
 	opencode.Register()
 	r := reconcilerFor(t)
