@@ -17,10 +17,19 @@ const sseIdleTimeout = 5 * time.Minute
 
 type SessionIdleCallback func(workspaceID, sessionID string)
 
+type RawEventCallback func(workspaceID, eventType, rawData string)
+
 type sseEvent struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
+}
+
+type opencodeEvent struct {
+	Payload struct {
+		Type       string          `json:"type"`
+		Properties json.RawMessage `json:"properties"`
+	} `json:"payload"`
 }
 
 type SSETracker struct {
@@ -28,6 +37,7 @@ type SSETracker struct {
 	logger          pkginterfaces.LoggerInterface
 	onSessionIdle   SessionIdleCallback
 	onSessionActive SessionIdleCallback
+	onRawEvent      RawEventCallback
 	subscriptions   map[string]context.CancelFunc
 	subMu           sync.Mutex
 	passwordGetter  func(ctx context.Context, workspaceID string) (string, error)
@@ -57,6 +67,10 @@ func (t *SSETracker) SetPodIPResolver(resolver func(workspaceID string) string) 
 
 func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
 	t.onSessionActive = callback
+}
+
+func (t *SSETracker) SetOnRawEvent(callback RawEventCallback) {
+	t.onRawEvent = callback
 }
 
 func (t *SSETracker) EnsureWatching(workspaceID string) {
@@ -201,21 +215,55 @@ func (t *SSETracker) processEvent(workspaceID, data string) {
 		return
 	}
 
+	// Try nested format first (opencode /event format):
+	// {"directory":"...","payload":{"type":"session.status","properties":{...}}}
+	var nested opencodeEvent
+	if json.Unmarshal([]byte(data), &nested) == nil && nested.Payload.Type != "" {
+		if t.onRawEvent != nil {
+			t.onRawEvent(workspaceID, nested.Payload.Type, data)
+		}
+
+		if nested.Payload.Type == "session.status" {
+			var props struct {
+				SessionID string `json:"sessionID"`
+				Status    string `json:"status"`
+			}
+			if json.Unmarshal(nested.Payload.Properties, &props) == nil {
+				switch props.Status {
+				case "idle":
+					if props.SessionID != "" && t.onSessionIdle != nil {
+						t.onSessionIdle(workspaceID, props.SessionID)
+					}
+				case "busy":
+					if props.SessionID != "" && t.onSessionActive != nil {
+						t.onSessionActive(workspaceID, props.SessionID)
+					}
+				}
+			}
+		}
+		return
+	}
+
+	// Fall back to flat format used in tests
 	var evt sseEvent
 	if err := json.Unmarshal([]byte(data), &evt); err != nil {
 		return
 	}
 
-	if evt.Type != "session.status" || evt.SessionID == "" {
-		return
+	if t.onRawEvent != nil {
+		t.onRawEvent(workspaceID, evt.Type, data)
 	}
 
-	switch evt.Status {
-	case "idle":
-		t.onSessionIdle(workspaceID, evt.SessionID)
-	case "busy":
-		if t.onSessionActive != nil {
-			t.onSessionActive(workspaceID, evt.SessionID)
+	if evt.Type == "session.status" && evt.SessionID != "" {
+		switch evt.Status {
+		case "idle":
+			if t.onSessionIdle != nil {
+				t.onSessionIdle(workspaceID, evt.SessionID)
+			}
+		case "busy":
+			if t.onSessionActive != nil {
+				t.onSessionActive(workspaceID, evt.SessionID)
+			}
 		}
 	}
 }

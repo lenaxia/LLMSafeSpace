@@ -12,11 +12,14 @@ const brokerChannelBuffer = 16
 // Event types:
 //   - "workspace.phase": workspace phase changed; Phase is set.
 //   - "session.status":  session idle/busy notification; SessionID and Status are set.
+//   - "opencode.event":  raw event forwarded from the opencode agent; EventType and Data are set.
 type WorkspaceSSEEvent struct {
-	Type      string `json:"type"`
-	Phase     string `json:"phase,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Status    string `json:"status,omitempty"`
+	Type      string      `json:"type"`
+	Phase     string      `json:"phase,omitempty"`
+	SessionID string      `json:"session_id,omitempty"`
+	Status    string      `json:"status,omitempty"`
+	EventType string      `json:"event_type,omitempty"` // opencode event type (e.g. "session.diff", "message.updated")
+	Data      interface{} `json:"data,omitempty"`       // raw opencode event payload for "opencode.event"
 }
 
 // WorkspaceEventBroker is a fan-out pub/sub for per-workspace SSE events.
