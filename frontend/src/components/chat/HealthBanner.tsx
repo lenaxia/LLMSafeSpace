@@ -8,8 +8,8 @@ interface Props {
 
 function credentialLabel(state?: CredentialState) {
   if (!state || state.available) return null;
+  if (state.reason === "CredentialSecretNotFound") return null;
   const reasons: Record<string, string> = {
-    CredentialSecretNotFound: "No credentials configured",
     CredentialEmpty: "Credentials are empty",
     CredentialInvalid: "Credentials are invalid",
     CredentialCheckError: "Credential check failed",
