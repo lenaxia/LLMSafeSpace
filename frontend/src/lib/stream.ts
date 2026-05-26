@@ -79,18 +79,28 @@ export function parseCompleteStream(accumulated: string): MessagePart[] | string
     const parsed = JSON.parse(trimmed);
 
     if (parsed.parts && Array.isArray(parsed.parts)) {
-      return parsed.parts.map((p: { type?: string; text?: string }) => ({
-        type: p.type ?? "text",
-        text: p.text ?? "",
+      return parsed.parts.map((p: Record<string, unknown>) => ({
+        type: (p.type as string) ?? "text",
+        text: p.text as string | undefined,
+        name: p.name as string | undefined,
+        input: p.input,
+        id: p.id as string | undefined,
+        files: p.files as string[] | undefined,
+        hash: p.hash as string | undefined,
       }));
     }
 
     if (Array.isArray(parsed)) {
       const lastMsg = parsed[parsed.length - 1];
       if (lastMsg?.parts) {
-        return lastMsg.parts.map((p: { type?: string; text?: string }) => ({
-          type: p.type ?? "text",
-          text: p.text ?? "",
+        return lastMsg.parts.map((p: Record<string, unknown>) => ({
+          type: (p.type as string) ?? "text",
+          text: p.text as string | undefined,
+          name: p.name as string | undefined,
+          input: p.input,
+          id: p.id as string | undefined,
+          files: p.files as string[] | undefined,
+          hash: p.hash as string | undefined,
         }));
       }
     }

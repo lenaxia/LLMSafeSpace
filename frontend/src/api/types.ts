@@ -108,6 +108,11 @@ export interface AgentHealth {
 export interface MessagePart {
   type: string;
   text?: string;
+  name?: string;
+  input?: unknown;
+  id?: string;
+  files?: string[];
+  hash?: string;
 }
 
 export interface Message {

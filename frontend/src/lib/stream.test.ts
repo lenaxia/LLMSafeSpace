@@ -57,23 +57,23 @@ describe("parseCompleteStream", () => {
     const json = '{"info":{"id":"m1","role":"assistant"},"parts":[{"type":"text","text":"Hello world"}]}';
     const result = parseCompleteStream(json);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([{ type: "text", text: "Hello world" }]);
+    expect(result).toMatchObject([{ type: "text", text: "Hello world" }]);
   });
 
-  it("preserves multiple part types", () => {
-    const json = '{"info":{},"parts":[{"type":"thinking","text":"Let me think"},{"type":"text","text":"Answer"},{"type":"tool_call","text":"search()"}]}';
+  it("preserves multiple part types including tool_use fields", () => {
+    const json = '{"info":{},"parts":[{"type":"thinking","text":"Let me think"},{"type":"text","text":"Answer"},{"type":"tool_use","name":"read_file","input":{"path":"/foo"}}]}';
     const result = parseCompleteStream(json);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { type: "thinking", text: "Let me think" },
       { type: "text", text: "Answer" },
-      { type: "tool_call", text: "search()" },
+      { type: "tool_use", name: "read_file", input: { path: "/foo" } },
     ]);
   });
 
   it("handles array format (message history) by returning last message parts", () => {
     const json = '[{"info":{},"parts":[{"type":"text","text":"First"}]},{"info":{},"parts":[{"type":"text","text":"Second"}]}]';
-    expect(parseCompleteStream(json)).toEqual([{ type: "text", text: "Second" }]);
+    expect(parseCompleteStream(json)).toMatchObject([{ type: "text", text: "Second" }]);
   });
 
   it("returns raw text when not valid JSON", () => {
