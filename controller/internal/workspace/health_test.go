@@ -346,6 +346,92 @@ func TestCheckAgentHealth_SuccessResetsFailures(t *testing.T) {
 	assert.Equal(t, int32(0), ws.Status.ConsecutiveHealthFailures, "success should reset failure count")
 }
 
+func TestCheckAgentHealth_UnhealthyRepairsPodAfterThreshold(t *testing.T) {
+	opencode.Register()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{Healthy: false})
+	}))
+	defer server.Close()
+
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-repair", "default", v1.WorkspacePhaseActive)
+	ws.UID = "ws-repair-uid"
+	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &past
+	_, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	ws.Status.PodIP = "127.0.0.1"
+
+	pod := makeRunningPod(podName("ws-repair", string(ws.UID)), "default", "127.0.0.1")
+
+	origInterval := healthCheckInterval
+	origPort := agentdPort
+	healthCheckInterval = 0
+	agentdPort = port
+	defer func() {
+		healthCheckInterval = origInterval
+		agentdPort = origPort
+	}()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws, pod).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	ws.Status.ConsecutiveHealthFailures = 2
+	r.checkAgentHealth(context.Background(), ws)
+
+	assert.Equal(t, int32(3), ws.Status.ConsecutiveHealthFailures)
+	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase, "should transition to Creating to restart pod")
+	assert.Empty(t, ws.Status.PodIP, "PodIP should be cleared")
+	assert.Equal(t, int32(1), ws.Status.RestartCount, "RestartCount should increment")
+
+	var podCheck corev1.Pod
+	getErr := fc.Get(context.Background(), types.NamespacedName{Name: podName("ws-repair", string(ws.UID)), Namespace: "default"}, &podCheck)
+	assert.True(t, getErr != nil, "pod should be deleted after health failure threshold")
+}
+
+func TestCheckAgentHealth_UnhealthyBelowThreshold_NoRepair(t *testing.T) {
+	opencode.Register()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{Healthy: false})
+	}))
+	defer server.Close()
+
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-below", "default", v1.WorkspacePhaseActive)
+	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &past
+	_, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	ws.Status.PodIP = "127.0.0.1"
+
+	origInterval := healthCheckInterval
+	origPort := agentdPort
+	healthCheckInterval = 0
+	agentdPort = port
+	defer func() {
+		healthCheckInterval = origInterval
+		agentdPort = origPort
+	}()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	ws.Status.ConsecutiveHealthFailures = 1
+	r.checkAgentHealth(context.Background(), ws)
+
+	assert.Equal(t, int32(2), ws.Status.ConsecutiveHealthFailures)
+	assert.Equal(t, v1.WorkspacePhaseActive, ws.Status.Phase, "should stay Active below threshold")
+	assert.Equal(t, int32(0), ws.Status.RestartCount)
+}
+
 func TestCheckAgentHealth_EmptyPodIP(t *testing.T) {
 	opencode.Register()
 	r := reconcilerFor(t)
