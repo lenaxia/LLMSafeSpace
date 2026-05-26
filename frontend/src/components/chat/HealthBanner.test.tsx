@@ -18,13 +18,13 @@ describe("HealthBanner", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("renders credential warning when credentials missing", () => {
-    render(
+  it("hides banner when no credential secret exists (default state)", () => {
+    const { container } = render(
       <HealthBanner
         credentialState={{ available: false, reason: "CredentialSecretNotFound" }}
       />,
     );
-    expect(screen.getByText("No credentials configured")).toBeInTheDocument();
+    expect(container.innerHTML).toBe("");
   });
 
   it("renders credential warning when credentials empty", () => {
@@ -73,11 +73,11 @@ describe("HealthBanner", () => {
   it("renders both credential and agent issues", () => {
     render(
       <HealthBanner
-        credentialState={{ available: false, reason: "CredentialSecretNotFound" }}
+        credentialState={{ available: false, reason: "CredentialInvalid" }}
         agentHealth={{ status: "Unhealthy", message: "down" }}
       />,
     );
-    expect(screen.getByText("No credentials configured")).toBeInTheDocument();
+    expect(screen.getByText("Credentials are invalid")).toBeInTheDocument();
     expect(screen.getByText("down")).toBeInTheDocument();
   });
 
