@@ -110,7 +110,8 @@ RUN MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
         java@lts \
         maven@latest \
         gradle@latest \
-    && mise reshim || true
+    && printf '[tools]\npython = "latest"\nnode = "lts"\nrust = "stable"\ngo = "latest"\njava = "lts"\nmaven = "latest"\ngradle = "latest"\n' > /etc/mise/config.toml \
+    && mise reshim
 
 RUN /usr/local/bin/smoke-test.sh
 
