@@ -54,9 +54,9 @@ export function extractStreamText(accumulated: string): ParsedStreamResult {
       }
     } catch {
       if (match[1] === "thinking") {
-        thinkingParts.push(match[2]);
+        thinkingParts.push(match[2] ?? "");
       } else {
-        displayParts.push(match[2]);
+        displayParts.push(match[2] ?? "");
       }
     }
   }
