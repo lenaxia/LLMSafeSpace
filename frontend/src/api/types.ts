@@ -86,6 +86,23 @@ export interface WorkspaceStatus {
   phase: string;
   podName?: string;
   endpoint?: string;
+  credentialState?: CredentialState;
+  agentHealth?: AgentHealth;
+}
+
+export interface CredentialState {
+  available: boolean;
+  reason?: string;
+  message?: string;
+}
+
+export interface AgentHealth {
+  status: string;
+  providersConfigured?: number;
+  agentVersion?: string;
+  connected?: string[];
+  message?: string;
+  lastCheckedAt?: string;
 }
 
 export interface MessagePart {

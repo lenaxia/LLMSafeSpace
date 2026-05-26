@@ -926,6 +926,7 @@ func (r *WorkspaceReconciler) shouldRunHealthCheck(ws *v1.Workspace) bool {
 }
 
 func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Workspace) {
+	logger := log.FromContext(ctx)
 	if !r.shouldRunHealthCheck(ws) {
 		return
 	}
@@ -964,6 +965,16 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		ws.Status.ConsecutiveHealthFailures++
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
 			v1.ReasonAgentUnhealthy, "agent process not responding")
+		if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
+			podN := podName(ws.Name, string(ws.UID))
+			logger.Info("Agent unhealthy beyond threshold; restarting pod",
+				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN)
+			r.deletePodByName(ctx, podN, ws.Namespace)
+			ws.Status.Phase = v1.WorkspacePhaseCreating
+			ws.Status.PodIP = ""
+			ws.Status.Endpoint = ""
+			ws.Status.RestartCount++
+		}
 		return
 	}
 
