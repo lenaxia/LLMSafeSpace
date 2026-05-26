@@ -271,6 +271,13 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		}
 	}
 
+	if workspace.Status.PodIP != "" && workspace.Status.StartTime != nil {
+		if workspace.Status.LastHealthCheckAt != nil && workspace.Status.LastHealthCheckAt.Before(workspace.Status.StartTime) {
+			workspace.Status.ConsecutiveHealthFailures = 0
+			workspace.Status.LastHealthCheckAt = nil
+		}
+	}
+
 	// Check idle auto-suspend.
 	if workspace.Spec.AutoSuspend != nil && workspace.Spec.AutoSuspend.Enabled {
 		timeout := workspace.Spec.AutoSuspend.IdleTimeoutSeconds
@@ -927,6 +934,14 @@ func (r *WorkspaceReconciler) shouldRunHealthCheck(ws *v1.Workspace) bool {
 
 func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Workspace) {
 	logger := log.FromContext(ctx)
+
+	if ws.Status.PodIP != "" && ws.Status.StartTime != nil && ws.Status.LastHealthCheckAt != nil {
+		if ws.Status.LastHealthCheckAt.Before(ws.Status.StartTime) {
+			ws.Status.ConsecutiveHealthFailures = 0
+			ws.Status.LastHealthCheckAt = nil
+		}
+	}
+
 	if !r.shouldRunHealthCheck(ws) {
 		return
 	}
