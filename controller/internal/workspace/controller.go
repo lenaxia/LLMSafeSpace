@@ -158,6 +158,11 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
 
+	if err := r.copyDefaultCredentials(ctx, workspace); err != nil {
+		logger.Error(err, "Failed to copy default credentials")
+		return ctrl.Result{}, err
+	}
+
 	// Check if pod already exists.
 	existingPod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, existingPod)
