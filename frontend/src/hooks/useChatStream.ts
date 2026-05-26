@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { messagesApi } from "../api/messages";
 import { registerTabCloseAbort } from "../api/events";
 import { extractStreamText, parseCompleteStream } from "../lib/stream";
-import type { Message } from "../api/types";
+import type { Message, MessagePart } from "../api/types";
 
 export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined) {
   const [streaming, setStreaming] = useState(false);
-  const [streamedText, setStreamedText] = useState("");
+  const [streamedDisplayText, setStreamedDisplayText] = useState("");
+  const [streamedThinkingText, setStreamedThinkingText] = useState("");
+  const [streamedParts, setStreamedParts] = useState<MessagePart[]>([]);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cleanupBeaconRef = useRef<(() => void) | null>(null);
@@ -19,7 +21,9 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
     async (text: string, onComplete: (msg: Message) => void) => {
       if (!workspaceId || !sessionId) return;
       setStreaming(true);
-      setStreamedText("");
+      setStreamedDisplayText("");
+      setStreamedThinkingText("");
+      setStreamedParts([]);
       setError(null);
       abortRef.current = new AbortController();
       cleanupBeaconRef.current = registerTabCloseAbort(workspaceId, sessionId);
@@ -41,18 +45,22 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           const chunk = decoder.decode(value, { stream: true });
           accumulated += chunk;
 
-          const { displayText } = extractStreamText(accumulated);
-          if (displayText) {
-            setStreamedText(displayText);
-          }
+          const { displayText, thinkingText } = extractStreamText(accumulated);
+          setStreamedDisplayText(displayText);
+          setStreamedThinkingText(thinkingText);
         }
 
-        const finalText = parseCompleteStream(accumulated);
+        const parsed = parseCompleteStream(accumulated);
+        const parts: MessagePart[] = Array.isArray(parsed)
+          ? parsed
+          : [{ type: "text", text: parsed }];
+
+        setStreamedParts(parts);
 
         const msg: Message = {
           id: `msg-${Date.now()}`,
           role: "assistant",
-          parts: [{ type: "text", text: finalText }],
+          parts,
         };
         onComplete(msg);
       } catch (err: unknown) {
@@ -60,7 +68,9 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
         setError(message);
       } finally {
         setStreaming(false);
-        setStreamedText("");
+        setStreamedDisplayText("");
+        setStreamedThinkingText("");
+        setStreamedParts([]);
         abortRef.current = null;
         cleanupBeaconRef.current?.();
         cleanupBeaconRef.current = null;
@@ -75,5 +85,14 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { send, abort, streaming, streamedText, error, clearError };
+  return {
+    send,
+    abort,
+    streaming,
+    streamedDisplayText,
+    streamedThinkingText,
+    streamedParts,
+    error,
+    clearError,
+  };
 }

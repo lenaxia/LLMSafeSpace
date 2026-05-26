@@ -20,6 +20,13 @@ vi.mock("../../api/workspaces", () => ({
       ],
       pagination: { limit: 20, offset: 0, total: 1 },
     }),
+    create: vi.fn().mockResolvedValue({ id: "ws-new", name: "new-ws" }),
+    activate: vi.fn().mockResolvedValue({ resumed: "ws-1" }),
+    ensureSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", workspaceId: "ws-1" }),
+    getSessions: vi.fn().mockResolvedValue([]),
+    renameWorkspace: vi.fn().mockResolvedValue(undefined),
+    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+    renameSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -60,5 +67,11 @@ describe("Sidebar", () => {
   it("renders logout button", async () => {
     renderSidebar();
     expect(await screen.findByLabelText("Log out")).toBeInTheDocument();
+  });
+
+  it("renders kebab menu for workspace", async () => {
+    renderSidebar();
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    expect(kebabButtons.length).toBeGreaterThanOrEqual(1);
   });
 });

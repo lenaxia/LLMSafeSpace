@@ -6,98 +6,92 @@
  * as raw bytes with flush.
  *
  * Two possible formats:
- * 1. A single JSON object: {"info":{...},"parts":[{"type":"text","text":"..."}]}
+ * 1. A single JSON object: {"info":{...},"parts":[{"type":"text","text":"..."}, ...]}
  *    - Streamed progressively as chunks of the JSON string
- *    - We extract text content from parts on completion
+ *    - We extract parts content from the buffer during streaming and parse fully on completion
  * 2. Raw text (if opencode changes format in future)
  *    - Display as-is
  *
- * During streaming, we attempt to extract partial text from the accumulated buffer.
- * On completion, we parse the full JSON to get the final message.
+ * During streaming, we attempt to extract partial part content from the accumulated buffer.
+ * On completion, we parse the full JSON to get the final message with all parts.
  */
 
+import type { MessagePart } from "../api/types";
+
 export interface ParsedStreamResult {
-  /** Text to display during streaming (best-effort extraction) */
+  /** Text parts to display during streaming (best-effort extraction) */
   displayText: string;
+  /** Thinking/reasoning text extracted during streaming */
+  thinkingText: string;
   /** Whether the accumulated buffer looks like JSON (vs raw text) */
   isJSON: boolean;
 }
 
 /**
  * Extract displayable text from a partial or complete stream buffer.
- * Handles the opencode JSON format: {"info":...,"parts":[{"type":"text","text":"..."}]}
+ * Handles the opencode JSON format: {"info":...,"parts":[{"type":"text","text":"..."},{"type":"thinking","text":"..."}]}
+ * Returns both regular text and thinking text separately.
  */
 export function extractStreamText(accumulated: string): ParsedStreamResult {
   const trimmed = accumulated.trim();
 
-  // If it doesn't start with { or [, treat as raw text
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-    return { displayText: accumulated, isJSON: false };
+    return { displayText: accumulated, thinkingText: "", isJSON: false };
   }
 
-  // It looks like JSON — try to extract text content from parts
-  // Look for "text":"..." patterns and extract the text values
-  const textParts: string[] = [];
-  const regex = /"type"\s*:\s*"text"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const displayParts: string[] = [];
+  const thinkingParts: string[] = [];
+
+  const partRegex = /"type"\s*:\s*"(text|thinking)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
   let match;
-  while ((match = regex.exec(trimmed)) !== null) {
+  while ((match = partRegex.exec(trimmed)) !== null) {
     try {
-      // Unescape JSON string
-      textParts.push(JSON.parse(`"${match[1]}"`));
+      const text = JSON.parse(`"${match[2]}"`);
+      if (match[1] === "thinking") {
+        thinkingParts.push(text);
+      } else {
+        displayParts.push(text);
+      }
     } catch {
-      textParts.push(match[1]!);
+      if (match[1] === "thinking") {
+        thinkingParts.push(match[2]);
+      } else {
+        displayParts.push(match[2]);
+      }
     }
   }
 
-  if (textParts.length > 0) {
-    return { displayText: textParts.join(""), isJSON: true };
-  }
-
-  // Couldn't extract text parts — might be incomplete JSON
-  // Try the reverse pattern: "text":"..." , "type":"text"
-  const altRegex = /"text"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"type"\s*:\s*"text"/g;
-  while ((match = altRegex.exec(trimmed)) !== null) {
-    try {
-      textParts.push(JSON.parse(`"${match[1]}"`));
-    } catch {
-      textParts.push(match[1]!);
-    }
-  }
-
-  if (textParts.length > 0) {
-    return { displayText: textParts.join(""), isJSON: true };
-  }
-
-  // Can't parse yet — show nothing until we can extract text
-  return { displayText: "", isJSON: true };
+  return {
+    displayText: displayParts.join(""),
+    thinkingText: thinkingParts.join(""),
+    isJSON: true,
+  };
 }
 
 /**
- * Parse the complete stream response into a final message text.
+ * Parse the complete stream response into an array of message parts.
+ * Returns an array of part objects, or a raw string if not valid JSON.
  */
-export function parseCompleteStream(accumulated: string): string {
+export function parseCompleteStream(accumulated: string): MessagePart[] | string {
   const trimmed = accumulated.trim();
 
-  // Try to parse as JSON
   try {
     const parsed = JSON.parse(trimmed);
 
-    // Shape: {"info":..., "parts":[...]}
     if (parsed.parts && Array.isArray(parsed.parts)) {
-      return parsed.parts
-        .filter((p: { type?: string }) => p.type === "text")
-        .map((p: { text?: string }) => p.text ?? "")
-        .join("");
+      return parsed.parts.map((p: { type?: string; text?: string }) => ({
+        type: p.type ?? "text",
+        text: p.text ?? "",
+      }));
     }
 
-    // Shape: [{"info":..., "parts":[...]}, ...]  (array of messages)
     if (Array.isArray(parsed)) {
       const lastMsg = parsed[parsed.length - 1];
       if (lastMsg?.parts) {
-        return lastMsg.parts
-          .filter((p: { type?: string }) => p.type === "text")
-          .map((p: { text?: string }) => p.text ?? "")
-          .join("");
+        return lastMsg.parts.map((p: { type?: string; text?: string }) => ({
+          type: p.type ?? "text",
+          text: p.text ?? "",
+        }));
       }
     }
   } catch {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { workspacesApi } from "../api/workspaces";
 import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
@@ -11,6 +12,8 @@ import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
 import { Spinner } from "../components/ui/Spinner";
+import { KebabMenu } from "../components/ui/KebabMenu";
+import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
 import type { Message, WorkspaceStreamEvent } from "../api/types";
 
@@ -24,12 +27,19 @@ export function ChatPage() {
   useEffect(() => { setLocalMessages([]); }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
+
+  const { data: workspaces } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: () => workspacesApi.list(),
+  });
+
+  const workspace = workspaces?.items?.find((w) => w.id === workspaceId);
+  const workspaceName = workspace?.name ?? workspaceId ?? "";
+
   const activateMutation = useActivateWorkspace();
 
-  // Workspace is ready when phase is Active
   const isReady = status?.phase === "Active";
 
-  // Auto-create session when workspace is ready but no session selected
   const createSessionMutation = useMutation({
     mutationFn: (wsId: string) => sessionsApi.create(wsId, "New chat"),
     onSuccess: (data) => {
@@ -48,20 +58,16 @@ export function ChatPage() {
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
-  const { send, abort, streaming, streamedText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
+  const { send, abort, streaming, streamedDisplayText, streamedThinkingText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
 
-  // SSE event stream — handles workspace phase changes and session status events.
   const handleSSEEvent = useCallback((data: unknown) => {
     const event = data as WorkspaceStreamEvent;
     if (!event?.type) return;
 
     if (event.type === "workspace.phase" && workspaceId) {
-      // Phase changed: refresh both the sidebar list and the status query so the
-      // icon and the transitioning/suspended banners reflect the new state.
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     } else if (event.type === "session.status" && workspaceId) {
-      // Session idle/busy: refresh the session list so active indicators update.
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
     }
   }, [queryClient, workspaceId]);
@@ -95,8 +101,48 @@ export function ChatPage() {
     });
   };
 
+  const kebabItems: KebabMenuItem[] = [
+    {
+      label: "Rename",
+      onClick: () => {
+        const name = window.prompt("Workspace name:", workspaceName);
+        if (name && name.trim()) {
+          workspacesApi.renameWorkspace(workspaceId, name.trim()).then(() => {
+            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+          });
+        }
+      },
+    },
+    {
+      label: "Suspend",
+      onClick: () => {
+        workspacesApi.suspend(workspaceId).then(() => {
+          queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+          queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
+        });
+      },
+    },
+    {
+      label: "Delete",
+      onClick: () => {
+        if (window.confirm(`Delete workspace "${workspaceName}"?`)) {
+          workspacesApi.deleteWorkspace(workspaceId).then(() => {
+            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+            navigate("/chat");
+          });
+        }
+      },
+      destructive: true,
+    },
+  ];
+
   return (
     <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <h2 className="text-sm font-semibold truncate">{workspaceName}</h2>
+        <KebabMenu items={kebabItems} />
+      </div>
+
       {isSuspended && (
         <SuspendedBanner
           workspaceName={workspaceId}
@@ -138,7 +184,8 @@ export function ChatPage() {
         <ChatView
           messages={allMessages}
           streaming={streaming}
-          streamedText={streamedText}
+          streamedDisplayText={streamedDisplayText}
+          streamedThinkingText={streamedThinkingText}
           disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}
           onAbort={abort}

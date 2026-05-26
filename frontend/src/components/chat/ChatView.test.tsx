@@ -9,7 +9,8 @@ describe("ChatView", () => {
   const defaultProps = {
     messages: [] as Message[],
     streaming: false,
-    streamedText: "",
+    streamedDisplayText: "",
+    streamedThinkingText: "",
     disabled: false,
     onSend: vi.fn(),
     onAbort: vi.fn(),
@@ -32,7 +33,6 @@ describe("ChatView", () => {
 
   it("shows streaming indicator when streaming", () => {
     render(<ChatView {...defaultProps} streaming={true} />);
-    // StreamingIndicator renders animated dots
     const dots = document.querySelectorAll(".animate-bounce");
     expect(dots.length).toBe(3);
   });
@@ -68,8 +68,18 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText("Type a message...")).toBeDisabled();
   });
 
-  it("shows streamed text as a pending assistant message", () => {
-    render(<ChatView {...defaultProps} streaming={true} streamedText="Partial response..." />);
+  it("shows streamed display text", () => {
+    render(<ChatView {...defaultProps} streaming={true} streamedDisplayText="Partial response..." />);
     expect(screen.getByText("Partial response...")).toBeInTheDocument();
+  });
+
+  it("shows streamed thinking text", () => {
+    render(<ChatView {...defaultProps} streaming={true} streamedThinkingText="Thinking deeply..." />);
+    expect(screen.getByText("Thinking deeply...")).toBeInTheDocument();
+  });
+
+  it("does not show streaming bubble when no content", () => {
+    render(<ChatView {...defaultProps} streaming={true} />);
+    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
   });
 });

@@ -10,6 +10,10 @@ vi.mock("../api/workspaces", () => ({
     getStatus: vi.fn(),
     getWorkspaceSessions: vi.fn(),
     activate: vi.fn(),
+    list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
+    renameWorkspace: vi.fn(),
+    deleteWorkspace: vi.fn(),
+    suspend: vi.fn(),
   },
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn(), send: vi.fn() } }));
@@ -39,6 +43,16 @@ describe("ChatPage", () => {
     expect(screen.getByText("Select a workspace to start chatting")).toBeInTheDocument();
   });
 
+  it("shows workspace name in header", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Workspace", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
+    renderChatPage("/chat/ws-1");
+    await waitFor(() => expect(screen.getByText("My Workspace")).toBeInTheDocument());
+  });
+
   it("shows suspended banner for suspended workspace", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
     (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -65,5 +79,15 @@ describe("ChatPage", () => {
     (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "sb-1", phase: "Running" }]);
     renderChatPage("/chat/ws-1/sess-1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+  });
+
+  it("shows kebab menu in header", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Workspace", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    renderChatPage("/chat/ws-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
   });
 });

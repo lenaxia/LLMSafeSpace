@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+import { Brain, Wrench, Server } from "lucide-react";
 import type { MessagePart as MessagePartType } from "../../api/types";
 import { cn } from "../../lib/utils";
 
@@ -21,5 +22,50 @@ export function MessagePart({ part, isUser }: Props) {
       </div>
     );
   }
+
+  if (part.type === "thinking" && part.text) {
+    return (
+      <details className="group my-2 rounded-md border border-muted-foreground/20 bg-muted/30">
+        <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+          <Brain className="h-3.5 w-3.5" />
+          Thinking
+        </summary>
+        <div className="border-t border-muted-foreground/10 px-3 py-2 text-sm text-muted-foreground italic">
+          <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+            {part.text}
+          </ReactMarkdown>
+        </div>
+      </details>
+    );
+  }
+
+  if (part.type === "tool_call" && part.text) {
+    return (
+      <div className="my-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+        <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400">
+          <Wrench className="h-3.5 w-3.5" />
+          Tool call
+        </div>
+        <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
+          {part.text}
+        </pre>
+      </div>
+    );
+  }
+
+  if (part.type === "tool_result" && part.text) {
+    return (
+      <div className="my-1.5 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2">
+        <div className="flex items-center gap-2 text-xs font-medium text-green-600 dark:text-green-400">
+          <Server className="h-3.5 w-3.5" />
+          Tool result
+        </div>
+        <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
+          {part.text}
+        </pre>
+      </div>
+    );
+  }
+
   return null;
 }

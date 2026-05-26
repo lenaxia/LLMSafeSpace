@@ -109,3 +109,28 @@ func TestRenameSession_NilSessionIndex_NoError(t *testing.T) {
 	err := f.svc.RenameSession(context.Background(), "user-1", "ws-1", "s1", "Title")
 	assert.NoError(t, err)
 }
+
+func TestRenameWorkspace_Success(t *testing.T) {
+	f := newFixture(t)
+
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{
+		ID: "ws-1", UserID: "user-1",
+	}, nil)
+	name := "new-name"
+	f.db.On("UpdateWorkspace", mock.Anything, "ws-1", types.WorkspaceUpdates{Name: &name}).Return(nil)
+
+	err := f.svc.RenameWorkspace(context.Background(), "user-1", "ws-1", "new-name")
+	assert.NoError(t, err)
+}
+
+func TestRenameWorkspace_WrongOwner_Forbidden(t *testing.T) {
+	f := newFixture(t)
+
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{
+		ID: "ws-1", UserID: "other-user",
+	}, nil)
+
+	err := f.svc.RenameWorkspace(context.Background(), "user-1", "ws-1", "new-name")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "does not own")
+}

@@ -29,7 +29,23 @@ describe("MessagePart", () => {
   it("sanitizes dangerous HTML in assistant messages", () => {
     render(<MessagePart part={{ type: "text", text: "<script>alert('xss')</script>\n\nsafe text" }} isUser={false} />);
     expect(screen.queryByText("alert('xss')")).not.toBeInTheDocument();
-    // Script tag is stripped; safe text may or may not render depending on sanitizer behavior
-    // The key assertion is that the script content is NOT rendered
+  });
+
+  it("renders thinking part with collapsible details", () => {
+    render(<MessagePart part={{ type: "thinking", text: "Let me reason about this" }} isUser={false} />);
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Let me reason about this")).toBeInTheDocument();
+  });
+
+  it("renders tool_call part", () => {
+    render(<MessagePart part={{ type: "tool_call", text: "search(query: \"hello\")" }} isUser={false} />);
+    expect(screen.getByText("Tool call")).toBeInTheDocument();
+    expect(screen.getByText("search(query: \"hello\")")).toBeInTheDocument();
+  });
+
+  it("renders tool_result part", () => {
+    render(<MessagePart part={{ type: "tool_result", text: "Found 3 results" }} isUser={false} />);
+    expect(screen.getByText("Tool result")).toBeInTheDocument();
+    expect(screen.getByText("Found 3 results")).toBeInTheDocument();
   });
 });

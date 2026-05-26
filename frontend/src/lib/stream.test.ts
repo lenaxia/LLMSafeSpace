@@ -5,6 +5,7 @@ describe("extractStreamText", () => {
   it("returns raw text when input is not JSON", () => {
     const result = extractStreamText("Hello world");
     expect(result.displayText).toBe("Hello world");
+    expect(result.thinkingText).toBe("");
     expect(result.isJSON).toBe(false);
   });
 
@@ -12,15 +13,15 @@ describe("extractStreamText", () => {
     const json = '{"info":{"id":"m1"},"parts":[{"type":"text","text":"Hello world"}]}';
     const result = extractStreamText(json);
     expect(result.displayText).toBe("Hello world");
+    expect(result.thinkingText).toBe("");
     expect(result.isJSON).toBe(true);
   });
 
-  it("extracts text from partial JSON (text field visible)", () => {
-    const partial = '{"info":{"id":"m1"},"parts":[{"type":"text","text":"Hello wor';
-    // Can't extract because the text value isn't closed
-    const result = extractStreamText(partial);
-    expect(result.isJSON).toBe(true);
-    // May or may not extract partial — that's ok
+  it("extracts thinking text from parts", () => {
+    const json = '{"info":{},"parts":[{"type":"thinking","text":"Let me think..."},{"type":"text","text":"Answer"}]}';
+    const result = extractStreamText(json);
+    expect(result.displayText).toBe("Answer");
+    expect(result.thinkingText).toBe("Let me think...");
   });
 
   it("extracts text from multiple parts", () => {
@@ -29,10 +30,11 @@ describe("extractStreamText", () => {
     expect(result.displayText).toBe("Part 1 Part 2");
   });
 
-  it("skips non-text parts", () => {
+  it("skips non-text non-thinking parts", () => {
     const json = '{"info":{},"parts":[{"type":"patch","text":"diff"},{"type":"text","text":"Hello"}]}';
     const result = extractStreamText(json);
     expect(result.displayText).toBe("Hello");
+    expect(result.thinkingText).toBe("");
   });
 
   it("handles escaped characters in text", () => {
@@ -46,29 +48,32 @@ describe("extractStreamText", () => {
     const result = extractStreamText(partial);
     expect(result.isJSON).toBe(true);
     expect(result.displayText).toBe("");
+    expect(result.thinkingText).toBe("");
   });
 });
 
 describe("parseCompleteStream", () => {
-  it("parses complete opencode JSON response", () => {
+  it("parses complete opencode JSON response into parts", () => {
     const json = '{"info":{"id":"m1","role":"assistant"},"parts":[{"type":"text","text":"Hello world"}]}';
-    expect(parseCompleteStream(json)).toBe("Hello world");
+    const result = parseCompleteStream(json);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toEqual([{ type: "text", text: "Hello world" }]);
   });
 
-  it("concatenates multiple text parts", () => {
-    const json = '{"info":{},"parts":[{"type":"text","text":"Hello "},{"type":"text","text":"world"}]}';
-    expect(parseCompleteStream(json)).toBe("Hello world");
+  it("preserves multiple part types", () => {
+    const json = '{"info":{},"parts":[{"type":"thinking","text":"Let me think"},{"type":"text","text":"Answer"},{"type":"tool_call","text":"search()"}]}';
+    const result = parseCompleteStream(json);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toEqual([
+      { type: "thinking", text: "Let me think" },
+      { type: "text", text: "Answer" },
+      { type: "tool_call", text: "search()" },
+    ]);
   });
 
-  it("skips patch parts", () => {
-    const json = '{"info":{},"parts":[{"type":"patch","text":"diff"},{"type":"text","text":"Result"}]}';
-    expect(parseCompleteStream(json)).toBe("Result");
-  });
-
-  it("handles array format (message history)", () => {
+  it("handles array format (message history) by returning last message parts", () => {
     const json = '[{"info":{},"parts":[{"type":"text","text":"First"}]},{"info":{},"parts":[{"type":"text","text":"Second"}]}]';
-    // Returns last message's text
-    expect(parseCompleteStream(json)).toBe("Second");
+    expect(parseCompleteStream(json)).toEqual([{ type: "text", text: "Second" }]);
   });
 
   it("returns raw text when not valid JSON", () => {
@@ -77,11 +82,11 @@ describe("parseCompleteStream", () => {
 
   it("handles empty parts array", () => {
     const json = '{"info":{},"parts":[]}';
-    expect(parseCompleteStream(json)).toBe("");
+    expect(parseCompleteStream(json)).toEqual([]);
   });
 
   it("handles response with no parts field", () => {
     const json = '{"status":"ok"}';
-    expect(parseCompleteStream(json)).toBe('{"status":"ok"}');
+    expect(parseCompleteStream(json)).toBe(json);
   });
 });

@@ -38,4 +38,8 @@ export const workspacesApi = {
     api.get<OpenCodeSession>(`/workspaces/${workspaceId}/sessions/${sessionId}`),
   renameSession: (workspaceId: string, sessionId: string, title: string) =>
     api.put<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/title`, { title }),
+  renameWorkspace: (workspaceId: string, name: string) =>
+    api.put<void>(`/workspaces/${workspaceId}`, { name }),
+  deleteWorkspace: (workspaceId: string) =>
+    api.delete<void>(`/workspaces/${workspaceId}`),
 };

@@ -335,8 +335,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 
 	podIP := workspace.Status.PodIP
-	verbose := c.Query("verbose") == "true"
-	stripPatch := filterParts && !verbose
+	stripPatch := false
 	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
 	if proxyErr != nil && isConnectionError(proxyErr) {
@@ -437,6 +436,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			c.Writer.Header().Add(k, v)
 		}
 	}
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(resp.StatusCode)
 
 	flusher, canFlush := c.Writer.(http.Flusher)

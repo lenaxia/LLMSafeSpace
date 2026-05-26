@@ -16,8 +16,8 @@ import (
 // opencodeMessageResponse mirrors the shape opencode returns for
 // POST /session/:id/message and GET /session/:id/message.
 //
-// The API proxy strips parts where type=="patch" by default to keep responses
-// concise; clients can pass ?verbose=true to receive the unfiltered response.
+// The API proxy streams responses by default (including patch parts).
+// Clients are responsible for filtering out unwanted part types.
 const opencodeMessageBody = `{
   "info": {"role":"assistant","id":"msg_1","sessionID":"ses_1"},
   "parts": [
@@ -47,9 +47,9 @@ const opencodeHistoryBody = `[
   }
 ]`
 
-// TestProxy_StripsPatchParts_FromMessageResponse verifies that POST .../message
-// returns parts without any type=="patch" entries by default.
-func TestProxy_StripsPatchParts_FromMessageResponse(t *testing.T) {
+// TestProxy_DefaultKeepsPatchParts verifies that POST .../message
+// returns all parts including type=="patch" by default.
+func TestProxy_DefaultKeepsPatchParts(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -69,16 +69,20 @@ func TestProxy_StripsPatchParts_FromMessageResponse(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
+	// All 4 original parts should be preserved (no default stripping).
+	assert.Len(t, resp.Parts, 4)
+	hasPatch := false
 	for _, p := range resp.Parts {
-		assert.NotEqual(t, "patch", p["type"], "patch parts should be stripped by default")
+		if p["type"] == "patch" {
+			hasPatch = true
+		}
 	}
-	// Original had 4 parts; 1 patch removed → 3 should remain.
-	assert.Len(t, resp.Parts, 3, "expected 3 non-patch parts to remain")
+	assert.True(t, hasPatch, "patch parts should be present by default")
 }
 
-// TestProxy_VerboseFlag_KeepsPatchParts verifies that ?verbose=true preserves
-// patch parts in the response.
-func TestProxy_VerboseFlag_KeepsPatchParts(t *testing.T) {
+// TestProxy_VerboseFlag_NotForwardedToOpencode verifies that ?verbose=true
+// is consumed by the API proxy and not forwarded to opencode.
+func TestProxy_VerboseFlag_NotForwardedToOpencode(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		// Verify the verbose flag is NOT forwarded to opencode (it's our flag).
 		assert.NotContains(t, r.URL.RawQuery, "verbose",
@@ -112,9 +116,9 @@ func TestProxy_VerboseFlag_KeepsPatchParts(t *testing.T) {
 	assert.True(t, hasPatch, "patch parts should be present with verbose=true")
 }
 
-// TestProxy_StripsPatchParts_FromHistoryResponse verifies that the history
-// endpoint also strips patch parts from each message in the array.
-func TestProxy_StripsPatchParts_FromHistoryResponse(t *testing.T) {
+// TestProxy_DefaultKeepsPatchParts_FromHistoryResponse verifies that the history
+// endpoint preserves all parts including patches by default.
+func TestProxy_DefaultKeepsPatchParts_FromHistoryResponse(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -128,23 +132,25 @@ func TestProxy_StripsPatchParts_FromHistoryResponse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var msgs []struct {
-		Info  map[string]interface{}   `json:"info"`
 		Parts []map[string]interface{} `json:"parts"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &msgs))
 	require.Len(t, msgs, 2)
 
 	for _, m := range msgs {
+		hasPatch := false
 		for _, p := range m.Parts {
-			assert.NotEqual(t, "patch", p["type"],
-				"history endpoint should strip patch parts from every message")
+			if p["type"] == "patch" {
+				hasPatch = true
+			}
 		}
+		assert.True(t, hasPatch, "patch parts should be preserved in history by default")
 	}
 }
 
-// TestProxy_VerboseFlag_FalseStillStripsParts ensures that ?verbose=false (or
-// any value other than "true") still strips patch parts.
-func TestProxy_VerboseFlag_FalseStillStripsParts(t *testing.T) {
+// TestProxy_VerboseFlag_FalseKeepsPatchParts ensures that ?verbose=false
+// still preserves patch parts (verbose is now the default).
+func TestProxy_VerboseFlag_FalseKeepsPatchParts(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -163,9 +169,14 @@ func TestProxy_VerboseFlag_FalseStillStripsParts(t *testing.T) {
 		Parts []map[string]interface{} `json:"parts"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp.Parts, 4, "patch parts should be preserved even with verbose=false")
+	hasPatch := false
 	for _, p := range resp.Parts {
-		assert.NotEqual(t, "patch", p["type"])
+		if p["type"] == "patch" {
+			hasPatch = true
+		}
 	}
+	assert.True(t, hasPatch, "patch parts should be present")
 }
 
 // TestProxy_StripDoesNotApplyToSessionList verifies that creating/listing

@@ -116,6 +116,7 @@ type WorkspaceService interface {
 	EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error)
 	ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error)
 	RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error
+	RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error
 	Start() error
 	Stop() error
 }
