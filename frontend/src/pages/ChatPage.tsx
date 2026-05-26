@@ -9,6 +9,7 @@ import { useEventStream } from "../hooks/useEventStream";
 import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
+import { HealthBanner } from "../components/chat/HealthBanner";
 import { Spinner } from "../components/ui/Spinner";
 import { sessionsApi } from "../api/sessions";
 import type { Message, WorkspaceStreamEvent } from "../api/types";
@@ -109,6 +110,13 @@ export function ChatPage() {
           <Spinner size="sm" />
           <span>Workspace is {phaseLabel}...</span>
         </div>
+      )}
+
+      {isReady && (
+        <HealthBanner
+          credentialState={status?.credentialState}
+          agentHealth={status?.agentHealth}
+        />
       )}
 
       {atCap !== null && (
