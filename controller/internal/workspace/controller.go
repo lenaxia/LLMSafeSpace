@@ -3,10 +3,15 @@ package workspace
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -85,8 +90,11 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: workspace.Namespace}, existingPVC)
 
 	if err == nil {
-		// Check for stale PVC from previous workspace generation.
 		if r.isPVCStale(existingPVC, workspace) {
+			logger.Info("Deleting stale PVC", "pvc", pvcName, "reason", "owner mismatch or terminating")
+			if delErr := r.Delete(ctx, existingPVC); delErr != nil {
+				return ctrl.Result{}, delErr
+			}
 			err = errors.NewNotFound(corev1.Resource("persistentvolumeclaims"), pvcName)
 		}
 	}
@@ -221,7 +229,6 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
 	}
 
-	// Check credential secret change.
 	if changed, newHash := r.credentialSecretChanged(ctx, workspace); changed {
 		logger.Info("Credential secret changed; restarting pod")
 		r.deletePodByName(ctx, name, workspace.Namespace)
@@ -231,6 +238,11 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		workspace.Status.CredentialSecretHash = newHash
 		workspace.Status.RestartCount++
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	} else if newHash != "" && workspace.Status.CredentialSecretHash == "" {
+		workspace.Status.CredentialSecretHash = newHash
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Check pod exists and is running.
@@ -278,6 +290,26 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 
 	// Reset transient failure counter if stable long enough.
 	r.maybeResetTransientCounter(workspace)
+
+	// Check credential state (cheap — K8s API call only).
+	r.checkCredentialState(ctx, workspace)
+
+	if workspace.Annotations[AnnotationSuspendOnCredLoss] == "true" {
+		for _, c := range workspace.Status.Conditions {
+			if c.Type == v1.WorkspaceConditionCredentialsAvailable && c.Status == "False" {
+				logger.Info("Credential loss detected; suspending workspace per annotation")
+				workspace.Status.Phase = v1.WorkspacePhaseSuspending
+				return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			}
+		}
+	}
+
+	// Check agent health (HTTP to daemon — rate-limited).
+	r.checkAgentHealth(ctx, workspace)
+
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{RequeueAfter: requeueActive}, nil
 }
@@ -417,8 +449,6 @@ func (r *WorkspaceReconciler) credentialSecretChanged(ctx context.Context, works
 	}
 	newHash := hashSecretData(secret.Data)
 	if workspace.Status.CredentialSecretHash == "" {
-		// First time seeing credentials — store hash, no restart needed.
-		workspace.Status.CredentialSecretHash = newHash
 		return false, newHash
 	}
 	return newHash != workspace.Status.CredentialSecretHash, newHash
@@ -571,6 +601,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Command: []string{"/usr/local/bin/entrypoint-opencode.sh"},
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: 4096, Name: "opencode", Protocol: corev1.ProtocolTCP},
+			{ContainerPort: 4097, Name: "agentd", Protocol: corev1.ProtocolTCP},
 		},
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
@@ -578,19 +609,21 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromInt(4096),
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/readyz",
+					Port: intstr.FromInt(4097),
 				},
 			},
-			InitialDelaySeconds: 5, PeriodSeconds: 10, TimeoutSeconds: 3, FailureThreshold: 3,
+			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromInt(4096),
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/healthz",
+					Port: intstr.FromInt(4097),
 				},
 			},
-			InitialDelaySeconds: 15, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 3,
+			InitialDelaySeconds: 15, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 6,
 		},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
@@ -672,8 +705,6 @@ func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, work
 	credScript := `
 if [ -f /mnt/secrets/credentials/provider-config ]; then
   cp /mnt/secrets/credentials/provider-config /sandbox-cfg/credentials
-else
-  echo '{}' > /sandbox-cfg/credentials
 fi
 cp /mnt/secrets/password/password /sandbox-cfg/password
 `
@@ -803,4 +834,149 @@ func (r *WorkspaceReconciler) mapCredSecretToWorkspaces(ctx context.Context, obj
 // sanitizeLabelValue replaces characters invalid in K8s label values.
 func sanitizeLabelValue(s string) string {
 	return strings.ReplaceAll(s, ":", "_")
+}
+
+func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.WorkspaceConditionType, status, reason, message string) {
+	for i := range ws.Status.Conditions {
+		if ws.Status.Conditions[i].Type == condType {
+			if ws.Status.Conditions[i].Status == status && ws.Status.Conditions[i].Reason == reason {
+				ws.Status.Conditions[i].Message = message
+				return
+			}
+			ws.Status.Conditions[i].Status = status
+			ws.Status.Conditions[i].Reason = reason
+			ws.Status.Conditions[i].Message = message
+			ws.Status.Conditions[i].LastTransitionTime = metav1.Now()
+			return
+		}
+	}
+	ws.Status.Conditions = append(ws.Status.Conditions, v1.WorkspaceCondition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: metav1.Now(),
+	})
+}
+
+func (r *WorkspaceReconciler) checkCredentialState(ctx context.Context, ws *v1.Workspace) {
+	a, err := agent.Get(agent.AgentTypeOpenCode)
+	if err != nil {
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
+			v1.ReasonCredentialCheckError, "agent runtime not available")
+		return
+	}
+
+	secretName := fmt.Sprintf("workspace-creds-%s", ws.Name)
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ws.Namespace}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
+				v1.ReasonCredentialSecretNotFound, "No workspace credential secret exists")
+			return
+		}
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
+			v1.ReasonCredentialCheckError, err.Error())
+		return
+	}
+
+	rawConfig := secret.Data[CredentialSecretDataKey]
+	result, err := a.ValidateCredentials(rawConfig)
+	if err != nil {
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
+			v1.ReasonCredentialValidationError, err.Error())
+		return
+	}
+
+	switch result.State {
+	case agent.CredentialStateMissing:
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
+			v1.ReasonCredentialEmpty, result.Message)
+	case agent.CredentialStateInvalid:
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
+			v1.ReasonCredentialInvalid, result.Message)
+	case agent.CredentialStatePresent:
+		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "True",
+			v1.ReasonCredentialsValid, "")
+	}
+}
+
+var (
+	healthCheckInterval         = 5 * time.Minute
+	healthCheckBackoffInterval  = 15 * time.Minute
+	healthCheckFailureThreshold = int32(3)
+	healthCheckGracePeriod      = 2 * time.Minute
+	agentdPort                  = 4097
+)
+
+var healthHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+func (r *WorkspaceReconciler) shouldRunHealthCheck(ws *v1.Workspace) bool {
+	if ws.Status.StartTime != nil && time.Since(ws.Status.StartTime.Time) < healthCheckGracePeriod {
+		return false
+	}
+	interval := healthCheckInterval
+	if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
+		interval = healthCheckBackoffInterval
+	}
+	if ws.Status.LastHealthCheckAt == nil {
+		return true
+	}
+	return time.Since(ws.Status.LastHealthCheckAt.Time) >= interval
+}
+
+func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Workspace) {
+	if !r.shouldRunHealthCheck(ws) {
+		return
+	}
+	if ws.Status.PodIP == "" {
+		return
+	}
+
+	endpoint := fmt.Sprintf("http://%s:%d/v1/statusz", ws.Status.PodIP, agentdPort)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return
+	}
+
+	resp, err := healthHTTPClient.Do(req)
+
+	now := metav1.Now()
+	ws.Status.LastHealthCheckAt = &now
+
+	if err != nil {
+		ws.Status.ConsecutiveHealthFailures++
+		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
+			v1.ReasonHealthCheckFailed, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	var status agentd.StatuszResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		ws.Status.ConsecutiveHealthFailures++
+		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
+			v1.ReasonHealthCheckFailed, "failed to decode status response")
+		return
+	}
+
+	if !status.Healthy {
+		ws.Status.ConsecutiveHealthFailures++
+		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
+			v1.ReasonAgentUnhealthy, "agent process not responding")
+		return
+	}
+
+	ws.Status.ConsecutiveHealthFailures = 0
+
+	if !status.Ready || len(status.Connected) == 0 {
+		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
+			v1.ReasonAgentDegraded, fmt.Sprintf("no providers connected (configured=%d, connected=%v)",
+				status.ProvidersConfigured, status.Connected))
+		return
+	}
+
+	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
+		v1.ReasonAgentHealthy, fmt.Sprintf("connected=%v sessions=%d version=%s",
+			status.Connected, status.SessionsActive, status.AgentVersion))
 }

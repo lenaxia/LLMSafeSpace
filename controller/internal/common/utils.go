@@ -1,6 +1,8 @@
 package common
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -86,11 +88,9 @@ func IsPodReady(pod *corev1.Pod) bool {
 }
 
 func GenerateRandomString(length int) string {
-	// In a real implementation, this would generate a random string
-	// For simplicity, we'll just use the current timestamp
-	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
-	if len(timestamp) > length {
-		return timestamp[:length]
+	b := make([]byte, (length+1)/2)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	return timestamp
+	return hex.EncodeToString(b)[:length]
 }

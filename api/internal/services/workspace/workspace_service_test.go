@@ -499,6 +499,45 @@ func TestSetCredentials_UpdatesExistingSecret(t *testing.T) {
 	assert.Equal(t, []byte(`{"apiKey":"sk-new"}`), secret.Data["provider-config"])
 }
 
+func TestSetCredentials_InvalidJSON_ReturnsError(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+	req := types.SetCredentialsRequest{Provider: "openai", Config: []byte(`not json`)}
+	err := f.svc.SetCredentials(ctx, "user1", "ws-1", req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid credentials")
+}
+
+func TestSetCredentials_EmptyConfig_ReturnsError(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+	req := types.SetCredentialsRequest{Provider: "openai", Config: []byte(`{}`)}
+	err := f.svc.SetCredentials(ctx, "user1", "ws-1", req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid credentials")
+}
+
+func TestSetCredentials_NilConfig_ReturnsError(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+	req := types.SetCredentialsRequest{Provider: "openai", Config: nil}
+	err := f.svc.SetCredentials(ctx, "user1", "ws-1", req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid credentials")
+}
+
 // ===== DeleteCredentials =====
 
 func TestDeleteCredentials_HappyPath_NotFound_IsOK(t *testing.T) {
@@ -739,4 +778,43 @@ func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {
 			crd.Spec.Storage.StorageClassName == "fast-ssd" &&
 			crd.Spec.Runtime == "python:3.11"
 	}))
+}
+
+func TestCredStateFromConditions(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []v1.WorkspaceCondition
+		expected   types.CredentialStateResult
+	}{
+		{"valid", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionCredentialsAvailable, Status: "True", Reason: v1.ReasonCredentialsValid}}, types.CredentialStateResult{Available: true, Reason: v1.ReasonCredentialsValid}},
+		{"not found", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionCredentialsAvailable, Status: "False", Reason: v1.ReasonCredentialSecretNotFound, Message: "No secret"}}, types.CredentialStateResult{Available: false, Reason: v1.ReasonCredentialSecretNotFound, Message: "No secret"}},
+		{"empty", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionCredentialsAvailable, Status: "False", Reason: v1.ReasonCredentialEmpty}}, types.CredentialStateResult{Available: false, Reason: v1.ReasonCredentialEmpty}},
+		{"no condition", nil, types.CredentialStateResult{Available: false, Reason: "NotChecked"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, credStateFromConditions(tt.conditions))
+		})
+	}
+}
+
+func TestAgentHealthFromConditions(t *testing.T) {
+	past := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	tests := []struct {
+		name       string
+		conditions []v1.WorkspaceCondition
+		lastCheck  *metav1.Time
+		expected   types.AgentHealthResult
+	}{
+		{"healthy", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionAgentHealthy, Status: "True", Reason: v1.ReasonAgentHealthy, Message: "connected=[opencode] sessions=2 version=1.2.27"}}, &past, types.AgentHealthResult{Status: "Healthy", Message: "connected=[opencode] sessions=2 version=1.2.27", Connected: []string{"opencode"}, AgentVersion: "1.2.27", LastCheckedAt: past.Format(time.RFC3339)}},
+		{"degraded", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionAgentHealthy, Status: "False", Reason: v1.ReasonAgentDegraded, Message: "no providers connected (configured=1, connected=[])"}}, nil, types.AgentHealthResult{Status: "Degraded", Message: "no providers connected (configured=1, connected=[])", ProvidersConfigured: 1}},
+		{"unhealthy", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionAgentHealthy, Status: "False", Reason: v1.ReasonAgentUnhealthy, Message: "agent dead"}}, nil, types.AgentHealthResult{Status: "Unhealthy", Message: "agent dead"}},
+		{"check failed", []v1.WorkspaceCondition{{Type: v1.WorkspaceConditionAgentHealthy, Status: "Unknown", Reason: v1.ReasonHealthCheckFailed, Message: "refused"}}, nil, types.AgentHealthResult{Status: "Unknown", Message: "refused"}},
+		{"no condition", nil, nil, types.AgentHealthResult{Status: "Unknown"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, agentHealthFromConditions(tt.conditions, tt.lastCheck))
+		})
+	}
 }

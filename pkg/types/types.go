@@ -424,12 +424,29 @@ type WorkspaceListItem struct {
 
 // WorkspaceStatusResult carries the status fields read from the Workspace CRD.
 type WorkspaceStatusResult struct {
-	Phase          string                     `json:"phase"`
-	PVCName        string                     `json:"pvcName,omitempty"`
-	ActiveSessions int                        `json:"activeSessions"`
-	LastActivityAt *time.Time                 `json:"lastActivityAt,omitempty"`
-	Message        string                     `json:"message,omitempty"`
-	Conditions     []WorkspaceConditionResult `json:"conditions,omitempty"`
+	Phase           string                     `json:"phase"`
+	PVCName         string                     `json:"pvcName,omitempty"`
+	ActiveSessions  int                        `json:"activeSessions"`
+	LastActivityAt  *time.Time                 `json:"lastActivityAt,omitempty"`
+	Message         string                     `json:"message,omitempty"`
+	Conditions      []WorkspaceConditionResult `json:"conditions,omitempty"`
+	CredentialState CredentialStateResult      `json:"credentialState"`
+	AgentHealth     AgentHealthResult          `json:"agentHealth"`
+}
+
+type CredentialStateResult struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+type AgentHealthResult struct {
+	Status              string   `json:"status"`
+	ProvidersConfigured int      `json:"providersConfigured"`
+	AgentVersion        string   `json:"agentVersion,omitempty"`
+	Connected           []string `json:"connected,omitempty"`
+	Message             string   `json:"message,omitempty"`
+	LastCheckedAt       string   `json:"lastCheckedAt,omitempty"`
 }
 
 // WorkspaceConditionResult carries a single workspace condition.

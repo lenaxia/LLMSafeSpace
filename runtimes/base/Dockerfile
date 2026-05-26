@@ -4,9 +4,6 @@ ARG TARGETARCH=amd64
 
 WORKDIR /src
 
-# Allow operators to override the Go module proxy at build time. Useful in
-# environments where proxy.golang.org is unreachable (e.g. some corporate
-# VPNs); set --build-arg GOPROXY=direct to fetch modules directly.
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 
@@ -16,6 +13,22 @@ COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath -o /out/redact ./cmd/redact
+
+FROM golang:1.25-bookworm AS agentd-builder
+
+ARG TARGETARCH=amd64
+
+WORKDIR /src
+
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -o /out/workspace-agentd ./cmd/workspace-agentd
 
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
@@ -84,6 +97,7 @@ RUN set -eux; \
     rm -rf /tmp/mise /tmp/mise.tar.gz
 
 COPY --from=redact-builder --chmod=755 /out/redact /usr/local/bin/redact
+COPY --from=agentd-builder --chmod=755 /out/workspace-agentd /usr/local/bin/workspace-agentd
 
 COPY --chmod=755 runtimes/base/tools/entrypoints/entrypoint-common.sh  /usr/local/bin/entrypoint-common.sh
 COPY --chmod=755 runtimes/base/tools/entrypoints/entrypoint-opencode.sh /usr/local/bin/entrypoint-opencode.sh

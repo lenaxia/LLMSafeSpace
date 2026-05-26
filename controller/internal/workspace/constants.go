@@ -4,6 +4,10 @@ import "time"
 
 const WorkspaceFinalizer = "workspace.llmsafespace.dev/finalizer"
 
+const AnnotationSuspendOnCredLoss = "llmsafespace.dev/suspend-on-cred-loss"
+
+const CredentialSecretDataKey = "provider-config"
+
 // Pod naming: {workspaceName}-{uid[:8]}
 const podNameSuffix = 8
 
@@ -11,7 +15,6 @@ const podNameSuffix = 8
 const (
 	requeueCreating = 5 * time.Second
 	requeueActive   = 30 * time.Second
-	requeueSuspend  = 5 * time.Second
 )
 
 // pendingPhaseTimeout is how long a workspace can stay in Pending before

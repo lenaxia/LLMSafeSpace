@@ -145,10 +145,28 @@ const (
 type WorkspaceConditionType string
 
 const (
-	WorkspaceConditionReady      WorkspaceConditionType = "Ready"
-	WorkspaceConditionPVCReady   WorkspaceConditionType = "PVCReady"
-	WorkspaceConditionPodRunning WorkspaceConditionType = "PodRunning"
-	WorkspaceConditionSuspended  WorkspaceConditionType = "Suspended"
+	WorkspaceConditionReady                WorkspaceConditionType = "Ready"
+	WorkspaceConditionPVCReady             WorkspaceConditionType = "PVCReady"
+	WorkspaceConditionPodRunning           WorkspaceConditionType = "PodRunning"
+	WorkspaceConditionSuspended            WorkspaceConditionType = "Suspended"
+	WorkspaceConditionCredentialsAvailable WorkspaceConditionType = "CredentialsAvailable"
+	WorkspaceConditionAgentHealthy         WorkspaceConditionType = "AgentHealthy"
+)
+
+const (
+	ReasonCredentialsValid          = "CredentialsValid"
+	ReasonCredentialSecretNotFound  = "CredentialSecretNotFound"
+	ReasonCredentialEmpty           = "CredentialEmpty"
+	ReasonCredentialInvalid         = "CredentialInvalid"
+	ReasonCredentialCheckError      = "CredentialCheckError"
+	ReasonCredentialValidationError = "CredentialValidationError"
+)
+
+const (
+	ReasonAgentHealthy      = "AgentHealthy"
+	ReasonAgentUnhealthy    = "AgentUnhealthy"
+	ReasonAgentDegraded     = "AgentDegraded"
+	ReasonHealthCheckFailed = "HealthCheckFailed"
 )
 
 // WorkspaceCondition describes a condition of a Workspace.
@@ -183,6 +201,8 @@ type WorkspaceStatus struct {
 	LastTransientFailureAt    *metav1.Time `json:"lastTransientFailureAt,omitempty"`
 	ObservedRestartGeneration int64        `json:"observedRestartGeneration,omitempty"`
 	CredentialSecretHash      string       `json:"credentialSecretHash,omitempty"`
+	LastHealthCheckAt         *metav1.Time `json:"lastHealthCheckAt,omitempty"`
+	ConsecutiveHealthFailures int32        `json:"consecutiveHealthFailures,omitempty"`
 }
 
 // +kubebuilder:object:root=true
