@@ -106,7 +106,6 @@ RUN MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
         python@latest \
         node@lts \
         rust@stable \
-        ruby@latest \
         go@latest \
         java@lts \
         maven@latest \
