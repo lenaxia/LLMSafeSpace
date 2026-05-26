@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,12 +15,18 @@ import (
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 
 	"github.com/google/uuid"
 )
+
+func init() {
+	opencode.Register()
+}
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
@@ -424,6 +432,9 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 		})
 	}
 
+	result.CredentialState = credStateFromConditions(crd.Status.Conditions)
+	result.AgentHealth = agentHealthFromConditions(crd.Status.Conditions, crd.Status.LastHealthCheckAt)
+
 	s.syncPhase(workspaceID, crd.Status.Phase)
 
 	return result, nil
@@ -443,6 +454,27 @@ func (s *Service) SetCredentials(ctx context.Context, userID, workspaceID string
 		return err
 	}
 
+	a, err := agent.Get(agent.AgentTypeOpenCode)
+	if err != nil {
+		return apierrors.NewInternalError("agent_runtime_failed", err)
+	}
+	result, err := a.ValidateCredentials(req.Config)
+	if err != nil {
+		return apierrors.NewValidationError("credential validation failed", nil, err)
+	}
+	if result.State != agent.CredentialStatePresent {
+		return apierrors.NewValidationError(
+			fmt.Sprintf("invalid credentials: %s", result.Message),
+			nil,
+			fmt.Errorf("credential state: %s", result.State),
+		)
+	}
+
+	formatted, err := a.FormatCredentials(req.Config)
+	if err != nil {
+		return apierrors.NewInternalError("credential_format_failed", err)
+	}
+
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return apierrors.NewInternalError("workspace_get_failed", err)
@@ -450,7 +482,7 @@ func (s *Service) SetCredentials(ctx context.Context, userID, workspaceID string
 
 	secretName := fmt.Sprintf("workspace-creds-%s", workspaceID)
 	secretData := map[string][]byte{
-		"provider-config": req.Config,
+		"provider-config": formatted,
 	}
 
 	ownerRef := metav1.OwnerReference{
@@ -732,4 +764,63 @@ func (s *Service) RenameSession(ctx context.Context, userID, workspaceID, sessio
 		return nil
 	}
 	return s.sessionIndex.UpsertTitle(ctx, workspaceID, sessionID, title)
+}
+
+func credStateFromConditions(conditions []v1.WorkspaceCondition) types.CredentialStateResult {
+	for _, c := range conditions {
+		if c.Type == v1.WorkspaceConditionCredentialsAvailable {
+			return types.CredentialStateResult{
+				Available: c.Status == "True",
+				Reason:    c.Reason,
+				Message:   c.Message,
+			}
+		}
+	}
+	return types.CredentialStateResult{Available: false, Reason: "NotChecked"}
+}
+
+var connectedRe = regexp.MustCompile(`connected=\[([^\]]*)\]`)
+var versionRe = regexp.MustCompile(`version=(\S+)`)
+var configuredRe = regexp.MustCompile(`configured=(\d+)`)
+
+func agentHealthFromConditions(conditions []v1.WorkspaceCondition, lastCheckAt *metav1.Time) types.AgentHealthResult {
+	for _, c := range conditions {
+		if c.Type == v1.WorkspaceConditionAgentHealthy {
+			status := "Unknown"
+			if c.Status == "True" {
+				status = "Healthy"
+			} else if c.Status == "False" {
+				switch c.Reason {
+				case v1.ReasonAgentUnhealthy, v1.ReasonHealthCheckFailed:
+					status = "Unhealthy"
+				default:
+					status = "Degraded"
+				}
+			}
+			result := types.AgentHealthResult{
+				Status:  status,
+				Message: c.Message,
+			}
+			if m := connectedRe.FindStringSubmatch(c.Message); len(m) > 1 && m[1] != "" {
+				parts := strings.Split(m[1], " ")
+				result.Connected = make([]string, 0, len(parts))
+				for _, p := range parts {
+					if p != "" {
+						result.Connected = append(result.Connected, p)
+					}
+				}
+			}
+			if m := versionRe.FindStringSubmatch(c.Message); len(m) > 1 {
+				result.AgentVersion = m[1]
+			}
+			if m := configuredRe.FindStringSubmatch(c.Message); len(m) > 1 {
+				fmt.Sscanf(m[1], "%d", &result.ProvidersConfigured)
+			}
+			if lastCheckAt != nil {
+				result.LastCheckedAt = lastCheckAt.Format(time.RFC3339)
+			}
+			return result
+		}
+	}
+	return types.AgentHealthResult{Status: "Unknown"}
 }

@@ -5,7 +5,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/workspace"
+	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 )
+
+func init() {
+	opencode.Register()
+}
 
 func SetupControllers(mgr ctrl.Manager) error {
 	logger := log.Log.WithName("controller")

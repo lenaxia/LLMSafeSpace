@@ -11,4 +11,6 @@ if [[ -f /sandbox-cfg/password ]]; then
     export OPENCODE_SERVER_PASSWORD="$(cat /sandbox-cfg/password)"
 fi
 
+workspace-agentd &
+
 exec opencode serve --hostname 0.0.0.0 --port 4096

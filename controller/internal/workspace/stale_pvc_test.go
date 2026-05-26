@@ -26,30 +26,43 @@ func makeUnboundPVC(name, namespace string) *corev1.PersistentVolumeClaim {
 	}
 }
 
-func TestReconcile_Pending_StalePVC_Terminating_TriggersRecreate(t *testing.T) {
+func TestIsPVCStale_Terminating(t *testing.T) {
+	r := reconcilerFor(t)
 	ws := makeWorkspace("ws-stale", "default", v1.WorkspacePhasePending)
-	ws.UID = "ws-uid-NEW"
-	ws.Finalizers = []string{WorkspaceFinalizer}
-
+	ws.UID = "ws-uid-1"
 	now := metav1.Now()
-	stalePVC := makeUnboundPVC("workspace-ws-stale", "default")
-	stalePVC.DeletionTimestamp = &now
-	stalePVC.Finalizers = []string{"kubernetes.io/pvc-protection"}
-	stalePVC.OwnerReferences = []metav1.OwnerReference{{
-		APIVersion: "llmsafespace.dev/v1",
-		Kind:       "Workspace",
-		Name:       "ws-stale",
-		UID:        "ws-uid-OLD",
-	}}
-
-	r := reconcilerFor(t, ws, stalePVC)
-
-	result, err := r.Reconcile(context.Background(), reqFor("ws-stale", "default"))
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: requeueCreating}, result)
+	pvc := makeUnboundPVC("workspace-ws-stale", "default")
+	pvc.DeletionTimestamp = &now
+	pvc.OwnerReferences = []metav1.OwnerReference{{UID: ws.UID}}
+	assert.True(t, r.isPVCStale(pvc, ws), "terminating PVC should be stale regardless of owner UID")
 }
 
-func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_TriggersRecreate(t *testing.T) {
+func TestIsPVCStale_OwnerMismatch(t *testing.T) {
+	r := reconcilerFor(t)
+	ws := makeWorkspace("ws-stale", "default", v1.WorkspacePhasePending)
+	ws.UID = "ws-uid-1"
+	pvc := makeUnboundPVC("workspace-ws-stale", "default")
+	pvc.OwnerReferences = []metav1.OwnerReference{{UID: "different-uid"}}
+	assert.True(t, r.isPVCStale(pvc, ws), "PVC with different owner UID should be stale")
+}
+
+func TestIsPVCStale_SameOwner(t *testing.T) {
+	r := reconcilerFor(t)
+	ws := makeWorkspace("ws-ok", "default", v1.WorkspacePhasePending)
+	ws.UID = "ws-uid-1"
+	pvc := makeUnboundPVC("workspace-ws-ok", "default")
+	pvc.OwnerReferences = []metav1.OwnerReference{{UID: ws.UID}}
+	assert.False(t, r.isPVCStale(pvc, ws), "PVC with matching owner UID should not be stale")
+}
+
+func TestIsPVCStale_NoOwner(t *testing.T) {
+	r := reconcilerFor(t)
+	ws := makeWorkspace("ws-noown", "default", v1.WorkspacePhasePending)
+	pvc := makeUnboundPVC("workspace-ws-noown", "default")
+	assert.False(t, r.isPVCStale(pvc, ws), "PVC without owner refs should not be treated as stale")
+}
+
+func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_DeletesAndRecreates(t *testing.T) {
 	ws := makeWorkspace("ws-mismatch", "default", v1.WorkspacePhasePending)
 	ws.UID = "ws-uid-NEW"
 	ws.Finalizers = []string{WorkspaceFinalizer}
@@ -64,8 +77,20 @@ func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_TriggersRecreate(t *testing
 
 	r := reconcilerFor(t, ws, stalePVC)
 
-	_, err := r.Reconcile(context.Background(), reqFor("ws-mismatch", "default"))
+	result, err := r.Reconcile(context.Background(), reqFor("ws-mismatch", "default"))
 	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: requeueCreating}, result)
+
+	newPVC := &corev1.PersistentVolumeClaim{}
+	pvcErr := r.Get(context.Background(), types.NamespacedName{Name: "workspace-ws-mismatch", Namespace: "default"}, newPVC)
+	assert.NoError(t, pvcErr, "new PVC should be created after stale one is deleted")
+	for _, ref := range newPVC.OwnerReferences {
+		assert.Equal(t, types.UID("ws-uid-NEW"), ref.UID, "new PVC should reference current workspace UID")
+	}
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-mismatch", Namespace: "default"}, updated))
+	assert.Equal(t, "workspace-ws-mismatch", updated.Status.PVCName)
 }
 
 func TestReconcile_Pending_PVCWithoutOwnerRef_NotTreatedAsStale(t *testing.T) {
