@@ -531,6 +531,7 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
 	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
+	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
 	rg.GET("/:id/events", proxyHandler.StreamEvents)
 }

@@ -6,6 +6,7 @@ import type {
   SessionListItem,
   WorkspaceListResponse,
   WorkspaceStatus,
+  OpenCodeSession,
 } from "./types";
 
 export interface EnsureSessionResponse {
@@ -33,6 +34,8 @@ export const workspacesApi = {
   getSessions: (id: string) => api.get<SessionListItem[]>(`/workspaces/${id}/sessions`),
   getActiveSessions: (id: string) => api.get<ActiveSessionsResponse>(`/workspaces/${id}/sessions/active`),
   getWorkspaceSessions: (id: string) => api.get<WorkspaceListItem[]>(`/workspaces/${id}/sessions`),
+  getSession: (workspaceId: string, sessionId: string) =>
+    api.get<OpenCodeSession>(`/workspaces/${workspaceId}/sessions/${sessionId}`),
   renameSession: (workspaceId: string, sessionId: string, title: string) =>
     api.put<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/title`, { title }),
 };
