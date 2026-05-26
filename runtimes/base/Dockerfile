@@ -78,9 +78,10 @@ RUN set -eux; \
     curl --fail --show-error --location \
         "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${MISE_ARCH}.tar.gz" \
         -o /tmp/mise.tar.gz; \
-    tar -xzf /tmp/mise.tar.gz -C /usr/local/bin/ mise; \
+    tar -xzf /tmp/mise.tar.gz -C /tmp/; \
+    cp /tmp/mise/bin/mise /usr/local/bin/mise; \
     chmod +x /usr/local/bin/mise; \
-    rm /tmp/mise.tar.gz
+    rm -rf /tmp/mise /tmp/mise.tar.gz
 
 COPY --from=redact-builder --chmod=755 /out/redact /usr/local/bin/redact
 
