@@ -160,7 +160,13 @@ func (h *ProxyHandler) ListSessions(c *gin.Context) {
 
 func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	sid := c.Param("sessionId")
+	wid := c.Param("id")
 	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid, true)
+	// After the message round-trip completes, persist the opencode-generated
+	// title to the session index so the sidebar reflects it immediately.
+	if c.Writer.Status() < 300 && h.sessionIndex != nil {
+		go h.fetchAndPersistTitle(wid, sid)
+	}
 }
 
 func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
@@ -746,6 +752,48 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 // SetSessionIndex injects the session index service for recording message activity.
 func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
 	h.sessionIndex = si
+}
+
+// fetchAndPersistTitle fetches the session title from the opencode agent and
+// upserts it into the session index. Intended to be called in a goroutine
+// after SendMessage completes, so the sidebar shows the auto-generated title
+// without requiring the frontend to make a separate request.
+func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil || workspace.Status.PodIP == "" {
+		return
+	}
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+
+	url := fmt.Sprintf("http://%s:%d/session/%s", workspace.Status.PodIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer resp.Body.Close()
+
+	var session struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil || session.Title == "" {
+		return
+	}
+
+	if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, sessionID, session.Title); err != nil {
+		h.logger.Error("Failed to persist session title", err, "workspaceID", workspaceID, "sessionID", sessionID)
+	}
 }
 
 // GetActiveSessions returns the active session IDs for a workspace.

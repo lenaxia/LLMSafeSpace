@@ -6,7 +6,6 @@ import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
 import { useEventStream } from "../hooks/useEventStream";
-import { useSessionTitle } from "../hooks/useSessionTitle";
 import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
@@ -49,11 +48,6 @@ export function ChatPage() {
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, streamedText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
-
-  // Fetch the session title from the opencode agent and keep it fresh.
-  // When a title arrives (or changes), useSessionTitle invalidates ["sessions", workspaceId]
-  // so the sidebar updates automatically.
-  useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
 
   // SSE event stream — handles workspace phase changes and session status events.
   const handleSSEEvent = useCallback((data: unknown) => {
