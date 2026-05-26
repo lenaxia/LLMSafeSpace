@@ -162,8 +162,14 @@ export interface SessionStatusEvent {
   status: "idle" | "busy";
 }
 
+export interface OpenCodeEvent {
+  type: "opencode.event";
+  event_type: string;
+  data: unknown;
+}
+
 /**
  * Discriminated union of all event types delivered over the workspace SSE stream.
  * Narrow on `type` to access type-specific fields.
  */
-export type WorkspaceStreamEvent = WorkspacePhaseEvent | SessionStatusEvent;
+export type WorkspaceStreamEvent = WorkspacePhaseEvent | SessionStatusEvent | OpenCodeEvent;

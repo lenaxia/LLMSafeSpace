@@ -12,10 +12,10 @@ describe("SessionItem", () => {
   });
 
   it("renders fallback title when title is empty", () => {
-    const session: SessionListItem = { id: "s1", messageCount: 3, status: "idle", lastMessageAt: "2026-05-24T10:30:00Z" };
+    const twoHoursAgo = new Date(Date.now() - 120 * 60_000).toISOString();
+    const session: SessionListItem = { id: "s1", messageCount: 3, status: "idle", lastMessageAt: twoHoursAgo };
     render(<SessionItem session={session} selected={false} onSelect={vi.fn()} />);
-    // Should show "Session at HH:MM" format
-    expect(screen.getByText(/Session at/)).toBeInTheDocument();
+    expect(screen.getByText("Chat 2h")).toBeInTheDocument();
   });
 
   it("shows active indicator for active sessions", () => {

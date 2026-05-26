@@ -15,7 +15,7 @@ import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
-import type { Message, WorkspaceStreamEvent } from "../api/types";
+import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
 
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
@@ -59,6 +59,26 @@ export function ChatPage() {
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, streamedDisplayText, streamedThinkingText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
+  const [sseStreamText, setSseStreamText] = useState("");
+
+  const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
+    const envelope = event.data as Record<string, unknown> | undefined;
+    const payload = envelope?.payload as Record<string, unknown> | undefined;
+    if (!payload?.type) return;
+
+    const props = payload.properties as Record<string, unknown> | undefined;
+    if (!props) return;
+
+    const eventSessionId = (props.sessionID as string) || (props.session_id as string);
+    if (eventSessionId && eventSessionId !== currentSessionId) return;
+
+    if (payload.type === "part.updated") {
+      const part = props.part as Record<string, unknown> | undefined;
+      if (part?.type === "text" && typeof part.text === "string") {
+        setSseStreamText(part.text);
+      }
+    }
+  }, []);
 
   const handleSSEEvent = useCallback((data: unknown) => {
     const event = data as WorkspaceStreamEvent;
@@ -69,8 +89,10 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     } else if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+    } else if (event.type === "opencode.event" && sessionId) {
+      parseStreamEvent(event as OpenCodeEvent, sessionId);
     }
-  }, [queryClient, workspaceId]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent]);
 
   useEventStream(activeWorkspaceId, handleSSEEvent);
 
@@ -90,6 +112,7 @@ export function ChatPage() {
 
   const handleSend = (text: string) => {
     setAtCap(null);
+    setSseStreamText("");
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
@@ -184,7 +207,7 @@ export function ChatPage() {
         <ChatView
           messages={allMessages}
           streaming={streaming}
-          streamedDisplayText={streamedDisplayText}
+          streamedDisplayText={sseStreamText || streamedDisplayText}
           streamedThinkingText={streamedThinkingText}
           disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}

@@ -118,6 +118,7 @@ func (h *ProxyHandler) Start() error {
 		h.sseTracker.SetPasswordGetter(h.getPassword)
 		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
 		h.sseTracker.SetOnSessionActive(h.onSessionActive)
+		h.sseTracker.SetOnRawEvent(h.onRawEvent)
 
 		watcher, err := NewWorkspaceWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
 		if err != nil {
@@ -830,6 +831,19 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 			Status:    "busy",
 		})
 	}
+}
+
+func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
+	if h.broker == nil {
+		return
+	}
+	var parsed interface{}
+	json.Unmarshal([]byte(rawData), &parsed)
+	h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		Type:      "opencode.event",
+		EventType: eventType,
+		Data:      parsed,
+	})
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
