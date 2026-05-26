@@ -39,8 +39,14 @@ describe("MessagePart", () => {
 
   it("renders tool_call part", () => {
     render(<MessagePart part={{ type: "tool_call", text: "search(query: \"hello\")" }} isUser={false} />);
-    expect(screen.getByText("Tool call")).toBeInTheDocument();
-    expect(screen.getByText("search(query: \"hello\")")).toBeInTheDocument();
+    expect(screen.getByText("Tool call: search")).toBeInTheDocument();
+    expect(screen.getByText('(query: "hello")')).toBeInTheDocument();
+  });
+
+  it("renders tool_use part with name and input", () => {
+    render(<MessagePart part={{ type: "tool_use", name: "read_file", input: { path: "/foo" } }} isUser={false} />);
+    expect(screen.getByText("Tool call: read_file")).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes('"path"') && content.includes("/foo"))).toBeInTheDocument();
   });
 
   it("renders tool_result part", () => {

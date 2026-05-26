@@ -39,21 +39,23 @@ export function MessagePart({ part, isUser }: Props) {
     );
   }
 
-  if (part.type === "tool_call" && part.text) {
+  if ((part.type === "tool_use" || part.type === "tool_call") && (part.text || part.name)) {
+    const toolName = part.name ?? part.text?.split("(")[0] ?? "tool";
+    const toolArgs = part.input ?? (part.text ? part.text.substring(part.text.indexOf("(")) : "");
     return (
       <div className="my-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400">
           <Wrench className="h-3.5 w-3.5" />
-          Tool call
+          Tool call: {toolName}
         </div>
         <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
-          {part.text}
+          {typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs, null, 2)}
         </pre>
       </div>
     );
   }
 
-  if (part.type === "tool_result" && part.text) {
+  if (part.type === "tool_result" && (part.text || typeof part.text === "string")) {
     return (
       <div className="my-1.5 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-medium text-green-600 dark:text-green-400">
@@ -61,7 +63,7 @@ export function MessagePart({ part, isUser }: Props) {
           Tool result
         </div>
         <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
-          {part.text}
+          {part.text ?? ""}
         </pre>
       </div>
     );

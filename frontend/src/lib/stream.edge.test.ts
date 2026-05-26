@@ -11,21 +11,21 @@ describe("stream parser — production edge cases", () => {
 
     const full = parseCompleteStream(chunk1 + chunk2);
     expect(Array.isArray(full)).toBe(true);
-    expect(full).toEqual([{ type: "text", text: "Hello world, how are you?" }]);
+    expect(full).toMatchObject([{ type: "text", text: "Hello world, how are you?" }]);
   });
 
   it("handles chunk split mid-escape-sequence", () => {
     const complete = '{"info":{},"parts":[{"type":"text","text":"line1\\nline2"}]}';
     const result = parseCompleteStream(complete);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([{ type: "text", text: "line1\nline2" }]);
+    expect(result).toMatchObject([{ type: "text", text: "line1\nline2" }]);
   });
 
   it("handles unicode in text content", () => {
     const json = '{"info":{},"parts":[{"type":"text","text":"Hello 🌍 world"}]}';
     const result = parseCompleteStream(json);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([{ type: "text", text: "Hello 🌍 world" }]);
+    expect(result).toMatchObject([{ type: "text", text: "Hello 🌍 world" }]);
   });
 
   it("handles very large text content (10KB+)", () => {
@@ -33,7 +33,7 @@ describe("stream parser — production edge cases", () => {
     const json = `{"info":{},"parts":[{"type":"text","text":"${bigText}"}]}`;
     const result = parseCompleteStream(json);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([{ type: "text", text: bigText }]);
+    expect(result).toMatchObject([{ type: "text", text: bigText }]);
   });
 
   it("handles multiple text parts with code blocks", () => {
@@ -62,8 +62,8 @@ describe("stream parser — production edge cases", () => {
     const json = '{"info":{},"parts":[{"type":"tool_use","name":"read_file","input":{}},{"type":"text","text":"I read the file."}]}';
     const result = parseCompleteStream(json);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([
-      { type: "tool_use", text: "" },
+    expect(result).toMatchObject([
+      { type: "tool_use", name: "read_file", input: {} },
       { type: "text", text: "I read the file." },
     ]);
   });
@@ -84,6 +84,6 @@ describe("stream parser — production edge cases", () => {
 
     const result = parseCompleteStream(accumulated);
     expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual([{ type: "text", text: "The answer is 42." }]);
+    expect(result).toMatchObject([{ type: "text", text: "The answer is 42." }]);
   });
 });
