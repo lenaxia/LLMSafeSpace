@@ -1,6 +1,7 @@
 import { MessageSquare } from "lucide-react";
 import type { SessionListItem } from "../../api/types";
 import { cn } from "../../lib/utils";
+import { sessionDisplayTitle } from "../../lib/names";
 import { formatRelativeTime } from "../../lib/time";
 
 interface Props {
@@ -10,7 +11,7 @@ interface Props {
 }
 
 export function SessionItem({ session, selected, onSelect }: Props) {
-  const title = session.title || `Session at ${session.lastMessageAt ? new Date(session.lastMessageAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}`;
+  const title = sessionDisplayTitle(session.title, session.lastMessageAt);
 
   return (
     <button

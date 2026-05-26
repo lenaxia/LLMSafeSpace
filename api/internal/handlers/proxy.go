@@ -173,6 +173,11 @@ func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid, true)
 }
 
+func (h *ProxyHandler) GetSession(c *gin.Context) {
+	sid := c.Param("sessionId")
+	h.proxyToWorkspace(c, "/session/"+sid, false, sid, false)
+}
+
 func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	sid := c.Param("sessionId")
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid, false)

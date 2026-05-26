@@ -62,6 +62,14 @@ export interface SessionListItem {
   status: string; // "active" | "idle"
 }
 
+// Shape returned by the opencode agent GET /session/:id (proxied through)
+export interface OpenCodeSession {
+  id: string;
+  title?: string;
+  parentID?: string;
+  share?: string;
+}
+
 export interface ActiveSessionsResponse {
   active: string[];
   maxActive: number;

@@ -16,7 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { SessionListItem, WorkspaceListItem } from "../../api/types";
-import { formatRelativeTime } from "../../lib/time";
+import { sessionDisplayTitle } from "../../lib/names";
 import { cn } from "../../lib/utils";
 
 interface Props {
@@ -316,9 +316,7 @@ function WorkspaceSessionList({
       {sessions && sessions.length > 0 && (
         <div className="flex flex-col gap-0.5">
           {sessions.map((s) => {
-            const title =
-              s.title ||
-              `Chat ${s.lastMessageAt ? formatRelativeTime(s.lastMessageAt) : ""}`;
+            const title = sessionDisplayTitle(s.title, s.lastMessageAt);
             return (
               <button
                 key={s.id}
