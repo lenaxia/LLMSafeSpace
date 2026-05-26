@@ -306,12 +306,18 @@ func TestDeleteWorkspace_HappyPath(t *testing.T) {
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	f.ws.On("Delete", "ws-1", mock.Anything).Return(nil)
-	f.db.On("MarkWorkspaceDeleted", ctx, "ws-1").Return()
+	done := make(chan struct{})
+	f.db.On("MarkWorkspaceDeleted", ctx, "ws-1").Run(func(_ mock.Arguments) { close(done) })
 
 	err := f.svc.DeleteWorkspace(ctx, "user1", "ws-1")
 
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for MarkWorkspaceDeleted")
+	}
 	f.db.AssertExpectations(t)
 }
 
