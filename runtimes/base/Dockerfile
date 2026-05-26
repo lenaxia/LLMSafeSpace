@@ -101,7 +101,8 @@ COPY --chmod=755 runtimes/base/tools/smoke-test.sh /usr/local/bin/smoke-test.sh
 # MISE_YES=1                  — non-interactive (skip trust prompts)
 # MISE_GITHUB_ATTESTATIONS=0  — skip GitHub attestation checks (no outbound
 #                               OIDC calls in restricted build environments)
-RUN MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
+RUN mkdir -p /etc/mise \
+    && MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
     mise install --system \
         python@latest \
         node@lts \
