@@ -220,6 +220,12 @@ spec:
                   format: int64
                 credentialSecretHash:
                   type: string
+                lastHealthCheckAt:
+                  type: string
+                  format: date-time
+                consecutiveHealthFailures:
+                  type: integer
+                  format: int32
       additionalPrinterColumns:
         - name: Phase
           type: string
