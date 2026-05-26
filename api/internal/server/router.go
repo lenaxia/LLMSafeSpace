@@ -376,6 +376,26 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 		c.JSON(http.StatusOK, ws)
 	})
 
+	rg.PUT("/:id", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		var body struct {
+			Name string `json:"name" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+			return
+		}
+		if err := wsSvc.RenameWorkspace(c.Request.Context(), userID, c.Param("id"), body.Name); err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
 	rg.DELETE("/:id", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {

@@ -755,6 +755,14 @@ func (s *Service) ListWorkspaceSessions(ctx context.Context, userID, workspaceID
 	return s.sessionIndex.ListByWorkspace(ctx, workspaceID)
 }
 
+// RenameWorkspace updates the name of a workspace.
+func (s *Service) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return err
+	}
+	return s.dbService.UpdateWorkspace(ctx, workspaceID, types.WorkspaceUpdates{Name: &name})
+}
+
 // RenameSession updates the title of a session in the session index.
 func (s *Service) RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error {
 	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {

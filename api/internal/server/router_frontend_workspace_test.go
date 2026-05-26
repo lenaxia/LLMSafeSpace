@@ -211,6 +211,64 @@ func TestRenameSession_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+// --- PUT /api/v1/workspaces/:id ---
+
+func TestRenameWorkspace_Success(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("RenameWorkspace", mock.Anything, "test-user", "ws-1", "New Name").Return(nil)
+
+	body, _ := json.Marshal(map[string]string{"name": "New Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestRenameWorkspace_MissingName_Returns400(t *testing.T) {
+	router, _ := newRouterFixture(t)
+
+	body, _ := json.Marshal(map[string]string{})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestRenameWorkspace_Unauthorized(t *testing.T) {
+	router, _ := newRouterFixture(t)
+
+	body, _ := json.Marshal(map[string]string{"name": "New Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestRenameWorkspace_NotFound(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("RenameWorkspace", mock.Anything, "test-user", "ws-missing", "Name").Return(
+		apierrors.NewNotFoundError("workspace", "ws-missing", nil))
+
+	body, _ := json.Marshal(map[string]string{"name": "Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-missing", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 // --- POST /api/v1/workspaces/:id/sessions/new ---
 
 func TestEnsureSession_Route_Success(t *testing.T) {

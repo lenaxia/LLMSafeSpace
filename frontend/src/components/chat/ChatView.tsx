@@ -1,4 +1,4 @@
-import type { Message } from "../../api/types";
+import type { Message, MessagePart } from "../../api/types";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
@@ -8,21 +8,29 @@ import { MessageBubble } from "./MessageBubble";
 interface Props {
   messages: Message[];
   streaming: boolean;
-  streamedText: string;
+  streamedDisplayText: string;
+  streamedThinkingText: string;
   disabled: boolean;
   onSend: (text: string) => void;
   onAbort: () => void;
 }
 
-export function ChatView({ messages, streaming, streamedText, disabled, onSend, onAbort }: Props) {
+export function ChatView({ messages, streaming, streamedDisplayText, streamedThinkingText, disabled, onSend, onAbort }: Props) {
+  const hasStreamedContent = streamedDisplayText || streamedThinkingText;
+
+  const streamedParts: MessagePart[] = [
+    ...(streamedThinkingText ? [{ type: "thinking" as const, text: streamedThinkingText }] : []),
+    ...(streamedDisplayText ? [{ type: "text" as const, text: streamedDisplayText }] : []),
+  ];
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-1 flex-col overflow-hidden">
         <MessageList messages={messages} streaming={streaming} />
-        {streaming && streamedText && (
+        {streaming && hasStreamedContent && (
           <div className="px-4">
             <MessageBubble
-              message={{ id: "streaming", role: "assistant", parts: [{ type: "text", text: streamedText }] }}
+              message={{ id: "streaming", role: "assistant", parts: streamedParts }}
             />
           </div>
         )}

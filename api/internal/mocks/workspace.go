@@ -91,6 +91,10 @@ func (m *MockWorkspaceService) RenameSession(ctx context.Context, userID, worksp
 	return m.Called(ctx, userID, workspaceID, sessionID, title).Error(0)
 }
 
+func (m *MockWorkspaceService) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
+	return m.Called(ctx, userID, workspaceID, name).Error(0)
+}
+
 func (m *MockWorkspaceService) EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error) {
 	args := m.Called(ctx, userID, workspaceID)
 	if args.Get(0) == nil {

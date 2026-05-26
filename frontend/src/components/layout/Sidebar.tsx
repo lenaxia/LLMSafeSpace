@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
 import { NewWorkspaceDialog } from "../workspace/NewWorkspaceDialog";
+import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
+import { RenameSessionDialog } from "../session/RenameSessionDialog";
+import { KebabMenu } from "../ui/KebabMenu";
+import type { KebabMenuItem } from "../ui/KebabMenu";
 import {
   Settings,
   LogOut,
@@ -15,7 +19,7 @@ import {
   Play,
   Loader2,
 } from "lucide-react";
-import type { SessionListItem, WorkspaceListItem } from "../../api/types";
+import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle } from "../../lib/names";
 import { cn } from "../../lib/utils";
 
@@ -32,11 +36,23 @@ export function Sidebar({ onNavigate }: Props) {
   const [expandedWs, setExpandedWs] = useState<Set<string>>(() =>
     workspaceId ? new Set([workspaceId]) : new Set(),
   );
+  const [renamingWs, setRenamingWs] = useState<string | null>(null);
+  const [renamingSession, setRenamingSession] = useState<{ wsId: string; sessionId: string; title: string } | null>(null);
 
   const { data: workspaces } = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => workspacesApi.list(),
   });
+
+  useEffect(() => {
+    if (workspaces?.items) {
+      setExpandedWs((prev) => {
+        const next = new Set(prev);
+        workspaces.items.forEach((w) => next.add(w.id));
+        return next;
+      });
+    }
+  }, [workspaces?.items]);
 
   const createMutation = useMutation({
     mutationFn: async (params: { name: string }) => {
@@ -70,6 +86,34 @@ export function Sidebar({ onNavigate }: Props) {
     },
   });
 
+  const renameWsMutation = useMutation({
+    mutationFn: ({ wsId, name }: { wsId: string; name: string }) =>
+      workspacesApi.renameWorkspace(wsId, name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      setRenamingWs(null);
+    },
+  });
+
+  const deleteWsMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.deleteWorkspace(wsId),
+    onSuccess: (_data, wsId) => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      if (workspaceId === wsId) {
+        navigate("/chat");
+      }
+    },
+  });
+
+  const renameSessionMutation = useMutation({
+    mutationFn: ({ wsId, sessionId, title }: { wsId: string; sessionId: string; title: string }) =>
+      workspacesApi.renameSession(wsId, sessionId, title),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", vars.wsId] });
+      setRenamingSession(null);
+    },
+  });
+
   const handleWorkspaceClick = (ws: WorkspaceListItem) => {
     const isExpanded = expandedWs.has(ws.id);
 
@@ -88,24 +132,6 @@ export function Sidebar({ onNavigate }: Props) {
       }
       return next;
     });
-
-    if (!isExpanded) {
-      queryClient
-        .fetchQuery({
-          queryKey: ["sessions", ws.id],
-          queryFn: () => workspacesApi.getSessions(ws.id),
-        })
-        .then((sessions: SessionListItem[]) => {
-          if (sessionId && ws.id === workspaceId) return;
-          const first = sessions.length > 0 ? sessions[0] : undefined;
-          if (first) {
-            navigate(`/chat/${ws.id}/${first.id}`);
-          } else {
-            navigate(`/chat/${ws.id}`);
-          }
-          onNavigate?.();
-        });
-    }
   };
 
   const handleSessionClick = (wsId: string, sid: string) => {
@@ -150,6 +176,29 @@ export function Sidebar({ onNavigate }: Props) {
               onToggle={() => handleWorkspaceClick(ws)}
               onSelectSession={(sid) => handleSessionClick(ws.id, sid)}
               onNewSession={() => newSessionMutation.mutate(ws.id)}
+              isRenaming={renamingWs === ws.id}
+              onRenameClick={() => setRenamingWs(ws.id)}
+              onRenameCancel={() => setRenamingWs(null)}
+              onRenameConfirm={(name) => renameWsMutation.mutate({ wsId: ws.id, name })}
+              onDelete={() => {
+                if (window.confirm(`Delete workspace "${ws.name}"?`)) {
+                  deleteWsMutation.mutate(ws.id);
+                }
+              }}
+              onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
+              onDeleteSession={(sessionId) => {
+                if (window.confirm("Delete this session?")) {
+                  queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
+                  workspacesApi.renameSession(ws.id, sessionId, "").then(() => {
+                    queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
+                  });
+                }
+              }}
+              renamingSession={renamingSession?.wsId === ws.id ? renamingSession : null}
+              onRenameSessionCancel={() => setRenamingSession(null)}
+              onRenameSessionConfirm={(sessionId, title) =>
+                renameSessionMutation.mutate({ wsId: ws.id, sessionId, title })
+              }
             />
           ))}
           {((workspaces?.items ?? []).length === 0) && (
@@ -187,6 +236,16 @@ interface WorkspaceGroupProps {
   onToggle: () => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
+  isRenaming: boolean;
+  onRenameClick: () => void;
+  onRenameCancel: () => void;
+  onRenameConfirm: (name: string) => void;
+  onDelete: () => void;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  renamingSession: { wsId: string; sessionId: string; title: string } | null;
+  onRenameSessionCancel: () => void;
+  onRenameSessionConfirm: (sessionId: string, title: string) => void;
 }
 
 function WorkspaceGroup({
@@ -199,45 +258,75 @@ function WorkspaceGroup({
   onToggle,
   onSelectSession,
   onNewSession,
+  isRenaming,
+  onRenameClick,
+  onRenameCancel,
+  onRenameConfirm,
+  onDelete,
+  onRenameSession,
+  onDeleteSession,
+  renamingSession,
+  onRenameSessionCancel,
+  onRenameSessionConfirm,
 }: WorkspaceGroupProps) {
   const isSelected = workspace.id === selectedWorkspaceId;
   const isSuspended = workspace.phase === "Suspended";
   const isResuming = workspace.phase === "Resuming";
   const isActive = workspace.phase === "Active";
 
+  const kebabItems: KebabMenuItem[] = [
+    { label: "Rename", onClick: onRenameClick },
+    { label: "Delete", onClick: onDelete, destructive: true },
+  ];
+
   return (
     <div>
-      <button
-        onClick={onToggle}
-        className={cn(
-          "flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
-          isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
-        )}
-      >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-        )}
-        <Circle
-          className={cn(
-            "h-2 w-2 flex-shrink-0",
-            isActive
-              ? "fill-green-500 text-green-500"
-              : isSuspended
-                ? "fill-yellow-500 text-yellow-500"
-                : "fill-muted-foreground/40 text-muted-foreground/40",
-          )}
-        />
-        <span className="flex-1 truncate">{workspace.name}</span>
-        {activating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-        {isSuspended && !activating && (
-          <Play className="h-3 w-3 flex-shrink-0 text-yellow-500" />
-        )}
-        {!isActive && !isSuspended && !activating && workspace.phase && (
-          <span className="text-xs text-muted-foreground">{workspace.phase}</span>
-        )}
-      </button>
+      {isRenaming ? (
+        <div className="border-b border-border">
+          <RenameWorkspaceDialog
+            currentName={workspace.name}
+            onRename={onRenameConfirm}
+            onCancel={onRenameCancel}
+          />
+        </div>
+      ) : (
+        <div className="group flex items-center rounded-md transition-colors hover:bg-accent/50">
+          <button
+            onClick={onToggle}
+            className={cn(
+              "flex flex-1 items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+              isSelected ? "bg-accent text-accent-foreground" : "",
+            )}
+          >
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            )}
+            <Circle
+              className={cn(
+                "h-2 w-2 flex-shrink-0",
+                isActive
+                  ? "fill-green-500 text-green-500"
+                  : isSuspended
+                    ? "fill-yellow-500 text-yellow-500"
+                    : "fill-muted-foreground/40 text-muted-foreground/40",
+              )}
+            />
+            <span className="flex-1 truncate">{workspace.name}</span>
+            {activating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            {isSuspended && !activating && (
+              <Play className="h-3 w-3 flex-shrink-0 text-yellow-500" />
+            )}
+            {!isActive && !isSuspended && !activating && workspace.phase && (
+              <span className="text-xs text-muted-foreground">{workspace.phase}</span>
+            )}
+          </button>
+          <div className="mr-1">
+            <KebabMenu items={kebabItems} />
+          </div>
+        </div>
+      )}
 
       {expanded && (
         <WorkspaceSessionList
@@ -247,6 +336,11 @@ function WorkspaceGroup({
           onNewSession={onNewSession}
           creatingSession={creatingSession}
           isSuspended={isSuspended || isResuming}
+          onRenameSession={onRenameSession}
+          onDeleteSession={onDeleteSession}
+          renamingSession={renamingSession}
+          onRenameSessionCancel={onRenameSessionCancel}
+          onRenameSessionConfirm={onRenameSessionConfirm}
         />
       )}
     </div>
@@ -260,6 +354,11 @@ interface SessionListProps {
   onNewSession: () => void;
   creatingSession: boolean;
   isSuspended: boolean;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  renamingSession: { wsId: string; sessionId: string; title: string } | null;
+  onRenameSessionCancel: () => void;
+  onRenameSessionConfirm: (sessionId: string, title: string) => void;
 }
 
 function WorkspaceSessionList({
@@ -269,6 +368,11 @@ function WorkspaceSessionList({
   onNewSession,
   creatingSession,
   isSuspended,
+  onRenameSession,
+  onDeleteSession,
+  renamingSession,
+  onRenameSessionCancel,
+  onRenameSessionConfirm,
 }: SessionListProps) {
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions", workspaceId],
@@ -317,23 +421,53 @@ function WorkspaceSessionList({
         <div className="flex flex-col gap-0.5">
           {sessions.map((s) => {
             const title = sessionDisplayTitle(s.title, s.lastMessageAt);
+            const isRenaming = renamingSession?.sessionId === s.id;
+
+            if (isRenaming) {
+              return (
+                <div key={s.id} className="border rounded-md border-border ml-2">
+                  <RenameSessionDialog
+                    currentTitle={s.title ?? ""}
+                    onRename={(newTitle) => onRenameSessionConfirm(s.id, newTitle)}
+                    onCancel={onRenameSessionCancel}
+                  />
+                </div>
+              );
+            }
+
+            const kebabItems: KebabMenuItem[] = [
+              {
+                label: "Rename",
+                onClick: () => onRenameSession(s.id, s.title ?? ""),
+              },
+              {
+                label: "Delete",
+                onClick: () => onDeleteSession(s.id),
+                destructive: true,
+              },
+            ];
+
             return (
-              <button
-                key={s.id}
-                onClick={() => onSelectSession(s.id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                  s.id === selectedSessionId
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-accent/50 text-muted-foreground",
-                )}
-              >
-                <MessageSquare className="h-3 w-3 flex-shrink-0" />
-                <span className="flex-1 truncate">{title}</span>
-                {s.status === "active" && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                )}
-              </button>
+              <div key={s.id} className="group flex items-center rounded-md transition-colors hover:bg-accent/50">
+                <button
+                  onClick={() => onSelectSession(s.id)}
+                  className={cn(
+                    "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                    s.id === selectedSessionId
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  <MessageSquare className="h-3 w-3 flex-shrink-0" />
+                  <span className="flex-1 truncate">{title}</span>
+                  {s.status === "active" && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  )}
+                </button>
+                <div className="mr-1">
+                  <KebabMenu items={kebabItems} align="left" />
+                </div>
+              </div>
             );
           })}
         </div>

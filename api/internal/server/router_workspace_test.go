@@ -79,6 +79,7 @@ var workspaceRoutes = []struct {
 	{http.MethodGet, "/api/v1/workspaces/ws-1/status"},
 	{http.MethodPut, "/api/v1/workspaces/ws-1/credentials"},
 	{http.MethodDelete, "/api/v1/workspaces/ws-1/credentials"},
+	{http.MethodPut, "/api/v1/workspaces/ws-1"},
 }
 
 // TestWorkspaceRoutes_Exist verifies that every workspace route returns a
@@ -107,6 +108,8 @@ func TestWorkspaceRoutes_Exist(t *testing.T) {
 			svc.workspace.On("SetCredentials", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
 			svc.workspace.On("DeleteCredentials", mock.Anything, mock.Anything, mock.Anything).
+				Return(assert.AnError).Maybe()
+			svc.workspace.On("RenameWorkspace", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
 
 			req, _ := http.NewRequest(rt.method, rt.path, nil)
