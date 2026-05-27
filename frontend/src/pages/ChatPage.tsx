@@ -60,9 +60,10 @@ export function ChatPage() {
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
   const [sseStreamText, setSseStreamText] = useState("");
   const [sseThinkingText, setSseThinkingText] = useState("");
-  // Track the messageID of the first part we accept so we only accumulate
-  // parts belonging to a single (assistant) message and ignore user echoes.
-  const streamMessageIdRef = useRef<string | null>(null);
+  // Store the text the user just sent so we can strip the user echo from
+  // the SSE stream. Opencode echoes the user's message as the first
+  // message.part.updated event(s) before the assistant response begins.
+  const sentTextRef = useRef<string>("");
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
     // The proxy re-parses the raw opencode JSON and sets it as evt.Data.
@@ -90,7 +91,14 @@ export function ChatPage() {
       const field = props.field as string | undefined;
       if (!delta) return;
       if (field === "text") {
-        setSseStreamText((prev) => prev + delta);
+        setSseStreamText((prev) => {
+          const next = prev + delta;
+          if (sentTextRef.current && next === sentTextRef.current) return "";
+          if (sentTextRef.current && next.startsWith(sentTextRef.current)) {
+            return next.slice(sentTextRef.current.length);
+          }
+          return next;
+        });
       } else if (field === "reasoning" || field === "thinking") {
         setSseThinkingText((prev) => prev + delta);
       }
@@ -98,25 +106,13 @@ export function ChatPage() {
       const part = props.part as Record<string, unknown> | undefined;
       if (!part) return;
 
-      // Each part may carry a messageID that identifies which message it belongs
-      // to. We lock onto the first messageID we see so that if opencode echoes
-      // the user message (different messageID) we skip it.
-      const partMessageId = (part.messageID as string) || (props.messageID as string) || null;
-      if (partMessageId) {
-        if (!streamMessageIdRef.current) {
-          streamMessageIdRef.current = partMessageId;
-        } else if (partMessageId !== streamMessageIdRef.current) {
-          // Different message — skip (user echo or unrelated part)
-          return;
-        }
-      }
-
-      // Also skip if the part itself is tagged with role === "user"
-      const partRole = (part.role as string) || (props.role as string);
-      if (partRole === "user") return;
-
       if (part.type === "text" && typeof part.text === "string" && part.text) {
-        setSseStreamText(part.text);
+        let text = part.text;
+        if (sentTextRef.current && text === sentTextRef.current) return;
+        if (sentTextRef.current && text.startsWith(sentTextRef.current)) {
+          text = text.slice(sentTextRef.current.length);
+        }
+        if (text) setSseStreamText(text);
       } else if ((part.type === "reasoning" || part.type === "thinking") && typeof part.text === "string" && part.text) {
         setSseThinkingText(part.text);
       }
@@ -159,7 +155,7 @@ export function ChatPage() {
   const handleSend = (text: string) => {
     setSseStreamText("");
     setSseThinkingText("");
-    streamMessageIdRef.current = null;
+    sentTextRef.current = text;
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
