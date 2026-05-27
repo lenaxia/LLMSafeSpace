@@ -88,8 +88,8 @@ describe("MessagePart", () => {
     expect(screen.getByText("Tool call: tool")).toBeInTheDocument();
   });
 
-  it("does not render tool_use part with empty text when not streaming", () => {
-    const { container } = render(<MessagePart part={{ type: "tool_use", text: "" }} isUser={false} isStreaming={false} />);
-    expect(container.innerHTML).toBe("");
+  it("renders tool_use part with empty text when not streaming", () => {
+    render(<MessagePart part={{ type: "tool_use", text: "" }} isUser={false} isStreaming={false} />);
+    expect(screen.getByText("Tool call: tool")).toBeInTheDocument();
   });
 });
