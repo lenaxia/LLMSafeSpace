@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -129,6 +131,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 		proxy.POST("/sessions/:sessionId/message", handler.SendMessage)
 		proxy.POST("/sessions/:sessionId/prompt", handler.SendPromptAsync)
 		proxy.GET("/sessions/:sessionId/message", handler.GetHistory)
+		proxy.GET("/sessions/:sessionId", handler.GetSession)
 		proxy.POST("/sessions/:sessionId/abort", handler.AbortSession)
 		proxy.GET("/events", handler.StreamEvents)
 	}
@@ -256,6 +259,17 @@ func TestProxy_StreamingResponse(t *testing.T) {
 	assert.Equal(t, "no-cache", header.Get("Cache-Control"))
 }
 
+func TestProxy_StreamEvents_NilBrokerReturns503(t *testing.T) {
+	// StreamEvents must not panic if broker is nil (Start() not called yet).
+	env := newTestEnv(t)
+	// Deliberately do NOT set env.handler.broker
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "event broker not initialized")
+}
+
 // TestProxy_SSEStreamPassthrough previously tested transparent proxy forwarding
 // to the pod's /event endpoint. StreamEvents is now broker-based and no longer
 // proxies to the pod; passthrough behaviour is covered by stream_events_test.go.
@@ -308,7 +322,10 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&transport.attempts))
+	// attempts == 1 proves the first request hit the stale IP and failed.
+	// w.Code == 200 proves the retry with the fresh IP succeeded.
+	// Together they confirm a retry occurred and reached the backend.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&transport.attempts), "exactly one request should have hit the stale IP")
 }
 
 func TestProxy_ConnectionFailureReturns503(t *testing.T) {
@@ -392,15 +409,21 @@ func TestProxy_PasswordCachedAfterFirstRead(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
+	// Track how many times the k8s secret is read
+	var secretReadCount int32
+	env.clientset.Fake.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		atomic.AddInt32(&secretReadCount, 1)
+		return false, nil, nil // fall through to default handler
+	})
+
 	w1 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w1.Code)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&secretReadCount), "secret should be read exactly once on first request")
 
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w2 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 	assert.Equal(t, http.StatusOK, w2.Code)
-
-	_, err := env.clientset.CoreV1().Secrets("default").Get(context.Background(), "workspace-pw-ws-1", metav1.GetOptions{})
-	assert.NoError(t, err, "password should be read from cache on second request")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&secretReadCount), "secret should NOT be re-read on second request (served from cache)")
 }
 
 func TestProxy_SecretNotFound(t *testing.T) {
@@ -565,6 +588,7 @@ func TestProxy_EndpointMapping(t *testing.T) {
 		{"send message", "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
 		{"prompt async", "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", "/session/s1/prompt_async"},
 		{"get history", "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
+		{"get session", "GET", "/api/v1/workspaces/ws-1/sessions/s1", "/session/s1"},
 		{"abort", "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", "/session/s1/abort"},
 		// NOTE: "events" is intentionally omitted — StreamEvents is broker-based
 		// and does not proxy to the pod; it is covered by stream_events_test.go.
@@ -664,7 +688,7 @@ func TestProxy_E2E_MultipleWorkspaceIsolation(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "pw-1")
 	env.setupPasswordWithT(t, "sb-2", "pw-2")
 	env.setupWorkspaceWithT(t, "ws-1", 1)
-	env.setupWorkspaceWithT(t, "ws-1", 1)
+	env.setupWorkspaceWithT(t, "sb-2", 1)
 
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
