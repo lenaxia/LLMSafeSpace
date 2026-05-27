@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
+import { formatRelativeTime } from "../../lib/time";
 import { cn } from "../../lib/utils";
 
 interface Props {
@@ -278,12 +279,15 @@ function WorkspaceGroup({
           />
         </div>
       ) : (
-        <div className="group flex items-center rounded-md transition-colors hover:bg-accent/50">
+        <div className={cn(
+          "group flex items-center rounded-md transition-colors hover:bg-accent/50",
+          isSelected && "bg-accent",
+        )}>
           <button
             onClick={onToggle}
             className={cn(
               "flex flex-1 items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
-              isSelected ? "bg-accent text-accent-foreground" : "",
+              isSelected ? "text-accent-foreground" : "",
             )}
           >
             {expanded ? (
@@ -446,6 +450,9 @@ function WorkspaceSessionList({
                 >
                   <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="flex-1 truncate">{title}</span>
+                  {s.lastMessageAt && (
+                    <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
+                  )}
                   {s.status === "active" && (
                     <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
                   )}
