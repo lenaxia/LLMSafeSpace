@@ -4,13 +4,16 @@ import { registerTabCloseAbort } from "../api/events";
 import { ApiClientError } from "../api/client";
 import type { Message } from "../api/types";
 
+// If session.status=idle SSE never arrives (e.g. connection drops), fall
+// back to getHistory after this many ms.
+const IDLE_WAIT_TIMEOUT_MS = 60_000;
+
 export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined) {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cleanupBeaconRef = useRef<(() => void) | null>(null);
-  // Resolves when notifySessionIdle is called with the matching sessionId
   const idleResolverRef = useRef<((sid: string) => void) | null>(null);
 
   useEffect(() => {
@@ -35,17 +38,28 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           parts: [{ type: "text", text }],
         });
 
-        // Wait for the session.status=idle SSE event to signal the LLM has finished
+        // Wait for session.status=idle SSE OR a timeout fallback.
+        // The SSE path is preferred (real-time), but if the connection drops
+        // before idle fires we still need to fetch the response.
+        const capturedSessionId = sessionId;
         await new Promise<void>((resolve) => {
+          let timeoutId: ReturnType<typeof setTimeout>;
+
           idleResolverRef.current = (idleSessionId: string) => {
-            if (idleSessionId === sessionId) {
+            if (idleSessionId === capturedSessionId) {
+              clearTimeout(timeoutId);
               idleResolverRef.current = null;
               resolve();
             }
           };
+
+          timeoutId = setTimeout(() => {
+            idleResolverRef.current = null;
+            resolve();
+          }, IDLE_WAIT_TIMEOUT_MS);
         });
 
-        const history = await messagesApi.getHistory(workspaceId, sessionId);
+        const history = await messagesApi.getHistory(workspaceId, capturedSessionId);
         const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
 
         const msg: Message = lastAssistant ?? {

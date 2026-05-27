@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ type RateLimitConfig struct {
 	BurstSize     int
 	Strategy      string
 	ExemptRoles   []string
+	ExemptPaths   []string // path prefixes exempt from rate limiting (e.g. SSE endpoints)
 	CustomLimits  map[string]int
 	CustomBursts  map[string]int
 }
@@ -39,6 +41,15 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		if !config.Enabled {
 			c.Next()
 			return
+		}
+
+		// Skip rate limiting for exempt paths (e.g. long-lived SSE connections)
+		reqPath := c.FullPath()
+		for _, exempt := range config.ExemptPaths {
+			if strings.HasSuffix(reqPath, exempt) || reqPath == exempt {
+				c.Next()
+				return
+			}
 		}
 
 		// Check for exempt roles
