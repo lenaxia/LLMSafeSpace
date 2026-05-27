@@ -189,7 +189,11 @@ export function ChatPage() {
             const existingIdx = prev.findIndex((p: StreamPart) => p.type === "tool" && p.toolCallID === callID);
             if (existingIdx >= 0) {
               const updated = [...prev];
-              updated[existingIdx] = { type: "tool", text: displayText, toolState, toolCallID: callID, toolInput, toolOutput };
+              // Preserve original tool name if current event doesn't have one
+              const existingName = prev[existingIdx]!.text.split(":")[0] || "";
+              const effectiveName = toolName || existingName;
+              const effectiveText = title ? `${effectiveName}: ${title}` : effectiveName;
+              updated[existingIdx] = { type: "tool", text: effectiveText, toolState, toolCallID: callID, toolInput, toolOutput };
               return updated;
             }
           }
