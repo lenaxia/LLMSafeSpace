@@ -63,8 +63,8 @@ export function ChatPage() {
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
   useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
-  const [sseStreamParts, setSseStreamParts] = useState<Array<{ type: "thinking" | "text" | "tool"; text: string }>>([]);
-  const sseStreamPartsRef = useRef<Array<{ type: "thinking" | "text" | "tool"; text: string }>>([]);
+  const [sseStreamParts, setSseStreamParts] = useState<StreamPart[]>([]);
+  const sseStreamPartsRef = useRef<StreamPart[]>([]);
   useEffect(() => { sseStreamPartsRef.current = sseStreamParts; }, [sseStreamParts]);
   // Store the text the user just sent so we can strip the user echo from
   // the SSE stream. Opencode echoes the user's message as the first
@@ -121,7 +121,7 @@ export function ChatPage() {
           // Snapshot: update the current thinking block by tracked index
           const idx = currentThinkingIdxRef.current;
           setSseStreamParts((prev) => {
-            if (idx >= 0 && idx < prev.length && prev[idx].type === "thinking") {
+            if (idx >= 0 && idx < prev.length && prev[idx]!.type === "thinking") {
               const updated = [...prev];
               updated[idx] = { type: "thinking", text };
               return updated;
@@ -146,7 +146,7 @@ export function ChatPage() {
           const stripped = text.slice(sentTextRef.current.length);
           const idx = currentTextIdxRef.current;
           setSseStreamParts((prev) => {
-            if (idx >= 0 && idx < prev.length && prev[idx].type === "text") {
+            if (idx >= 0 && idx < prev.length && prev[idx]!.type === "text") {
               const updated = [...prev];
               updated[idx] = { type: "text", text: stripped };
               return updated;
@@ -158,7 +158,7 @@ export function ChatPage() {
           if (text) {
             const idx = currentTextIdxRef.current;
             setSseStreamParts((prev) => {
-              if (idx >= 0 && idx < prev.length && prev[idx].type === "text") {
+              if (idx >= 0 && idx < prev.length && prev[idx]!.type === "text") {
                 const updated = [...prev];
                 updated[idx] = { type: "text", text };
                 return updated;
@@ -186,7 +186,7 @@ export function ChatPage() {
         setSseStreamParts((prev) => {
           // If this is an update to an existing tool call (same callID), update in place
           if (callID) {
-            const existingIdx = prev.findIndex(p => p.type === "tool" && p.toolCallID === callID);
+            const existingIdx = prev.findIndex((p: StreamPart) => p.type === "tool" && p.toolCallID === callID);
             if (existingIdx >= 0) {
               const updated = [...prev];
               updated[existingIdx] = { type: "tool", text: displayText, toolState, toolCallID: callID, toolInput, toolOutput };
@@ -259,9 +259,9 @@ export function ChatPage() {
             parts: streamedParts.map(p => ({
               type: p.type === "tool" ? "tool_use" as const : p.type,
               text: p.text,
-              ...(p.toolState && { toolState: p.toolState }),
-              ...(p.toolInput && { input: p.toolInput }),
-              ...(p.toolOutput && { toolOutput: p.toolOutput }),
+              ...(p.toolState ? { toolState: p.toolState } : {}),
+              ...(p.toolInput != null ? { input: p.toolInput } : {}),
+              ...(p.toolOutput ? { toolOutput: p.toolOutput } : {}),
             })),
           }
         : assistantMsg;
