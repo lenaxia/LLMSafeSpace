@@ -336,67 +336,73 @@ describe("ChatPage SSE event handler", () => {
     });
   });
 
-  describe("user echo filtering (Bug 1)", () => {
-    it("ignores message.part.updated with role=user in properties", async () => {
+  describe("user echo filtering — sent-text tracking", () => {
+    it("strips exact user echo from message.part.updated snapshot", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "message.part.updated",
-        data: {
-          type: "message.part.updated",
-          properties: { sessionID: "sess-1", role: "user", part: { type: "text", text: "User echo" } },
-        },
-      } as unknown as WorkspaceStreamEvent);
+
+      // Send a message to populate sentTextRef
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "my question");
+      await user.keyboard("{Enter}");
+
+      // Simulate opencode echoing the user's message back as a part.updated
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "my question"));
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
       });
-    });
 
-    it("ignores message.part.updated with role=user in part", async () => {
-      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
-      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "message.part.updated",
-        data: {
-          type: "message.part.updated",
-          properties: { sessionID: "sess-1", part: { type: "text", text: "User echo", role: "user" } },
-        },
-      } as unknown as WorkspaceStreamEvent);
+      // Now the real assistant response arrives — should be accepted
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Here is the answer!"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is the answer!");
       });
     });
 
-    it("ignores message.part.updated with different messageID after locking", async () => {
+    it("strips user echo prefix from message.part.updated snapshot", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
 
-      // First event: assistant message — locks onto msg-assistant
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "message.part.updated",
-        data: {
-          type: "message.part.updated",
-          properties: { sessionID: "sess-1", messageID: "msg-assistant", part: { type: "text", text: "Hello" } },
-        },
-      } as unknown as WorkspaceStreamEvent);
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello");
-      });
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "hello");
+      await user.keyboard("{Enter}");
 
-      // Second event: different messageID (user echo) — should be ignored
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "message.part.updated",
-        data: {
-          type: "message.part.updated",
-          properties: { sessionID: "sess-1", messageID: "msg-user", part: { type: "text", text: "User echo" } },
-        },
-      } as unknown as WorkspaceStreamEvent);
+      // Opencode echoes user text + assistant response in one snapshot
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "helloThe answer is 42"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("The answer is 42");
+      });
+    });
+
+    it("strips user echo prefix from accumulated deltas", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "hi");
+      await user.keyboard("{Enter}");
+
+      // Deltas spell out "hi" first (user echo), then the assistant response
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "h"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "i"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "response text"));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("response text");
       });
     });
   });
