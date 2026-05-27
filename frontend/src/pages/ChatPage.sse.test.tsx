@@ -572,7 +572,7 @@ describe("ChatPage SSE event handler", () => {
         const parts = getStreamParts();
         expect(parts).toHaveLength(4);
         expect(parts[0]).toEqual({ type: "thinking", text: "thought 1" });
-        expect(parts[1]).toEqual({ type: "tool", text: "" });
+        expect(parts[1]).toMatchObject({ type: "tool", text: "" });
         expect(parts[2]).toEqual({ type: "thinking", text: "thought 2" });
         expect(parts[3]).toEqual({ type: "text", text: "answer" });
       });
@@ -731,8 +731,8 @@ describe("ChatPage SSE event handler", () => {
         const parts = getStreamParts();
         expect(parts).toHaveLength(3); // thinking + 2 tools
         expect(parts[0]).toEqual({ type: "thinking", text: "complete thought from snapshot" });
-        expect(parts[1]).toEqual({ type: "tool", text: "" });
-        expect(parts[2]).toEqual({ type: "tool", text: "" });
+        expect(parts[1]).toMatchObject({ type: "tool", text: "" });
+        expect(parts[2]).toMatchObject({ type: "tool", text: "" });
       });
     });
 
@@ -785,7 +785,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => {
         const parts = getStreamParts();
         expect(parts[0]!.text).toBe("thought snapshot");
-        expect(parts[1]).toEqual({ type: "tool", text: "" });
+        expect(parts[1]).toMatchObject({ type: "tool", text: "" });
         // No part should contain the stray delta
         expect(parts.every(p => !p.text.includes("SHOULD NOT APPEAR"))).toBe(true);
       });

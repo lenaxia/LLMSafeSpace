@@ -70,17 +70,13 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
   }
 
   if (part.type === "tool_use" || part.type === "tool_call") {
-    const toolName = part.name ?? (part.text ? part.text.split("(")[0] : undefined) ?? "tool";
-    const toolArgs = part.input ?? (part.text ? part.text.substring(part.text.indexOf("(")) : "");
+    const toolName = part.name ?? part.text ?? "tool";
     return (
       <div className="my-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400">
           <Wrench className="h-3.5 w-3.5" />
-          Tool call: {toolName}
+          {toolName || "tool"}
         </div>
-        <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
-          {typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs, null, 2)}
-        </pre>
       </div>
     );
   }
