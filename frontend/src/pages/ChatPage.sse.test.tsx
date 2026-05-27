@@ -591,8 +591,8 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => {
         const parts = getStreamParts();
         expect(parts[0]).toEqual({ type: "thinking", text: "let me search" });
-        // Multiple tool events should not create duplicate entries
-        expect(parts.filter(p => p.type === "tool")).toHaveLength(1);
+        // Each tool event produces its own entry
+        expect(parts.filter(p => p.type === "tool")).toHaveLength(3);
       });
     });
 
@@ -635,9 +635,9 @@ describe("ChatPage SSE event handler", () => {
 
       await waitFor(() => {
         const parts = getStreamParts();
-        // Should have: thinking, tool, thinking, tool, thinking, text
+        // Should have: thinking, tool(s), thinking, tool(s), thinking, text
         expect(parts.filter(p => p.type === "thinking")).toHaveLength(3);
-        expect(parts.filter(p => p.type === "tool")).toHaveLength(2);
+        expect(parts.filter(p => p.type === "tool")).toHaveLength(3);
         expect(parts.filter(p => p.type === "text")).toHaveLength(1);
         expect(parts[parts.length - 1]).toEqual({ type: "text", text: "Here is the repo info" });
       });
@@ -724,14 +724,47 @@ describe("ChatPage SSE event handler", () => {
       // Tools arrive
       sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
       sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
-      // Reasoning snapshot arrives (after tools, updates the thinking part)
+      // Reasoning snapshot arrives (after tools, updates the tracked thinking part)
       sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "complete thought from snapshot"));
 
       await waitFor(() => {
         const parts = getStreamParts();
-        expect(parts).toHaveLength(2); // thinking + tool
+        expect(parts).toHaveLength(3); // thinking + 2 tools
         expect(parts[0]).toEqual({ type: "thinking", text: "complete thought from snapshot" });
         expect(parts[1]).toEqual({ type: "tool", text: "" });
+        expect(parts[2]).toEqual({ type: "tool", text: "" });
+      });
+    });
+
+    it("multiple thinking blocks are preserved across steps (snapshots don't overwrite other blocks)", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Step 1: thinking + tool
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "step 1 thinking"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "step 1 complete"));
+      // Step 2: thinking + tool
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "step 2 thinking"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "step 2 complete"));
+      // Step 3: text output
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "final answer"));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        const thinkingParts = parts.filter(p => p.type === "thinking");
+        expect(thinkingParts).toHaveLength(2);
+        expect(thinkingParts[0]).toEqual({ type: "thinking", text: "step 1 complete" });
+        expect(thinkingParts[1]).toEqual({ type: "thinking", text: "step 2 complete" });
+        expect(parts[parts.length - 1]).toEqual({ type: "text", text: "final answer" });
       });
     });
 
