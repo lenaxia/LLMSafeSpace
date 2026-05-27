@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
 import { cn } from "../../lib/utils";
 
@@ -16,22 +17,36 @@ interface Props {
 
 export function KebabMenu({ items, align = "right" }: Props) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const updatePos = useCallback(() => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    setPos({
+      top: rect.bottom + 4,
+      left: align === "right" ? rect.right - 160 : rect.left,
+    });
+  }, [align]);
 
   useEffect(() => {
     if (!open) return;
+    updatePos();
     const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
+          buttonRef.current && !buttonRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  }, [open, updatePos]);
 
   return (
-    <div ref={menuRef} className="relative inline-block">
+    <>
       <button
+        ref={buttonRef}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-opacity"
         aria-label="Actions"
@@ -40,12 +55,11 @@ export function KebabMenu({ items, align = "right" }: Props) {
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
-      {open && (
+      {open && createPortal(
         <div
-          className={cn(
-            "absolute z-50 mt-1 w-40 rounded-md border border-border bg-popover py-1 shadow-md",
-            align === "right" ? "right-0" : "left-0",
-          )}
+          ref={menuRef}
+          className="fixed z-[9999] w-40 rounded-md border border-border bg-popover py-1 shadow-md"
+          style={{ top: pos.top, left: pos.left }}
           role="menu"
         >
           {items.map((item, i) => (
@@ -71,8 +85,9 @@ export function KebabMenu({ items, align = "right" }: Props) {
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
