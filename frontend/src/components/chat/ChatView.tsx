@@ -5,23 +5,27 @@ import { StreamingIndicator } from "./StreamingIndicator";
 import { AbortSessionButton } from "./AbortSessionButton";
 import { MessageBubble } from "./MessageBubble";
 
+interface StreamingPart {
+  type: "thinking" | "text" | "tool";
+  text: string;
+}
+
 interface Props {
   messages: Message[];
   streaming: boolean;
-  streamedDisplayText: string;
-  streamedThinkingText: string;
+  streamParts: StreamingPart[];
   disabled: boolean;
   onSend: (text: string) => void;
   onAbort: () => void;
 }
 
-export function ChatView({ messages, streaming, streamedDisplayText, streamedThinkingText, disabled, onSend, onAbort }: Props) {
-  const hasStreamedContent = streamedDisplayText || streamedThinkingText;
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort }: Props) {
+  const hasStreamedContent = streamParts.length > 0;
 
-  const streamedParts: MessagePart[] = [
-    ...(streamedThinkingText ? [{ type: "thinking" as const, text: streamedThinkingText }] : []),
-    ...(streamedDisplayText ? [{ type: "text" as const, text: streamedDisplayText }] : []),
-  ];
+  const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
+    type: p.type === "tool" ? "tool_use" as const : p.type,
+    text: p.text,
+  }));
 
   return (
     <div className="flex h-full flex-col">
@@ -32,7 +36,7 @@ export function ChatView({ messages, streaming, streamedDisplayText, streamedThi
           streamingBubble={
             streaming && hasStreamedContent ? (
               <MessageBubble
-                message={{ id: "streaming", role: "assistant", parts: streamedParts }}
+                message={{ id: "streaming", role: "assistant", parts: streamedMessageParts }}
                 isStreaming
               />
             ) : undefined

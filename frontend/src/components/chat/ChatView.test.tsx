@@ -9,8 +9,7 @@ describe("ChatView", () => {
   const defaultProps = {
     messages: [] as Message[],
     streaming: false,
-    streamedDisplayText: "",
-    streamedThinkingText: "",
+    streamParts: [] as Array<{ type: "thinking" | "text" | "tool"; text: string }>,
     disabled: false,
     onSend: vi.fn(),
     onAbort: vi.fn(),
@@ -68,18 +67,18 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText("Type a message...")).toBeDisabled();
   });
 
-  it("shows streamed display text", () => {
-    render(<ChatView {...defaultProps} streaming={true} streamedDisplayText="Partial response..." />);
+  it("shows streamed text parts", () => {
+    render(<ChatView {...defaultProps} streaming={true} streamParts={[{ type: "text", text: "Partial response..." }]} />);
     expect(screen.getByText("Partial response...")).toBeInTheDocument();
   });
 
-  it("shows streamed thinking text", () => {
-    render(<ChatView {...defaultProps} streaming={true} streamedThinkingText="Thinking deeply..." />);
+  it("shows streamed thinking parts", () => {
+    render(<ChatView {...defaultProps} streaming={true} streamParts={[{ type: "thinking", text: "Thinking deeply..." }]} />);
     expect(screen.getByText("Thinking deeply...")).toBeInTheDocument();
   });
 
-  it("does not show streaming bubble when no content", () => {
-    render(<ChatView {...defaultProps} streaming={true} />);
+  it("does not show streaming bubble when no parts", () => {
+    render(<ChatView {...defaultProps} streaming={true} streamParts={[]} />);
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
   });
 });
