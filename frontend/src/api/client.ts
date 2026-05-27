@@ -34,7 +34,10 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    await handleUnauthorized(res.status);
+    // Don't redirect on /auth/me 401 — that's the normal "not logged in" check
+    if (path !== "/auth/me") {
+      await handleUnauthorized(res.status);
+    }
     throw new ApiClientError(res.status, body);
   }
 
