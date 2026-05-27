@@ -1,4 +1,4 @@
-import { api, streamRequest } from "./client";
+import { api } from "./client";
 import type { Message, SendMessageRequest } from "./types";
 
 interface OpenCodeMessage {
@@ -35,6 +35,6 @@ export const messagesApi = {
     );
     return transformHistory(raw);
   },
-  send: (workspaceId: string, sessionId: string, req: SendMessageRequest) =>
-    streamRequest(`/workspaces/${workspaceId}/sessions/${sessionId}/message`, req),
+  sendAsync: (workspaceId: string, sessionId: string, req: SendMessageRequest) =>
+    api.post<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/prompt`, req),
 };
