@@ -4,7 +4,6 @@ import rehypeSanitize from "rehype-sanitize";
 import { Brain, Wrench, Server } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { MessagePart as MessagePartType } from "../../api/types";
-import { cn } from "../../lib/utils";
 
 interface Props {
   part: MessagePartType;
@@ -95,9 +94,9 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
           <span>{statusIcon} {toolName || "tool"}</span>
         </summary>
         <div className="border-t border-inherit px-3 py-2 space-y-1">
-          {part.input && (
+          {part.input != null && (
             <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto">
-              {typeof part.input === "string" ? part.input : JSON.stringify(part.input, null, 2)}
+              {typeof part.input === "string" ? String(part.input) : JSON.stringify(part.input, null, 2)}
             </pre>
           )}
           {part.toolOutput && (
