@@ -47,6 +47,7 @@ const (
 
 type SettingDef struct {
     Key         string      `json:"key"`
+    Tier        int         `json:"tier"`              // 2=instance, 3=user
     Type        SettingType `json:"type"`
     Default     any         `json:"default"`
     Required    bool        `json:"required"`
@@ -72,6 +73,7 @@ The schema is:
 ```
 # User settings (authenticated)
 GET    /api/v1/users/me/settings
+GET    /api/v1/users/me/settings/schema
 PUT    /api/v1/users/me/settings/:key
 
 # Admin settings (admin only — returns 404 for non-admin)
@@ -107,7 +109,11 @@ func AdminGuard(dbService DatabaseService) gin.HandlerFunc {
 
 1. **Auth middleware must populate `userRole` in context.** Currently only sets `userID`. The `AdminGuard` above does its own DB lookup instead (avoids adding a DB call to every request's auth middleware).
 
-2. **`router.go:208` hardcodes `RegistrationEnabled: false`.** Must read from instance settings service.
+2. **`router.go:208` hardcodes `RegistrationEnabled: false`.** US-9.4 must wire this to read from the settings service (inject `SettingsService` into the auth routes registration and call `GetInstanceSetting("auth.registrationEnabled")`).
+
+3. **Admin endpoints must still be rate-limited.** The existing rate limiter should NOT exempt admin routes. Admin settings writes are low-volume but must be protected against brute-force probing. The standard per-user rate limit applies.
+
+4. **Rate limiter middleware must read from SettingsService.** Currently takes a static `RateLimitConfig` struct at construction. US-9.2 must refactor it to accept `SettingsService` and read `rateLimiting.*` settings per-request (cached via 60s TTL, so no DB hit). Fallback to compiled defaults if settings service is unavailable.
 
 ### Cache Strategy
 
@@ -143,6 +149,52 @@ Every admin settings write produces a structured log:
 ```
 
 No separate audit table for V1 — structured logs are queryable via existing log infrastructure.
+
+### SettingsService Interface
+
+```go
+type SettingsService interface {
+    // Instance settings (Tier 2)
+    GetInstanceSetting(ctx context.Context, key string) (any, error)
+    GetAllInstanceSettings(ctx context.Context) (map[string]any, error)
+    SetInstanceSetting(ctx context.Context, key string, value any) error
+
+    // User settings (Tier 3)
+    GetUserSettings(ctx context.Context, userID string) (map[string]any, error)
+    SetUserSetting(ctx context.Context, userID, key string, value any) error
+
+    // Schema
+    GetSchema() []SettingDef
+    GetInstanceSchema() []SettingDef
+    GetUserSchema() []SettingDef
+
+    Start() error
+    Stop() error
+}
+```
+
+Added to `Services` interface:
+```go
+GetSettings() SettingsService
+GetCredentialSets() CredentialSetService
+```
+
+### Credential Sets Service Interface
+
+```go
+type CredentialSetService interface {
+    Create(ctx context.Context, req CreateCredentialSetRequest) (*CredentialSet, error)
+    Get(ctx context.Context, id string) (*CredentialSet, error)
+    List(ctx context.Context) ([]*CredentialSet, error)
+    ListForUser(ctx context.Context, userID string) ([]*CredentialSetSummary, error)
+    Update(ctx context.Context, id string, req UpdateCredentialSetRequest) (*CredentialSet, error)
+    Delete(ctx context.Context, id string) error
+    SetDefault(ctx context.Context, id string) error
+    GetDefault(ctx context.Context) (*CredentialSet, error)
+    Start() error
+    Stop() error
+}
+```
 
 ### Helm Seeding
 
@@ -221,7 +273,6 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 | `workspace.autoSuspend.idleTimeoutMinutes` | `60` | int | 5–10080 | ✓ | Auto-Suspend | Idle timeout |
 | `workspace.ttlDaysAfterSuspended` | `0` | int | 0–365 | | Auto-Suspend | Auto-delete (0 = never) |
 | `credentials.autoProvision` | `false` | bool | | | Credentials | Auto-copy default set to new workspaces |
-| `credentials.defaultSetId` | `""` | string | UUID or `""` | | Credentials | Set to auto-provision |
 | `workspace.defaultNetworkAccess.ingress` | `false` | bool | | | Network | Allow inbound by default |
 | `workspace.defaultNetworkAccess.egressDomains` | `[]` | strings | domain names | | Network | Default allowed egress |
 | `workspace.defaultSecurityLevel` | `standard` | enum | `standard` `high` | | Security | Pod security posture |
@@ -269,6 +320,28 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 
 **Duration convention:** User-facing durations (idle timeout, TTL) stored/displayed in minutes or days. CRD stores seconds internally; the API converts at the boundary. Pod `timeout` stays in seconds (technical, not user-facing).
 
+## Database Schema
+
+### Settings Tables
+
+```sql
+CREATE TABLE instance_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_settings (
+  user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, key)
+);
+```
+
 ## Credential Sets
 
 ### Schema
@@ -280,14 +353,48 @@ CREATE TABLE credential_sets (
   is_default BOOLEAN NOT NULL DEFAULT false,
   providers_encrypted BYTEA NOT NULL,  -- AES-256-GCM encrypted JSONB
   model_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  assigned_to JSONB NOT NULL DEFAULT '"all"',
-  created_at TIMESTAMP NOT NULL DEFAULT now(),
-  updated_at TIMESTAMP NOT NULL DEFAULT now()
+  assigned_to JSONB NOT NULL DEFAULT '"all"',  -- "all" or ["user-id-1", ...] (VARCHAR(36) user IDs)
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
 -- Only one default at a time
 CREATE UNIQUE INDEX idx_credential_sets_default ON credential_sets (is_default) WHERE is_default = true;
+
+-- Auto-update updated_at on all settings/credential tables
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_instance_settings_updated_at
+  BEFORE UPDATE ON instance_settings
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER trg_user_settings_updated_at
+  BEFORE UPDATE ON user_settings
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER trg_credential_sets_updated_at
+  BEFORE UPDATE ON credential_sets
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 ```
+
+### Default Toggle Transaction
+
+Toggling `is_default` requires a transaction to prevent race conditions:
+
+```sql
+BEGIN;
+UPDATE credential_sets SET is_default = false WHERE is_default = true;
+UPDATE credential_sets SET is_default = true WHERE id = $1;
+COMMIT;
+```
+
+The partial unique index prevents two defaults even if the transaction logic fails, but the service layer must use a transaction to avoid a window where no set is default.
 
 ### Provider Config (decrypted form)
 
@@ -431,15 +538,18 @@ US-9.8 (workspace drawer) depends on US-9.0 + US-9.4 + US-9.5
 | D8 | User-facing durations in minutes/days; pod timeout in seconds | Consistent UX for humans; technical precision for K8s |
 | D9 | Credential set deletion blocked if referenced (409) | Prevent orphaned workspace references |
 | D10 | Structured log audit (not audit table) for V1 | Sufficient for compliance; avoids schema complexity |
+| D11 | Migration rollback drops settings tables entirely | Settings tables are additive; rollback loses settings data but no other tables are affected. Acceptable for V1. |
+| D12 | Admin endpoints rate-limited (not exempt) | Prevents brute-force probing of admin routes even though they return 404 |
 
 ## Test Plan
 
 ### US-9.1 (Schema + DB)
-- Migration up creates `instance_settings` and `user_settings` with correct constraints
+- Migration up creates `instance_settings`, `user_settings`, and `credential_sets` with correct constraints
 - Migration down drops cleanly
 - PK on `instance_settings.key` prevents duplicates
 - Composite PK `(user_id, key)` on `user_settings` works
 - FK cascade: deleting user deletes their settings
+- `updated_at` trigger fires on UPDATE (value changes → `updated_at` advances)
 - Schema definition compiles and contains all expected keys
 
 ### US-9.2 (Settings Service)
@@ -478,9 +588,9 @@ US-9.8 (workspace drawer) depends on US-9.0 + US-9.4 + US-9.5
 ### US-9.9 (Max Active Workspaces)
 - User at cap: activate suspends stalest (oldest `lastActivityAt`)
 - User below cap: activate works without suspending
-- Response includes `resumed` and `suspended` IDs
-- Edge: all workspaces null `lastActivityAt` → pick oldest by `createdAt`
-- Setting change immediately affects next activation
+- Response includes `resumed` and `suspended` fields (change `Suspended` from `string` to `[]string` to handle cap reduction scenarios)
+- Stalest = oldest `lastActivityAt`; fallback to oldest `createdAt` if null
+- Setting change immediately affects next activation (not retroactive — existing over-cap workspaces stay running until next activate)
 
 ### US-9.10 (Max Storage)
 - Create with size ≤ max → succeeds
