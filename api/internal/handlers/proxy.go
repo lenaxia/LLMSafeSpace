@@ -376,7 +376,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		h.activityTracker.Record(workspaceID)
 	}
 
-	if h.sessionIndex != nil && sessionID != "" {
+	if h.sessionIndex != nil && sessionID != "" && isWriteOp {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 	}
 }
