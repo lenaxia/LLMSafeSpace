@@ -24,8 +24,26 @@ function transformHistory(raw: OpenCodeMessage[]): Message[] {
       id: m.info?.id ?? m.id ?? `msg-${Math.random()}`,
       role: (m.info?.role ?? m.role) as "user" | "assistant",
       parts: (m.parts ?? []).filter((p) => {
+        if (p.type === "tool") return true;
         if (!p.text) return false;
         return p.type === "text" || p.type === "thinking" || p.type === "reasoning";
+      }).map((p) => {
+        if (p.type === "tool") {
+          // Map opencode tool part fields to our MessagePart shape
+          const part = p as Record<string, unknown>;
+          const state = part.state as Record<string, unknown> | undefined;
+          const toolName = (part.tool as string) || "";
+          const title = (state?.title as string) || "";
+          const toolState = (state?.status as string) || "";
+          return {
+            type: "tool_use" as const,
+            text: title ? `${toolName}: ${title}` : toolName,
+            toolState,
+            input: state?.input,
+            toolOutput: (state?.output as string) || undefined,
+          };
+        }
+        return p;
       }),
     }))
     .filter((m) => m.parts.length > 0);
