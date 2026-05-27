@@ -18,7 +18,7 @@ import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
 import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
 
-type StreamPart = { type: "text" | "thinking" | "tool"; text: string };
+type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string };
 
 
 export function ChatPage() {
@@ -174,10 +174,26 @@ export function ChatPage() {
           }
         }
       } else if (partType === "tool" || partType === "tool_use" || partType === "tool_call") {
-        const toolName = (part.name as string) || (part.toolName as string) || "";
-        setSseStreamParts((prev) => [...prev, { type: "tool", text: toolName }]);
+        // opencode ToolPart: { type:"tool", tool:"bash", callID:"...", state:{status,input,output,title} }
+        const toolName = (part.tool as string) || (part.name as string) || "";
+        const state = part.state as Record<string, unknown> | undefined;
+        const toolState = (state?.status as string) || "";
+        const title = (state?.title as string) || "";
+        const displayText = title || toolName;
+        const callID = (part.callID as string) || undefined;
+        setSseStreamParts((prev) => {
+          // If this is an update to an existing tool call (same callID), update in place
+          if (callID) {
+            const existingIdx = prev.findIndex(p => p.type === "tool" && p.toolCallID === callID);
+            if (existingIdx >= 0) {
+              const updated = [...prev];
+              updated[existingIdx] = { type: "tool", text: displayText, toolState, toolCallID: callID };
+              return updated;
+            }
+          }
+          return [...prev, { type: "tool", text: displayText, toolState, toolCallID: callID }];
+        });
         activePartTypeRef.current = null;
-        console.log("[SSE]", "tool part fields:", JSON.stringify(Object.keys(part)), "name:", part.name, "toolName:", part.toolName, "id:", part.id);
       }
       // step-start, step-finish: don't change routing or parts
 
