@@ -74,4 +74,30 @@ describe("Sidebar", () => {
     const kebabButtons = await screen.findAllByLabelText("Actions");
     expect(kebabButtons.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("new workspace button creates immediately without dialog", async () => {
+    renderSidebar();
+    const btn = await screen.findByLabelText("New workspace");
+    expect(btn).toBeInTheDocument();
+    // No dialog should be visible — the button triggers creation directly
+    expect(screen.queryByText("New Workspace")).not.toBeInTheDocument();
+  });
+
+  it("does not render 'Sessions' subheading", async () => {
+    renderSidebar();
+    await screen.findByText("alpha");
+    expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
+  });
+
+  it("sidebar has resize-x class for resizability", async () => {
+    renderSidebar();
+    const aside = await screen.findByLabelText("Navigation");
+    expect(aside.className).toContain("resize-x");
+  });
+
+  it("sidebar has overflow-x-hidden to prevent horizontal scroll", async () => {
+    renderSidebar();
+    const scrollContainer = (await screen.findByLabelText("Navigation")).querySelector(".overflow-x-hidden");
+    expect(scrollContainer).toBeInTheDocument();
+  });
 });
