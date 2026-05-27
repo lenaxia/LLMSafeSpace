@@ -15,7 +15,7 @@ export function generateWorkspaceName(): string {
  * Returns the session title if set, or a human-readable fallback based on
  * the last message timestamp. Single canonical implementation used everywhere.
  */
-export function sessionDisplayTitle(title: string | undefined, lastMessageAt: string | undefined): string {
+export function sessionDisplayTitle(title: string | undefined, _lastMessageAt: string | undefined): string {
   if (title) return title;
   return "New chat";
 }
