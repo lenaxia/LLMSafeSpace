@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
@@ -59,12 +59,24 @@ export function ChatPage() {
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
   const [sseStreamText, setSseStreamText] = useState("");
+  const [sseThinkingText, setSseThinkingText] = useState("");
+  // Track the messageID of the first part we accept so we only accumulate
+  // parts belonging to a single (assistant) message and ignore user echoes.
+  const streamMessageIdRef = useRef<string | null>(null);
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
-    // The API publishes: WorkspaceSSEEvent{Type:"opencode.event", EventType:et, Data:parsed}
-    // where parsed = {"type":"message.part.delta","properties":{...}}
-    // So event.data IS the payload — there is no intermediate "payload" key.
-    const payload = event.data as Record<string, unknown> | undefined;
+    // The proxy re-parses the raw opencode JSON and sets it as evt.Data.
+    // Two formats are possible depending on the opencode agent version:
+    //   Flat:    {type:"message.part.delta", properties:{...}}
+    //   Nested:  {directory:"...", payload:{type:"message.part.delta", properties:{...}}}
+    let payload = event.data as Record<string, unknown> | undefined;
+    if (!payload) return;
+
+    // Unwrap nested format: {directory, payload: {type, properties}}
+    if (!payload.type && payload.payload && typeof payload.payload === "object") {
+      payload = payload.payload as Record<string, unknown>;
+    }
+
     if (!payload?.type) return;
 
     const props = payload.properties as Record<string, unknown> | undefined;
@@ -75,13 +87,38 @@ export function ChatPage() {
 
     if (payload.type === "message.part.delta") {
       const delta = props.delta as string | undefined;
-      if (delta && (props.field as string) === "text") {
+      const field = props.field as string | undefined;
+      if (!delta) return;
+      if (field === "text") {
         setSseStreamText((prev) => prev + delta);
+      } else if (field === "reasoning" || field === "thinking") {
+        setSseThinkingText((prev) => prev + delta);
       }
     } else if (payload.type === "message.part.updated") {
       const part = props.part as Record<string, unknown> | undefined;
-      if (part?.type === "text" && typeof part.text === "string" && part.text) {
+      if (!part) return;
+
+      // Each part may carry a messageID that identifies which message it belongs
+      // to. We lock onto the first messageID we see so that if opencode echoes
+      // the user message (different messageID) we skip it.
+      const partMessageId = (part.messageID as string) || (props.messageID as string) || null;
+      if (partMessageId) {
+        if (!streamMessageIdRef.current) {
+          streamMessageIdRef.current = partMessageId;
+        } else if (partMessageId !== streamMessageIdRef.current) {
+          // Different message — skip (user echo or unrelated part)
+          return;
+        }
+      }
+
+      // Also skip if the part itself is tagged with role === "user"
+      const partRole = (part.role as string) || (props.role as string);
+      if (partRole === "user") return;
+
+      if (part.type === "text" && typeof part.text === "string" && part.text) {
         setSseStreamText(part.text);
+      } else if ((part.type === "reasoning" || part.type === "thinking") && typeof part.text === "string" && part.text) {
+        setSseThinkingText(part.text);
       }
     }
   }, []);
@@ -121,6 +158,8 @@ export function ChatPage() {
 
   const handleSend = (text: string) => {
     setSseStreamText("");
+    setSseThinkingText("");
+    streamMessageIdRef.current = null;
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
@@ -216,7 +255,7 @@ export function ChatPage() {
           messages={allMessages}
           streaming={streaming}
           streamedDisplayText={sseStreamText}
-          streamedThinkingText=""
+          streamedThinkingText={sseThinkingText}
           disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}
           onAbort={abort}

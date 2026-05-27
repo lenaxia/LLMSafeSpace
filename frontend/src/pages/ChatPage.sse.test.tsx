@@ -36,6 +36,7 @@ vi.mock("../components/chat/ChatView", () => ({
       <div
         data-testid="chat-view"
         data-streamed-text={String(props.streamedDisplayText ?? "")}
+        data-streamed-thinking-text={String(props.streamedThinkingText ?? "")}
         data-streaming={String(props.streaming ?? false)}
       >
         <textarea
@@ -291,6 +292,194 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent({ type: "opencode.event", event_type: "message.part.updated", data: null } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+  });
+
+  describe("nested SSE format unwrapping", () => {
+    it("unwraps nested payload and processes message.part.updated", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          directory: "ws-1",
+          payload: {
+            type: "message.part.updated",
+            properties: { sessionID: "sess-1", part: { type: "text", text: "Nested format works!" } },
+          },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Nested format works!");
+      });
+    });
+
+    it("unwraps nested payload and processes message.part.delta", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.delta",
+        data: {
+          directory: "ws-1",
+          payload: {
+            type: "message.part.delta",
+            properties: { sessionID: "sess-1", field: "text", delta: "nested delta" },
+          },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("nested delta");
+      });
+    });
+  });
+
+  describe("user echo filtering (Bug 1)", () => {
+    it("ignores message.part.updated with role=user in properties", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", role: "user", part: { type: "text", text: "User echo" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+
+    it("ignores message.part.updated with role=user in part", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", part: { type: "text", text: "User echo", role: "user" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+
+    it("ignores message.part.updated with different messageID after locking", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // First event: assistant message — locks onto msg-assistant
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", messageID: "msg-assistant", part: { type: "text", text: "Hello" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello");
+      });
+
+      // Second event: different messageID (user echo) — should be ignored
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", messageID: "msg-user", part: { type: "text", text: "User echo" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello");
+      });
+    });
+  });
+
+  describe("thinking/reasoning streaming (Bug 2)", () => {
+    it("accumulates thinking deltas with field=reasoning", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "Hmm "));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "let me think"));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Hmm let me think");
+      });
+    });
+
+    it("accumulates thinking deltas with field=thinking", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartDeltaEvent("sess-1", "thinking", "I wonder..."));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("I wonder...");
+      });
+    });
+
+    it("captures thinking part from message.part.updated", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", part: { type: "thinking", text: "Deep thoughts" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Deep thoughts");
+      });
+    });
+
+    it("captures reasoning part from message.part.updated", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", part: { type: "reasoning", text: "Chain of thought" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Chain of thought");
+      });
+    });
+
+    it("handleSend clears thinking text", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent({
+        type: "opencode.event",
+        event_type: "message.part.updated",
+        data: {
+          type: "message.part.updated",
+          properties: { sessionID: "sess-1", part: { type: "thinking", text: "Old thinking" } },
+        },
+      } as unknown as WorkspaceStreamEvent);
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Old thinking");
+      });
+
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "new message");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("");
       });
     });
   });

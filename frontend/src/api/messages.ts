@@ -23,7 +23,10 @@ function transformHistory(raw: OpenCodeMessage[]): Message[] {
     .map((m) => ({
       id: m.info?.id ?? m.id ?? `msg-${Math.random()}`,
       role: (m.info?.role ?? m.role) as "user" | "assistant",
-      parts: (m.parts ?? []).filter((p) => p.type === "text" && p.text),
+      parts: (m.parts ?? []).filter((p) => {
+        if (!p.text) return false;
+        return p.type === "text" || p.type === "thinking" || p.type === "reasoning";
+      }),
     }))
     .filter((m) => m.parts.length > 0);
 }
