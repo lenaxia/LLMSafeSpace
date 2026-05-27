@@ -147,7 +147,7 @@ export function Sidebar({ onNavigate }: Props) {
   };
 
   return (
-    <aside className="flex h-full flex-col border-r border-border bg-card resize-x overflow-hidden min-w-48 max-w-96" style={{ width: "16rem" }} aria-label="Navigation">
+    <aside className="flex h-full flex-col border-r border-border bg-card resize-x overflow-auto min-w-48 max-w-96" style={{ width: "16rem" }} aria-label="Navigation">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h1 className="text-sm font-semibold">Safe Space</h1>
         <button
@@ -304,7 +304,7 @@ function WorkspaceGroup({
           <button
             onClick={onToggle}
             className={cn(
-              "flex flex-1 items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+              "flex flex-1 min-w-0 items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm transition-colors overflow-hidden",
               isSelected ? "text-accent-foreground" : "",
             )}
           >
