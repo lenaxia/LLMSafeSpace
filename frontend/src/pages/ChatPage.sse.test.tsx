@@ -20,7 +20,7 @@ import { render, waitFor, act, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
-import type { WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
+import type { WorkspaceStreamEvent } from "../api/types";
 
 // --- Mocks ---
 

@@ -54,10 +54,10 @@ export function extractStreamText(accumulated: string): ParsedStreamResult {
 
   let match;
   while ((match = typeFirst.exec(trimmed)) !== null) {
-    matches.push({ type: match[1], text: match[2], index: match.index });
+    matches.push({ type: match[1]!, text: match[2]!, index: match.index });
   }
   while ((match = textFirst.exec(trimmed)) !== null) {
-    matches.push({ type: match[2], text: match[1], index: match.index });
+    matches.push({ type: match[2]!, text: match[1]!, index: match.index });
   }
 
   matches.sort((a, b) => a.index - b.index);
