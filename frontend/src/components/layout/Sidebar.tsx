@@ -319,7 +319,9 @@ function WorkspaceGroup({
                   ? "fill-green-500 text-green-500"
                   : isSuspended
                     ? "fill-yellow-500 text-yellow-500"
-                    : "fill-muted-foreground/40 text-muted-foreground/40",
+                    : isResuming
+                      ? "fill-yellow-500 text-yellow-500 animate-pulse"
+                      : "fill-muted-foreground/40 text-muted-foreground/40",
               )}
             />
             <span className="flex-1 truncate">{workspace.name}</span>
@@ -400,10 +402,10 @@ function WorkspaceSessionList({
     enabled: !!workspaceId,
   });
 
-  if (isSuspended) {
+  if (isSuspended && isLoading) {
     return (
       <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">
-        {isLoading ? "Checking..." : "Resuming workspace..."}
+        Loading...
       </div>
     );
   }
