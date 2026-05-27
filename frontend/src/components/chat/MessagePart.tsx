@@ -2,6 +2,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Brain, Wrench, Server } from "lucide-react";
+import { cn } from "../../lib/utils";
 import type { MessagePart as MessagePartType } from "../../api/types";
 import { cn } from "../../lib/utils";
 
@@ -71,13 +72,41 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
 
   if (part.type === "tool_use" || part.type === "tool_call") {
     const toolName = part.name ?? part.text ?? "tool";
-    return (
-      <div className="my-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
-        <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400">
-          <Wrench className="h-3.5 w-3.5" />
-          {toolName || "tool"}
+    const hasDetails = part.input || part.toolOutput;
+    const statusIcon = part.toolState === "completed" ? "✓" : part.toolState === "error" ? "✗" : part.toolState === "running" ? "⟳" : "…";
+    const borderColor = part.toolState === "error" ? "border-red-500/20 bg-red-500/5" : "border-blue-500/20 bg-blue-500/5";
+    const textColor = part.toolState === "error" ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400";
+
+    if (!hasDetails) {
+      return (
+        <div className={cn("my-1.5 rounded-md border px-3 py-2", borderColor)}>
+          <div className={cn("flex items-center gap-2 text-xs font-medium", textColor)}>
+            <Wrench className="h-3.5 w-3.5" />
+            <span>{statusIcon} {toolName || "tool"}</span>
+          </div>
         </div>
-      </div>
+      );
+    }
+
+    return (
+      <details className={cn("group my-1.5 rounded-md border", borderColor)}>
+        <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium", textColor)}>
+          <Wrench className="h-3.5 w-3.5" />
+          <span>{statusIcon} {toolName || "tool"}</span>
+        </summary>
+        <div className="border-t border-inherit px-3 py-2 space-y-1">
+          {part.input && (
+            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto">
+              {typeof part.input === "string" ? part.input : JSON.stringify(part.input, null, 2)}
+            </pre>
+          )}
+          {part.toolOutput && (
+            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto border-t border-muted pt-1 mt-1">
+              {part.toolOutput}
+            </pre>
+          )}
+        </div>
+      </details>
     );
   }
 

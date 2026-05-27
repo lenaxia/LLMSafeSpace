@@ -113,6 +113,8 @@ export interface MessagePart {
   id?: string;
   files?: string[];
   hash?: string;
+  toolState?: string;
+  toolOutput?: string;
 }
 
 export interface Message {

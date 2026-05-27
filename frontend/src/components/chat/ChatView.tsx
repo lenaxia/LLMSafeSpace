@@ -25,6 +25,9 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
     type: p.type === "tool" ? "tool_use" as const : p.type,
     text: p.text,
+    ...(p.toolState && { toolState: p.toolState }),
+    ...(p.toolInput && { input: p.toolInput }),
+    ...(p.toolOutput && { toolOutput: p.toolOutput }),
   }));
 
   return (
