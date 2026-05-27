@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
@@ -9,11 +9,11 @@ import { ChatPage } from "./ChatPage";
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
     getStatus: vi.fn(),
-    getWorkspaceSessions: vi.fn(),
     activate: vi.fn(),
+    list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
   },
 }));
-vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn(), send: vi.fn() } }));
+vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), sendAsync: vi.fn() } }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
 
@@ -34,12 +34,14 @@ function renderChat(path: string) {
 }
 
 describe("Workspace activate flow — state machine", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } });
+  });
+
   it("suspended workspace shows banner with resume button, composer disabled", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
     renderChat("/chat/ws-1");
-
     await waitFor(() => expect(screen.getByText(/is suspended/)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Resume to chat" })).toBeInTheDocument();
     expect(document.querySelector("textarea")).toBeDisabled();
@@ -48,60 +50,30 @@ describe("Workspace activate flow — state machine", () => {
   it("clicking resume calls activate API", async () => {
     const user = userEvent.setup();
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (workspacesApi.activate as ReturnType<typeof vi.fn>).mockResolvedValue({ resumed: "ws-1" });
-
     renderChat("/chat/ws-1");
-
     await waitFor(() => expect(screen.getByRole("button", { name: "Resume to chat" })).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Resume to chat" }));
-
     expect(workspacesApi.activate).toHaveBeenCalledWith("ws-1");
   });
 
   it("resuming state shows spinner with transitioning message", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Resuming" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
     renderChat("/chat/ws-1");
-
     await waitFor(() => expect(screen.getByText(/resuming/i)).toBeInTheDocument());
   });
 
-  it("active workspace with running workspace enables composer", async () => {
+  it("active workspace with session enables composer", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sb-1", phase: "Running", podIP: "10.0.0.1" },
-    ]);
-
     renderChat("/chat/ws-1/sess-1");
-
-    await waitFor(() => {
-      expect(document.querySelector("textarea")).not.toBeDisabled();
-    });
+    // Composer enabled when workspaceId + sessionId present and not suspended
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
   });
 
-  it("active workspace with no workspace keeps composer disabled", async () => {
+  it("active workspace without sessionId keeps composer disabled (no session selected)", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
     renderChat("/chat/ws-1");
-
-    await waitFor(() => {
-      expect(document.querySelector("textarea")).toBeDisabled();
-    });
-  });
-
-  it("active workspace with workspace in Creating state keeps composer disabled", async () => {
-    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.getWorkspaceSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sb-1", phase: "Creating" },
-    ]);
-
-    renderChat("/chat/ws-1");
-
-    await waitFor(() => {
-      expect(document.querySelector("textarea")).toBeDisabled();
-    });
+    // No sessionId in URL — composer disabled
+    await waitFor(() => expect(document.querySelector("textarea")).toBeDisabled());
   });
 });

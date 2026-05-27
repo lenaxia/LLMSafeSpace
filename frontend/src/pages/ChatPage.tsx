@@ -21,7 +21,6 @@ export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
-  const [atCap, setAtCap] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => { setLocalMessages([]); }, [sessionId]);
@@ -58,7 +57,7 @@ export function ChatPage() {
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
-  const { send, abort, streaming, streamedThinkingText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
+  const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
   const [sseStreamText, setSseStreamText] = useState("");
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
@@ -89,10 +88,13 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     } else if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+      if (event.status === "idle" && event.session_id) {
+        notifySessionIdle(event.session_id);
+      }
     } else if (event.type === "opencode.event" && sessionId) {
       parseStreamEvent(event as OpenCodeEvent, sessionId);
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle]);
 
   useEventStream(activeWorkspaceId, handleSSEEvent);
 
@@ -111,7 +113,6 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
-    setAtCap(null);
     setSseStreamText("");
     const userMsg: Message = {
       id: `local-${Date.now()}`,
@@ -188,8 +189,8 @@ export function ChatPage() {
         />
       )}
 
-      {atCap !== null && (
-        <AtCapBanner retryAfter={atCap} onRetry={() => setAtCap(null)} />
+      {atCapRetryAfter !== null && (
+        <AtCapBanner retryAfter={atCapRetryAfter} onRetry={clearAtCap} />
       )}
 
       {chatError && (
@@ -208,7 +209,7 @@ export function ChatPage() {
           messages={allMessages}
           streaming={streaming}
           streamedDisplayText={sseStreamText}
-          streamedThinkingText={streamedThinkingText}
+          streamedThinkingText=""
           disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}
           onAbort={abort}

@@ -152,17 +152,17 @@ func (h *ProxyHandler) Stop() error {
 }
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
-	h.proxyToWorkspace(c, "/session", false, "", false)
+	h.proxyToWorkspace(c, "/session", false, "")
 }
 
 func (h *ProxyHandler) ListSessions(c *gin.Context) {
-	h.proxyToWorkspace(c, "/session", false, "", false)
+	h.proxyToWorkspace(c, "/session", false, "")
 }
 
 func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	sid := c.Param("sessionId")
 	wid := c.Param("id")
-	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid, true)
+	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid)
 	// After the message round-trip completes, persist the opencode-generated
 	// title to the session index so the sidebar reflects it immediately.
 	if c.Writer.Status() < 300 && h.sessionIndex != nil {
@@ -172,22 +172,22 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 
 func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid, false)
+	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid)
 }
 
 func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid, true)
+	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid)
 }
 
 func (h *ProxyHandler) GetSession(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToWorkspace(c, "/session/"+sid, false, sid, false)
+	h.proxyToWorkspace(c, "/session/"+sid, false, sid)
 }
 
 func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	sid := c.Param("sessionId")
-	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid, false)
+	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
 }
 
 // StreamEvents opens a persistent SSE connection for the given workspace.
@@ -216,6 +216,11 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
+	if h.broker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event broker not initialized"})
 		return
 	}
 
@@ -249,9 +254,9 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 }
 
 // proxyToWorkspace forwards the incoming request to the workspace pod's opencode
-// server. When filterParts is true and ?verbose=true is NOT set, response
-// parts of type=="patch" are stripped before sending to the client.
-func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string, filterParts bool) {
+// server. Patch-part filtering is not applied at this level; it is handled
+// directly by callers that invoke doProxy with stripPatch=true.
+func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
 	workspaceID := c.Param("id")
 	if workspaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace ID required"})
