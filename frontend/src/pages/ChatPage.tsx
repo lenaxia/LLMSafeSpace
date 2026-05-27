@@ -58,7 +58,7 @@ export function ChatPage() {
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
-  const { send, abort, streaming, streamedDisplayText, streamedThinkingText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
+  const { send, abort, streaming, streamedThinkingText, error: chatError, clearError } = useChatStream(activeWorkspaceId, sessionId);
   const [sseStreamText, setSseStreamText] = useState("");
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
@@ -207,7 +207,7 @@ export function ChatPage() {
         <ChatView
           messages={allMessages}
           streaming={streaming}
-          streamedDisplayText={sseStreamText || streamedDisplayText}
+          streamedDisplayText={sseStreamText}
           streamedThinkingText={streamedThinkingText}
           disabled={!workspaceId || !sessionId || isSuspended}
           onSend={handleSend}
