@@ -219,4 +219,33 @@ describe("useChatStream", () => {
     expect(registerTabCloseAbort).toHaveBeenCalledWith("sb-1", "sess-1");
     expect(mockCleanup).toHaveBeenCalled();
   });
+
+  it("falls back to getHistory after timeout when notifySessionIdle never fires", async () => {
+    vi.useFakeTimers();
+
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "asst-timeout", role: "assistant", parts: [{ type: "text", text: "timeout response" }] },
+    ]);
+
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+    const onComplete = vi.fn();
+
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", onComplete); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+    // Do NOT call notifySessionIdle — simulate SSE connection never delivers idle
+    // Advance past the timeout
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await act(async () => { await sendPromise; });
+
+    expect(messagesApi.getHistory).toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
+      id: "asst-timeout",
+      role: "assistant",
+    }));
+
+    vi.useRealTimers();
+  });
 });

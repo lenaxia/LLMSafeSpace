@@ -40,10 +40,15 @@ type RouterConfig struct {
 
 // DefaultRouterConfig returns the default router configuration
 func DefaultRouterConfig() RouterConfig {
+	rlCfg := middleware.DefaultRateLimitConfig()
+	// The /events SSE endpoint is a long-lived connection, not a per-request
+	// API call. Exempt it from the token-bucket rate limiter so reconnects
+	// after network drops don't trigger 429s.
+	rlCfg.ExemptPaths = []string{"/events"}
 	return RouterConfig{
 		Debug:                   false,
 		LoggingConfig:           middleware.DefaultLoggingConfig(),
-		RateLimitConfig:         middleware.DefaultRateLimitConfig(),
+		RateLimitConfig:         rlCfg,
 		SecurityConfig:          middleware.DefaultSecurityConfig(),
 		TracingConfig:           middleware.DefaultTracingConfig(),
 		AllowedWebSocketOrigins: []string{"*"},
