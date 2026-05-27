@@ -15,7 +15,7 @@ describe("SessionItem", () => {
     const twoHoursAgo = new Date(Date.now() - 120 * 60_000).toISOString();
     const session: SessionListItem = { id: "s1", messageCount: 3, status: "idle", lastMessageAt: twoHoursAgo };
     render(<SessionItem session={session} selected={false} onSelect={vi.fn()} />);
-    expect(screen.getByText("Chat 2h")).toBeInTheDocument();
+    expect(screen.getByText("New chat")).toBeInTheDocument();
   });
 
   it("shows active indicator for active sessions", () => {
