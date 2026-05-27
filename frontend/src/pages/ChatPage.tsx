@@ -286,35 +286,30 @@ export function ChatPage() {
     });
   };
 
+  const sessionDisplayName = sessionTitle || "New chat";
   const kebabItems: KebabMenuItem[] = [
     {
-      label: "Rename",
+      label: "Copy link",
+      onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspaceId}/${sessionId}`),
+    },
+    {
+      label: "Rename session",
       onClick: () => {
-        const name = window.prompt("Workspace name:", workspaceName);
-        if (name && name.trim()) {
-          workspacesApi.renameWorkspace(workspaceId, name.trim()).then(() => {
-            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+        const name = window.prompt("Session name:", sessionDisplayName);
+        if (name && name.trim() && workspaceId && sessionId) {
+          workspacesApi.renameSession(workspaceId, sessionId, name.trim()).then(() => {
+            queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+            queryClient.invalidateQueries({ queryKey: ["session-title", workspaceId, sessionId] });
           });
         }
       },
     },
     {
-      label: "Suspend",
+      label: "Delete session",
       onClick: () => {
-        workspacesApi.suspend(workspaceId).then(() => {
-          queryClient.invalidateQueries({ queryKey: ["workspaces"] });
-          queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
-        });
-      },
-    },
-    {
-      label: "Delete",
-      onClick: () => {
-        if (window.confirm(`Delete workspace "${workspaceName}"?`)) {
-          workspacesApi.deleteWorkspace(workspaceId).then(() => {
-            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
-            navigate("/chat");
-          });
+        if (window.confirm("Delete this session?") && workspaceId && sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+          navigate(`/chat/${workspaceId}`);
         }
       },
       destructive: true,
@@ -324,7 +319,11 @@ export function ChatPage() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <h2 className="text-sm font-semibold truncate">{workspaceName}</h2>
+        <h2 className="text-sm font-semibold truncate">
+          <span className="text-muted-foreground">{workspaceName}</span>
+          <span className="text-muted-foreground/50 mx-1">/</span>
+          <span>{sessionDisplayName}</span>
+        </h2>
         <KebabMenu items={kebabItems} />
       </div>
 

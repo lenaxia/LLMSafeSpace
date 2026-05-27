@@ -7,68 +7,160 @@
 
 ## Rationale
 
-The platform has configuration scattered across `values.yaml`, `config.yaml`, env vars, and hardcoded constants. There is no runtime-mutable settings layer, no admin panel, and no user preferences beyond localStorage theme. Operators must redeploy to change any behavior.
+Configuration is scattered across `values.yaml`, `config.yaml`, env vars, and hardcoded constants. No runtime-mutable settings, no admin panel, no user preferences beyond localStorage theme. Operators must redeploy to change any behavior.
 
-This epic introduces a tiered configuration system:
-
-- **Tier 1 (Platform):** Immutable at runtime. Set via config file / Helm / env vars. Displayed read-only in admin UI.
-- **Tier 2 (Instance):** Admin-mutable at runtime. Stored in DB. Seeded from Helm on install (`ON CONFLICT DO NOTHING` + log warning).
-- **Tier 3 (User):** Per-user preferences. Stored in DB, cached in localStorage for instant UI.
-- **Tier 4 (Workspace):** Per-workspace overrides. Stored in CRD spec.
-
-Everything configurable through a config file or env var (GitOps), with optional clickops via the UI for operators who prefer it.
+This epic introduces a tiered configuration system with a **declarative settings schema** as the single source of truth — driving validation, seeding, API responses, and frontend form generation from one definition.
 
 ## Architecture
 
-### Configuration Resolution Order
+### Tiered Configuration
+
+| Tier | Mutability | Storage | Who |
+|------|-----------|---------|-----|
+| 1 (Platform) | Immutable at runtime | config.yaml / values.yaml / env | Operator (deploy-time) |
+| 2 (Instance) | Mutable at runtime | PostgreSQL `instance_settings` | Admin (UI or API) |
+| 3 (User) | Mutable at runtime | PostgreSQL `user_settings` + localStorage cache | User |
+| 4 (Workspace) | Mutable at runtime | Workspace CRD spec | Workspace owner |
+
+### Resolution Order
 
 ```
-Workspace setting (Tier 4)
-  → User preference (Tier 3)
-    → Instance setting (Tier 2)
-      → Hardcoded default
+Workspace (Tier 4) → Instance (Tier 2) → Hardcoded default
+User (Tier 3) is independent — UX preferences only, no overlap with Tier 2/4.
 ```
 
-Not all settings exist at all tiers. Most Tier 2 settings have no user override (admin-only). Tier 3 is purely UX preferences.
+### Declarative Settings Schema
+
+A single Go struct defines every setting. Validation, seeding, API serialization, and frontend form generation all derive from this schema. No separate validation registry, no manual sync between layers.
+
+```go
+// pkg/settings/schema.go
+
+type SettingType string
+const (
+    TypeBool    SettingType = "bool"
+    TypeInt     SettingType = "int"
+    TypeString  SettingType = "string"
+    TypeEnum    SettingType = "enum"
+    TypeStrings SettingType = "strings"
+)
+
+type SettingDef struct {
+    Key         string      `json:"key"`
+    Type        SettingType `json:"type"`
+    Default     any         `json:"default"`
+    Required    bool        `json:"required"`
+    Min         *int        `json:"min,omitempty"`         // int range
+    Max         *int        `json:"max,omitempty"`         // int range
+    Pattern     string      `json:"pattern,omitempty"`     // string regex
+    Enum        []string    `json:"enum,omitempty"`        // enum values
+    Category    string      `json:"category"`              // UI grouping
+    Label       string      `json:"label"`                 // UI display name
+    Description string      `json:"description"`           // UI help text
+}
+```
+
+The schema is:
+- Compiled into the API binary (no runtime file loading)
+- Exposed via `GET /api/v1/admin/settings/schema` for frontend form generation
+- Used by the seed job to know what to insert
+- Used by the service layer to validate writes
+- Used by the frontend to render controls (type → component mapping)
 
 ### API Route Separation
 
-Admin and user settings are completely separate route groups with independent auth middleware:
-
 ```
-User:   GET/PUT  /api/v1/users/me/settings[/:key]
-Admin:  GET/PUT  /api/v1/admin/settings[/:key]
-Admin:  GET      /api/v1/admin/settings/platform
-Admin:  CRUD     /api/v1/admin/credentials[/:id]
-User:   GET      /api/v1/credentials  (accessible sets only, no keys)
+# User settings (authenticated)
+GET    /api/v1/users/me/settings
+PUT    /api/v1/users/me/settings/:key
+
+# Admin settings (admin only — returns 404 for non-admin)
+GET    /api/v1/admin/settings
+GET    /api/v1/admin/settings/schema
+PUT    /api/v1/admin/settings/:key
+GET    /api/v1/admin/settings/platform
+CRUD   /api/v1/admin/credentials[/:id]
+
+# User-facing credentials (authenticated)
+GET    /api/v1/credentials
 ```
 
-Admin routes return 404 (not 403) for non-admin users — don't reveal route existence.
+### Admin Guard Middleware
 
-### Helm Seeding Behavior
+New middleware (not reusing existing `RequireRoles` which returns 403):
 
-On install/upgrade, a seed job inserts Tier 2 defaults:
+```go
+func AdminGuard(dbService DatabaseService) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        userID := c.GetString("userID")
+        user, err := dbService.GetUser(c.Request.Context(), userID)
+        if err != nil || user == nil || user.Role != "admin" {
+            c.AbortWithStatus(404) // Don't reveal route exists
+            return
+        }
+        c.Next()
+    }
+}
+```
+
+### Prerequisites (Code Fixes Required)
+
+1. **Auth middleware must populate `userRole` in context.** Currently only sets `userID`. The `AdminGuard` above does its own DB lookup instead (avoids adding a DB call to every request's auth middleware).
+
+2. **`router.go:208` hardcodes `RegistrationEnabled: false`.** Must read from instance settings service.
+
+### Cache Strategy
+
+Instance settings are read on nearly every request (rate limit config, registration check). Strategy:
+
+- In-memory cache in the settings service with **60-second TTL**
+- `SetInstanceSetting` immediately invalidates local cache
+- Multi-pod: each pod has its own cache; changes propagate within 60s
+- No Redis pub/sub needed — 60s staleness is acceptable for admin config changes
+
+### User Settings Sync
+
+- Frontend reads localStorage first (instant, no flash)
+- On mount, fetches from API; DB value overwrites local (DB wins on read)
+- Writes go to localStorage (optimistic) + API (async persist)
+- `updated_at` column enables future conflict detection if needed
+
+### Credential Encryption
+
+Provider API keys in `credential_sets.providers` are encrypted at the application layer:
+
+- AES-256-GCM encryption
+- Encryption key sourced from K8s Secret (same secret that holds JWT key)
+- Encrypted before DB write, decrypted on read
+- Only decrypted when copying to workspace secret — never returned to API responses
+
+### Audit Logging
+
+Every admin settings write produces a structured log:
+
+```json
+{"level":"info","msg":"instance_setting_changed","user_id":"...","key":"...","old_value":"...","new_value":"...","timestamp":"..."}
+```
+
+No separate audit table for V1 — structured logs are queryable via existing log infrastructure.
+
+### Helm Seeding
+
+On install/upgrade, seed job inserts Tier 2 defaults from schema:
 
 ```sql
 INSERT INTO instance_settings (key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO NOTHING;
 ```
 
-When a row already exists and differs from the Helm value, log:
+When skipped (row exists with different value):
 ```
 WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value>
 ```
 
-### User Settings Sync
-
-- Frontend reads localStorage first (instant UI, no flash)
-- On mount, fetches from API and reconciles
-- Writes go to both localStorage (optimistic) and API (async persist)
-- DB is source of truth; localStorage is cache
-
 ## Settings Inventory
 
-### Tier 1: Platform (Read-only)
+### Tier 1: Platform (Read-only in UI)
 
 | Key | Default | Valid Values | Req | Source |
 |-----|---------|-------------|-----|--------|
@@ -95,7 +187,7 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 | `security.allowCredentials` | `false` | bool | | config.yaml/env |
 | `auth.apiKeyPrefix` | `lsp_` | string 3–10 | ✓ | config.yaml |
 | `auth.tokenDuration` | `24h` | Go duration | ✓ | config.yaml |
-| `auth.cookieName` | `lsp_session` | string | ✓ | config.yaml (hardcoded in router) |
+| `auth.cookieName` | `lsp_session` | string | ✓ | hardcoded in router |
 | `logging.level` | `info` | `debug` `info` `warn` `error` | ✓ | config.yaml/env |
 | `logging.encoding` | `json` | `json` `console` | ✓ | config.yaml |
 | `logging.development` | `false` | bool | | config.yaml |
@@ -105,61 +197,53 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 
 ### Tier 2: Instance (Admin-mutable)
 
-| Key | Default | Valid Values | Req | Description |
-|-----|---------|-------------|-----|-------------|
-| **Auth** |
-| `auth.registrationEnabled` | `true` | bool | ✓ | Allow new user sign-ups |
-| `auth.lockoutEnabled` | `false` | bool | | Account lockout on failed attempts |
-| `auth.lockoutAttempts` | `5` | 1–100 | | Failed attempts before lockout |
-| `auth.lockoutDurationMinutes` | `15` | 1–1440 | | Lockout duration |
-| **Rate Limiting** |
-| `rateLimiting.enabled` | `true` | bool | ✓ | Global rate limiting |
-| `rateLimiting.defaultLimit` | `100` | 1–100000 | | Requests per window |
-| `rateLimiting.windowMinutes` | `1` | 1–1440 | | Rate limit window |
-| `rateLimiting.burstSize` | `20` | 1–1000 | | Token bucket burst |
-| `rateLimiting.strategy` | `token_bucket` | `token_bucket` `fixed_window` `sliding_window` | | Rate limit algorithm |
-| **Workspace Defaults** |
-| `workspace.defaultImage` | `ghcr.io/lenaxia/llmsafespace/base:latest` | container image ref | ✓ | Image for new workspaces |
-| `workspace.defaultStorageSize` | `1Gi` | `^[0-9]+(Gi\|Mi)$` | ✓ | Default PVC size |
-| `workspace.maxStorageSize` | `10Gi` | `^[0-9]+(Gi\|Mi)$` | ✓ | Max PVC size users can request |
-| `workspace.defaultStorageClass` | `""` | StorageClass name or `""` | | K8s StorageClass |
-| `workspace.maxActiveWorkspacesPerUser` | `3` | 1–50 | ✓ | Max running pods per user; oldest auto-suspended when exceeded |
-| `workspace.defaultMaxActiveSessions` | `5` | 1–20 | ✓ | Default concurrent sessions per workspace |
-| `workspace.defaultResources.cpu` | `500m` | K8s quantity | ✓ | Default CPU limit |
-| `workspace.defaultResources.memory` | `512Mi` | K8s quantity | ✓ | Default memory limit |
-| `workspace.defaultResources.ephemeralStorage` | `1Gi` | K8s quantity | | Default ephemeral storage |
-| **Auto-Suspend** |
-| `workspace.autoSuspend.enabled` | `true` | bool | ✓ | Global auto-suspend |
-| `workspace.autoSuspend.idleTimeoutMinutes` | `60` | 5–10080 | ✓ | Idle timeout |
-| `workspace.ttlDaysAfterSuspended` | `0` | 0–365 (0 = never) | | Auto-delete suspended workspaces |
-| **Credentials** |
-| `credentials.autoProvision` | `false` | bool | | Auto-copy default credential set to new workspaces |
-| `credentials.defaultSetId` | `""` | UUID or `""` | | Which set to auto-provision |
-| **Network** |
-| `workspace.defaultNetworkAccess.ingress` | `false` | bool | | Allow inbound by default |
-| `workspace.defaultNetworkAccess.egressDomains` | `[]` | string[] | | Default allowed egress |
-| **Security** |
-| `workspace.defaultSecurityLevel` | `standard` | `standard` `high` | | Pod security posture |
-| **Branding** |
-| `instance.name` | `LLMSafeSpace` | string 1–64 | | Instance display name |
-| `instance.motd` | `""` | string 0–500 | | Login page message |
+| Key | Default | Type | Valid Values | Req | Category | Description |
+|-----|---------|------|-------------|-----|----------|-------------|
+| `auth.registrationEnabled` | `true` | bool | | ✓ | Auth | Allow new user sign-ups |
+| `auth.lockoutEnabled` | `false` | bool | | | Auth | Account lockout on failed attempts |
+| `auth.lockoutAttempts` | `5` | int | 1–100 | | Auth | Failed attempts before lockout |
+| `auth.lockoutDurationMinutes` | `15` | int | 1–1440 | | Auth | Lockout duration |
+| `rateLimiting.enabled` | `true` | bool | | ✓ | Rate Limiting | Global rate limiting |
+| `rateLimiting.defaultLimit` | `100` | int | 1–100000 | | Rate Limiting | Requests per window |
+| `rateLimiting.windowMinutes` | `1` | int | 1–1440 | | Rate Limiting | Window duration |
+| `rateLimiting.burstSize` | `20` | int | 1–1000 | | Rate Limiting | Burst size |
+| `rateLimiting.strategy` | `token_bucket` | enum | `token_bucket` `fixed_window` `sliding_window` | | Rate Limiting | Algorithm |
+| `workspace.defaultImage` | `ghcr.io/lenaxia/llmsafespace/base:latest` | string | container image ref | ✓ | Workspace | Image for new workspaces |
+| `workspace.defaultStorageSize` | `1Gi` | string | `^[0-9]+(Gi\|Mi)$` | ✓ | Workspace | Default PVC size |
+| `workspace.maxStorageSize` | `10Gi` | string | `^[0-9]+(Gi\|Mi)$` | ✓ | Workspace | Max PVC size |
+| `workspace.defaultStorageClass` | `""` | string | StorageClass or `""` | | Workspace | K8s StorageClass |
+| `workspace.maxActiveWorkspacesPerUser` | `3` | int | 1–50 | ✓ | Workspace | Max running pods; oldest auto-suspended |
+| `workspace.defaultMaxActiveSessions` | `5` | int | 1–20 | ✓ | Workspace | Concurrent sessions per workspace |
+| `workspace.defaultResources.cpu` | `500m` | string | K8s quantity | ✓ | Workspace | Default CPU limit |
+| `workspace.defaultResources.memory` | `512Mi` | string | K8s quantity | ✓ | Workspace | Default memory limit |
+| `workspace.defaultResources.ephemeralStorage` | `1Gi` | string | K8s quantity | | Workspace | Default ephemeral storage |
+| `workspace.autoSuspend.enabled` | `true` | bool | | ✓ | Auto-Suspend | Global auto-suspend |
+| `workspace.autoSuspend.idleTimeoutMinutes` | `60` | int | 5–10080 | ✓ | Auto-Suspend | Idle timeout |
+| `workspace.ttlDaysAfterSuspended` | `0` | int | 0–365 | | Auto-Suspend | Auto-delete (0 = never) |
+| `credentials.autoProvision` | `false` | bool | | | Credentials | Auto-copy default set to new workspaces |
+| `credentials.defaultSetId` | `""` | string | UUID or `""` | | Credentials | Set to auto-provision |
+| `workspace.defaultNetworkAccess.ingress` | `false` | bool | | | Network | Allow inbound by default |
+| `workspace.defaultNetworkAccess.egressDomains` | `[]` | strings | domain names | | Network | Default allowed egress |
+| `workspace.defaultSecurityLevel` | `standard` | enum | `standard` `high` | | Security | Pod security posture |
+| `instance.name` | `LLMSafeSpace` | string | 1–64 chars | | Branding | Instance display name |
+| `instance.motd` | `""` | string | 0–500 chars | | Branding | Login page message |
 
 ### Tier 3: User (Per-user)
 
-| Key | Default | Valid Values | Req | Description |
-|-----|---------|-------------|-----|-------------|
-| `theme` | `system` | `light` `dark` `system` | ✓ | Color theme |
-| `fontSize` | `14` | 10–24 | | Font size (px) |
-| `compactMode` | `false` | bool | | Compact layout |
-| `streamingEnabled` | `true` | bool | | Stream tokens |
-| `showThinkingBlocks` | `true` | bool | | Show reasoning |
-| `codeBlockWordWrap` | `false` | bool | | Wrap code lines |
-| `sendOnEnter` | `true` | bool | | Enter sends |
-| `preferredModel` | `""` | model ID or `""` | | Preferred model |
-| `notifyOnSessionComplete` | `true` | bool | | Notify when agent finishes |
-| `notifyOnWorkspaceReady` | `true` | bool | | Notify on workspace resume |
-| `sidebarCollapsed` | `false` | bool | | Sidebar state |
-| `sidebarWidth` | `280` | 200–600 | | Sidebar width (px) |
+| Key | Default | Type | Valid Values | Req | Category |
+|-----|---------|------|-------------|-----|----------|
+| `theme` | `system` | enum | `light` `dark` `system` | ✓ | Appearance |
+| `fontSize` | `14` | int | 10–24 | | Appearance |
+| `compactMode` | `false` | bool | | | Appearance |
+| `streamingEnabled` | `true` | bool | | | Chat |
+| `showThinkingBlocks` | `true` | bool | | | Chat |
+| `codeBlockWordWrap` | `false` | bool | | | Chat |
+| `sendOnEnter` | `true` | bool | | | Chat |
+| `preferredModel` | `""` | string | model ID or `""` | | Chat |
+| `notifyOnSessionComplete` | `true` | bool | | | Notifications |
+| `notifyOnWorkspaceReady` | `true` | bool | | | Notifications |
+| `sidebarCollapsed` | `false` | bool | | | Layout |
+| `sidebarWidth` | `280` | int | 200–600 | | Layout |
 
 ### Tier 4: Workspace-level
 
@@ -168,10 +252,10 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 | `name` | DB | auto-generated | string 1–64 | ✓ |
 | `storageSize` | `spec.storage.size` | (instance) | `^[0-9]+(Gi\|Mi)$` ≤ max | ✓ |
 | `storageClass` | `spec.storage.storageClassName` | (instance) | StorageClass or `""` | |
-| `maxActiveSessions` | `spec.maxActiveSessions` | (instance: 5) | 1–20 | |
+| `maxActiveSessions` | `spec.maxActiveSessions` | (instance) | 1–20 | |
 | `autoSuspend.enabled` | `spec.autoSuspend.enabled` | (instance) | bool | |
-| `autoSuspend.idleTimeoutMinutes` | `spec.autoSuspend.idleTimeoutSeconds` | (instance) | 5–10080 | |
-| `ttlDaysAfterSuspended` | `spec.ttlSecondsAfterSuspended` | (instance: 0) | 0–365 | |
+| `autoSuspend.idleTimeoutMinutes` | `spec.autoSuspend.idleTimeoutSeconds` ÷ 60 | (instance) | 5–10080 | |
+| `ttlDaysAfterSuspended` | `spec.ttlSecondsAfterSuspended` ÷ 86400 | (instance) | 0–365 | |
 | `timeout` | `spec.timeout` | `0` | 0–86400 (seconds) | |
 | `maxRetries` | `spec.maxRetries` | `3` | 0–10 | |
 | `resources.cpu` | `spec.resources.cpu` | (instance) | K8s quantity | |
@@ -183,9 +267,9 @@ WARN instance_setting_seed_skipped key=<key> current=<db_value> helm=<helm_value
 | `credentialSetId` | `spec.credentials.secretName` | (instance default) | secret name | |
 | `securityLevel` | `spec.securityLevel` | (instance) | `standard` `high` | |
 
-## Credential Sets
+**Duration convention:** User-facing durations (idle timeout, TTL) stored/displayed in minutes or days. CRD stores seconds internally; the API converts at the boundary. Pod `timeout` stays in seconds (technical, not user-facing).
 
-New entity for managing multiple provider credential configurations.
+## Credential Sets
 
 ### Schema
 
@@ -194,7 +278,7 @@ CREATE TABLE credential_sets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
   is_default BOOLEAN NOT NULL DEFAULT false,
-  providers JSONB NOT NULL DEFAULT '{}',
+  providers_encrypted BYTEA NOT NULL,  -- AES-256-GCM encrypted JSONB
   model_allowlist TEXT[] NOT NULL DEFAULT '{}',
   assigned_to JSONB NOT NULL DEFAULT '"all"',
   created_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -205,7 +289,7 @@ CREATE TABLE credential_sets (
 CREATE UNIQUE INDEX idx_credential_sets_default ON credential_sets (is_default) WHERE is_default = true;
 ```
 
-### Provider Config Format
+### Provider Config (decrypted form)
 
 ```json
 {
@@ -217,9 +301,13 @@ CREATE UNIQUE INDEX idx_credential_sets_default ON credential_sets (is_default) 
 
 ### Access Control
 
-- `assigned_to`: `"all"` (everyone) or `["user-id-1", "user-id-2"]`
-- Users only see set names + model allowlist, never API keys
-- Admin sees everything
+- `assigned_to`: `"all"` or `["user-id-1", "user-id-2"]`
+- Users see: set name, model allowlist, provider names (not keys)
+- Admin sees: everything (keys masked in UI as `sk-...xxxx`, full value on explicit reveal)
+
+### Deletion Policy
+
+Deleting a credential set that is referenced by active workspaces returns **409 Conflict** with the list of referencing workspace IDs. Admin must reassign those workspaces first.
 
 ### UX Flow
 
@@ -232,86 +320,93 @@ CREATE UNIQUE INDEX idx_credential_sets_default ON credential_sets (is_default) 
 
 ### Decision: Radix UI Primitives
 
-Hand-rolled components lack accessibility (focus trapping, keyboard nav, ARIA). Adding Radix for interactive primitives:
-
 ```
 @radix-ui/react-dialog          — Dialog + Drawer
-@radix-ui/react-dropdown-menu   — Replaces hand-rolled KebabMenu
-@radix-ui/react-switch          — Toggle for boolean settings
+@radix-ui/react-dropdown-menu   — Replaces KebabMenu
+@radix-ui/react-switch          — Toggle
 @radix-ui/react-select          — Select dropdown
 @radix-ui/react-slider          — Range slider
-@radix-ui/react-tabs            — Tab navigation
-@radix-ui/react-toast           — Save feedback, replaces UpdateAvailableToast
-@radix-ui/react-tooltip         — Info icons on settings
+@radix-ui/react-tabs            — Tabs
+@radix-ui/react-toast           — Notifications
+@radix-ui/react-tooltip         — Info icons
 ```
 
 ### Components to Swap
 
 | Current | Replace With |
 |---------|-------------|
-| `KebabMenu` (hand-rolled portal + click-outside) | `@radix-ui/react-dropdown-menu` |
-| `RenameWorkspaceDialog` / `RenameSessionDialog` / `NewWorkspaceDialog` (inline forms) | `@radix-ui/react-dialog` |
-| `UpdateAvailableToast` (one-off fixed div) | `@radix-ui/react-toast` |
+| `KebabMenu` | `@radix-ui/react-dropdown-menu` |
+| `Rename*Dialog` / `NewWorkspaceDialog` | `@radix-ui/react-dialog` |
+| `UpdateAvailableToast` | `@radix-ui/react-toast` |
 
-### New Primitives to Build
+### New Primitives
 
-| Component | Library | Description |
-|-----------|---------|-------------|
+| Component | Source | Description |
+|-----------|--------|-------------|
 | `Toggle` | Radix Switch | Boolean on/off |
-| `Select` | Radix Select | Dropdown with options |
-| `Slider` | Radix Slider | Range with value display |
+| `Select` | Radix Select | Dropdown |
+| `Slider` | Radix Slider | Range with value |
 | `Dialog` | Radix Dialog | Modal with focus trap |
-| `Drawer` | Radix Dialog (side-positioned) | Slide-in panel |
+| `Drawer` | Radix Dialog (side) | Slide-in panel |
 | `Toast` + `useToast()` | Radix Toast | Notification system |
 | `Tabs` | Radix Tabs | Tab bar + panels |
-| `DropdownMenu` | Radix Dropdown Menu | Replaces KebabMenu |
+| `DropdownMenu` | Radix Dropdown | Replaces KebabMenu |
 | `Tooltip` | Radix Tooltip | Hover info |
-| `NumberInput` | Hand-rolled | Input + min/max/step |
-| `Textarea` | Hand-rolled | Styled multi-line |
+| `NumberInput` | Hand-rolled | Input + min/max |
+| `Textarea` | Hand-rolled | Multi-line |
 | `TagInput` | Hand-rolled | Multi-value chips |
 
-### Settings Layout Patterns
+### Settings Layout (schema-driven)
 
-| Component | Description |
-|-----------|-------------|
-| `SettingsSection` | Group heading + description + children |
-| `SettingsRow` | Label + description (left) + control (right) |
-| `ReadOnlyField` | Label + value + source badge ("Config file") |
+Frontend fetches `GET /admin/settings/schema` and renders forms dynamically:
+
+| `type` | Renders |
+|--------|---------|
+| `bool` | `<Toggle>` |
+| `int` | `<NumberInput>` or `<Slider>` (if range is small) |
+| `string` | `<Input>` |
+| `enum` | `<Select>` |
+| `strings` | `<TagInput>` |
+
+Layout components:
+- `SettingsSection` — groups by `category`
+- `SettingsRow` — label + description + control
+- `ReadOnlyField` — for Tier 1 display
 
 ## Story List
 
 | Story | Title | Size | Phase |
 |-------|-------|------|-------|
-| US-9.0 | UI Primitives — Radix integration + settings components | Large | A |
-| US-9.1 | DB Schema — Settings tables | Small | A |
-| US-9.2 | Settings Service — Backend CRUD + validation | Medium | A |
-| US-9.3 | Settings Seed Job — Helm-driven seeding | Small | A |
-| US-9.4 | Admin API Endpoints | Medium | A |
-| US-9.5 | User Settings API Endpoints | Small | A |
-| US-9.6 | Frontend — Admin Settings Page (Instance + Platform) | Large | B |
-| US-9.7 | Frontend — User Settings Page Rework | Large | B |
+| US-9.0 | UI Primitives — Radix integration + settings layout components | Large | A |
+| US-9.1 | Declarative Settings Schema + DB Migration | Medium | A |
+| US-9.2 | Settings Service — CRUD, validation, caching | Medium | A |
+| US-9.3 | Settings Seed Job | Small | A |
+| US-9.4 | Admin API + AdminGuard Middleware | Medium | A |
+| US-9.5 | User Settings API | Small | A |
+| US-9.6 | Frontend — Admin Settings Page (schema-driven) | Large | B |
+| US-9.7 | Frontend — User Settings Page | Large | B |
 | US-9.8 | Frontend — Workspace Settings Drawer | Medium | B |
 | US-9.9 | Max Active Workspaces Enforcement | Small | B |
 | US-9.10 | Max Storage Size Enforcement | Small | B |
 | US-9.11 | Credential Sets Entity (full stack) | Large | C |
 | US-9.12 | Frontend — Admin Credentials Page | Medium | C |
-| US-9.13 | Preferred Model (User Setting + Chat Integration) | Medium | C |
+| US-9.13 | Preferred Model + Chat Integration | Medium | C |
 
 ## Dependency Graph
 
 ```
-US-9.0 (UI primitives) ─────────────────────────────────┐
-                                                          │
-US-9.1 (DB schema) ──┐                                   │
-                      ├── US-9.2 (service) ──┐            │
-                      │                       ├── US-9.3 (seed)
-                      │                       ├── US-9.4 (admin API) ──── US-9.6 (admin frontend) ←─┤
-                      │                       ├── US-9.5 (user API) ───── US-9.7 (user frontend) ←──┤
-                      │                       ├── US-9.9 (max workspaces)                           │
-                      │                       └── US-9.10 (max storage)                             │
-                      │                                                                             │
-                      └── US-9.11 (credential sets) ──── US-9.12 (creds frontend) ←────────────────┤
-                                                     └── US-9.13 (model picker) ←──────────────────┘
+US-9.0 (UI primitives) ──────────────────────────────────┐
+                                                           │
+US-9.1 (schema + DB) ──┐                                  │
+                        ├── US-9.2 (service) ──┐           │
+                        │                       ├── US-9.3 (seed)
+                        │                       ├── US-9.4 (admin API) ─── US-9.6 (admin UI) ←──┤
+                        │                       ├── US-9.5 (user API) ──── US-9.7 (user UI) ←───┤
+                        │                       ├── US-9.9 (max workspaces)                     │
+                        │                       └── US-9.10 (max storage)                       │
+                        │                                                                       │
+                        └── US-9.11 (credential sets) ─── US-9.12 (creds UI) ←─────────────────┤
+                                                      └── US-9.13 (model picker) ←─────────────┘
 
 US-9.8 (workspace drawer) depends on US-9.0 + US-9.4 + US-9.5
 ```
@@ -322,16 +417,91 @@ US-9.8 (workspace drawer) depends on US-9.0 + US-9.4 + US-9.5
 **Phase B (UI + Enforcement):** US-9.6, US-9.7, US-9.8, US-9.9, US-9.10
 **Phase C (Credentials):** US-9.11, US-9.12, US-9.13
 
-## Key Design Decisions
+## Design Decisions
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | Separate admin/user API routes (not role-branching in handlers) | Security — admin routes return 404 for non-admins, no information leakage |
-| D2 | `ON CONFLICT DO NOTHING` for Helm seeding | GitOps sets initial defaults; UI overrides persist across upgrades |
-| D3 | Radix UI for interactive primitives | Accessibility, focus management, keyboard nav — too error-prone to hand-roll |
-| D4 | User settings in DB with localStorage cache | Sync across devices (DB) + instant UI (localStorage) |
-| D5 | Credential sets as separate entity (not single secret) | Multi-provider support, model allowlisting, per-user access control |
-| D6 | All durations stored/displayed in minutes | Consistent UX. CRD uses seconds internally; API converts at boundary. |
-| D7 | Workspace timeout stays in seconds | Technical pod-level setting (max 86400s), not user-facing idle concept |
-| D8 | No OIDC/SSO settings yet | Only a DTO field exists, no implementation. Add when built. |
-| D9 | No Docker-mode settings yet | Epic 7 not implemented. Add when Docker deployment is built. |
+| D1 | Declarative settings schema as single source of truth | Drives validation, seeding, API responses, and frontend form generation. Adding a setting = adding one struct entry. |
+| D2 | Separate admin/user API routes with AdminGuard returning 404 | Security — no information leakage about admin routes |
+| D3 | `ON CONFLICT DO NOTHING` + log warning for Helm seeding | GitOps sets initial defaults; UI overrides persist across upgrades |
+| D4 | Radix UI for interactive primitives | Accessibility, focus management, keyboard nav |
+| D5 | User settings: DB source of truth + localStorage cache | Cross-device sync + instant UI |
+| D6 | Credential sets as separate entity with AES-256-GCM encryption | Multi-provider, model allowlisting, per-user access, keys never in API responses |
+| D7 | In-memory cache with 60s TTL for instance settings | Hot-path reads (rate limiting) without DB per request |
+| D8 | User-facing durations in minutes/days; pod timeout in seconds | Consistent UX for humans; technical precision for K8s |
+| D9 | Credential set deletion blocked if referenced (409) | Prevent orphaned workspace references |
+| D10 | Structured log audit (not audit table) for V1 | Sufficient for compliance; avoids schema complexity |
+
+## Test Plan
+
+### US-9.1 (Schema + DB)
+- Migration up creates `instance_settings` and `user_settings` with correct constraints
+- Migration down drops cleanly
+- PK on `instance_settings.key` prevents duplicates
+- Composite PK `(user_id, key)` on `user_settings` works
+- FK cascade: deleting user deletes their settings
+- Schema definition compiles and contains all expected keys
+
+### US-9.2 (Settings Service)
+- `GetInstanceSettings` returns all rows merged with schema defaults
+- `SetInstanceSetting` valid value → succeeds, cache invalidated
+- `SetInstanceSetting` invalid value (wrong type, out of range, bad enum) → validation error
+- `SetInstanceSetting` unknown key → error
+- `GetUserSettings` returns user values merged with schema defaults
+- `SetUserSetting` valid → succeeds
+- `SetUserSetting` invalid → validation error
+- Cache: after set, immediate get returns new value (no stale read)
+- Concurrent writes: no corruption (DB row-level locking)
+
+### US-9.3 (Seed Job)
+- Fresh DB: all schema defaults inserted
+- Existing values: not overwritten, warning logged per skipped key
+- Partial existing: only missing keys inserted
+- Seed job is idempotent (run twice = same result)
+
+### US-9.4 (Admin API + AdminGuard)
+- Admin GET returns all instance settings with schema metadata
+- Admin PUT valid value → 200, audit log emitted
+- Admin PUT invalid → 400 with validation details
+- Non-admin on any `/admin/*` → 404 (not 401, not 403)
+- Unauthenticated → 401 (from auth middleware, before AdminGuard)
+- `GET /admin/settings/platform` returns Tier 1 read-only values
+- `GET /admin/settings/schema` returns full schema definition
+
+### US-9.5 (User Settings API)
+- Authenticated GET returns user settings merged with defaults
+- PUT valid → 200
+- PUT invalid → 400
+- User A cannot access User B's settings
+- Unset keys return schema defaults
+
+### US-9.9 (Max Active Workspaces)
+- User at cap: activate suspends stalest (oldest `lastActivityAt`)
+- User below cap: activate works without suspending
+- Response includes `resumed` and `suspended` IDs
+- Edge: all workspaces null `lastActivityAt` → pick oldest by `createdAt`
+- Setting change immediately affects next activation
+
+### US-9.10 (Max Storage)
+- Create with size ≤ max → succeeds
+- Create with size > max → 400 with max in error message
+- Setting change affects new creations only (not existing)
+
+### US-9.11 (Credential Sets)
+- Admin CRUD: create, read, update, delete
+- Toggle `is_default`: previous default unset (transaction)
+- User list: only sees assigned sets, no API keys in response
+- Delete with active references → 409 with workspace IDs
+- Auto-provision: new workspace gets default set copied as K8s Secret
+- Encryption: providers stored encrypted, decrypted only for K8s Secret copy
+- Model allowlist correctly filters available models
+
+### Frontend (US-9.0, 9.6, 9.7, 9.8, 9.12)
+- Radix components render correctly, keyboard navigable, focus trapped in dialogs
+- Admin page: schema-driven form renders correct control per type
+- Admin page: hidden from non-admin (404 route)
+- User settings: localStorage provides instant render, API sync on mount
+- User settings: write updates both local and remote
+- Workspace drawer: opens from kebab, saves patch CRD
+- Toast appears on save success/failure
+- Read-only fields not editable, show source badge
