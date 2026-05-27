@@ -66,14 +66,9 @@ export function ChatPage() {
   const sentTextRef = useRef<string>("");
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
-    // The proxy re-parses the raw opencode JSON and sets it as evt.Data.
-    // Two formats are possible depending on the opencode agent version:
-    //   Flat:    {type:"message.part.delta", properties:{...}}
-    //   Nested:  {directory:"...", payload:{type:"message.part.delta", properties:{...}}}
     let payload = event.data as Record<string, unknown> | undefined;
     if (!payload) return;
 
-    // Unwrap nested format: {directory, payload: {type, properties}}
     if (!payload.type && payload.payload && typeof payload.payload === "object") {
       payload = payload.payload as Record<string, unknown>;
     }
@@ -85,6 +80,11 @@ export function ChatPage() {
 
     const eventSessionId = (props.sessionID as string) || (props.session_id as string);
     if (eventSessionId && eventSessionId !== currentSessionId) return;
+
+    if (payload.type === "message.part.delta" || payload.type === "message.part.updated") {
+      const part = props.part as Record<string, unknown> | undefined;
+      console.log("[SSE DEBUG]", payload.type, "partType:", part?.type, "field:", props.field, "text:", typeof part?.text === "string" ? part.text.slice(0, 80) : props.delta);
+    }
 
     if (payload.type === "message.part.delta") {
       const delta = props.delta as string | undefined;
