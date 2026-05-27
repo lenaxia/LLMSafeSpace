@@ -399,7 +399,11 @@ function WorkspaceSessionList({
 }: SessionListProps) {
   const { data: sessions, isLoading } = useQuery({
     queryKey: ["sessions", workspaceId],
-    queryFn: () => workspacesApi.getSessions(workspaceId),
+    queryFn: async () => {
+      const result = await workspacesApi.getSessions(workspaceId);
+      console.log("[Sessions] fetched for", workspaceId, "titles:", result?.map(s => ({ id: s.id.slice(0, 8), title: s.title })));
+      return result;
+    },
     enabled: !!workspaceId,
   });
 
