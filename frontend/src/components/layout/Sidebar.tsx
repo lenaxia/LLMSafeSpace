@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
-import { formatRelativeTime } from "../../lib/time";
 import { cn } from "../../lib/utils";
 
 interface Props {
@@ -450,9 +449,6 @@ function WorkspaceSessionList({
                 >
                   <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="flex-1 truncate">{title}</span>
-                  {s.lastMessageAt && (
-                    <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
-                  )}
                   {s.status === "active" && (
                     <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
                   )}
