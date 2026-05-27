@@ -42,21 +42,39 @@ export function extractStreamText(accumulated: string): ParsedStreamResult {
   const displayParts: string[] = [];
   const thinkingParts: string[] = [];
 
-  const partRegex = /"type"\s*:\s*"(text|thinking)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const typeFirst = /"type"\s*:\s*"(text|thinking)"[^}]*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const textFirst = /"text"\s*:\s*"((?:[^"\\]|\\.)*)"[^}]*"type"\s*:\s*"(text|thinking)"/g;
+
+  interface PartMatch {
+    type: string;
+    text: string;
+    index: number;
+  }
+  const matches: PartMatch[] = [];
+
   let match;
-  while ((match = partRegex.exec(trimmed)) !== null) {
+  while ((match = typeFirst.exec(trimmed)) !== null) {
+    matches.push({ type: match[1], text: match[2], index: match.index });
+  }
+  while ((match = textFirst.exec(trimmed)) !== null) {
+    matches.push({ type: match[2], text: match[1], index: match.index });
+  }
+
+  matches.sort((a, b) => a.index - b.index);
+
+  for (const m of matches) {
     try {
-      const text = JSON.parse(`"${match[2]}"`);
-      if (match[1] === "thinking") {
-        thinkingParts.push(text);
+      const decoded = JSON.parse(`"${m.text}"`);
+      if (m.type === "thinking") {
+        thinkingParts.push(decoded);
       } else {
-        displayParts.push(text);
+        displayParts.push(decoded);
       }
     } catch {
-      if (match[1] === "thinking") {
-        thinkingParts.push(match[2] ?? "");
+      if (m.type === "thinking") {
+        thinkingParts.push(m.text ?? "");
       } else {
-        displayParts.push(match[2] ?? "");
+        displayParts.push(m.text ?? "");
       }
     }
   }

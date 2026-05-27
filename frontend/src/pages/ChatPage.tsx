@@ -72,7 +72,7 @@ export function ChatPage() {
     const eventSessionId = (props.sessionID as string) || (props.session_id as string);
     if (eventSessionId && eventSessionId !== currentSessionId) return;
 
-    if (payload.type === "part.updated") {
+    if (payload.type === "message.part.updated") {
       const part = props.part as Record<string, unknown> | undefined;
       if (part?.type === "text" && typeof part.text === "string") {
         setSseStreamText(part.text);

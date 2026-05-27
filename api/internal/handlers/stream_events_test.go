@@ -299,6 +299,247 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	}
 }
 
+// --- onRawEvent -> broker pipeline ---
+
+func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+
+	broker := NewWorkspaceEventBroker()
+	handler.broker = broker
+
+	ch := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", ch)
+
+	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello"}}}}`
+	handler.onRawEvent("ws-1", "message.part.updated", rawData)
+
+	select {
+	case evt := <-ch:
+		assert.Equal(t, "opencode.event", evt.Type)
+		assert.Equal(t, "message.part.updated", evt.EventType)
+		require.NotNil(t, evt.Data)
+		dataMap, ok := evt.Data.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "ws-1", dataMap["directory"])
+	case <-time.After(time.Second):
+		t.Fatal("expected opencode.event from onRawEvent")
+	}
+}
+
+func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+
+	broker := NewWorkspaceEventBroker()
+	handler.broker = broker
+
+	ch := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", ch)
+
+	events := []struct {
+		eventType string
+		data      string
+	}{
+		{"message.part.updated", `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"s1"}}}`},
+		{"message.updated", `{"directory":"ws-1","payload":{"type":"message.updated","properties":{"sessionID":"s1"}}}`},
+		{"session.diff", `{"directory":"ws-1","payload":{"type":"session.diff","properties":{"sessionID":"s1"}}}`},
+		{"session.error", `{"directory":"ws-1","payload":{"type":"session.error","properties":{"sessionID":"s1","error":"something went wrong"}}}`},
+	}
+
+	for _, e := range events {
+		handler.onRawEvent("ws-1", e.eventType, e.data)
+
+		select {
+		case evt := <-ch:
+			assert.Equal(t, "opencode.event", evt.Type)
+			assert.Equal(t, e.eventType, evt.EventType)
+		case <-time.After(time.Second):
+			t.Fatalf("expected opencode.event for type %s", e.eventType)
+		}
+	}
+}
+
+func TestStreamEvents_OnRawEvent_NilBrokerDoesNotPanic(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+	// broker is nil — onRawEvent should not panic
+
+	handler.onRawEvent("ws-1", "message.part.updated", `{"foo":"bar"}`)
+}
+
+func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+
+	broker := NewWorkspaceEventBroker()
+	handler.broker = broker
+
+	ch := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", ch)
+
+	// Invalid JSON — unmarshaling fails, Data will be nil
+	handler.onRawEvent("ws-1", "session.status", "not-json-at-all")
+
+	select {
+	case evt := <-ch:
+		assert.Equal(t, "opencode.event", evt.Type)
+		assert.Equal(t, "session.status", evt.EventType)
+		// Data should be nil since JSON unmarshal failed
+		assert.Nil(t, evt.Data)
+	case <-time.After(time.Second):
+		t.Fatal("expected opencode.event even with unparsable data")
+	}
+}
+
+func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+
+	broker := NewWorkspaceEventBroker()
+	handler.broker = broker
+
+	ch := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", ch)
+
+	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello world"}}}}`
+	handler.onRawEvent("ws-1", "message.part.updated", rawData)
+
+	select {
+	case evt := <-ch:
+		assert.Equal(t, "opencode.event", evt.Type)
+		require.NotNil(t, evt.Data)
+
+		dataMap, ok := evt.Data.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "ws-1", dataMap["directory"])
+
+		payload, ok := dataMap["payload"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "message.part.updated", payload["type"])
+
+		props, ok := payload["properties"].(map[string]interface{})
+		require.True(t, ok, "properties should be a map (JSON object)")
+		assert.Equal(t, "sess-1", props["sessionID"])
+
+		part, ok := props["part"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "text", part["type"])
+		assert.Equal(t, "hello world", part["text"])
+	case <-time.After(time.Second):
+		t.Fatal("expected opencode.event with nested structure preserved")
+	}
+}
+
+func TestStreamEvents_OpenCodeEventDeliveredToSSEClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	env := newTestEnv(t)
+	broker := NewWorkspaceEventBroker()
+	env.handler.broker = broker
+	env.wsMock.On("Get", "ws-1", metav1.GetOptions{}).
+		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
+
+	cancel, body, _, _ := doStreamingRequest(newStreamEventsRouter(env.handler), "/api/v1/workspaces/ws-1/events")
+	defer cancel()
+	defer body.Close()
+
+	require.Eventually(t, func() bool {
+		broker.mu.Lock()
+		n := len(broker.subs["ws-1"])
+		broker.mu.Unlock()
+		return n > 0
+	}, time.Second, 5*time.Millisecond)
+
+	// Simulate what onRawEvent does: publish an opencode.event to the broker
+	broker.Publish("ws-1", WorkspaceSSEEvent{
+		Type:      "opencode.event",
+		EventType: "message.part.updated",
+		Data: map[string]interface{}{
+			"directory": "ws-1",
+			"payload": map[string]interface{}{
+				"type":       "message.part.updated",
+				"properties": `{"sessionID":"s1","part":{"type":"text","text":"hello"}}`,
+			},
+		},
+	})
+
+	evt := readNextSSEDataLine(t, bufio.NewReader(body))
+	assert.Equal(t, "opencode.event", evt["type"])
+	assert.Equal(t, "message.part.updated", evt["event_type"])
+	require.Contains(t, evt, "data")
+}
+
+func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	require.NoError(t, err)
+
+	broker := NewWorkspaceEventBroker()
+	handler.broker = broker
+
+	ch1 := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", ch1)
+	ch2 := broker.Subscribe("ws-2")
+	defer broker.Unsubscribe("ws-2", ch2)
+
+	// Publish event for ws-1
+	handler.onRawEvent("ws-1", "message.part.updated", `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"s1"}}}`)
+
+	// ws-1 subscriber should receive it
+	select {
+	case evt := <-ch1:
+		assert.Equal(t, "opencode.event", evt.Type)
+	case <-time.After(time.Second):
+		t.Fatal("ws-1 subscriber should receive opencode.event")
+	}
+
+	// ws-2 subscriber should NOT receive it
+	select {
+	case <-ch2:
+		t.Fatal("ws-2 subscriber should NOT receive ws-1's event")
+	case <-time.After(200 * time.Millisecond):
+		// expected
+	}
+}
+
+// --- Existing onSessionActive test ---
+
 func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
