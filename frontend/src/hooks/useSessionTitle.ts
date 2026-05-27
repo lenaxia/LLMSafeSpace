@@ -34,6 +34,7 @@ export function useSessionTitle(
   // Re-fetch when streaming ends — opencode generates the title after the first exchange.
   useEffect(() => {
     if (prevStreaming.current && !streaming && workspaceId && sessionId && active) {
+      console.log("[SessionTitle] streaming ended, refetching title for", sessionId);
       refetch();
     }
     prevStreaming.current = streaming;
@@ -42,6 +43,7 @@ export function useSessionTitle(
   // When a title arrives, push it into the sessions list cache so the sidebar
   // updates without a full refetch of the session list.
   useEffect(() => {
+    console.log("[SessionTitle] data:", data?.id, "title:", data?.title);
     if (!data?.title || !workspaceId || !sessionId) return;
     queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
   }, [data?.title, workspaceId, sessionId, queryClient]);
