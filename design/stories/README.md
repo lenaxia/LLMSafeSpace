@@ -21,6 +21,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 7 | Runtime Interception Layer — system daemon, shadow PATH wrappers, RuntimePolicy CRD | Epic 6 |
 
 | 8 | Credential Health & Agent Abstraction — detect credential loss, agent degradation, self-heal | Epic 6 |
+| 9 | Configuration & Settings — tiered config system, admin/user settings, credential sets, Radix UI | Epic 6 |
 
 ## V2.1 (Deferred)
 

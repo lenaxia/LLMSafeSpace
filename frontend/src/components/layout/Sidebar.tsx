@@ -126,6 +126,7 @@ export function Sidebar({ onNavigate }: Props) {
     if (ws.phase === "Suspended") {
       activateMutation.mutate(ws.id);
       setExpandedWs((prev) => new Set(prev).add(ws.id));
+      navigate(`/chat/${ws.id}`);
       return;
     }
 
