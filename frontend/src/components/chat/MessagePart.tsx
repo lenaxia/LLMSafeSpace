@@ -16,10 +16,18 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     if (isUser) {
       return <p className="whitespace-pre-wrap text-sm">{part.text}</p>;
     }
+    // During streaming, close any unclosed code fences so markdown renders
+    let text = part.text;
+    if (isStreaming) {
+      const fenceCount = (text.match(/^```/gm) || []).length;
+      if (fenceCount % 2 !== 0) {
+        text += "\n```";
+      }
+    }
     return (
       <div className={cn("prose prose-sm dark:prose-invert max-w-none")}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-          {part.text}
+          {text}
         </ReactMarkdown>
       </div>
     );
