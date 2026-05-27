@@ -20,9 +20,8 @@ type SessionIdleCallback func(workspaceID, sessionID string)
 type RawEventCallback func(workspaceID, eventType, rawData string)
 
 type sseEvent struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Status    string `json:"status"`
+	Type       string          `json:"type"`
+	Properties json.RawMessage `json:"properties"`
 }
 
 type opencodeEvent struct {
@@ -215,55 +214,50 @@ func (t *SSETracker) processEvent(workspaceID, data string) {
 		return
 	}
 
-	// Try nested format first (opencode /event format):
-	// {"directory":"...","payload":{"type":"session.status","properties":{...}}}
-	var nested opencodeEvent
-	if json.Unmarshal([]byte(data), &nested) == nil && nested.Payload.Type != "" {
-		if t.onRawEvent != nil {
-			t.onRawEvent(workspaceID, nested.Payload.Type, data)
-		}
-
-		if nested.Payload.Type == "session.status" {
-			var props struct {
-				SessionID string `json:"sessionID"`
-				Status    string `json:"status"`
-			}
-			if json.Unmarshal(nested.Payload.Properties, &props) == nil {
-				switch props.Status {
-				case "idle":
-					if props.SessionID != "" && t.onSessionIdle != nil {
-						t.onSessionIdle(workspaceID, props.SessionID)
-					}
-				case "busy":
-					if props.SessionID != "" && t.onSessionActive != nil {
-						t.onSessionActive(workspaceID, props.SessionID)
-					}
-				}
-			}
-		}
-		return
-	}
-
-	// Fall back to flat format used in tests
+	// Parse the flat opencode event format:
+	// {"type":"session.status","properties":{"sessionID":"ses_...","status":{"type":"idle"}}}
 	var evt sseEvent
-	if err := json.Unmarshal([]byte(data), &evt); err != nil {
+	if err := json.Unmarshal([]byte(data), &evt); err != nil || evt.Type == "" {
+		// Try legacy nested format: {"payload":{"type":"...","properties":{...}}}
+		var nested opencodeEvent
+		if json.Unmarshal([]byte(data), &nested) == nil && nested.Payload.Type != "" {
+			if t.onRawEvent != nil {
+				t.onRawEvent(workspaceID, nested.Payload.Type, data)
+			}
+			t.dispatchProperties(workspaceID, nested.Payload.Type, nested.Payload.Properties)
+		}
 		return
 	}
 
 	if t.onRawEvent != nil {
 		t.onRawEvent(workspaceID, evt.Type, data)
 	}
+	t.dispatchProperties(workspaceID, evt.Type, evt.Properties)
+}
 
-	if evt.Type == "session.status" && evt.SessionID != "" {
-		switch evt.Status {
-		case "idle":
-			if t.onSessionIdle != nil {
-				t.onSessionIdle(workspaceID, evt.SessionID)
-			}
-		case "busy":
-			if t.onSessionActive != nil {
-				t.onSessionActive(workspaceID, evt.SessionID)
-			}
+func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props json.RawMessage) {
+	if eventType != "session.status" || len(props) == 0 {
+		return
+	}
+
+	var p struct {
+		SessionID string `json:"sessionID"`
+		Status    struct {
+			Type string `json:"type"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(props, &p) != nil || p.SessionID == "" {
+		return
+	}
+
+	switch p.Status.Type {
+	case "idle":
+		if t.onSessionIdle != nil {
+			t.onSessionIdle(workspaceID, p.SessionID)
+		}
+	case "busy":
+		if t.onSessionActive != nil {
+			t.onSessionActive(workspaceID, p.SessionID)
 		}
 	}
 }
