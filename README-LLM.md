@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.8
-**Last Updated:** 2026-05-23
+**Version:** 1.9
+**Last Updated:** 2026-05-27
 **Project Status:** Active Development
 
 ---
@@ -719,6 +719,16 @@ What was the goal of this session?
 ---
 
 ## Work Completed
+
+### Worklog 0046 (2026-05-27): Streaming UX — User Echo, Thinking Blocks, Bubble Overflow
+- Replaced `@tanstack/react-virtual` in `MessageList` with flex column — virtualizer's absolute positioning caused streaming bubble to overflow on top of other messages
+- `transformHistory` in `messages.ts` now preserves `thinking`/`reasoning` part types (was filtering to `text` only, causing thinking blocks to vanish after streaming)
+- User echo fix: `sentTextRef` tracks sent text and strips exact/prefix matches from both `message.part.updated` snapshots and accumulated deltas. Previous `messageID`/`role` filters were dead code — those fields don't exist in SSE event properties (validated via backend test data in `proxy_filter_test.go`, `session_tracker_test.go`, `stream_events_test.go`)
+- Thinking rendering: same visual treatment for streaming and completed — rounded border, brain icon, `border-l-2` blockquote. Streaming shows expanded with pulsing icon; completed wraps in collapsible `<details>`
+- Nested SSE format unwrapping: `parseStreamEvent` handles both flat `{type, properties}` and nested `{directory, payload: {type, properties}}` opencode event formats
+- E2E test SSE data format fixed from nested to flat (matching actual backend output)
+- **Blocked:** Thinking and text still render as single unformatted blob during streaming. Debug logging deployed to diagnose actual SSE event structure from opencode. Need browser console output to determine if thinking is sent as separate part type or mixed into text.
+- 369 frontend tests passing; 8 files modified across 3 commits (`54cb589`, `46dd2ac`, `c30d6e9`)
 
 ### Worklog 0033 (2026-05-23): Cluster Validation, Scheme Conversion Root Cause, First-User-Admin
 - Validated worklog 0032 changes against the home-kubernetes cluster running pinned `sha-e8cdbc8`
