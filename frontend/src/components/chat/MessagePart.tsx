@@ -1,9 +1,31 @@
+import { lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Brain, Wrench, Server } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { MessagePart as MessagePartType } from "../../api/types";
+
+const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
+
+function ToolDiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
+  return (
+    <Suspense fallback={<pre className="px-3 text-xs text-muted-foreground">Loading diff...</pre>}>
+      <div className="text-xs overflow-auto max-h-60">
+        <ReactDiffViewer
+          oldValue={oldStr}
+          newValue={newStr}
+          splitView={false}
+          useDarkTheme
+          hideLineNumbers={false}
+          styles={{
+            contentText: { fontSize: "11px", lineHeight: "1.4" },
+          }}
+        />
+      </div>
+    </Suspense>
+  );
+}
 
 interface Props {
   part: MessagePartType;
@@ -76,6 +98,11 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     const borderColor = part.toolState === "error" ? "border-red-500/20 bg-red-500/5" : "border-blue-500/20 bg-blue-500/5";
     const textColor = part.toolState === "error" ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400";
 
+    // Detect file edit tools with oldStr/newStr for diff rendering
+    const input = part.input as Record<string, unknown> | undefined;
+    const isFileEdit = input && typeof input === "object" && "oldStr" in input && "newStr" in input;
+    const filePath = input && typeof input === "object" ? (input.path as string) || (input.file_path as string) || "" : "";
+
     if (!hasDetails) {
       return (
         <div className={cn("my-1.5 rounded-md border px-3 py-2", borderColor)}>
@@ -91,18 +118,24 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
       <details className={cn("group my-1.5 rounded-md border", borderColor)}>
         <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium", textColor)}>
           <Wrench className="h-3.5 w-3.5" />
-          <span>{statusIcon} {toolName || "tool"}</span>
+          <span>{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
         </summary>
-        <div className="border-t border-inherit px-3 py-2 space-y-1">
-          {part.input != null && (
-            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto">
-              {typeof part.input === "string" ? String(part.input) : JSON.stringify(part.input, null, 2)}
-            </pre>
-          )}
-          {part.toolOutput && (
-            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto border-t border-muted pt-1 mt-1">
-              {part.toolOutput}
-            </pre>
+        <div className="border-t border-inherit py-1 space-y-1 overflow-hidden">
+          {isFileEdit ? (
+            <ToolDiffView oldStr={String(input.oldStr ?? "")} newStr={String(input.newStr ?? "")} />
+          ) : (
+            <>
+              {part.input != null && (
+                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto px-3">
+                  {typeof part.input === "string" ? String(part.input) : JSON.stringify(part.input, null, 2)}
+                </pre>
+              )}
+              {part.toolOutput && (
+                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto border-t border-muted pt-1 mt-1 px-3">
+                  {part.toolOutput}
+                </pre>
+              )}
+            </>
           )}
         </div>
       </details>
