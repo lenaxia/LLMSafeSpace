@@ -757,6 +757,7 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 			// Record message in session index
 			if h.sessionIndex != nil {
 				h.sessionIndex.RecordMessage(cfg.workspaceID, sessionID, "", time.Now())
+				go h.fetchAndPersistTitle(cfg.workspaceID, sessionID)
 			}
 		}
 	}
