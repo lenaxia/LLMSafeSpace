@@ -126,8 +126,6 @@ export function ChatPage() {
       if (!part) return;
 
       const partType = part.type as string | undefined;
-      const prevRoute = activePartTypeRef.current;
-
       if (partType === "reasoning" || partType === "thinking") {
         activePartTypeRef.current = "reasoning";
         const text = typeof part.text === "string" ? part.text : "";
