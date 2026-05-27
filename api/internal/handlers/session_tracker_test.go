@@ -33,10 +33,25 @@ func makeNestedEvent(eventType string, props map[string]interface{}) string {
 	return string(data)
 }
 
-func makeNestedSessionEvent(status, sessionID string) string {
+// makeSessionStatusEvent builds a real opencode flat-format session.status event.
+// statusType is "idle" or "busy".
+func makeSessionStatusEvent(sessionID, statusType string) string {
+	data, _ := json.Marshal(map[string]interface{}{
+		"type": "session.status",
+		"properties": map[string]interface{}{
+			"sessionID": sessionID,
+			"status":    map[string]string{"type": statusType},
+		},
+	})
+	return string(data)
+}
+
+// makeNestedSessionEvent builds a nested-format session.status event (legacy format).
+// statusType is "idle" or "busy".
+func makeNestedSessionEvent(statusType, sessionID string) string {
 	return makeNestedEvent("session.status", map[string]interface{}{
 		"sessionID": sessionID,
-		"status":    status,
+		"status":    map[string]string{"type": statusType},
 	})
 }
 
@@ -235,8 +250,7 @@ func TestSSETracker_RawEventCallback_FlatFormatStillWorks(t *testing.T) {
 		mu.Unlock()
 	})
 
-	data, _ := json.Marshal(sseEvent{Type: "session.status", SessionID: "sess-1", Status: "idle"})
-	tracker.processEvent("sb-1", string(data))
+	tracker.processEvent("sb-1", makeSessionStatusEvent("sess-1", "idle"))
 
 	mu.Lock()
 	require.Len(t, rawEvents, 1)
@@ -329,12 +343,7 @@ func TestSSETracker_ProcessEvent_SessionStatusIdle(t *testing.T) {
 		mu.Unlock()
 	})
 
-	data, _ := json.Marshal(sseEvent{
-		Type:      "session.status",
-		SessionID: "sess-1",
-		Status:    "idle",
-	})
-	tracker.processEvent("sb-1", string(data))
+	tracker.processEvent("sb-1", makeSessionStatusEvent("sess-1", "idle"))
 
 	mu.Lock()
 	require.Len(t, calls, 1)
@@ -350,19 +359,28 @@ func TestSSETracker_ProcessEvent_IgnoresNonSessionStatus(t *testing.T) {
 	})
 
 	tests := []struct {
-		name  string
-		event sseEvent
+		name      string
+		eventData string
 	}{
-		{"other event type", sseEvent{Type: "session.created", SessionID: "sess-1", Status: "idle"}},
-		{"output event", sseEvent{Type: "session.output", SessionID: "sess-1", Status: "idle"}},
-		{"ping event", sseEvent{Type: "ping", SessionID: "", Status: ""}},
+		{"other event type", makeSessionStatusEvent("sess-1", "idle")}, // wrong type below
+		{"output event", makeSessionStatusEvent("sess-1", "idle")},
+		{"ping event", `{"type":"ping","properties":{}}`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			atomic.StoreInt32(&called, 0)
-			data, _ := json.Marshal(tt.event)
-			tracker.processEvent("sb-1", string(data))
+			// For non-session.status types, build them directly
+			var data string
+			switch tt.name {
+			case "other event type":
+				data = `{"type":"session.created","properties":{"sessionID":"sess-1","status":{"type":"idle"}}}`
+			case "output event":
+				data = `{"type":"session.output","properties":{"sessionID":"sess-1","status":{"type":"idle"}}}`
+			case "ping event":
+				data = `{"type":"ping","properties":{}}`
+			}
+			tracker.processEvent("sb-1", data)
 			assert.Equal(t, int32(0), atomic.LoadInt32(&called))
 		})
 	}
@@ -387,12 +405,7 @@ func TestSSETracker_ProcessEvent_IgnoresBusyStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			atomic.StoreInt32(&called, 0)
-			data, _ := json.Marshal(sseEvent{
-				Type:      "session.status",
-				SessionID: "sess-1",
-				Status:    tt.status,
-			})
-			tracker.processEvent("sb-1", string(data))
+			tracker.processEvent("sb-1", makeSessionStatusEvent("sess-1", tt.status))
 			assert.Equal(t, int32(0), atomic.LoadInt32(&called))
 		})
 	}
@@ -453,12 +466,8 @@ func TestSSETracker_ProcessEvent_IgnoresIdleWithEmptySessionID(t *testing.T) {
 		atomic.AddInt32(&called, 1)
 	})
 
-	data, _ := json.Marshal(sseEvent{
-		Type:      "session.status",
-		SessionID: "",
-		Status:    "idle",
-	})
-	tracker.processEvent("sb-1", string(data))
+	// Empty sessionID — should not call idle callback
+	tracker.processEvent("sb-1", `{"type":"session.status","properties":{"sessionID":"","status":{"type":"idle"}}}`)
 	assert.Equal(t, int32(0), atomic.LoadInt32(&called))
 }
 
@@ -599,15 +608,15 @@ func TestSSETracker_Subscribe_ReceivesIdleEvent(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 
-		events := []sseEvent{
-			{Type: "session.status", SessionID: "sess-1", Status: "idle"},
-			{Type: "session.status", SessionID: "sess-2", Status: "busy"},
-			{Type: "session.output", SessionID: "sess-1", Status: ""},
-			{Type: "session.status", SessionID: "sess-3", Status: "idle"},
+		// Emit real opencode flat-format events
+		eventStrings := []string{
+			makeSessionStatusEvent("sess-1", "idle"),
+			makeSessionStatusEvent("sess-2", "busy"),
+			`{"type":"session.output","properties":{"sessionID":"sess-1"}}`,
+			makeSessionStatusEvent("sess-3", "idle"),
 		}
-		for _, evt := range events {
-			data, _ := json.Marshal(evt)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+		for _, evtStr := range eventStrings {
+			fmt.Fprintf(w, "data: %s\n\n", evtStr)
 			flusher.Flush()
 		}
 		// Block until client disconnects so the scanner sees EOF

@@ -978,8 +978,22 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			select {
 			case <-idleSignal:
-				evt := sseEvent{Type: "session.status", SessionID: "s1", Status: "idle"}
-				data, _ := json.Marshal(evt)
+				// Emit real opencode flat-format session.status event
+				type statusObj struct {
+					Type string `json:"type"`
+				}
+				type sessionStatusProps struct {
+					SessionID string    `json:"sessionID"`
+					Status    statusObj `json:"status"`
+				}
+				payload := struct {
+					Type       string             `json:"type"`
+					Properties sessionStatusProps `json:"properties"`
+				}{
+					Type:       "session.status",
+					Properties: sessionStatusProps{SessionID: "s1", Status: statusObj{Type: "idle"}},
+				}
+				data, _ := json.Marshal(payload)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 			case <-r.Context().Done():

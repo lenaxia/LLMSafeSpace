@@ -94,6 +94,19 @@ function makePartUpdatedEvent(sessionID: string, partType: string, text: string)
   } as unknown as WorkspaceStreamEvent;
 }
 
+function makePartDeltaEvent(sessionID: string, field: string, delta: string): WorkspaceStreamEvent {
+  return {
+    type: "opencode.event",
+    event_type: "message.part.delta",
+    data: {
+      payload: {
+        type: "message.part.delta",
+        properties: { sessionID, field, delta },
+      },
+    },
+  } as unknown as WorkspaceStreamEvent;
+}
+
 function makePartUpdatedEventSnakeCase(session_id: string, text: string): WorkspaceStreamEvent {
   return {
     type: "opencode.event",
@@ -216,14 +229,45 @@ describe("ChatPage SSE event handler", () => {
       });
     });
 
-    it("last part.updated event overwrites previous (not accumulated)", async () => {
+    it("last part.updated event overwrites previous (snapshot semantics)", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "First chunk"));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Second chunk"));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Third chunk"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "First"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Second"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Final text"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Third chunk");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Final text");
+      });
+    });
+  });
+
+  describe("opencode.event with message.part.delta (incremental streaming)", () => {
+    it("accumulates text deltas incrementally", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Hello"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " world"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "!"));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello world!");
+      });
+    });
+
+    it("ignores delta with non-text field", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "thinking..."));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+
+    it("ignores delta with wrong session ID", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartDeltaEvent("other-session", "text", "should be ignored"));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
       });
     });
   });
