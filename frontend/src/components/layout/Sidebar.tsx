@@ -75,6 +75,14 @@ export function Sidebar({ onNavigate }: Props) {
     },
   });
 
+  const suspendMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.suspend(wsId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
+    },
+  });
+
   const newSessionMutation = useMutation({
     mutationFn: (wsId: string) => workspacesApi.ensureSession(wsId),
     onSuccess: (data, wsId) => {
@@ -174,6 +182,8 @@ export function Sidebar({ onNavigate }: Props) {
                   deleteWsMutation.mutate(ws.id);
                 }
               }}
+              onSuspend={() => suspendMutation.mutate(ws.id)}
+              onResume={() => activateMutation.mutate(ws.id)}
               onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
               onDeleteSession={(sessionId) => {
                 if (window.confirm("Delete this session?")) {
@@ -230,6 +240,8 @@ interface WorkspaceGroupProps {
   onRenameCancel: () => void;
   onRenameConfirm: (name: string) => void;
   onDelete: () => void;
+  onSuspend: () => void;
+  onResume: () => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
@@ -252,6 +264,8 @@ function WorkspaceGroup({
   onRenameCancel,
   onRenameConfirm,
   onDelete,
+  onSuspend,
+  onResume,
   onRenameSession,
   onDeleteSession,
   renamingSession,
@@ -265,6 +279,8 @@ function WorkspaceGroup({
 
   const kebabItems: KebabMenuItem[] = [
     { label: "Copy new session link", onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspace.id}`) },
+    ...(isActive ? [{ label: "Suspend", onClick: onSuspend }] : []),
+    ...(isSuspended ? [{ label: "Resume", onClick: onResume }] : []),
     { label: "Rename", onClick: onRenameClick },
     { label: "Delete", onClick: onDelete, destructive: true },
   ];
