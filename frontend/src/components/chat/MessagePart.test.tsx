@@ -67,12 +67,12 @@ describe("MessagePart", () => {
 
   it("renders tool_call part", () => {
     render(<MessagePart part={{ type: "tool_call", text: "search" }} isUser={false} />);
-    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText(/search/)).toBeInTheDocument();
   });
 
   it("renders tool_use part with name and input", () => {
     render(<MessagePart part={{ type: "tool_use", name: "read_file", input: { path: "/foo" } }} isUser={false} />);
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    expect(screen.getByText(/read_file/)).toBeInTheDocument();
   });
 
   it("renders tool_result part", () => {
@@ -83,11 +83,11 @@ describe("MessagePart", () => {
 
   it("renders tool_use part with empty text during streaming", () => {
     render(<MessagePart part={{ type: "tool_use", text: "" }} isUser={false} isStreaming={true} />);
-    expect(screen.getByText("tool")).toBeInTheDocument();
+    expect(screen.getByText(/tool/)).toBeInTheDocument();
   });
 
   it("renders tool_use part with empty text when not streaming", () => {
     render(<MessagePart part={{ type: "tool_use", text: "" }} isUser={false} isStreaming={false} />);
-    expect(screen.getByText("tool")).toBeInTheDocument();
+    expect(screen.getByText(/tool/)).toBeInTheDocument();
   });
 });

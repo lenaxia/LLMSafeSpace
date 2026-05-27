@@ -18,7 +18,7 @@ import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
 import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
 
-type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string };
+type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
 
 export function ChatPage() {
@@ -181,17 +181,19 @@ export function ChatPage() {
         const title = (state?.title as string) || "";
         const displayText = title || toolName;
         const callID = (part.callID as string) || undefined;
+        const toolInput = state?.input;
+        const toolOutput = (state?.output as string) || undefined;
         setSseStreamParts((prev) => {
           // If this is an update to an existing tool call (same callID), update in place
           if (callID) {
             const existingIdx = prev.findIndex(p => p.type === "tool" && p.toolCallID === callID);
             if (existingIdx >= 0) {
               const updated = [...prev];
-              updated[existingIdx] = { type: "tool", text: displayText, toolState, toolCallID: callID };
+              updated[existingIdx] = { type: "tool", text: displayText, toolState, toolCallID: callID, toolInput, toolOutput };
               return updated;
             }
           }
-          return [...prev, { type: "tool", text: displayText, toolState, toolCallID: callID }];
+          return [...prev, { type: "tool", text: displayText, toolState, toolCallID: callID, toolInput, toolOutput }];
         });
         activePartTypeRef.current = null;
       }
@@ -257,6 +259,9 @@ export function ChatPage() {
             parts: streamedParts.map(p => ({
               type: p.type === "tool" ? "tool_use" as const : p.type,
               text: p.text,
+              ...(p.toolState && { toolState: p.toolState }),
+              ...(p.toolInput && { input: p.toolInput }),
+              ...(p.toolOutput && { toolOutput: p.toolOutput }),
             })),
           }
         : assistantMsg;
