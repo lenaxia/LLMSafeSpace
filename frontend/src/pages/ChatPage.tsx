@@ -18,6 +18,16 @@ import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
 import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
 
+type StreamPart = { type: "text" | "thinking" | "tool"; text: string };
+
+function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const item = arr[i];
+    if (item !== undefined && predicate(item)) return i;
+  }
+  return -1;
+}
+
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
@@ -94,10 +104,9 @@ export function ChatPage() {
         const expectedType = target === "reasoning" ? "thinking" : "text";
         setSseStreamParts((prev) => {
           if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          // Only append if the last part matches the expected type
-          if (last.type !== expectedType) return prev;
-          return [...prev.slice(0, -1), { ...last, text: last.text + delta }];
+          const last: StreamPart | undefined = prev[prev.length - 1];
+          if (!last || last.type !== expectedType) return prev;
+          return [...prev.slice(0, -1), { type: last.type, text: last.text + delta }];
         });
       }
       // "user-echo" and null: discard
@@ -112,12 +121,11 @@ export function ChatPage() {
         activePartTypeRef.current = "reasoning";
         const text = typeof part.text === "string" ? part.text : "";
         if (text) {
-          // Snapshot: update the last thinking part's text, or push new
           setSseStreamParts((prev) => {
-            const lastThinkingIdx = prev.findLastIndex(p => p.type === "thinking");
+            const lastThinkingIdx = findLastIndex(prev, (p: StreamPart) => p.type === "thinking");
             if (lastThinkingIdx >= 0) {
               const updated = [...prev];
-              updated[lastThinkingIdx] = { ...updated[lastThinkingIdx], text };
+              updated[lastThinkingIdx] = { type: "thinking", text };
               return updated;
             }
             return [...prev, { type: "thinking", text }];
@@ -135,10 +143,10 @@ export function ChatPage() {
           activePartTypeRef.current = "text";
           const stripped = text.slice(sentTextRef.current.length);
           setSseStreamParts((prev) => {
-            const lastTextIdx = prev.findLastIndex(p => p.type === "text");
+            const lastTextIdx = findLastIndex(prev, (p: StreamPart) => p.type === "text");
             if (lastTextIdx >= 0) {
               const updated = [...prev];
-              updated[lastTextIdx] = { ...updated[lastTextIdx], text: stripped };
+              updated[lastTextIdx] = { type: "text", text: stripped };
               return updated;
             }
             return [...prev, { type: "text", text: stripped }];
@@ -146,12 +154,11 @@ export function ChatPage() {
         } else {
           activePartTypeRef.current = "text";
           if (text) {
-            // Snapshot with content: update last text part or push new
             setSseStreamParts((prev) => {
-              const lastTextIdx = prev.findLastIndex(p => p.type === "text");
+              const lastTextIdx = findLastIndex(prev, (p: StreamPart) => p.type === "text");
               if (lastTextIdx >= 0) {
                 const updated = [...prev];
-                updated[lastTextIdx] = { ...updated[lastTextIdx], text };
+                updated[lastTextIdx] = { type: "text", text };
                 return updated;
               }
               return [...prev, { type: "text", text }];
@@ -164,7 +171,8 @@ export function ChatPage() {
       } else if (partType === "tool" || partType === "tool_use" || partType === "tool_call") {
         // Only push a tool entry if the last part isn't already a tool (avoid duplicates)
         setSseStreamParts((prev) => {
-          if (prev.length > 0 && prev[prev.length - 1].type === "tool") return prev;
+          const lastPart: StreamPart | undefined = prev[prev.length - 1];
+          if (lastPart && lastPart.type === "tool") return prev;
           return [...prev, { type: "tool", text: "" }];
         });
         activePartTypeRef.current = null;
