@@ -382,6 +382,10 @@ function WorkspaceSessionList({
     enabled: !!workspaceId,
   });
 
+  if (sessions?.length) {
+    console.log("[Sessions] first session raw:", JSON.stringify(sessions[0]));
+  }
+
   if (isSuspended) {
     return (
       <div className="ml-7 px-2 py-1 text-xs text-muted-foreground">
