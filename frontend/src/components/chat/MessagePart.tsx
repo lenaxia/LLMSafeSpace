@@ -8,6 +8,26 @@ import type { MessagePart as MessagePartType } from "../../api/types";
 
 const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
 
+function ToolInput({ input }: { input: unknown }) {
+  if (!input || typeof input !== "object") {
+    return <pre className="text-xs text-muted-foreground font-mono">{String(input)}</pre>;
+  }
+  const obj = input as Record<string, unknown>;
+  // For bash/shell: show command inline
+  if ("command" in obj && typeof obj.command === "string") {
+    return <code className="block text-xs font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1 whitespace-pre-wrap">$ {obj.command}</code>;
+  }
+  // For webfetch/read: show URL or path
+  if ("url" in obj && typeof obj.url === "string") {
+    return <code className="block text-xs font-mono text-muted-foreground truncate">{obj.url}</code>;
+  }
+  if ("path" in obj && typeof obj.path === "string" && Object.keys(obj).length <= 2) {
+    return <code className="block text-xs font-mono text-muted-foreground truncate">{obj.path}</code>;
+  }
+  // Fallback: compact JSON
+  return <pre className="text-xs text-muted-foreground font-mono whitespace-pre-wrap max-h-20 overflow-y-auto">{JSON.stringify(input, null, 2)}</pre>;
+}
+
 function ToolDiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   return (
     <Suspense fallback={<pre className="px-3 text-xs text-muted-foreground">Loading diff...</pre>}>
@@ -126,14 +146,19 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
           ) : (
             <>
               {part.input != null && (
-                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto px-3">
-                  {typeof part.input === "string" ? String(part.input) : JSON.stringify(part.input, null, 2)}
-                </pre>
+                <div className="px-3 py-1">
+                  <ToolInput input={part.input} />
+                </div>
               )}
               {part.toolOutput && (
-                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-y-auto border-t border-muted pt-1 mt-1 px-3">
-                  {part.toolOutput}
-                </pre>
+                <details className="border-t border-muted">
+                  <summary className="px-3 py-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                    Output ({part.toolOutput.length > 200 ? `${Math.ceil(part.toolOutput.length / 1024)}KB` : `${part.toolOutput.length} chars`})
+                  </summary>
+                  <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+                    {part.toolOutput}
+                  </pre>
+                </details>
               )}
             </>
           )}
