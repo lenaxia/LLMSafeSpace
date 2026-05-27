@@ -71,6 +71,8 @@ export function ChatPage() {
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
   useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
   const [sseStreamParts, setSseStreamParts] = useState<Array<{ type: "thinking" | "text" | "tool"; text: string }>>([]);
+  const sseStreamPartsRef = useRef<Array<{ type: "thinking" | "text" | "tool"; text: string }>>([]);
+  useEffect(() => { sseStreamPartsRef.current = sseStreamParts; }, [sseStreamParts]);
   // Store the text the user just sent so we can strip the user echo from
   // the SSE stream. Opencode echoes the user's message as the first
   // message.part.updated event(s) before the assistant response begins.
@@ -170,12 +172,14 @@ export function ChatPage() {
         }
       } else if (partType === "tool" || partType === "tool_use" || partType === "tool_call") {
         // Only push a tool entry if the last part isn't already a tool (avoid duplicates)
+        const toolName = (part.name as string) || (part.toolName as string) || "";
         setSseStreamParts((prev) => {
           const lastPart: StreamPart | undefined = prev[prev.length - 1];
           if (lastPart && lastPart.type === "tool") return prev;
-          return [...prev, { type: "tool", text: "" }];
+          return [...prev, { type: "tool", text: toolName }];
         });
         activePartTypeRef.current = null;
+        console.log("[SSE]", "tool part fields:", JSON.stringify(Object.keys(part)), "name:", part.name, "toolName:", part.toolName, "id:", part.id);
       }
       // step-start, step-finish: don't change routing or parts
 
@@ -227,7 +231,20 @@ export function ChatPage() {
     };
     setLocalMessages((prev) => [...prev, userMsg]);
     send(text, (assistantMsg) => {
-      setLocalMessages((prev) => [...prev, assistantMsg]);
+      // Prefer streaming parts (preserves thinking/tool structure) over
+      // history-only message which may strip them
+      const streamedParts = sseStreamPartsRef.current.filter(p => p.text || p.type === "tool");
+      const finalMsg: Message = streamedParts.length > 0
+        ? {
+            id: assistantMsg.id,
+            role: "assistant",
+            parts: streamedParts.map(p => ({
+              type: p.type === "tool" ? "tool_use" as const : p.type,
+              text: p.text,
+            })),
+          }
+        : assistantMsg;
+      setLocalMessages((prev) => [...prev, finalMsg]);
     });
   };
 
