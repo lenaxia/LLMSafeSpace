@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -139,6 +140,72 @@ func TestStreamEvents_SetsSSEHeaders(t *testing.T) {
 	assert.Equal(t, "text/event-stream", header.Get("Content-Type"))
 	assert.Equal(t, "no-cache", header.Get("Cache-Control"))
 	assert.Equal(t, "keep-alive", header.Get("Connection"))
+}
+
+func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
+	// Validate: opening /events triggers EnsureWatching on the SSE tracker
+	// so that pod events are available before the first write operation.
+	gin.SetMode(gin.TestMode)
+
+	trackerConnected := make(chan struct{}, 1)
+	sseBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/event" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// Signal that the SSE tracker connected
+			select {
+			case trackerConnected <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer sseBackend.Close()
+
+	transport := &redirectTransport{server: sseBackend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	fakeClientset := k8sfake.NewSimpleClientset()
+	k8sMock.On("Clientset").Return(fakeClientset)
+
+	secret := makePasswordSecret("ws-1", "test-pw")
+	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
+	).Maybe()
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
+	require.NoError(t, err)
+
+	// Wire the SSE tracker directly (same pattern as E2E test)
+	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
+	handler.sseTracker.SetPasswordGetter(handler.getPassword)
+	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
+	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
+	handler.broker = NewWorkspaceEventBroker()
+
+	// Open /events — NO prior write op, so EnsureWatching should be called here
+	cancel, body, _, _ := doStreamingRequest(newStreamEventsRouter(handler), "/api/v1/workspaces/ws-1/events")
+	defer cancel()
+	defer body.Close()
+
+	// Verify the SSE tracker connected to the pod backend
+	select {
+	case <-trackerConnected:
+		// success — EnsureWatching was triggered by StreamEvents
+	case <-time.After(3 * time.Second):
+		t.Fatal("SSE tracker did not connect to pod after /events was opened; EnsureWatching not called from StreamEvents")
+	}
 }
 
 func TestStreamEvents_PhaseEventDeliveredToClient(t *testing.T) {
