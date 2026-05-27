@@ -35,8 +35,7 @@ vi.mock("../components/chat/ChatView", () => ({
     return (
       <div
         data-testid="chat-view"
-        data-streamed-text={String(props.streamedDisplayText ?? "")}
-        data-streamed-thinking-text={String(props.streamedThinkingText ?? "")}
+        data-stream-parts={JSON.stringify(props.streamParts ?? [])}
         data-streaming={String(props.streaming ?? false)}
       >
         <textarea
@@ -80,6 +79,11 @@ function renderChat(qc: QueryClient, path: string) {
 
 function sendSSEEvent(event: WorkspaceStreamEvent) {
   act(() => { capturedSSEHandler?.(event); });
+}
+
+function getStreamParts(): Array<{ type: string; text: string }> {
+  const el = screen.getByTestId("chat-view");
+  return JSON.parse(el.getAttribute("data-stream-parts") || "[]");
 }
 
 function makePartUpdatedEvent(sessionID: string, partType: string, text: string): WorkspaceStreamEvent {
@@ -188,21 +192,24 @@ describe("ChatPage SSE event handler", () => {
   });
 
   describe("opencode.event with message.part.updated", () => {
-    it("sets sseStreamText for text part with matching session (camelCase sessionID)", async () => {
+    it("text part with matching session creates a text entry", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Hello streaming!"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello streaming!");
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(1);
+        expect(parts[0]).toEqual({ type: "text", text: "Hello streaming!" });
       });
     });
 
-    it("sets sseStreamText for text part with snake_case session_id", async () => {
+    it("text part with snake_case session_id works", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent(makePartUpdatedEventSnakeCase("sess-1", "snake case works"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("snake case works");
+        const parts = getStreamParts();
+        expect(parts[0]).toEqual({ type: "text", text: "snake case works" });
       });
     });
 
@@ -211,61 +218,52 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent(makePartUpdatedEvent("other-session", "text", "Should not appear"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
 
-    it("ignores non-text parts", async () => {
-      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
-      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "thinking", "reasoning content"));
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
-      });
-    });
-
-    it("last part.updated event overwrites previous (snapshot semantics)", async () => {
+    it("last text snapshot overwrites previous text in same part", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "First"));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Second"));
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Final text"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Final text");
+        const parts = getStreamParts();
+        // Second text part.updated with content updates the existing text part
+        expect(parts[parts.length - 1].text).toBe("Final text");
       });
     });
   });
 
-  describe("opencode.event with message.part.delta (incremental streaming)", () => {
+  describe("opencode.event with message.part.delta", () => {
     it("accumulates text deltas incrementally", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      // A text part.updated must precede deltas to activate text routing
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Hello"));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", " world"));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "!"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Hello world!");
+        expect(getStreamParts()[0].text).toBe("Hello world!");
       });
     });
 
-    it("ignores delta with non-text field", async () => {
+    it("discards deltas without preceding part.updated", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-      // Without a preceding part.updated, deltas are discarded (activePartType is null)
-      sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "thinking..."));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "orphan"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
 
     it("ignores delta with wrong session ID", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent(makePartDeltaEvent("other-session", "text", "should be ignored"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()[0].text).toBe("");
       });
     });
   });
@@ -276,7 +274,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent({ type: "opencode.event", event_type: "message.part.updated", data: { wrong: "structure" } } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
 
@@ -285,7 +283,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent({ type: "opencode.event", event_type: "message.part.updated", data: { payload: { type: "message.part.updated" } } } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
 
@@ -294,7 +292,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
       sendSSEEvent({ type: "opencode.event", event_type: "message.part.updated", data: null } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
   });
@@ -315,7 +313,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Nested format works!");
+        expect(getStreamParts()[0].text).toBe("Nested format works!");
       });
     });
 
@@ -336,7 +334,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("nested delta");
+        expect(getStreamParts()[0].text).toBe("nested delta");
       });
     });
   });
@@ -359,13 +357,13 @@ describe("ChatPage SSE event handler", () => {
       // Simulate opencode echoing the user's message back as a part.updated
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "my question"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
 
       // Now the real assistant response arrives — should be accepted
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Here is the answer!"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is the answer!");
+        expect(getStreamParts().find(p => p.type === "text")?.text).toBe("Here is the answer!");
       });
     });
 
@@ -385,7 +383,7 @@ describe("ChatPage SSE event handler", () => {
       // Opencode echoes user text + assistant response in one snapshot
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "helloThe answer is 42"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("The answer is 42");
+        expect(getStreamParts().find(p => p.type === "text")?.text).toBe("The answer is 42");
       });
     });
 
@@ -415,7 +413,7 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "response text"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("response text");
+        expect(getStreamParts().find(p => p.type === "text")?.text).toBe("response text");
       });
     });
   });
@@ -429,7 +427,7 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "Hmm "));
       sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "let me think"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Hmm let me think");
+        expect(getStreamParts().find(p => p.type === "thinking")?.text).toBe("Hmm let me think");
       });
     });
 
@@ -439,7 +437,7 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent(makePartUpdatedEvent("sess-1", "thinking", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "thinking", "I wonder..."));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("I wonder...");
+        expect(getStreamParts().find(p => p.type === "thinking")?.text).toBe("I wonder...");
       });
     });
 
@@ -455,7 +453,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Deep thoughts");
+        expect(getStreamParts().find(p => p.type === "thinking")?.text).toBe("Deep thoughts");
       });
     });
 
@@ -471,7 +469,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Chain of thought");
+        expect(getStreamParts().find(p => p.type === "thinking")?.text).toBe("Chain of thought");
       });
     });
 
@@ -492,7 +490,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Old thinking");
+        expect(getStreamParts().find(p => p.type === "thinking")?.text).toBe("Old thinking");
       });
 
       await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
@@ -501,7 +499,7 @@ describe("ChatPage SSE event handler", () => {
       await user.keyboard("{Enter}");
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("");
+        expect(getStreamParts().filter(p => p.type === "thinking")).toHaveLength(0);
       });
     });
   });
@@ -518,7 +516,7 @@ describe("ChatPage SSE event handler", () => {
       // Set some streaming text via SSE
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "Old stream text"));
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Old stream text");
+        expect(getStreamParts().find(p => p.type === "text")?.text).toBe("Old stream text");
       });
 
       // Submit a new message — should clear sseStreamText
@@ -528,123 +526,77 @@ describe("ChatPage SSE event handler", () => {
       await user.keyboard("{Enter}");
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(getStreamParts()).toHaveLength(0);
       });
     });
   });
 
-  describe("state-machine part routing (activePartType tracking)", () => {
-    it("routes field:text deltas to thinking buffer when preceded by reasoning part.updated", async () => {
+  describe("streaming parts array (ordered accumulation)", () => {
+    it("single thinking block followed by text produces two parts", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
 
-      // reasoning part.updated signals thinking block starts
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
-      // deltas arrive with field:text (this is what opencode actually sends)
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "The user"));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " is asking"));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("The user is asking");
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
-      });
-    });
-
-    it("routes field:text deltas to response buffer when preceded by text part.updated", async () => {
-      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
-      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-
-      // First a reasoning block
       sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thinking content"));
-
-      // Then text part.updated signals response starts
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Here is"));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " the answer"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "response content"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("thinking content");
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is the answer");
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(2);
+        expect(parts[0]).toEqual({ type: "thinking", text: "thinking content" });
+        expect(parts[1]).toEqual({ type: "text", text: "response content" });
       });
     });
 
-    it("user echo part.updated suppresses subsequent deltas until next part.updated", async () => {
-      const user = userEvent.setup();
-      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
+    it("multiple thinking blocks produce separate entries (not overwritten)", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
 
-      // User sends a message
-      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
-      await user.click(document.querySelector("textarea")!);
-      await user.type(document.querySelector("textarea")!, "hello world");
-      await user.keyboard("{Enter}");
-
-      // Opencode echoes user text as first text part.updated
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "hello world"));
-      // Some deltas might follow the echo (should be discarded)
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "echo garbage"));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("");
-      });
-
-      // Now reasoning starts — should route to thinking
+      // First thinking block
       sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Let me think"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thought 1"));
 
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Let me think");
-      });
-    });
-
-    it("multi-step: second reasoning block appends to thinking buffer", async () => {
-      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
-      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-
-      // Step 1: reasoning
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "First thought. "));
-
-      // Step 1: response
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Response text"));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
-
-      // Step 2: reasoning
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Second thought."));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("First thought. Second thought.");
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Response text");
-      });
-    });
-
-    it("tool part.updated causes subsequent deltas to be discarded", async () => {
-      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
-      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
-
-      // Some response text first
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Before tool"));
-
-      // Tool part arrives
+      // Tool interrupts
       sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "tool output junk"));
+
+      // Second thinking block
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thought 2"));
+
+      // Response
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "answer"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Before tool");
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(4);
+        expect(parts[0]).toEqual({ type: "thinking", text: "thought 1" });
+        expect(parts[1]).toEqual({ type: "tool", text: "" });
+        expect(parts[2]).toEqual({ type: "thinking", text: "thought 2" });
+        expect(parts[3]).toEqual({ type: "text", text: "answer" });
       });
     });
 
-    it("full realistic sequence: echo → step-start → reasoning → deltas → text → deltas → step-finish", async () => {
+    it("tool events produce tool entries in the array", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "let me search"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        expect(parts[0]).toEqual({ type: "thinking", text: "let me search" });
+        // Multiple tool events should not create duplicate entries
+        expect(parts.filter(p => p.type === "tool")).toHaveLength(1);
+      });
+    });
+
+    it("full realistic sequence: echo → thinking → tools → thinking → tools → text", async () => {
       const user = userEvent.setup();
       (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
       (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -655,23 +607,110 @@ describe("ChatPage SSE event handler", () => {
       // User sends
       await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
       await user.click(document.querySelector("textarea")!);
-      await user.type(document.querySelector("textarea")!, "test query");
+      await user.type(document.querySelector("textarea")!, "fetch repo info");
       await user.keyboard("{Enter}");
 
-      // Full opencode sequence from debug output
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "test query")); // user echo
+      // Echo
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "fetch repo info"));
+      // Step 1
       sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
       sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "The user wants "));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "me to think."));
-      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "")); // response starts
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Here is "));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "my answer."));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "I'll use gh CLI"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+      // Step 2
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Let me try curl"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+      // Step 3: response
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Got the data"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Here is the repo info"));
       sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
 
       await waitFor(() => {
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("The user wants me to think.");
-        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is my answer.");
+        const parts = getStreamParts();
+        // Should have: thinking, tool, thinking, tool, thinking, text
+        expect(parts.filter(p => p.type === "thinking")).toHaveLength(3);
+        expect(parts.filter(p => p.type === "tool")).toHaveLength(2);
+        expect(parts.filter(p => p.type === "text")).toHaveLength(1);
+        expect(parts[parts.length - 1]).toEqual({ type: "text", text: "Here is the repo info" });
+      });
+    });
+
+    it("deltas append to the last part in the array", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Hello"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " world"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "!"));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(1);
+        expect(parts[0]).toEqual({ type: "text", text: "Hello world!" });
+      });
+    });
+
+    it("handleSend clears the parts array", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "old content"));
+
+      await waitFor(() => expect(getStreamParts()).toHaveLength(1));
+
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "new msg");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => expect(getStreamParts()).toHaveLength(0));
+    });
+
+    it("user echo is suppressed — no parts created", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "hello");
+      await user.keyboard("{Enter}");
+
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "hello"));
+
+      await waitFor(() => expect(getStreamParts()).toHaveLength(0));
+    });
+
+    it("reasoning snapshot updates existing thinking part text", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "partial"));
+      // Snapshot arrives with full text
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "full thinking text"));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(1);
+        expect(parts[0]).toEqual({ type: "thinking", text: "full thinking text" });
       });
     });
   });
@@ -704,7 +743,7 @@ describe("ChatPage SSE event handler", () => {
     await waitFor(() => {
       const chatView = screen.queryByTestId("chat-view");
       if (chatView) {
-        expect(chatView.getAttribute("data-streamed-text")).toBe("");
+        expect(JSON.parse(chatView.getAttribute("data-stream-parts") || "[]")).toHaveLength(0);
       }
     });
   });
