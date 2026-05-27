@@ -69,7 +69,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     );
   }
 
-  if ((part.type === "tool_use" || part.type === "tool_call") && (part.text || part.name || isStreaming)) {
+  if (part.type === "tool_use" || part.type === "tool_call") {
     const toolName = part.name ?? (part.text ? part.text.split("(")[0] : undefined) ?? "tool";
     const toolArgs = part.input ?? (part.text ? part.text.substring(part.text.indexOf("(")) : "");
     return (
