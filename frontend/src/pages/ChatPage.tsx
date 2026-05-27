@@ -67,10 +67,12 @@ export function ChatPage() {
   // Auto-rename workspace from first session title if name is still auto-generated
   const hasAutoRenamedRef = useRef(false);
   useEffect(() => {
+    console.log("[Workspace] sessionTitle:", sessionTitle, "workspace:", workspace?.name, "pattern match:", workspace?.name ? /^[a-z]+-[a-z]+-\d+$/.test(workspace.name) : "n/a");
     if (!sessionTitle || !workspace || !workspaceId || hasAutoRenamedRef.current) return;
     // Detect auto-generated name: adjective-noun-number pattern
     if (/^[a-z]+-[a-z]+-\d+$/.test(workspace.name)) {
       hasAutoRenamedRef.current = true;
+      console.log("[Workspace] auto-renaming to:", sessionTitle);
       workspacesApi.renameWorkspace(workspaceId, sessionTitle).then(() => {
         queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       });
@@ -109,7 +111,6 @@ export function ChatPage() {
       if (!delta) return;
 
       const target = activePartTypeRef.current;
-      console.log("[SSE]", "delta", "route:", target, "text:", delta.slice(0, 60));
       if (target === "reasoning" || target === "text") {
         const expectedType = target === "reasoning" ? "thinking" : "text";
         setSseStreamParts((prev) => {
@@ -216,7 +217,6 @@ export function ChatPage() {
       }
       // step-start, step-finish: don't change routing or parts
 
-      console.log("[SSE]", "part.updated", "type:", partType, "route:", prevRoute, "→", activePartTypeRef.current, "text:", typeof part.text === "string" ? part.text.slice(0, 40) : "");
     }
   }, []);
 
