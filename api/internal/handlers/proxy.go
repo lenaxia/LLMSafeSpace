@@ -234,6 +234,13 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	ch := h.broker.Subscribe(workspaceID)
 	defer h.broker.Unsubscribe(workspaceID, ch)
 
+	// Start watching the workspace pod as soon as a browser subscribes so that
+	// events are available immediately when the user sends a message, rather than
+	// waiting for the first write operation to trigger EnsureWatching.
+	if h.sseTracker != nil {
+		h.sseTracker.EnsureWatching(workspaceID)
+	}
+
 	ctx := c.Request.Context()
 	for {
 		select {
