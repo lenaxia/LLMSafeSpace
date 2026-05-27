@@ -240,6 +240,8 @@ describe("ChatPage SSE event handler", () => {
     it("accumulates text deltas incrementally", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      // A text part.updated must precede deltas to activate text routing
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Hello"));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", " world"));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "!"));
@@ -251,6 +253,7 @@ describe("ChatPage SSE event handler", () => {
     it("ignores delta with non-text field", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      // Without a preceding part.updated, deltas are discarded (activePartType is null)
       sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "thinking..."));
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
@@ -319,6 +322,8 @@ describe("ChatPage SSE event handler", () => {
     it("unwraps nested payload and processes message.part.delta", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      // Activate text routing first
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent({
         type: "opencode.event",
         event_type: "message.part.delta",
@@ -397,10 +402,18 @@ describe("ChatPage SSE event handler", () => {
       await user.type(document.querySelector("textarea")!, "hi");
       await user.keyboard("{Enter}");
 
-      // Deltas spell out "hi" first (user echo), then the assistant response
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "h"));
-      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "i"));
+      // User echo arrives as part.updated — suppresses subsequent deltas
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "hi"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "echo junk"));
+
+      // Then reasoning starts, routing switches
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thinking"));
+
+      // Then text response starts
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "response text"));
+
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("response text");
       });
@@ -411,6 +424,8 @@ describe("ChatPage SSE event handler", () => {
     it("accumulates thinking deltas with field=reasoning", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      // A reasoning part.updated must precede deltas to activate thinking routing
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "Hmm "));
       sendSSEEvent(makePartDeltaEvent("sess-1", "reasoning", "let me think"));
       await waitFor(() => {
@@ -421,6 +436,7 @@ describe("ChatPage SSE event handler", () => {
     it("accumulates thinking deltas with field=thinking", async () => {
       renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "thinking", ""));
       sendSSEEvent(makePartDeltaEvent("sess-1", "thinking", "I wonder..."));
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("I wonder...");
@@ -513,6 +529,149 @@ describe("ChatPage SSE event handler", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+  });
+
+  describe("state-machine part routing (activePartType tracking)", () => {
+    it("routes field:text deltas to thinking buffer when preceded by reasoning part.updated", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // reasoning part.updated signals thinking block starts
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      // deltas arrive with field:text (this is what opencode actually sends)
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "The user"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " is asking"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("The user is asking");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+      });
+    });
+
+    it("routes field:text deltas to response buffer when preceded by text part.updated", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // First a reasoning block
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thinking content"));
+
+      // Then text part.updated signals response starts
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Here is"));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", " the answer"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("thinking content");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is the answer");
+      });
+    });
+
+    it("user echo part.updated suppresses subsequent deltas until next part.updated", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // User sends a message
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "hello world");
+      await user.keyboard("{Enter}");
+
+      // Opencode echoes user text as first text part.updated
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "hello world"));
+      // Some deltas might follow the echo (should be discarded)
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "echo garbage"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("");
+      });
+
+      // Now reasoning starts — should route to thinking
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Let me think"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("Let me think");
+      });
+    });
+
+    it("multi-step: second reasoning block appends to thinking buffer", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Step 1: reasoning
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "First thought. "));
+
+      // Step 1: response
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Response text"));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+
+      // Step 2: reasoning
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Second thought."));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("First thought. Second thought.");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Response text");
+      });
+    });
+
+    it("tool part.updated causes subsequent deltas to be discarded", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Some response text first
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Before tool"));
+
+      // Tool part arrives
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "tool output junk"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Before tool");
+      });
+    });
+
+    it("full realistic sequence: echo → step-start → reasoning → deltas → text → deltas → step-finish", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // User sends
+      await waitFor(() => expect(document.querySelector("textarea")).not.toBeNull());
+      await user.click(document.querySelector("textarea")!);
+      await user.type(document.querySelector("textarea")!, "test query");
+      await user.keyboard("{Enter}");
+
+      // Full opencode sequence from debug output
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "test query")); // user echo
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-start", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "The user wants "));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "me to think."));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "text", "")); // response starts
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "Here is "));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "my answer."));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "step-finish", ""));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-thinking-text")).toBe("The user wants me to think.");
+        expect(screen.getByTestId("chat-view").getAttribute("data-streamed-text")).toBe("Here is my answer.");
       });
     });
   });

@@ -64,6 +64,11 @@ export function ChatPage() {
   // the SSE stream. Opencode echoes the user's message as the first
   // message.part.updated event(s) before the assistant response begins.
   const sentTextRef = useRef<string>("");
+  // Tracks which buffer to route message.part.delta events to.
+  // Opencode sends all deltas with field:"text" regardless of whether they
+  // are thinking or response content. The only signal is the preceding
+  // message.part.updated partType.
+  const activePartTypeRef = useRef<"user-echo" | "reasoning" | "text" | null>(null);
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
     let payload = event.data as Record<string, unknown> | undefined;
@@ -81,41 +86,53 @@ export function ChatPage() {
     const eventSessionId = (props.sessionID as string) || (props.session_id as string);
     if (eventSessionId && eventSessionId !== currentSessionId) return;
 
-    if (payload.type === "message.part.delta" || payload.type === "message.part.updated") {
-      const part = props.part as Record<string, unknown> | undefined;
-      console.log("[SSE DEBUG]", payload.type, "partType:", part?.type, "field:", props.field, "text:", typeof part?.text === "string" ? part.text.slice(0, 80) : props.delta);
-    }
-
     if (payload.type === "message.part.delta") {
       const delta = props.delta as string | undefined;
-      const field = props.field as string | undefined;
       if (!delta) return;
-      if (field === "text") {
-        setSseStreamText((prev) => {
-          const next = prev + delta;
-          if (sentTextRef.current && next === sentTextRef.current) return "";
-          if (sentTextRef.current && next.startsWith(sentTextRef.current)) {
-            return next.slice(sentTextRef.current.length);
-          }
-          return next;
-        });
-      } else if (field === "reasoning" || field === "thinking") {
+
+      // Route delta based on the active part type set by the last part.updated
+      const target = activePartTypeRef.current;
+      console.log("[SSE]", "delta", "route:", target, "text:", delta.slice(0, 60));
+      if (target === "reasoning") {
         setSseThinkingText((prev) => prev + delta);
+      } else if (target === "text") {
+        setSseStreamText((prev) => prev + delta);
       }
+      // "user-echo" and null: discard
     } else if (payload.type === "message.part.updated") {
       const part = props.part as Record<string, unknown> | undefined;
       if (!part) return;
 
-      if (part.type === "text" && typeof part.text === "string" && part.text) {
-        let text = part.text;
-        if (sentTextRef.current && text === sentTextRef.current) return;
-        if (sentTextRef.current && text.startsWith(sentTextRef.current)) {
-          text = text.slice(sentTextRef.current.length);
+      const partType = part.type as string | undefined;
+      const prevRoute = activePartTypeRef.current;
+
+      if (partType === "reasoning" || partType === "thinking") {
+        activePartTypeRef.current = "reasoning";
+        // If snapshot has text, set it (overwrites accumulated deltas)
+        if (typeof part.text === "string" && part.text) {
+          setSseThinkingText(part.text);
         }
-        if (text) setSseStreamText(text);
-      } else if ((part.type === "reasoning" || part.type === "thinking") && typeof part.text === "string" && part.text) {
-        setSseThinkingText(part.text);
+      } else if (partType === "text") {
+        const text = typeof part.text === "string" ? part.text : "";
+        // Detect user echo: first text part.updated matching sent text
+        if (sentTextRef.current && text === sentTextRef.current) {
+          activePartTypeRef.current = "user-echo";
+        } else if (sentTextRef.current && text.startsWith(sentTextRef.current)) {
+          // Echo prefix case: strip and switch to text mode
+          activePartTypeRef.current = "text";
+          const stripped = text.slice(sentTextRef.current.length);
+          if (stripped) setSseStreamText(stripped);
+        } else {
+          activePartTypeRef.current = "text";
+          // Snapshot with content sets the text directly
+          if (text) setSseStreamText(text);
+        }
+      } else if (partType === "tool" || partType === "tool_use" || partType === "tool_call") {
+        activePartTypeRef.current = null;
       }
+      // step-start, step-finish, and other types: don't change routing
+
+      console.log("[SSE]", "part.updated", "type:", partType, "route:", prevRoute, "→", activePartTypeRef.current, "text:", typeof part.text === "string" ? part.text.slice(0, 40) : "");
     }
   }, []);
 
@@ -156,6 +173,7 @@ export function ChatPage() {
     setSseStreamText("");
     setSseThinkingText("");
     sentTextRef.current = text;
+    activePartTypeRef.current = null;
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
