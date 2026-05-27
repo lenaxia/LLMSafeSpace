@@ -89,9 +89,12 @@ export function ChatPage() {
       const target = activePartTypeRef.current;
       console.log("[SSE]", "delta", "route:", target, "text:", delta.slice(0, 60));
       if (target === "reasoning" || target === "text") {
+        const expectedType = target === "reasoning" ? "thinking" : "text";
         setSseStreamParts((prev) => {
           if (prev.length === 0) return prev;
           const last = prev[prev.length - 1];
+          // Only append if the last part matches the expected type
+          if (last.type !== expectedType) return prev;
           return [...prev.slice(0, -1), { ...last, text: last.text + delta }];
         });
       }

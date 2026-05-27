@@ -713,6 +713,50 @@ describe("ChatPage SSE event handler", () => {
         expect(parts[0]).toEqual({ type: "thinking", text: "full thinking text" });
       });
     });
+
+    it("reasoning snapshot after tool events updates the correct thinking part", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Thinking block with deltas
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "partial thought"));
+      // Tools arrive
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      // Reasoning snapshot arrives (after tools, updates the thinking part)
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "complete thought from snapshot"));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        expect(parts).toHaveLength(2); // thinking + tool
+        expect(parts[0]).toEqual({ type: "thinking", text: "complete thought from snapshot" });
+        expect(parts[1]).toEqual({ type: "tool", text: "" });
+      });
+    });
+
+    it("deltas are discarded if last part type doesn't match active route", async () => {
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Thinking block
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", ""));
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "thought"));
+      // Tool arrives (last part is now tool)
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "tool", ""));
+      // Reasoning snapshot sets activePartType back to "reasoning"
+      sendSSEEvent(makePartUpdatedEvent("sess-1", "reasoning", "thought snapshot"));
+      // A stray delta arrives — last part is tool, not thinking, so discard
+      sendSSEEvent(makePartDeltaEvent("sess-1", "text", "SHOULD NOT APPEAR"));
+
+      await waitFor(() => {
+        const parts = getStreamParts();
+        expect(parts[0].text).toBe("thought snapshot");
+        expect(parts[1]).toEqual({ type: "tool", text: "" });
+        // No part should contain the stray delta
+        expect(parts.every(p => !p.text.includes("SHOULD NOT APPEAR"))).toBe(true);
+      });
+    });
   });
 
   describe("unknown events", () => {
