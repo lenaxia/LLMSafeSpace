@@ -230,7 +230,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => {
         const parts = getStreamParts();
         // Second text part.updated with content updates the existing text part
-        expect(parts[parts.length - 1].text).toBe("Final text");
+        expect(parts[parts.length - 1]!.text).toBe("Final text");
       });
     });
   });
@@ -244,7 +244,7 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", " world"));
       sendSSEEvent(makePartDeltaEvent("sess-1", "text", "!"));
       await waitFor(() => {
-        expect(getStreamParts()[0].text).toBe("Hello world!");
+        expect(getStreamParts()[0]!.text).toBe("Hello world!");
       });
     });
 
@@ -263,7 +263,7 @@ describe("ChatPage SSE event handler", () => {
       sendSSEEvent(makePartUpdatedEvent("sess-1", "text", ""));
       sendSSEEvent(makePartDeltaEvent("other-session", "text", "should be ignored"));
       await waitFor(() => {
-        expect(getStreamParts()[0].text).toBe("");
+        expect(getStreamParts()[0]!.text).toBe("");
       });
     });
   });
@@ -313,7 +313,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(getStreamParts()[0].text).toBe("Nested format works!");
+        expect(getStreamParts()[0]!.text).toBe("Nested format works!");
       });
     });
 
@@ -334,7 +334,7 @@ describe("ChatPage SSE event handler", () => {
         },
       } as unknown as WorkspaceStreamEvent);
       await waitFor(() => {
-        expect(getStreamParts()[0].text).toBe("nested delta");
+        expect(getStreamParts()[0]!.text).toBe("nested delta");
       });
     });
   });
@@ -751,7 +751,7 @@ describe("ChatPage SSE event handler", () => {
 
       await waitFor(() => {
         const parts = getStreamParts();
-        expect(parts[0].text).toBe("thought snapshot");
+        expect(parts[0]!.text).toBe("thought snapshot");
         expect(parts[1]).toEqual({ type: "tool", text: "" });
         // No part should contain the stray delta
         expect(parts.every(p => !p.text.includes("SHOULD NOT APPEAR"))).toBe(true);
