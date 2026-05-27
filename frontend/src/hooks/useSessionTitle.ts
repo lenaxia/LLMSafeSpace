@@ -32,10 +32,15 @@ export function useSessionTitle(
   });
 
   // Re-fetch when streaming ends — opencode generates the title after the first exchange.
+  // Retry after a delay since title generation is async.
   useEffect(() => {
     if (prevStreaming.current && !streaming && workspaceId && sessionId && active) {
       console.log("[SessionTitle] streaming ended, refetching title for", sessionId);
+      // First attempt immediately
       refetch();
+      // Retry after 2s in case title wasn't ready
+      const timer = setTimeout(() => refetch(), 2000);
+      return () => clearTimeout(timer);
     }
     prevStreaming.current = streaming;
   }, [streaming, workspaceId, sessionId, active, refetch]);
