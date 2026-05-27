@@ -20,13 +20,6 @@ import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types"
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string };
 
-function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    const item = arr[i];
-    if (item !== undefined && predicate(item)) return i;
-  }
-  return -1;
-}
 
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
@@ -79,6 +72,8 @@ export function ChatPage() {
   const sentTextRef = useRef<string>("");
   // Tracks which buffer to route message.part.delta events to.
   const activePartTypeRef = useRef<"user-echo" | "reasoning" | "text" | null>(null);
+  const currentThinkingIdxRef = useRef<number>(-1);
+  const currentTextIdxRef = useRef<number>(-1);
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
     let payload = event.data as Record<string, unknown> | undefined;
@@ -123,18 +118,23 @@ export function ChatPage() {
         activePartTypeRef.current = "reasoning";
         const text = typeof part.text === "string" ? part.text : "";
         if (text) {
+          // Snapshot: update the current thinking block by tracked index
+          const idx = currentThinkingIdxRef.current;
           setSseStreamParts((prev) => {
-            const lastThinkingIdx = findLastIndex(prev, (p: StreamPart) => p.type === "thinking");
-            if (lastThinkingIdx >= 0) {
+            if (idx >= 0 && idx < prev.length && prev[idx].type === "thinking") {
               const updated = [...prev];
-              updated[lastThinkingIdx] = { type: "thinking", text };
+              updated[idx] = { type: "thinking", text };
               return updated;
             }
+            // Fallback: append if no tracked block
             return [...prev, { type: "thinking", text }];
           });
         } else {
-          // Empty text = new thinking block starting
-          setSseStreamParts((prev) => [...prev, { type: "thinking", text: "" }]);
+          // Empty text = new thinking block starting; track its index
+          setSseStreamParts((prev) => {
+            currentThinkingIdxRef.current = prev.length;
+            return [...prev, { type: "thinking", text: "" }];
+          });
         }
       } else if (partType === "text") {
         const text = typeof part.text === "string" ? part.text : "";
@@ -144,11 +144,11 @@ export function ChatPage() {
         } else if (sentTextRef.current && text.startsWith(sentTextRef.current)) {
           activePartTypeRef.current = "text";
           const stripped = text.slice(sentTextRef.current.length);
+          const idx = currentTextIdxRef.current;
           setSseStreamParts((prev) => {
-            const lastTextIdx = findLastIndex(prev, (p: StreamPart) => p.type === "text");
-            if (lastTextIdx >= 0) {
+            if (idx >= 0 && idx < prev.length && prev[idx].type === "text") {
               const updated = [...prev];
-              updated[lastTextIdx] = { type: "text", text: stripped };
+              updated[idx] = { type: "text", text: stripped };
               return updated;
             }
             return [...prev, { type: "text", text: stripped }];
@@ -156,28 +156,26 @@ export function ChatPage() {
         } else {
           activePartTypeRef.current = "text";
           if (text) {
+            const idx = currentTextIdxRef.current;
             setSseStreamParts((prev) => {
-              const lastTextIdx = findLastIndex(prev, (p: StreamPart) => p.type === "text");
-              if (lastTextIdx >= 0) {
+              if (idx >= 0 && idx < prev.length && prev[idx].type === "text") {
                 const updated = [...prev];
-                updated[lastTextIdx] = { type: "text", text };
+                updated[idx] = { type: "text", text };
                 return updated;
               }
               return [...prev, { type: "text", text }];
             });
           } else {
-            // Empty = new text block starting
-            setSseStreamParts((prev) => [...prev, { type: "text", text: "" }]);
+            // Empty = new text block starting; track its index
+            setSseStreamParts((prev) => {
+              currentTextIdxRef.current = prev.length;
+              return [...prev, { type: "text", text: "" }];
+            });
           }
         }
       } else if (partType === "tool" || partType === "tool_use" || partType === "tool_call") {
-        // Only push a tool entry if the last part isn't already a tool (avoid duplicates)
         const toolName = (part.name as string) || (part.toolName as string) || "";
-        setSseStreamParts((prev) => {
-          const lastPart: StreamPart | undefined = prev[prev.length - 1];
-          if (lastPart && lastPart.type === "tool") return prev;
-          return [...prev, { type: "tool", text: toolName }];
-        });
+        setSseStreamParts((prev) => [...prev, { type: "tool", text: toolName }]);
         activePartTypeRef.current = null;
         console.log("[SSE]", "tool part fields:", JSON.stringify(Object.keys(part)), "name:", part.name, "toolName:", part.toolName, "id:", part.id);
       }
@@ -224,6 +222,8 @@ export function ChatPage() {
     setSseStreamParts([]);
     sentTextRef.current = text;
     activePartTypeRef.current = null;
+    currentThinkingIdxRef.current = -1;
+    currentTextIdxRef.current = -1;
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
