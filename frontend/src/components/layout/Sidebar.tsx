@@ -326,7 +326,7 @@ function WorkspaceGroup({
             </button>
           )}
           <div className="mr-1">
-            <KebabMenu items={kebabItems} />
+            <KebabMenu items={kebabItems} align="left" />
           </div>
         </div>
       )}
