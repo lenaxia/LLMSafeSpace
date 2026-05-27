@@ -26,14 +26,18 @@ export function ChatView({ messages, streaming, streamedDisplayText, streamedThi
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <MessageList messages={messages} streaming={streaming} />
-        {streaming && hasStreamedContent && (
-          <div className="px-4">
-            <MessageBubble
-              message={{ id: "streaming", role: "assistant", parts: streamedParts }}
-            />
-          </div>
-        )}
+        <MessageList
+          messages={messages}
+          streaming={streaming}
+          streamingBubble={
+            streaming && hasStreamedContent ? (
+              <MessageBubble
+                message={{ id: "streaming", role: "assistant", parts: streamedParts }}
+                isStreaming
+              />
+            ) : undefined
+          }
+        />
         {streaming && <StreamingIndicator />}
       </div>
 

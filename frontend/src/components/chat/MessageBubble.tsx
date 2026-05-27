@@ -4,9 +4,10 @@ import { MessagePart } from "./MessagePart";
 
 interface Props {
   message: Message;
+  isStreaming?: boolean;
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, isStreaming }: Props) {
   const isUser = message.role === "user";
 
   return (
@@ -20,7 +21,7 @@ export function MessageBubble({ message }: Props) {
         )}
       >
         {message.parts.map((part, i) => (
-          <MessagePart key={i} part={part} isUser={isUser} />
+          <MessagePart key={i} part={part} isUser={isUser} isStreaming={isStreaming} />
         ))}
       </div>
     </div>

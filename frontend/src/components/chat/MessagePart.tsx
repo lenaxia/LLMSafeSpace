@@ -7,9 +7,10 @@ import { cn } from "../../lib/utils";
 interface Props {
   part: MessagePartType;
   isUser: boolean;
+  isStreaming?: boolean;
 }
 
-export function MessagePart({ part, isUser }: Props) {
+export function MessagePart({ part, isUser, isStreaming }: Props) {
   if (part.type === "text" && part.text) {
     if (isUser) {
       return <p className="whitespace-pre-wrap text-sm">{part.text}</p>;
@@ -23,17 +24,34 @@ export function MessagePart({ part, isUser }: Props) {
     );
   }
 
-  if (part.type === "thinking" && part.text) {
+  if ((part.type === "thinking" || part.type === "reasoning") && part.text) {
+    if (isStreaming) {
+      // While streaming: show inline with a left-border indicator (actively generating)
+      return (
+        <div className="my-2 border-l-2 border-muted-foreground/40 pl-3">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Brain className="h-3.5 w-3.5 animate-pulse" />
+            <span>Thinking…</span>
+          </div>
+          <div className="text-xs text-muted-foreground/80 italic whitespace-pre-wrap">
+            {part.text}
+          </div>
+        </div>
+      );
+    }
+    // Completed: collapsible with blockquote-style content
     return (
       <details className="group my-2 rounded-md border border-muted-foreground/20 bg-muted/30">
         <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
           <Brain className="h-3.5 w-3.5" />
           Thinking
         </summary>
-        <div className="border-t border-muted-foreground/10 px-3 py-2 text-sm text-muted-foreground italic">
-          <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
-            {part.text}
-          </ReactMarkdown>
+        <div className="border-t border-muted-foreground/10 px-3 py-2">
+          <div className="border-l-2 border-muted-foreground/30 pl-3 text-xs text-muted-foreground italic">
+            <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+              {part.text}
+            </ReactMarkdown>
+          </div>
         </div>
       </details>
     );

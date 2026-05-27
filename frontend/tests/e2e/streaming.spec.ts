@@ -54,20 +54,18 @@ async function setupAPIMocks(page: Page) {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
   });
 
-  // SSE events endpoint — return prefilled events
+  // SSE events endpoint — return prefilled events in the flat format the backend
+  // produces (the proxy re-parses raw opencode JSON and sets it as evt.Data).
   await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
     const events = [
       {
         type: "opencode.event",
         event_type: "message.part.updated",
         data: {
-          directory: WORKSPACE_ID,
-          payload: {
-            type: "message.part.updated",
-            properties: {
-              sessionID: SESSION_ID,
-              part: { type: "text", text: "Hello from SSE stream!" },
-            },
+          type: "message.part.updated",
+          properties: {
+            sessionID: SESSION_ID,
+            part: { type: "text", text: "Hello from SSE stream!" },
           },
         },
       },
