@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Brain, Wrench, Server } from "lucide-react";
 import type { MessagePart as MessagePartType } from "../../api/types";
@@ -17,7 +18,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     }
     return (
       <div className={cn("prose prose-sm dark:prose-invert max-w-none")}>
-        <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
           {part.text}
         </ReactMarkdown>
       </div>
@@ -27,7 +28,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
   if ((part.type === "thinking" || part.type === "reasoning") && part.text) {
     const content = (
       <div className="border-l-2 border-muted-foreground/30 pl-3 text-xs text-muted-foreground italic">
-        <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
           {part.text}
         </ReactMarkdown>
       </div>

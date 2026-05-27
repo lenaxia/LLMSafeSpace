@@ -31,6 +31,34 @@ describe("MessagePart", () => {
     expect(screen.queryByText("alert('xss')")).not.toBeInTheDocument();
   });
 
+  it("renders GFM tables", () => {
+    const table = "| Col A | Col B |\n|-------|-------|\n| 1     | 2     |\n| 3     | 4     |";
+    render(<MessagePart part={{ type: "text", text: table }} isUser={false} />);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText("Col A")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
+  it("renders fenced code blocks", () => {
+    const code = "```js\nconst x = 1;\n```";
+    render(<MessagePart part={{ type: "text", text: code }} isUser={false} />);
+    expect(screen.getByText("const x = 1;")).toBeInTheDocument();
+    const codeEl = screen.getByText("const x = 1;").closest("code");
+    expect(codeEl).toBeInTheDocument();
+  });
+
+  it("renders inline code", () => {
+    render(<MessagePart part={{ type: "text", text: "Use `npm install` to install" }} isUser={false} />);
+    const codeEl = screen.getByText("npm install");
+    expect(codeEl.tagName).toBe("CODE");
+  });
+
+  it("renders strikethrough (GFM)", () => {
+    render(<MessagePart part={{ type: "text", text: "~~deleted~~" }} isUser={false} />);
+    const del = screen.getByText("deleted");
+    expect(del.tagName).toBe("DEL");
+  });
+
   it("renders thinking part with collapsible details", () => {
     render(<MessagePart part={{ type: "thinking", text: "Let me reason about this" }} isUser={false} />);
     expect(screen.getByText("Thinking")).toBeInTheDocument();
