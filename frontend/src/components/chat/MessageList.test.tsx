@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { render } from "../../test/utils";
 import { MessageList } from "./MessageList";
 import type { Message } from "../../api/types";
@@ -31,5 +31,52 @@ describe("MessageList", () => {
   it("has aria-live polite for screen readers", () => {
     render(<MessageList messages={messages} />);
     expect(screen.getByRole("log")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("does not show jump-to-bottom button when at bottom", () => {
+    render(<MessageList messages={messages} />);
+    expect(screen.queryByLabelText("Scroll to bottom")).not.toBeInTheDocument();
+  });
+
+  it("shows jump-to-bottom button when scrolled away from bottom", async () => {
+    render(<MessageList messages={messages} />);
+    const scrollContainer = screen.getByRole("log");
+    // Simulate scroll away: set scrollHeight > scrollTop + clientHeight
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", { value: 0, writable: true, configurable: true });
+    scrollContainer.dispatchEvent(new Event("scroll"));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Scroll to bottom")).toBeInTheDocument();
+    });
+  });
+
+  it("button says 'Resume tailing' during streaming", async () => {
+    render(<MessageList messages={messages} streaming={true} streamingBubble={<div>streaming...</div>} />);
+    const scrollContainer = screen.getByRole("log");
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", { value: 0, writable: true, configurable: true });
+    scrollContainer.dispatchEvent(new Event("scroll"));
+    await waitFor(() => {
+      expect(screen.getByText("Resume tailing")).toBeInTheDocument();
+    });
+  });
+
+  it("button says 'Jump to bottom' when not streaming", async () => {
+    render(<MessageList messages={messages} />);
+    const scrollContainer = screen.getByRole("log");
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", { value: 0, writable: true, configurable: true });
+    scrollContainer.dispatchEvent(new Event("scroll"));
+    await waitFor(() => {
+      expect(screen.getByText("Jump to bottom")).toBeInTheDocument();
+    });
+  });
+
+  it("renders streaming bubble when provided", () => {
+    render(<MessageList messages={messages} streaming={true} streamingBubble={<div data-testid="stream-bubble">streaming content</div>} />);
+    expect(screen.getByTestId("stream-bubble")).toBeInTheDocument();
   });
 });
