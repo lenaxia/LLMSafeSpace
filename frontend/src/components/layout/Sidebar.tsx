@@ -421,6 +421,10 @@ function WorkspaceSessionList({
 
             const kebabItems: KebabMenuItem[] = [
               {
+                label: "Copy link",
+                onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspaceId}/${s.id}`),
+              },
+              {
                 label: "Rename",
                 onClick: () => onRenameSession(s.id, s.title ?? ""),
               },
