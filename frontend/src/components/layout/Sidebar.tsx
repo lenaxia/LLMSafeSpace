@@ -337,7 +337,7 @@ function WorkspaceGroup({
             <button
               onClick={onNewSession}
               disabled={creatingSession}
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50 transition-opacity"
               aria-label="New chat"
               title="New chat"
             >
