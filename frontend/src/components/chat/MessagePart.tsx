@@ -61,8 +61,8 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     );
   }
 
-  if ((part.type === "tool_use" || part.type === "tool_call") && (part.text || part.name)) {
-    const toolName = part.name ?? part.text?.split("(")[0] ?? "tool";
+  if ((part.type === "tool_use" || part.type === "tool_call") && (part.text || part.name || isStreaming)) {
+    const toolName = part.name ?? (part.text ? part.text.split("(")[0] : undefined) ?? "tool";
     const toolArgs = part.input ?? (part.text ? part.text.substring(part.text.indexOf("(")) : "");
     return (
       <div className="my-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
