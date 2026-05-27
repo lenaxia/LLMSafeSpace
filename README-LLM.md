@@ -144,6 +144,7 @@ Maps are acceptable only when parsing external JSON/YAML with unknown structure 
 - Remove legacy code
 - Implement the full final solution
 - Never hack tests to pass — fix the root cause
+- **No pre-existing errors are acceptable.** "Pre-existing" is not an excuse. If you encounter errors, warnings, or broken behaviour in the codebase — even if you did not introduce them — fix them. We are the only ones working on this codebase; every error is our responsibility. Leave the codebase in a zero-error state after every session.
 
 ### 6. Uncertainty Protocol
 
