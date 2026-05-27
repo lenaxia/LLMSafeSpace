@@ -61,8 +61,10 @@ export function ChatPage() {
   const [sseStreamText, setSseStreamText] = useState("");
 
   const parseStreamEvent = useCallback((event: OpenCodeEvent, currentSessionId: string) => {
-    const envelope = event.data as Record<string, unknown> | undefined;
-    const payload = envelope?.payload as Record<string, unknown> | undefined;
+    // The API publishes: WorkspaceSSEEvent{Type:"opencode.event", EventType:et, Data:parsed}
+    // where parsed = {"type":"message.part.delta","properties":{...}}
+    // So event.data IS the payload — there is no intermediate "payload" key.
+    const payload = event.data as Record<string, unknown> | undefined;
     if (!payload?.type) return;
 
     const props = payload.properties as Record<string, unknown> | undefined;
@@ -72,13 +74,11 @@ export function ChatPage() {
     if (eventSessionId && eventSessionId !== currentSessionId) return;
 
     if (payload.type === "message.part.delta") {
-      // Incremental text chunk: append delta to running stream text
       const delta = props.delta as string | undefined;
       if (delta && (props.field as string) === "text") {
         setSseStreamText((prev) => prev + delta);
       }
     } else if (payload.type === "message.part.updated") {
-      // Snapshot: only use for final text part (when part.text is non-empty)
       const part = props.part as Record<string, unknown> | undefined;
       if (part?.type === "text" && typeof part.text === "string" && part.text) {
         setSseStreamText(part.text);

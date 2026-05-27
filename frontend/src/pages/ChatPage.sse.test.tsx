@@ -86,10 +86,8 @@ function makePartUpdatedEvent(sessionID: string, partType: string, text: string)
     type: "opencode.event",
     event_type: "message.part.updated",
     data: {
-      payload: {
-        type: "message.part.updated",
-        properties: { sessionID, part: { type: partType, text } },
-      },
+      type: "message.part.updated",
+      properties: { sessionID, part: { type: partType, text } },
     },
   } as unknown as WorkspaceStreamEvent;
 }
@@ -99,10 +97,8 @@ function makePartDeltaEvent(sessionID: string, field: string, delta: string): Wo
     type: "opencode.event",
     event_type: "message.part.delta",
     data: {
-      payload: {
-        type: "message.part.delta",
-        properties: { sessionID, field, delta },
-      },
+      type: "message.part.delta",
+      properties: { sessionID, field, delta },
     },
   } as unknown as WorkspaceStreamEvent;
 }
@@ -112,10 +108,8 @@ function makePartUpdatedEventSnakeCase(session_id: string, text: string): Worksp
     type: "opencode.event",
     event_type: "message.part.updated",
     data: {
-      payload: {
-        type: "message.part.updated",
-        properties: { session_id, part: { type: "text", text } },
-      },
+      type: "message.part.updated",
+      properties: { session_id, part: { type: "text", text } },
     },
   } as unknown as WorkspaceStreamEvent;
 }

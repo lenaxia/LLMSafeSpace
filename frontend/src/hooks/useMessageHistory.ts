@@ -6,5 +6,7 @@ export function useMessageHistory(workspaceId: string | undefined, sessionId: st
     queryKey: ["messages", workspaceId, sessionId],
     queryFn: () => messagesApi.getHistory(workspaceId!, sessionId!),
     enabled: !!workspaceId && !!sessionId,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false,
   });
 }
