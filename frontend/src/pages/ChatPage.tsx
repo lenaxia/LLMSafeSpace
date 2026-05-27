@@ -62,7 +62,20 @@ export function ChatPage() {
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
-  useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
+  const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
+
+  // Auto-rename workspace from first session title if name is still auto-generated
+  const hasAutoRenamedRef = useRef(false);
+  useEffect(() => {
+    if (!sessionTitle || !workspace || !workspaceId || hasAutoRenamedRef.current) return;
+    // Detect auto-generated name: adjective-noun-number pattern
+    if (/^[a-z]+-[a-z]+-\d+$/.test(workspace.name)) {
+      hasAutoRenamedRef.current = true;
+      workspacesApi.renameWorkspace(workspaceId, sessionTitle).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      });
+    }
+  }, [sessionTitle, workspace, workspaceId, queryClient]);
   const [sseStreamParts, setSseStreamParts] = useState<StreamPart[]>([]);
   const sseStreamPartsRef = useRef<StreamPart[]>([]);
   useEffect(() => { sseStreamPartsRef.current = sseStreamParts; }, [sseStreamParts]);
