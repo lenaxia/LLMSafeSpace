@@ -264,6 +264,7 @@ function WorkspaceGroup({
   const isActive = workspace.phase === "Active";
 
   const kebabItems: KebabMenuItem[] = [
+    { label: "Copy new session link", onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspace.id}`) },
     { label: "Rename", onClick: onRenameClick },
     { label: "Delete", onClick: onDelete, destructive: true },
   ];
