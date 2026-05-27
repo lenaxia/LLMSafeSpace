@@ -51,3 +51,25 @@ body {
   @apply bg-background text-foreground antialiased;
   font-family: system-ui, -apple-system, sans-serif;
 }
+
+/* Minimal scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--color-muted-foreground) / 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--color-muted-foreground) / 0.4);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--color-muted-foreground) / 0.2) transparent;
+}

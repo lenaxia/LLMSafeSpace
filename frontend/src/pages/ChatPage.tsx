@@ -7,6 +7,7 @@ import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
 import { useEventStream } from "../hooks/useEventStream";
+import { useSessionTitle } from "../hooks/useSessionTitle";
 import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
@@ -33,7 +34,7 @@ export function ChatPage() {
   });
 
   const workspace = workspaces?.items?.find((w) => w.id === workspaceId);
-  const workspaceName = workspace?.name ?? workspaceId ?? "";
+  const workspaceName = workspace?.name ?? (workspaceId ? `workspace-${workspaceId.slice(0, 8)}` : "");
 
   const activateMutation = useActivateWorkspace();
 
@@ -58,6 +59,7 @@ export function ChatPage() {
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
   const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
+  useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
   const [sseStreamParts, setSseStreamParts] = useState<Array<{ type: "thinking" | "text" | "tool"; text: string }>>([]);
   // Store the text the user just sent so we can strip the user echo from
   // the SSE stream. Opencode echoes the user's message as the first
@@ -272,9 +274,12 @@ export function ChatPage() {
       )}
 
       {isTransitioning && (
-        <div className="flex items-center gap-2 border-b border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-          <Spinner size="sm" />
-          <span>Workspace is {phaseLabel}...</span>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
+          <Spinner size="lg" />
+          <div className="text-center">
+            <p className="text-base font-medium">Workspace is {phaseLabel}...</p>
+            <p className="mt-1 text-sm">This usually takes a few seconds</p>
+          </div>
         </div>
       )}
 
