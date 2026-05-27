@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
-import { NewWorkspaceDialog } from "../workspace/NewWorkspaceDialog";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
 import { KebabMenu } from "../ui/KebabMenu";
@@ -20,7 +19,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { WorkspaceListItem } from "../../api/types";
-import { sessionDisplayTitle } from "../../lib/names";
+import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
 import { cn } from "../../lib/utils";
 
 interface Props {
@@ -32,7 +31,6 @@ export function Sidebar({ onNavigate }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId, sessionId } = useParams();
-  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   const [expandedWs, setExpandedWs] = useState<Set<string>>(() =>
     workspaceId ? new Set([workspaceId]) : new Set(),
   );
@@ -61,7 +59,6 @@ export function Sidebar({ onNavigate }: Props) {
     },
     onSuccess: (ws) => {
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
-      setShowNewWorkspace(false);
       setExpandedWs((prev) => new Set(prev).add(ws.id));
       navigate(`/chat/${ws.id}`);
       onNavigate?.();
@@ -140,29 +137,20 @@ export function Sidebar({ onNavigate }: Props) {
   };
 
   return (
-    <aside className="flex h-full w-64 flex-col border-r border-border bg-card" aria-label="Navigation">
+    <aside className="flex h-full flex-col border-r border-border bg-card resize-x overflow-hidden min-w-48 max-w-96" style={{ width: "16rem" }} aria-label="Navigation">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h1 className="text-sm font-semibold">Safe Space</h1>
         <button
-          onClick={() => setShowNewWorkspace(true)}
-          className="rounded p-1 hover:bg-accent"
+          onClick={() => createMutation.mutate({ name: generateWorkspaceName() })}
+          disabled={createMutation.isPending}
+          className="rounded p-1 hover:bg-accent disabled:opacity-50"
           aria-label="New workspace"
         >
-          <Plus className="h-4 w-4" />
+          {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {showNewWorkspace && (
-          <div className="border-b border-border">
-            <NewWorkspaceDialog
-              onCreate={(params) => createMutation.mutate(params)}
-              onCancel={() => setShowNewWorkspace(false)}
-              loading={createMutation.isPending}
-            />
-          </div>
-        )}
-
+      <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/20 hover:scrollbar-thumb-muted-foreground/40">
         <nav className="flex flex-col gap-0.5 p-2" aria-label="Workspaces">
           {(workspaces?.items ?? []).map((ws) => (
             <WorkspaceGroup
@@ -322,6 +310,17 @@ function WorkspaceGroup({
               <span className="text-xs text-muted-foreground">{workspace.phase}</span>
             )}
           </button>
+          {isActive && (
+            <button
+              onClick={onNewSession}
+              disabled={creatingSession}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50 opacity-0 group-hover:opacity-100 transition-opacity"
+              aria-label="New chat"
+              title="New chat"
+            >
+              {creatingSession ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            </button>
+          )}
           <div className="mr-1">
             <KebabMenu items={kebabItems} />
           </div>
@@ -390,25 +389,6 @@ function WorkspaceSessionList({
 
   return (
     <div className="ml-5 pl-2 border-l border-border">
-      <div className="flex items-center justify-between px-2 py-1">
-        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Sessions</span>
-        {!isSuspended && (
-          <button
-            onClick={onNewSession}
-            disabled={creatingSession}
-            className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            aria-label="New chat"
-            title="New chat"
-          >
-            {creatingSession ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Plus className="h-3 w-3" />
-            )}
-          </button>
-        )}
-      </div>
-
       {isLoading && (
         <div className="px-2 py-1 text-xs text-muted-foreground">Loading...</div>
       )}
@@ -448,23 +428,29 @@ function WorkspaceSessionList({
             ];
 
             return (
-              <div key={s.id} className="group flex items-center rounded-md transition-colors hover:bg-accent/50">
+              <div
+                key={s.id}
+                className={cn(
+                  "group flex items-center rounded-md transition-colors hover:bg-accent/50",
+                  s.id === selectedSessionId && "bg-accent",
+                )}
+              >
                 <button
                   onClick={() => onSelectSession(s.id)}
                   className={cn(
-                    "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                    "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors overflow-hidden",
                     s.id === selectedSessionId
-                      ? "bg-accent text-accent-foreground"
+                      ? "text-accent-foreground"
                       : "text-muted-foreground",
                   )}
                 >
-                  <MessageSquare className="h-3 w-3 flex-shrink-0" />
+                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="flex-1 truncate">{title}</span>
                   {s.status === "active" && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
                   )}
                 </button>
-                <div className="mr-1">
+                <div className="mr-1 flex-shrink-0">
                   <KebabMenu items={kebabItems} align="left" />
                 </div>
               </div>
