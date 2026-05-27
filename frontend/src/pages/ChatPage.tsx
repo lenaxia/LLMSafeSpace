@@ -179,7 +179,7 @@ export function ChatPage() {
         const state = part.state as Record<string, unknown> | undefined;
         const toolState = (state?.status as string) || "";
         const title = (state?.title as string) || "";
-        const displayText = title || toolName;
+        const displayText = title ? `${toolName}: ${title}` : toolName;
         const callID = (part.callID as string) || undefined;
         const toolInput = state?.input;
         const toolOutput = (state?.output as string) || undefined;
