@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { screen, act } from "@testing-library/react";
+import { describe, expect, it, beforeEach, vi } from "vitest";
+import { screen, act, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 
@@ -63,5 +63,48 @@ describe("ThemeProvider", () => {
 
   it("throws when useTheme is used outside provider", () => {
     expect(() => render(<TestConsumer />)).toThrow("useTheme must be used within ThemeProvider");
+  });
+
+  describe("compactMode", () => {
+    beforeEach(() => {
+      document.documentElement.removeAttribute("data-compact");
+    });
+
+    it("sets data-compact=true when API returns compactMode true", async () => {
+      // Simulate authenticated session
+      Object.defineProperty(document, "cookie", { value: "lsp_session=abc", writable: true });
+      const { settingsApi } = await import("../api/settings");
+      vi.spyOn(settingsApi, "getUserSettings").mockResolvedValueOnce({
+        settings: { theme: "system", compactMode: true },
+        schemaVersion: 1,
+      });
+
+      render(<ThemeProvider><TestConsumer /></ThemeProvider>);
+
+      await waitFor(() => {
+        expect(document.documentElement.getAttribute("data-compact")).toBe("true");
+      });
+
+      vi.restoreAllMocks();
+      Object.defineProperty(document, "cookie", { value: "", writable: true });
+    });
+
+    it("sets data-compact=false when API returns compactMode false", async () => {
+      Object.defineProperty(document, "cookie", { value: "lsp_session=abc", writable: true });
+      const { settingsApi } = await import("../api/settings");
+      vi.spyOn(settingsApi, "getUserSettings").mockResolvedValueOnce({
+        settings: { theme: "system", compactMode: false },
+        schemaVersion: 1,
+      });
+
+      render(<ThemeProvider><TestConsumer /></ThemeProvider>);
+
+      await waitFor(() => {
+        expect(document.documentElement.getAttribute("data-compact")).toBe("false");
+      });
+
+      vi.restoreAllMocks();
+      Object.defineProperty(document, "cookie", { value: "", writable: true });
+    });
   });
 });

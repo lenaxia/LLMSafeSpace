@@ -90,4 +90,36 @@ describe("MessagePart", () => {
     render(<MessagePart part={{ type: "tool_use", text: "" }} isUser={false} isStreaming={false} />);
     expect(screen.getByText(/tool/)).toBeInTheDocument();
   });
+
+  describe("codeBlockWordWrap setting", () => {
+    const STORAGE_KEY = "llmsafespace_user_settings";
+    const codeMarkdown = "```js\nconst x = 1;\n```";
+
+    it("does not apply word-wrap classes when setting is false", () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: false }));
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose).not.toHaveClass("[&_pre]:whitespace-pre-wrap");
+    });
+
+    it("applies word-wrap classes when setting is true", () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: true }));
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose?.className).toContain("whitespace-pre-wrap");
+    });
+
+    it("defaults to no word-wrap when setting is absent", () => {
+      localStorage.removeItem(STORAGE_KEY);
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose?.className).not.toContain("whitespace-pre-wrap");
+    });
+  });
 });
