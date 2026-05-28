@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	agentAddr  = "http://localhost:4096"
 	listenAddr = "0.0.0.0:4097"
 )
+
+var agentAddr = "http://localhost:4096"
 
 var log *zap.Logger
 
