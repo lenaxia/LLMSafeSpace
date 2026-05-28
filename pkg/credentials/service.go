@@ -235,6 +235,22 @@ func isAssignedToUser(assignedTo json.RawMessage, userID string) bool {
 }
 
 // RotateEncryptionKey re-encrypts all credential sets with the active key.
+// GetDecryptedProviders retrieves and decrypts the provider config for a credential set.
+func (s *Service) GetDecryptedProviders(ctx context.Context, id string) (ProviderConfig, error) {
+	row, err := s.store.GetCredentialSet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, fmt.Errorf("credential set %q not found", id)
+	}
+	plaintext, err := Decrypt(s.keySet, row.ProvidersEncrypted, []byte(row.Name))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt providers: %w", err)
+	}
+	return UnmarshalProviders(plaintext)
+}
+
 func (s *Service) RotateEncryptionKey(ctx context.Context) (*RotateKeyResult, error) {
 	active, err := s.keySet.ActiveKey()
 	if err != nil {
