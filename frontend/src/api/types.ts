@@ -14,6 +14,8 @@ export interface AuthConfig {
   registrationEnabled: boolean;
   oidcEnabled: boolean;
   ssoProviders?: string[];
+  instanceName: string;
+  motd?: string;
 }
 
 export interface AuthResponse {

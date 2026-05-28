@@ -501,6 +501,8 @@ type AuthConfig struct {
 	RegistrationEnabled bool     `json:"registrationEnabled"`
 	OIDCEnabled         bool     `json:"oidcEnabled"`
 	SSOProviders        []string `json:"ssoProviders,omitempty"`
+	InstanceName        string   `json:"instanceName"`
+	MOTD                string   `json:"motd,omitempty"`
 }
 
 // ActivateWorkspaceResponse is returned by POST /workspaces/:id/activate.

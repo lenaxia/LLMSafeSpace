@@ -8,7 +8,7 @@ import { LoginPage } from "./LoginPage";
 vi.mock("../api/auth", () => ({
   authApi: {
     me: vi.fn().mockRejectedValue(new Error("401")),
-    getConfig: vi.fn().mockResolvedValue({ registrationEnabled: true, oidcEnabled: false }),
+    getConfig: vi.fn().mockResolvedValue({ registrationEnabled: true, oidcEnabled: false, instanceName: "TestSpace" }),
     login: vi.fn(),
   },
 }));
@@ -26,7 +26,7 @@ function renderLoginPage() {
 describe("LoginPage", () => {
   it("renders sign in form", async () => {
     renderLoginPage();
-    await waitFor(() => expect(screen.getByText("Welcome back")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Welcome to TestSpace")).toBeInTheDocument());
     expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
   });
