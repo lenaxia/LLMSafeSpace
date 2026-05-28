@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"os"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -235,4 +237,19 @@ func (u *bcryptPasswordUpdater) UpdatePasswordHash(ctx context.Context, userID s
 	}
 	hashStr := string(hash)
 	return u.db.UpdateUser(ctx, userID, types.UserUpdates{PasswordHash: &hashStr})
+}
+
+// dekMasterKey reads the optional DEK master key from environment.
+// If set (32 bytes hex = 64 chars), DEKs are encrypted at rest in Redis.
+// If unset or invalid, DEKs are stored as plain hex (backwards compatible).
+func dekMasterKey() []byte {
+	hexKey := os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
+	if len(hexKey) != 64 {
+		return nil
+	}
+	key, err := hex.DecodeString(hexKey)
+	if err != nil || len(key) != 32 {
+		return nil
+	}
+	return key
 }
