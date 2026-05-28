@@ -239,16 +239,30 @@ func (u *bcryptPasswordUpdater) UpdatePasswordHash(ctx context.Context, userID s
 	return u.db.UpdateUser(ctx, userID, types.UserUpdates{PasswordHash: &hashStr})
 }
 
-// dekMasterKey reads the optional DEK master key from environment.
-// If set (32 bytes hex = 64 chars), DEKs are encrypted at rest in Redis.
-// If unset or invalid, DEKs are stored as plain hex (backwards compatible).
+// dekMasterKey derives the DEK cache encryption key from the master secret.
+// Uses HKDF with purpose-specific context so each derived key is independent.
 func dekMasterKey() []byte {
-	hexKey := os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
-	if len(hexKey) != 64 {
+	return deriveServerKey("dek-cache")
+}
+
+// deriveServerKey derives a 32-byte key from LLMSAFESPACE_MASTER_SECRET using HKDF.
+// Each purpose string produces an independent key. Returns nil if master secret is unset.
+func deriveServerKey(purpose string) []byte {
+	masterHex := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
+	if masterHex == "" {
+		// Fallback: check legacy env var
+		masterHex = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
+	}
+	if len(masterHex) < 32 {
 		return nil
 	}
-	key, err := hex.DecodeString(hexKey)
-	if err != nil || len(key) != 32 {
+	master, err := hex.DecodeString(masterHex)
+	if err != nil || len(master) < 16 {
+		// If not valid hex, use raw bytes
+		master = []byte(masterHex)
+	}
+	key, err := secrets.DeriveKEK(master, []byte("llmsafespace-server"), purpose)
+	if err != nil {
 		return nil
 	}
 	return key
