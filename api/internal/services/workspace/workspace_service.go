@@ -619,10 +619,6 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 			StorageClassName: req.StorageClass,
 		},
 		Runtime: req.Runtime,
-		AutoSuspend: &v1.WorkspaceAutoSuspend{
-			Enabled:            true,
-			IdleTimeoutSeconds: 86400,
-		},
 	}
 
 	return &v1.Workspace{
@@ -674,18 +670,20 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 		}
 	}
 
-	// Auto-suspend
-	autoSuspendEnabled := true
-	idleTimeout := int64(86400)
-	if v, err := s.instanceSettings.GetBool(ctx, "workspace.autoSuspend.enabled"); err == nil {
-		autoSuspendEnabled = v
-	}
-	if v, err := s.instanceSettings.GetInt(ctx, "workspace.autoSuspend.idleTimeoutMinutes"); err == nil && v > 0 {
-		idleTimeout = int64(v) * 60
-	}
-	crd.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
-		Enabled:            autoSuspendEnabled,
-		IdleTimeoutSeconds: idleTimeout,
+	// Auto-suspend (only if not already set by request/CRD)
+	if crd.Spec.AutoSuspend == nil {
+		autoSuspendEnabled := true
+		idleTimeout := int64(86400)
+		if v, err := s.instanceSettings.GetBool(ctx, "workspace.autoSuspend.enabled"); err == nil {
+			autoSuspendEnabled = v
+		}
+		if v, err := s.instanceSettings.GetInt(ctx, "workspace.autoSuspend.idleTimeoutMinutes"); err == nil && v > 0 {
+			idleTimeout = int64(v) * 60
+		}
+		crd.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
+			Enabled:            autoSuspendEnabled,
+			IdleTimeoutSeconds: idleTimeout,
+		}
 	}
 
 	// TTL after suspended
