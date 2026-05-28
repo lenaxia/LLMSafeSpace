@@ -172,6 +172,30 @@ func main() {
 		})
 	})
 
+	mux.HandleFunc("/v1/reload-secrets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var secrets []struct {
+			Type      string          `json:"type"`
+			Name      string          `json:"name"`
+			Metadata  json.RawMessage `json:"metadata"`
+			Plaintext string          `json:"plaintext"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&secrets); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if err := materializeSecrets(secrets); err != nil {
+			log.Error("reload-secrets failed", zap.Error(err))
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Info("secrets reloaded", zap.Int("count", len(secrets)))
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
@@ -195,4 +219,96 @@ func main() {
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal("workspace-agentd server failed", zap.Error(err))
 	}
+}
+
+const secretsBaseDir = "/home/sandbox/.secrets"
+
+func materializeSecrets(secrets []struct {
+	Type      string          `json:"type"`
+	Name      string          `json:"name"`
+	Metadata  json.RawMessage `json:"metadata"`
+	Plaintext string          `json:"plaintext"`
+}) error {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sandbox"
+	}
+	sshDir := home + "/.ssh"
+
+	// Clean previous secret files (full replace semantics)
+	os.RemoveAll(secretsBaseDir)
+	os.MkdirAll(secretsBaseDir, 0700)
+	os.RemoveAll(sshDir)
+	os.MkdirAll(sshDir, 0700)
+	os.Remove(home + "/.git-credentials")
+
+	var envLines []string
+
+	for _, s := range secrets {
+		var meta map[string]string
+		json.Unmarshal(s.Metadata, &meta)
+
+		switch s.Type {
+		case "llm-provider":
+			os.WriteFile("/tmp/agent-config.json", []byte(s.Plaintext), 0600)
+
+		case "ssh-key":
+			keyType := meta["key_type"]
+			if keyType == "" {
+				keyType = "ed25519"
+			}
+			keyPath := sshDir + "/id_" + keyType + "_" + s.Name
+			os.WriteFile(keyPath, []byte(s.Plaintext), 0600)
+			host := meta["host"]
+			if host == "" {
+				host = "github.com"
+			}
+			configEntry := "Host " + host + "\n    IdentityFile " + keyPath + "\n    StrictHostKeyChecking accept-new\n"
+			f, _ := os.OpenFile(sshDir+"/config", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			f.WriteString(configEntry)
+			f.Close()
+
+		case "git-credential":
+			host := meta["host"]
+			if host == "" {
+				host = "github.com"
+			}
+			protocol := meta["protocol"]
+			if protocol == "" {
+				protocol = "https"
+			}
+			line := protocol + "://oauth2:" + s.Plaintext + "@" + host + "\n"
+			f, _ := os.OpenFile(home+"/.git-credentials", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			f.WriteString(line)
+			f.Close()
+
+		case "secret-file":
+			mountPath := meta["mount_path"]
+			if mountPath == "" {
+				continue
+			}
+			// Force all secret files under the safe base dir
+			if !strings.HasPrefix(mountPath, secretsBaseDir) {
+				mountPath = secretsBaseDir + "/" + strings.TrimPrefix(mountPath, "/")
+			}
+			os.MkdirAll(mountPath[:strings.LastIndex(mountPath, "/")], 0700)
+			os.WriteFile(mountPath, []byte(s.Plaintext), 0600)
+
+		case "env-secret":
+			varName := meta["var_name"]
+			if varName != "" {
+				envLines = append(envLines, "export "+varName+"='"+s.Plaintext+"'")
+				os.Setenv(varName, s.Plaintext)
+			}
+		}
+	}
+
+	// Write env file
+	if len(envLines) > 0 {
+		os.WriteFile("/tmp/secrets-env", []byte(strings.Join(envLines, "\n")+"\n"), 0600)
+	} else {
+		os.Remove("/tmp/secrets-env")
+	}
+
+	return nil
 }

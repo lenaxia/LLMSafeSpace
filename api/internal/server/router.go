@@ -170,6 +170,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
+		workspaceGroup.POST("/:id/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
 		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
 		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
 		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
