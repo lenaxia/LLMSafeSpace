@@ -19,6 +19,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 
 	"github.com/google/uuid"
@@ -30,13 +31,14 @@ func init() {
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
-	logger         pkginterfaces.LoggerInterface
-	k8sClient      pkginterfaces.KubernetesClient
-	dbService      apiinterfaces.DatabaseService
-	cacheService   apiinterfaces.CacheService
-	metricsService apiinterfaces.MetricsService
-	sessionIndex   apiinterfaces.SessionIndexService
-	config         *Config
+	logger           pkginterfaces.LoggerInterface
+	k8sClient        pkginterfaces.KubernetesClient
+	dbService        apiinterfaces.DatabaseService
+	cacheService     apiinterfaces.CacheService
+	metricsService   apiinterfaces.MetricsService
+	sessionIndex     apiinterfaces.SessionIndexService
+	instanceSettings *settings.InstanceService
+	config           *Config
 }
 
 func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
@@ -734,13 +736,20 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		return nil, err
 	}
 
+	// Enforce max active workspaces — may suspend the stalest workspace
+	suspended, err := s.enforceMaxActiveWorkspaces(ctx, userID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Resume the target workspace
 	if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
 		return nil, err
 	}
 
 	return &types.ActivateWorkspaceResponse{
-		Resumed: workspaceID,
+		Resumed:   workspaceID,
+		Suspended: suspended,
 	}, nil
 }
 
