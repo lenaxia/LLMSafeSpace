@@ -35,4 +35,4 @@ DONOTUSE
 # Helm chart packages (output of `helm package` / `make helm-package`)
 dist/
 frontend/coverage
-workspace-agentd
+/workspace-agentd
