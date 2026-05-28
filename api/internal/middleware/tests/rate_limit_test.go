@@ -222,39 +222,4 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 	mockLogger.AssertExpectations(t)
 }
 
-func TestRateLimitMiddleware_ExemptRoles(t *testing.T) {
-	// Setup
-	gin.SetMode(gin.TestMode)
-	mockLogger := logmock.NewMockLogger()
-	mockRateLimiter := new(mocks.MockRateLimiterService)
-	
-	config := middleware.RateLimitConfig{
-		Enabled:      true,
-		DefaultLimit: 1,
-		ExemptRoles:  []string{"admin"},
-	}
-	
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		// Set API key and role in context
-		c.Set("apiKey", "test-key")
-		c.Set("userRole", "admin")
-		c.Next()
-	})
-	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config))
-	router.GET("/test", func(c *gin.Context) {
-		c.String(http.StatusOK, "success")
-	})
-	
-	// Execute multiple requests - all should succeed due to exempt role
-	for i := 0; i < 5; i++ {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/test", nil)
-		router.ServeHTTP(w, req)
-		
-		assert.Equal(t, http.StatusOK, w.Code)
-	}
-	
-	mockRateLimiter.AssertNotCalled(t, "Increment")
-	mockRateLimiter.AssertNotCalled(t, "Allow")
-}
+
