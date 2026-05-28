@@ -68,7 +68,7 @@ describe("SettingsForm", () => {
     });
   });
 
-  it("shows error when onSave fails", async () => {
+  it("does not crash when onSave fails", async () => {
     const onSave = vi.fn().mockRejectedValue(new Error("Network error"));
     render(<SettingsForm schema={mockSchema} values={{ "test.bool": false }} onSave={onSave} />);
 
@@ -76,8 +76,9 @@ describe("SettingsForm", () => {
     fireEvent.click(toggle);
 
     await waitFor(() => {
-      expect(screen.getByText("Network error")).toBeInTheDocument();
+      expect(onSave).toHaveBeenCalled();
     });
+    // Error is handled by parent (toast) — no inline error shown
   });
 
   it("uses default value when value not in values map", () => {
