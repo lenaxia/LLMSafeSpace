@@ -190,7 +190,7 @@ export function SecretsTab() {
                       {revealingId === s.id && revealedValue && (
                         <div className="mt-2 space-y-1">
                           <div className="flex items-center gap-2">
-                            <code className="flex-1 rounded bg-yellow-50 border border-yellow-200 px-2 py-1 text-xs font-mono break-all">
+                            <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground break-all">
                               {revealedValue}
                             </code>
                             <button
@@ -200,7 +200,7 @@ export function SecretsTab() {
                               Copy
                             </button>
                           </div>
-                          <p className="text-xs text-yellow-600">Auto-hides in 30 seconds</p>
+                          <p className="text-xs text-muted-foreground">Auto-hides in 30 seconds</p>
                         </div>
                       )}
                     </div>
@@ -300,34 +300,34 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
   // Show "secret created" confirmation with copy option
   if (createdValue) {
     return (
-      <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-3">
-        <p className="text-sm font-medium text-green-800">✓ Secret "{name}" created and encrypted</p>
+      <div className="rounded-md border border-border bg-accent/20 p-4 space-y-3">
+        <p className="text-sm font-medium text-foreground">✓ Secret "{name}" created and encrypted</p>
         <div className="flex items-center gap-2">
-          <code className="flex-1 rounded bg-white border px-2 py-1 text-xs font-mono break-all max-h-24 overflow-auto">
+          <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground break-all max-h-24 overflow-auto">
             {createdValue}
           </code>
           <button
             onClick={() => navigator.clipboard.writeText(createdValue)}
-            className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
+            className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
           >
             Copy
           </button>
         </div>
         {metadata.public_key && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-green-700">Public key:</span>
-            <code className="flex-1 rounded bg-white border px-2 py-1 text-xs font-mono truncate">
+            <span className="text-xs text-muted-foreground">Public key:</span>
+            <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground truncate">
               {metadata.public_key}
             </code>
             <button
               onClick={() => navigator.clipboard.writeText(metadata.public_key ?? "")}
-              className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
+              className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
             >
               Copy
             </button>
           </div>
         )}
-        <p className="text-xs text-green-600">⚠️ Save this value now. You won't be able to view it without re-entering your password.</p>
+        <p className="text-xs text-muted-foreground">⚠️ Save this value now. You won't be able to view it without re-entering your password.</p>
         <Button onClick={handleDone}>Done</Button>
       </div>
     );
