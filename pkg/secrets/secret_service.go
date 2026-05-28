@@ -282,6 +282,16 @@ func (s *SecretService) GetBindings(ctx context.Context, userID, workspaceID str
 	return &BindingsResponse{Bindings: bindings}, nil
 }
 
+// GetBindingsForSecret returns workspace IDs that a secret is bound to.
+func (s *SecretService) GetBindingsForSecret(ctx context.Context, userID, secretID string) ([]string, error) {
+	// Verify ownership
+	secret, err := s.store.GetSecret(ctx, userID, secretID)
+	if err != nil || secret == nil {
+		return nil, nil
+	}
+	return s.store.GetBindingsForSecret(ctx, secretID)
+}
+
 // QueryAudit returns audit log entries for the current user.
 func (s *SecretService) QueryAudit(ctx context.Context, userID string, query AuditQuery) ([]*AuditEntry, error) {
 	return s.store.QueryAudit(ctx, userID, query)

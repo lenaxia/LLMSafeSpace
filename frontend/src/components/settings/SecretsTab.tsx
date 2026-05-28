@@ -23,12 +23,23 @@ export function SecretsTab() {
   const [revealingId, setRevealingId] = useState<string | null>(null);
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
   const [revealPassword, setRevealPassword] = useState("");
+  const [secretBindings, setSecretBindings] = useState<Record<string, string[]>>({});
   const { toast } = useToast();
 
   const fetchSecrets = async () => {
     try {
       const res = await secretsApi.list();
-      setSecrets(res.secrets || []);
+      const secs = res.secrets || [];
+      setSecrets(secs);
+      // Fetch bindings for each secret
+      const bindings: Record<string, string[]> = {};
+      await Promise.all(secs.map(async (s) => {
+        try {
+          const b = await secretsApi.getSecretBindings(s.id);
+          bindings[s.id] = b.workspaces;
+        } catch { bindings[s.id] = []; }
+      }));
+      setSecretBindings(bindings);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -98,9 +109,9 @@ export function SecretsTab() {
       </div>
 
       {error && (
-        <div className="flex items-center justify-between rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <span>{error}</span>
-          <button onClick={() => setError("")} className="text-red-500">✕</button>
+          <button onClick={() => setError("")} className="text-destructive">✕</button>
         </div>
       )}
 
@@ -140,17 +151,25 @@ export function SecretsTab() {
                             .map(([k, v]) => (
                               <span key={k} className="text-xs text-muted-foreground">{k}: {v}</span>
                             ))}
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(s.createdAt).toLocaleDateString()}
+                          </span>
+                          {(secretBindings[s.id] ?? []).length > 0 && (
+                            <span className="text-xs text-muted-foreground">
+                              · {(secretBindings[s.id] ?? []).length} workspace{(secretBindings[s.id] ?? []).length > 1 ? "s" : ""}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => { setRevealingId(revealingId === s.id ? null : s.id); setRevealedValue(null); }}
-                            className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 transition-colors"
+                            className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
                           >
                             {revealingId === s.id ? "Hide" : "Reveal"}
                           </button>
                           <button
                             onClick={() => handleDelete(s.id, s.name)}
-                            className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 transition-colors"
+                            className="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
                           >
                             Delete
                           </button>
@@ -167,7 +186,7 @@ export function SecretsTab() {
                             </code>
                             <button
                               onClick={() => copyToClipboard(s.metadata.public_key!)}
-                              className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                              className="text-xs text-primary hover:text-primary/80 whitespace-nowrap"
                             >
                               Copy public key
                           </button>
@@ -201,7 +220,7 @@ export function SecretsTab() {
                             </code>
                             <button
                               onClick={() => copyToClipboard(revealedValue)}
-                              className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                              className="text-xs text-primary hover:text-primary/80 whitespace-nowrap"
                             >
                               Copy
                             </button>
@@ -368,7 +387,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             type="button"
             onClick={handleGenerate}
             disabled={generating}
-            className="text-xs text-blue-600 hover:text-blue-800"
+            className="text-xs text-primary hover:text-primary/80"
           >
             {type === "ssh-key" ? "🔑 Generate keypair" : "🎲 Generate random"}
           </button>
@@ -407,7 +426,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
               {metadata.public_key}
             </code>
-            <button type="button" onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }} className="text-xs text-blue-600">
+            <button type="button" onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }} className="text-xs text-primary">
               Copy
             </button>
           </div>

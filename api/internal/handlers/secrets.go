@@ -153,6 +153,26 @@ func (h *SecretsHandler) RevealSecret(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"value": string(plaintext)})
 }
+
+// GetSecretBindings handles GET /api/v1/secrets/:id/bindings
+func (h *SecretsHandler) GetSecretBindings(c *gin.Context) {
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	secretID := c.Param("id")
+	workspaces, err := h.svc.GetBindingsForSecret(c.Request.Context(), userID, secretID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get bindings"})
+		return
+	}
+	if workspaces == nil {
+		workspaces = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"workspaces": workspaces})
+}
+
 func (h *SecretsHandler) SetBindings(c *gin.Context) {
 	userID, _ := extractAuth(c)
 	if userID == "" {
