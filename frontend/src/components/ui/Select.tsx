@@ -14,7 +14,7 @@ export function Select({ value, onValueChange, options, disabled, id }: SelectPr
     <RadixSelect.Root value={value} onValueChange={onValueChange} disabled={disabled}>
       <RadixSelect.Trigger
         id={id}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <RadixSelect.Value />
         <RadixSelect.Icon>
@@ -22,13 +22,17 @@ export function Select({ value, onValueChange, options, disabled, id }: SelectPr
         </RadixSelect.Icon>
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
-        <RadixSelect.Content className="rounded-md border border-border bg-popover p-1 shadow-md">
+        <RadixSelect.Content
+          className="z-50 min-w-[8rem] rounded-md border border-border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+          position="popper"
+          sideOffset={4}
+        >
           <RadixSelect.Viewport>
             {options.map((opt) => (
               <RadixSelect.Item
                 key={opt}
                 value={opt}
-                className="cursor-pointer rounded px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent"
+                className="relative cursor-pointer rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
               >
                 <RadixSelect.ItemText>{opt}</RadixSelect.ItemText>
               </RadixSelect.Item>

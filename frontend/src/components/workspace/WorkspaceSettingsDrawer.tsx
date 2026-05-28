@@ -45,8 +45,8 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50" />
-        <Dialog.Content className="fixed right-0 top-0 z-50 h-full w-80 bg-background border-l border-border shadow-xl p-6 overflow-y-auto">
+        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+        <Dialog.Content className="fixed right-0 top-0 z-50 h-full w-80 bg-background border-l border-border shadow-xl p-6 overflow-y-auto data-[state=open]:animate-in data-[state=open]:slide-in-from-right data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right duration-200">
           <div className="flex items-center justify-between mb-6">
             <Dialog.Title className="text-sm font-semibold">
               Workspace Settings
