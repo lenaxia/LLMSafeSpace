@@ -1,0 +1,104 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
+)
+
+type settingsStore struct {
+	data map[string]json.RawMessage
+}
+
+func (s *settingsStore) GetAllInstanceSettings(_ context.Context) (map[string]json.RawMessage, error) {
+	return s.data, nil
+}
+func (s *settingsStore) SetInstanceSetting(_ context.Context, key string, value json.RawMessage) error {
+	s.data[key] = value
+	return nil
+}
+
+func newAuthConfigWithSettings(t *testing.T, vals map[string]any) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	data := make(map[string]json.RawMessage)
+	for k, v := range vals {
+		raw, _ := json.Marshal(v)
+		data[k] = raw
+	}
+	instanceSettings := settings.NewInstanceService(&settingsStore{data: data}, nil)
+	instanceSettings.Start()
+
+	apiLog, _ := apilogger.New(false, "error", "json")
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+
+	svc := &authMockServices{auth: auth, metrics: met, database: &imocks.MockDatabaseService{}, cache: &imocks.MockCacheService{}}
+	router := NewRouter(svc, apiLog, nil, RouterConfig{
+		Debug:            false,
+		InstanceSettings: instanceSettings,
+	})
+	return router
+}
+
+func TestAuthConfig_ReturnsInstanceNameFromSettings(t *testing.T) {
+	router := newAuthConfigWithSettings(t, map[string]any{
+		"instance.name": "My Corp AI",
+		"instance.motd": "Welcome to the AI sandbox!",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cfg types.AuthConfig
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
+	assert.Equal(t, "My Corp AI", cfg.InstanceName)
+	assert.Equal(t, "Welcome to the AI sandbox!", cfg.MOTD)
+}
+
+func TestAuthConfig_DefaultInstanceName_WhenNotSet(t *testing.T) {
+	router := newAuthConfigWithSettings(t, map[string]any{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cfg types.AuthConfig
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
+	assert.Equal(t, "LLMSafeSpace", cfg.InstanceName)
+	assert.Empty(t, cfg.MOTD)
+}
+
+func TestAuthConfig_RegistrationDisabledFromSettings(t *testing.T) {
+	router := newAuthConfigWithSettings(t, map[string]any{
+		"auth.registrationEnabled": false,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cfg types.AuthConfig
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
+	assert.False(t, cfg.RegistrationEnabled)
+}

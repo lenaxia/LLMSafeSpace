@@ -38,6 +38,11 @@ func DefaultRateLimitConfig() RateLimitConfig {
 
 func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig, instanceSettings *settings.InstanceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if rl == nil {
+			c.Next()
+			return
+		}
+
 		// Read runtime overrides from instance settings (cached, ~0 cost)
 		enabled := config.Enabled
 		limit := config.DefaultLimit
