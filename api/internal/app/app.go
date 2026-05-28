@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -88,23 +89,43 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	credentialsHandler := handlers.NewCredentialsHandler(credSvc)
 
 	// Wire secret management (Epic 10).
-	dekCacheClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	dekCache := secrets.NewRedisDEKCache(dekCacheClient)
-	keyService := secrets.NewKeyService(&dbKeyStoreAdapter{db: svc.Database}, dekCache)
-	secretStore := &dbSecretStoreAdapter{db: svc.Database}
-	secretService := secrets.NewSecretService(keyService, secretStore)
-	secretsHandler := handlers.NewSecretsHandler(secretService)
-	rotateKeyHandler := handlers.NewRotateKeyHandler(keyService)
+	var secretsHandler *handlers.SecretsHandler
+	var rotateKeyHandler *handlers.RotateKeyHandler
+	{
+		dekCacheClient := redis.NewClient(&redis.Options{
+			Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		dekCache := secrets.NewRedisDEKCache(dekCacheClient)
 
-	if authSvc, ok := svc.Auth.(*auth.Service); ok {
-		authSvc.SetKeyService(keyService)
-	}
-	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-		wsSvc.SetSecretInjector(secretService)
+		// Create pgxpool for secret stores (same DB, separate pool for pgx native queries).
+		pgxDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+			cfg.Database.Password, cfg.Database.Database, cfg.Database.SSLMode)
+		secretsPool, pgxErr := pgxpool.New(context.Background(), pgxDSN)
+
+		var keyService *secrets.KeyService
+		var secretService *secrets.SecretService
+		if pgxErr != nil {
+			log.Warn("Failed to create pgxpool for secrets; using in-memory adapters", "error", pgxErr.Error())
+			keyService = secrets.NewKeyService(&dbKeyStoreAdapter{}, dekCache)
+			secretService = secrets.NewSecretService(keyService, &dbSecretStoreAdapter{})
+		} else {
+			keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
+			secretService = secrets.NewSecretService(keyService, secrets.NewPgSecretStore(secretsPool))
+		}
+
+		secretsHandler = handlers.NewSecretsHandler(secretService)
+		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
+		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
+
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			authSvc.SetKeyService(keyService)
+		}
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			wsSvc.SetSecretInjector(secretService)
+		}
 	}
 
 	// In development mode, disable RequireHTTPS so the API works over plain
