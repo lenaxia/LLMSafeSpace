@@ -191,5 +191,13 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     );
   }
 
+  if (part.type === "error" && part.text) {
+    return (
+      <div className="my-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+        <p className="text-sm text-destructive">{part.text}</p>
+      </div>
+    );
+  }
+
   return null;
 }

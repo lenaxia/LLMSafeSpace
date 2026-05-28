@@ -1,21 +1,25 @@
 import { useState } from "react";
 import { cn } from "../lib/utils";
-import { AppearanceTab } from "../components/settings/AppearanceTab";
+import { UserSettingsTab } from "../components/settings/UserSettingsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
-import { ComingSoonTab } from "../components/settings/ComingSoonTab";
+import { AdminSettingsPage } from "./AdminSettingsPage";
+import { AdminCredentialsTab } from "../components/settings/AdminCredentialsTab";
+import { useAuth } from "../providers/AuthProvider";
 
-const tabs = [
-  { id: "api-keys", label: "API Keys" },
-  { id: "appearance", label: "Appearance" },
-  { id: "profile", label: "Profile" },
-  { id: "mcp", label: "MCP Servers" },
-  { id: "presets", label: "Presets" },
+const allTabs = [
+  { id: "preferences", label: "Preferences", adminOnly: false },
+  { id: "api-keys", label: "API Keys", adminOnly: false },
+  { id: "credentials", label: "Credentials", adminOnly: true },
+  { id: "admin", label: "Admin", adminOnly: true },
 ] as const;
 
-type TabId = (typeof tabs)[number]["id"];
+type TabId = (typeof allTabs)[number]["id"];
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("api-keys");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const tabs = allTabs.filter((t) => !t.adminOnly || isAdmin);
+  const [activeTab, setActiveTab] = useState<TabId>("preferences");
 
   return (
     <div className="flex h-full">
@@ -38,11 +42,10 @@ export function SettingsPage() {
         </ul>
       </nav>
       <div className="flex-1 overflow-y-auto p-6">
+        {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
-        {activeTab === "appearance" && <AppearanceTab />}
-        {(activeTab === "profile" || activeTab === "mcp" || activeTab === "presets") && (
-          <ComingSoonTab name={tabs.find((t) => t.id === activeTab)!.label} />
-        )}
+        {activeTab === "credentials" && isAdmin && <AdminCredentialsTab />}
+        {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
       </div>
     </div>
   );

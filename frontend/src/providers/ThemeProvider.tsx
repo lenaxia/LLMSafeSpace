@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { settingsApi } from "../api/settings";
 
 type Theme = "light" | "dark" | "system";
 
@@ -23,9 +24,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     theme === "system" ? getSystemTheme() : theme,
   );
 
+  // Sync from API on mount — only if authenticated (cookie present)
+  useEffect(() => {
+    const hasSession = document.cookie.includes("lsp_session");
+    if (!hasSession) return;
+    settingsApi.getUserSettings()
+      .then((res) => {
+        const apiTheme = res.settings.theme as Theme | undefined;
+        if (apiTheme && apiTheme !== theme) {
+          localStorage.setItem("lsp-theme", apiTheme);
+          setThemeState(apiTheme);
+        }
+        const size = res.settings.fontSize as number | undefined;
+        if (size && size >= 10 && size <= 24) {
+          document.documentElement.style.fontSize = `${size}px`;
+        }
+      })
+      .catch(() => {}); // Use localStorage value on failure
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setTheme = useCallback((t: Theme) => {
     localStorage.setItem("lsp-theme", t);
     setThemeState(t);
+    // Persist to API (fire-and-forget)
+    settingsApi.setUserSetting("theme", t).catch(() => {});
   }, []);
 
   useEffect(() => {

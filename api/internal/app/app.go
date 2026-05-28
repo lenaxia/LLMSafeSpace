@@ -13,24 +13,28 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/server"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
 type App struct {
-	config          *config.Config
-	logger          *logger.Logger
-	router          *gin.Engine
-	server          *http.Server
-	k8sClient       *kubernetes.Client
-	services        *services.Services
-	proxyHandler    *handlers.ProxyHandler
-	sessionIndexSvc *sessionindex.Service
-	shutdownCh      chan struct{}
-	ctx             context.Context
-	cancel          context.CancelFunc
+	config           *config.Config
+	logger           *logger.Logger
+	router           *gin.Engine
+	server           *http.Server
+	k8sClient        *kubernetes.Client
+	services         *services.Services
+	proxyHandler     *handlers.ProxyHandler
+	sessionIndexSvc  *sessionindex.Service
+	instanceSettings *settings.InstanceService
+	userSettings     *settings.UserService
+	shutdownCh       chan struct{}
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
@@ -61,33 +65,35 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 	proxyHandler.SetSessionIndex(sessionIndexSvc)
 
+	// Initialize settings services (backed by the same DB service).
+	dbSvc := svc.Database.(*database.Service)
+	instanceSettings := settings.NewInstanceService(dbSvc, log)
+	userSettings := settings.NewUserService(dbSvc, log)
+
+	// Inject instance settings into workspace service for enforcement.
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc.SetInstanceSettings(instanceSettings)
+	}
+
+	// Create settings handler for API routes.
+	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
+
 	// Wire secret management (Epic 10).
-	var secretsHandler *handlers.SecretsHandler
 	dekCacheClient := redis.NewClient(&redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
 	dekCache := secrets.NewRedisDEKCache(dekCacheClient)
-	// PgKeyStore and PgSecretStore require a pgxpool — for now use a nil-safe
-	// approach: if database is available, wire secrets; otherwise skip.
-	// The database service manages its own pool, so we create lightweight
-	// in-memory key/secret stores that delegate to the DB service interface.
-	// For the initial wiring, we use the KeyService with the DEK cache and
-	// a placeholder key store that will be replaced when pgxpool is exposed.
 	keyService := secrets.NewKeyService(&dbKeyStoreAdapter{db: svc.Database}, dekCache)
 	secretStore := &dbSecretStoreAdapter{db: svc.Database}
 	secretService := secrets.NewSecretService(keyService, secretStore)
-	secretsHandler = handlers.NewSecretsHandler(secretService)
+	secretsHandler := handlers.NewSecretsHandler(secretService)
+	rotateKeyHandler := handlers.NewRotateKeyHandler(keyService)
 
-	// Connect key service to auth for DEK unlock on login
 	if authSvc, ok := svc.Auth.(*auth.Service); ok {
 		authSvc.SetKeyService(keyService)
 	}
-
-	rotateKeyHandler := handlers.NewRotateKeyHandler(keyService)
-
-	// Wire secret injector into workspace service for pod activation
 	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 		wsSvc.SetSecretInjector(secretService)
 	}
@@ -134,6 +140,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecurityConfig:          securityCfg,
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: wsOrigins,
+		SettingsHandler:         settingsHandler,
+		InstanceSettings:        instanceSettings,
 		SecretsHandler:          secretsHandler,
 		RotateKeyHandler:        rotateKeyHandler,
 	})
@@ -144,23 +152,38 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	return &App{
-		config:          cfg,
-		logger:          log,
-		router:          router,
-		server:          httpServer,
-		k8sClient:       k8sClient,
-		services:        svc,
-		proxyHandler:    proxyHandler,
-		sessionIndexSvc: sessionIndexSvc,
-		shutdownCh:      make(chan struct{}),
-		ctx:             ctx,
-		cancel:          cancel,
+		config:           cfg,
+		logger:           log,
+		router:           router,
+		server:           httpServer,
+		k8sClient:        k8sClient,
+		services:         svc,
+		proxyHandler:     proxyHandler,
+		sessionIndexSvc:  sessionIndexSvc,
+		instanceSettings: instanceSettings,
+		userSettings:     userSettings,
+		shutdownCh:       make(chan struct{}),
+		ctx:              ctx,
+		cancel:           cancel,
 	}, nil
 }
 
 func (a *App) Run() error {
 	if err := a.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Start instance settings (loads cache from DB).
+	if err := a.instanceSettings.Start(); err != nil {
+		a.logger.Warn("Instance settings failed to start (will use defaults)", "error", err.Error())
+		// Non-fatal: settings will fall back to schema defaults.
+	}
+
+	// Seed instance settings defaults (idempotent).
+	if result, err := settings.Seed(a.ctx, a.services.Database.(*database.Service), a.logger); err != nil {
+		a.logger.Warn("Settings seed failed", "error", err.Error())
+	} else {
+		a.logger.Info("Settings seed complete", "inserted", result.Inserted, "skipped", result.Skipped, "orphaned", len(result.Orphaned))
 	}
 
 	if err := a.k8sClient.Start(); err != nil {
