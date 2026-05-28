@@ -278,8 +278,8 @@ func TestEnsureSession_Route_Success(t *testing.T) {
 		&types.EnsureSessionResponse{
 			WorkspaceID:    "sb-1",
 			WorkspacePhase: "Active",
-			SessionID:    "sess-abc",
-			Resumed:      false,
+			SessionID:      "sess-abc",
+			Resumed:        false,
 		}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/sessions/new", nil)
@@ -302,8 +302,8 @@ func TestEnsureSession_Route_Resumed(t *testing.T) {
 		&types.EnsureSessionResponse{
 			WorkspaceID:    "sb-new",
 			WorkspacePhase: "Active",
-			SessionID:    "sess-xyz",
-			Resumed:      true,
+			SessionID:      "sess-xyz",
+			Resumed:        true,
 		}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-2/sessions/new", nil)

@@ -19,7 +19,7 @@ const (
 )
 
 var (
-	ErrDecryptionFailed = errors.New("decryption failed: ciphertext tampered or wrong key")
+	ErrDecryptionFailed  = errors.New("decryption failed: ciphertext tampered or wrong key")
 	ErrInvalidCiphertext = errors.New("ciphertext too short")
 )
 

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
-	
+
 	"github.com/gin-gonic/gin"
 	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	httputil "github.com/lenaxia/llmsafespace/pkg/http"
@@ -20,13 +20,13 @@ import (
 type ErrorHandlerConfig struct {
 	// IncludeStackTrace indicates whether to include stack traces in error responses
 	IncludeStackTrace bool
-	
+
 	// LogStackTrace indicates whether to log stack traces
 	LogStackTrace bool
-	
+
 	// MaxBodyLogSize is the maximum size of request/response bodies to log
 	MaxBodyLogSize int
-	
+
 	// SensitiveFields are JSON fields that should be redacted in request/response bodies
 	SensitiveFields []string
 }
@@ -48,7 +48,7 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(c *gin.Context) {
 		// Create a copy of the request body for logging
 		var requestBody []byte
@@ -56,28 +56,27 @@ func ErrorHandlerMiddleware(log interfaces.LoggerInterface, config ...ErrorHandl
 			requestBody, _ = io.ReadAll(c.Request.Body)
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		}
-		
+
 		// Create a response writer that captures the response
 		writer := httputil.NewBodyCaptureWriter(c)
 		c.Writer = writer
-		
+
 		// Process request
 		c.Next()
-		
+
 		// Check for errors
 		if len(c.Errors) > 0 {
 			// Get the last error
 			err := c.Errors.Last().Err
-			
+
 			// Log the error with request details
 			logError(log, c, err, requestBody, writer.GetBody(), cfg)
-			
+
 			// Handle the error
 			handleError(c, err, cfg)
 		}
 	}
 }
-
 
 // logError logs an error with request details
 func logError(log interfaces.LoggerInterface, c *gin.Context, err error, requestBody []byte, responseBody string, cfg ErrorHandlerConfig) {
@@ -95,7 +94,7 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 	} else {
 		logLevel = "error"
 	}
-	
+
 	// Create log fields
 	fields := []interface{}{
 		"method", c.Request.Method,
@@ -104,19 +103,19 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 		"client_ip", c.ClientIP(),
 		"request_id", c.GetString("request_id"),
 	}
-	
+
 	// Add user ID if available
 	if userID, exists := c.Get("userID"); exists {
 		fields = append(fields, "user_id", userID)
 	}
-	
+
 	// Add request body if available (truncate if too large)
 	if len(requestBody) > 0 {
 		reqBodyStr := string(requestBody)
 		if len(reqBodyStr) > cfg.MaxBodyLogSize {
 			reqBodyStr = reqBodyStr[:cfg.MaxBodyLogSize] + "... (truncated)"
 		}
-		
+
 		// Try to parse as JSON for prettier logging and to mask sensitive fields
 		var prettyBody interface{}
 		if json.Unmarshal(requestBody, &prettyBody) == nil {
@@ -129,13 +128,13 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 			fields = append(fields, "request_body", reqBodyStr)
 		}
 	}
-	
+
 	// Add response body if available (truncate if too large)
 	if responseBody != "" {
 		if len(responseBody) > cfg.MaxBodyLogSize {
 			responseBody = responseBody[:cfg.MaxBodyLogSize] + "... (truncated)"
 		}
-		
+
 		// Try to parse as JSON for prettier logging and to mask sensitive fields
 		var prettyBody interface{}
 		if json.Unmarshal([]byte(responseBody), &prettyBody) == nil {
@@ -148,45 +147,45 @@ func logError(log interfaces.LoggerInterface, c *gin.Context, err error, request
 			fields = append(fields, "response_body", responseBody)
 		}
 	}
-	
+
 	// Add stack trace for internal errors
 	if apiErr, ok := err.(*apiErrors.APIError); ok && apiErr.Type == apiErrors.ErrorTypeInternal || cfg.LogStackTrace {
 		fields = append(fields, "stack_trace", string(debug.Stack()))
 	}
-	
+
 	// Add error details
 	if apiErr, ok := err.(*apiErrors.APIError); ok {
 		fields = append(fields, "error_type", apiErr.Type)
 		fields = append(fields, "error_code", apiErr.Code)
-		
+
 		if apiErr.Details != nil {
 			fields = append(fields, "error_details", apiErr.Details)
 		}
-		
+
 		if apiErr.Err != nil {
 			fields = append(fields, "error_cause", apiErr.Err.Error())
 		}
 	}
-	
+
 	// Log to OpenTelemetry if available
 	// Commented out until we properly import trace and attribute packages
 	/*
-	if span := trace.SpanFromContext(c.Request.Context()); span != nil {
-		span.RecordError(err)
-		span.SetStatus(trace.StatusCodeError, fmt.Sprintf("%v", err))
-		
-		// Add attributes to span
-		span.SetAttributes(
-			attribute.String("error.type", logLevel),
-			attribute.String("error.message", err.Error()),
-		)
-		
-		if apiErr, ok := err.(*apiErrors.APIError); ok {
-			span.SetAttributes(attribute.String("error.code", apiErr.Code))
+		if span := trace.SpanFromContext(c.Request.Context()); span != nil {
+			span.RecordError(err)
+			span.SetStatus(trace.StatusCodeError, fmt.Sprintf("%v", err))
+
+			// Add attributes to span
+			span.SetAttributes(
+				attribute.String("error.type", logLevel),
+				attribute.String("error.message", err.Error()),
+			)
+
+			if apiErr, ok := err.(*apiErrors.APIError); ok {
+				span.SetAttributes(attribute.String("error.code", apiErr.Code))
+			}
 		}
-	}
 	*/
-	
+
 	// Log the error with the appropriate level
 	if log != nil {
 		switch logLevel {
@@ -206,7 +205,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 	if apiErr, ok := err.(*apiErrors.APIError); ok {
 		// Get status code from API error
 		statusCode := apiErr.StatusCode()
-		
+
 		// Add rate limit headers if applicable
 		if apiErr.Type == apiErrors.ErrorTypeRateLimit {
 			if limit, ok := apiErr.Details["limit"].(int); ok {
@@ -216,7 +215,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 				c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", reset))
 			}
 		}
-		
+
 		// Include stack trace if configured
 		if cfg.IncludeStackTrace && apiErr.Type == apiErrors.ErrorTypeInternal {
 			if apiErr.Details == nil {
@@ -224,7 +223,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 			}
 			apiErr.Details["stack"] = strings.Split(string(debug.Stack()), "\n")
 		}
-		
+
 		// Send error response
 		c.AbortWithStatusJSON(statusCode, gin.H{
 			"error": gin.H{
@@ -235,7 +234,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 		})
 		return
 	}
-	
+
 	// Handle generic errors
 	errorResponse := gin.H{
 		"error": gin.H{
@@ -243,14 +242,14 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 			"message": "An unexpected error occurred",
 		},
 	}
-	
+
 	// Include stack trace if configured
 	if cfg.IncludeStackTrace {
 		errorResponse["error"].(gin.H)["details"] = gin.H{
 			"stack": strings.Split(string(debug.Stack()), "\n"),
 		}
 	}
-	
+
 	c.AbortWithStatusJSON(http.StatusInternalServerError, errorResponse)
 }
 
@@ -258,8 +257,7 @@ func handleError(c *gin.Context, err error, cfg ErrorHandlerConfig) {
 func HandleAPIError(c *gin.Context, err error) {
 	// Add error to gin context
 	_ = c.Error(err)
-	
+
 	// Abort the request
 	c.Abort()
 }
-

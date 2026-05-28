@@ -61,7 +61,6 @@ func (m *MockLLMSafespaceV1Interface) Workspaces(ns string) interfaces.Workspace
 	return m.Called(ns).Get(0).(interfaces.WorkspaceInterface)
 }
 
-
 // MockRuntimeEnvironmentInterface mocks interfaces.RuntimeEnvironmentInterface.
 type MockRuntimeEnvironmentInterface struct{ mock.Mock }
 
@@ -116,7 +115,6 @@ func (m *MockRuntimeEnvironmentInterface) Watch(opts metav1.ListOptions) (watch.
 	}
 	return args.Get(0).(watch.Interface), args.Error(1)
 }
-
 
 // MockWorkspaceInterface mocks interfaces.WorkspaceInterface.
 type MockWorkspaceInterface struct{ mock.Mock }

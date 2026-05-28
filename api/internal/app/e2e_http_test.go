@@ -166,7 +166,9 @@ func TestE2E_RealHTTPServer(t *testing.T) {
 	// === Phase 9: Rotate key ===
 	resp = post(t, c, base+"/api/v1/account/rotate-key", `{"password":"e2e-password-123"}`, token)
 	assertStatus(t, resp, 200, "rotate")
-	var rotResp struct{ KeyVersion int `json:"keyVersion"` }
+	var rotResp struct {
+		KeyVersion int `json:"keyVersion"`
+	}
 	json.Unmarshal(readBody(t, resp), &rotResp)
 	if rotResp.KeyVersion != 2 {
 		t.Errorf("Rotate: expected version 2, got %d", rotResp.KeyVersion)

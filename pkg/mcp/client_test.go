@@ -88,9 +88,6 @@ func TestHTTPClient_SuspendWorkspace_HappyPath(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-
-
-
 // ===== CreateSession =====
 
 func TestHTTPClient_CreateSession_HappyPath(t *testing.T) {
@@ -107,7 +104,6 @@ func TestHTTPClient_CreateSession_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sess-1", resp.ID)
 }
-
 
 // ===== GetHistory =====
 
@@ -279,7 +275,6 @@ func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
 }
 
 // ===== Input validation (path traversal) =====
-
 
 func TestHTTPClient_InvalidSessionID(t *testing.T) {
 	client := &HTTPClient{BaseURL: "http://localhost", HTTPClient: http.DefaultClient}

@@ -29,10 +29,10 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	router := gin.New()
-	
-	router.POST("/users", 
+
+	router.POST("/users",
 		// Set validation model before validation middleware
 		func(c *gin.Context) {
 			c.Set("validationModel", &TestUser{})
@@ -46,7 +46,7 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
 				return
 			}
-			
+
 			user := validatedModel.(*TestUser)
 			c.JSON(http.StatusOK, gin.H{
 				"message": "User created",
@@ -54,7 +54,7 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 			})
 		},
 	)
-	
+
 	// Execute with valid data
 	w := httptest.NewRecorder()
 	validUser := `{
@@ -68,14 +68,14 @@ func TestValidationMiddleware_ValidRequest(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(validUser))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.Equal(t, "User created", response["message"])
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -83,10 +83,10 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	router := gin.New()
-	
-	router.POST("/users", 
+
+	router.POST("/users",
 		func(c *gin.Context) {
 			c.Set("validationModel", &TestUser{})
 			c.Next()
@@ -97,7 +97,7 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 			c.JSON(http.StatusOK, gin.H{"message": "User created"})
 		},
 	)
-	
+
 	// Execute with invalid data
 	w := httptest.NewRecorder()
 	invalidUser := `{
@@ -109,27 +109,27 @@ func TestValidationMiddleware_InvalidRequest(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(invalidUser))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	
+
 	// Check error structure
 	errorObj := response["error"].(map[string]interface{})
 	assert.Equal(t, "validation_error", errorObj["code"])
 	assert.Contains(t, errorObj["message"], "Validation failed")
-	
+
 	// Check validation errors
 	details := errorObj["details"].(map[string]interface{})
 	errors := details["errors"].(map[string]interface{})
-	
+
 	assert.Contains(t, errors, "username")
 	assert.Contains(t, errors, "email")
 	assert.Contains(t, errors, "password")
 	assert.Contains(t, errors, "age")
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -137,10 +137,10 @@ func TestValidationMiddleware_InvalidJSON(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	router := gin.New()
-	
-	router.POST("/users", 
+
+	router.POST("/users",
 		// Set validation model first
 		func(c *gin.Context) {
 			c.Set("validationModel", &TestUser{})
@@ -153,25 +153,25 @@ func TestValidationMiddleware_InvalidJSON(t *testing.T) {
 			c.JSON(http.StatusOK, gin.H{"message": "User created"})
 		},
 	)
-	
+
 	// Execute with invalid JSON
 	w := httptest.NewRecorder()
 	invalidJSON := `{"username": "testuser", "email": "test@example.com", "password": "password123", "age": 25,`
 	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(invalidJSON))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	
+
 	// Check error structure
 	errorObj := response["error"].(map[string]interface{})
 	assert.Equal(t, "validation_error", errorObj["code"])
 	assert.Contains(t, errorObj["message"], "Invalid request body")
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -179,7 +179,7 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	// Create custom validation config
 	config := middleware.ValidationConfig{
 		CustomValidators: map[string]validator.Func{
@@ -198,15 +198,15 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 			"custom_alpha": "Must contain only alphabetic characters",
 		},
 	}
-	
+
 	// Test model with custom validator
 	type CustomModel struct {
 		Name string `json:"name" validate:"required,custom_alpha"`
 	}
-	
+
 	router := gin.New()
-	
-	router.POST("/custom", 
+
+	router.POST("/custom",
 		// Set validation model first
 		func(c *gin.Context) {
 			c.Set("validationModel", &CustomModel{})
@@ -222,7 +222,7 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Validation failed"})
 				return
 			}
-			
+
 			model := validatedModel.(*CustomModel)
 			c.JSON(http.StatusOK, gin.H{
 				"message": "Valid data",
@@ -230,26 +230,26 @@ func TestValidationMiddleware_CustomValidator(t *testing.T) {
 			})
 		},
 	)
-	
+
 	// Execute with invalid data for custom validator
 	w := httptest.NewRecorder()
 	invalidData := `{"name": "John123"}`
 	req, _ := http.NewRequest("POST", "/custom", bytes.NewBufferString(invalidData))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	
+
 	// Check custom error message
 	errorObj := response["error"].(map[string]interface{})
 	details := errorObj["details"].(map[string]interface{})
 	errors := details["errors"].(map[string]interface{})
-	
+
 	assert.Contains(t, errors["name"], "Must contain only alphabetic characters")
-	
+
 	mockLogger.AssertExpectations(t)
 }

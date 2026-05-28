@@ -71,15 +71,15 @@ func TestWorkspaceSpec_PodLifecycleFields(t *testing.T) {
 
 func TestWorkspaceStatus_PodFields(t *testing.T) {
 	status := WorkspaceStatus{
-		Phase:                 WorkspacePhaseActive,
-		PodName:              "ws-abc-pod",
-		PodNamespace:         "llmsafespace",
-		PodIP:                "10.0.1.5",
-		Endpoint:             "http://10.0.1.5:4096",
-		RestartCount:         1,
-		TransientFailureCount: 0,
+		Phase:                     WorkspacePhaseActive,
+		PodName:                   "ws-abc-pod",
+		PodNamespace:              "llmsafespace",
+		PodIP:                     "10.0.1.5",
+		Endpoint:                  "http://10.0.1.5:4096",
+		RestartCount:              1,
+		TransientFailureCount:     0,
 		ObservedRestartGeneration: 2,
-		CredentialSecretHash: "sha256:abc123",
+		CredentialSecretHash:      "sha256:abc123",
 	}
 
 	data, err := json.Marshal(status)
