@@ -406,13 +406,26 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
         <div className="grid grid-cols-2 gap-4">
           {selectedType.metaFields.map((field) => (
             <div key={field}>
-              <label className="text-sm font-medium">{field.replace(/_/g, " ")}</label>
-              <Input
-                value={metadata[field] || ""}
-                onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value })}
-                placeholder={field === "key_type" ? "ed25519" : field === "mount_path" ? "/workspace/.secrets/cert.pem" : field === "var_name" ? "DATABASE_URL" : field === "provider" ? "anthropic" : "github.com"}
-                required={field === "key_type" || field === "mount_path" || field === "var_name"}
-              />
+              <label className="text-sm font-medium">{field === "mount_path" ? "File path" : field.replace(/_/g, " ")}</label>
+              {field === "mount_path" ? (
+                <div className="flex items-center gap-0">
+                  <span className="rounded-l-md border border-r-0 border-border bg-accent px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">/workspace/.secrets/</span>
+                  <Input
+                    value={(metadata[field] || "").replace(/^\/workspace\/\.secrets\//, "")}
+                    onChange={(e) => setMetadata({ ...metadata, [field]: `/workspace/.secrets/${e.target.value.replace(/^\/+/, "").replace(/\.\.\//g, "")}` })}
+                    placeholder="cert.pem"
+                    required
+                    className="rounded-l-none"
+                  />
+                </div>
+              ) : (
+                <Input
+                  value={metadata[field] || ""}
+                  onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value })}
+                  placeholder={field === "key_type" ? "ed25519" : field === "var_name" ? "DATABASE_URL" : field === "provider" ? "anthropic" : "github.com"}
+                  required={field === "key_type" || field === "var_name"}
+                />
+              )}
             </div>
           ))}
         </div>

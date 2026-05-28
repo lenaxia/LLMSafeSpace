@@ -1,9 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { WorkspaceListItem } from "../../api/types";
 import { Toggle } from "../ui/Toggle";
 import { NumberInput } from "../ui/NumberInput";
+import { secretsApi, type SecretResponse } from "../../api/secrets";
+import { api } from "../../api/client";
 
 interface Props {
   workspace: WorkspaceListItem;
@@ -24,6 +26,21 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
   const [idleMinutes, setIdleMinutes] = useState(60);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allSecrets, setAllSecrets] = useState<SecretResponse[]>([]);
+  const [boundIds, setBoundIds] = useState<Set<string>>(new Set());
+  const [bindingsChanged, setBindingsChanged] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    // Fetch user's secrets and current bindings for this workspace
+    Promise.all([
+      secretsApi.list(),
+      api.get<{ bindings: { secretId: string }[] }>(`/workspaces/${workspace.id}/bindings`),
+    ]).then(([secretsRes, bindingsRes]) => {
+      setAllSecrets(secretsRes.secrets || []);
+      setBoundIds(new Set((bindingsRes.bindings || []).map((b) => b.secretId)));
+    }).catch(() => {});
+  }, [open, workspace.id]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -34,12 +51,25 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
         autoSuspendEnabled: autoSuspend,
         autoSuspendIdleMinutes: idleMinutes,
       });
+      if (bindingsChanged) {
+        await api.put(`/workspaces/${workspace.id}/bindings`, { secretIds: Array.from(boundIds) });
+      }
       onOpenChange(false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleBinding = (secretId: string) => {
+    setBoundIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(secretId)) next.delete(secretId);
+      else next.add(secretId);
+      return next;
+    });
+    setBindingsChanged(true);
   };
 
   return (
@@ -85,6 +115,27 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
                   <p className="text-xs text-muted-foreground">Minutes before suspend</p>
                 </div>
                 <NumberInput id="idleMinutes" value={idleMinutes} onChange={setIdleMinutes} min={5} max={10080} />
+              </div>
+            )}
+
+            {allSecrets.length > 0 && (
+              <div className="border-t border-border pt-4">
+                <label className="text-sm font-medium">Attached Secrets</label>
+                <p className="text-xs text-muted-foreground mb-2">Secrets injected when this workspace starts</p>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {allSecrets.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={boundIds.has(s.id)}
+                        onChange={() => toggleBinding(s.id)}
+                        className="rounded border-border"
+                      />
+                      <span className="text-sm">{s.name}</span>
+                      <span className="text-xs text-muted-foreground">{s.type}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </div>
