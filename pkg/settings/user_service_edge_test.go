@@ -60,21 +60,21 @@ func TestUserService_Set_PreferredModel_EmptyString(t *testing.T) {
 	}
 }
 
-func TestUserService_Set_SidebarWidth_Boundaries(t *testing.T) {
+func TestUserService_Set_FontSize_Boundaries(t *testing.T) {
 	store := newMockUserStore()
 	svc := newTestUserService(store)
 
-	// sidebarWidth: min=200, max=600
-	if err := svc.Set(context.Background(), "u1", "sidebarWidth", 200); err != nil {
+	// fontSize: min=10, max=24
+	if err := svc.Set(context.Background(), "u1", "fontSize", 10); err != nil {
 		t.Errorf("unexpected error for min: %v", err)
 	}
-	if err := svc.Set(context.Background(), "u1", "sidebarWidth", 600); err != nil {
+	if err := svc.Set(context.Background(), "u1", "fontSize", 24); err != nil {
 		t.Errorf("unexpected error for max: %v", err)
 	}
-	if err := svc.Set(context.Background(), "u1", "sidebarWidth", 199); err == nil {
+	if err := svc.Set(context.Background(), "u1", "fontSize", 9); err == nil {
 		t.Error("expected error below min")
 	}
-	if err := svc.Set(context.Background(), "u1", "sidebarWidth", 601); err == nil {
+	if err := svc.Set(context.Background(), "u1", "fontSize", 25); err == nil {
 		t.Error("expected error above max")
 	}
 }

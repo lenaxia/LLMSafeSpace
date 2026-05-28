@@ -118,6 +118,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: wsOrigins,
 		SettingsHandler:         settingsHandler,
+		InstanceSettings:        instanceSettings,
 	})
 
 	httpServer := &http.Server{

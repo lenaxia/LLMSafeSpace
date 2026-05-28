@@ -37,7 +37,7 @@ export function AdminSettingsPage() {
   };
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;
-  if (error === "not-admin") return null; // Hidden from non-admins
+  if (error === "not-admin") return <p className="text-sm text-muted-foreground p-4">Admin access required. Contact your instance administrator.</p>;
   if (error) return <p className="text-destructive p-4">{error}</p>;
 
   return (

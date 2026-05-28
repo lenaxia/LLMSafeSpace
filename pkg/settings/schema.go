@@ -91,19 +91,13 @@ func UserSettings() []SettingDef {
 		{Key: "compactMode", Tier: 3, Type: TypeBool, Default: false, Category: "Appearance", Label: "Compact Mode", Description: "Reduce spacing"},
 
 		// Chat
-		{Key: "streamingEnabled", Tier: 3, Type: TypeBool, Default: true, Category: "Chat", Label: "Streaming", Description: "Stream responses"},
-		{Key: "showThinkingBlocks", Tier: 3, Type: TypeBool, Default: true, Category: "Chat", Label: "Show Thinking", Description: "Show thinking blocks"},
 		{Key: "codeBlockWordWrap", Tier: 3, Type: TypeBool, Default: false, Category: "Chat", Label: "Code Word Wrap", Description: "Wrap long lines in code blocks"},
-		{Key: "sendOnEnter", Tier: 3, Type: TypeBool, Default: true, Category: "Chat", Label: "Send on Enter", Description: "Enter sends message"},
+		{Key: "sendOnEnter", Tier: 3, Type: TypeBool, Default: true, Category: "Chat", Label: "Send on Enter", Description: "Enter sends message (off: Shift+Enter sends)"},
 		{Key: "preferredModel", Tier: 3, Type: TypeString, Default: "", Category: "Chat", Label: "Preferred Model", Description: "Default model ID"},
 
 		// Notifications
 		{Key: "notifyOnSessionComplete", Tier: 3, Type: TypeBool, Default: true, Category: "Notifications", Label: "Session Complete", Description: "Notify when session completes"},
 		{Key: "notifyOnWorkspaceReady", Tier: 3, Type: TypeBool, Default: true, Category: "Notifications", Label: "Workspace Ready", Description: "Notify when workspace is ready"},
-
-		// Layout
-		{Key: "sidebarCollapsed", Tier: 3, Type: TypeBool, Default: false, Category: "Layout", Label: "Sidebar Collapsed", Description: "Collapse sidebar"},
-		{Key: "sidebarWidth", Tier: 3, Type: TypeInt, Default: 280, Min: intPtr(200), Max: intPtr(600), Category: "Layout", Label: "Sidebar Width", Description: "Sidebar width in pixels"},
 	}
 }
 
