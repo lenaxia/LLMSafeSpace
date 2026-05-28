@@ -1,0 +1,252 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import { render } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ChatPage } from "./ChatPage";
+
+vi.mock("../api/workspaces", () => ({
+  workspacesApi: {
+    getStatus: vi.fn(),
+    activate: vi.fn(),
+    list: vi.fn(),
+    getSession: vi.fn(),
+    renameWorkspace: vi.fn().mockResolvedValue({}),
+    deleteWorkspace: vi.fn().mockResolvedValue({}),
+    suspend: vi.fn().mockResolvedValue({}),
+    getSessions: vi.fn().mockResolvedValue([]),
+    ensureSession: vi.fn(),
+    renameSession: vi.fn(),
+  },
+}));
+vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), sendAsync: vi.fn() } }));
+vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
+vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
+
+import { workspacesApi } from "../api/workspaces";
+
+function renderChat(path: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/chat/:workspaceId" element={<ChatPage />} />
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
+}
+
+describe("ChatPage — workspace auto-rename", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+  });
+
+  // --- Happy path: auto-generated name gets renamed ---
+
+  it("renames workspace when name matches adjective-noun-number pattern", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "happy-cloud-42", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "Clone lenaxia/llmsafespace",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => {
+      expect(workspacesApi.renameWorkspace).toHaveBeenCalledWith(
+        "ws-1",
+        "Clone lenaxia/llmsafespace",
+      );
+    });
+  });
+
+  it("renames workspace when name matches 'New session - <timestamp>' pattern", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "New session - 2026-05-27T23:03:56.256Z", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "Clone lenaxia/llmsafespace",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => {
+      expect(workspacesApi.renameWorkspace).toHaveBeenCalledWith(
+        "ws-1",
+        "Clone lenaxia/llmsafespace",
+      );
+    });
+  });
+
+  // --- Skips temporary titles ---
+
+  it("does NOT rename workspace when session title is a temporary opencode title", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "happy-cloud-42", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "New session - 2026-05-28T01:00:00.000Z",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    // Wait for the hook to process
+    await waitFor(() => expect(workspacesApi.getSession).toHaveBeenCalled());
+    // Give time for the effect to fire
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(workspacesApi.renameWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("does NOT rename workspace when session title starts with 'New session -' followed by date", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "cool-fox-7", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "New session - 2026-01-01T00:00:00Z",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => expect(workspacesApi.getSession).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(workspacesApi.renameWorkspace).not.toHaveBeenCalled();
+  });
+
+  // --- Does NOT rename user-chosen names ---
+
+  it("does NOT rename workspace when name is user-chosen (not auto-generated)", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Project", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "Clone lenaxia/llmsafespace",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => expect(workspacesApi.getSession).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(workspacesApi.renameWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("does NOT rename workspace when name contains uppercase (user-set)", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespace", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "Different title",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => expect(workspacesApi.getSession).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(workspacesApi.renameWorkspace).not.toHaveBeenCalled();
+  });
+
+  // --- Only renames once ---
+
+  it("only renames workspace once even if title changes", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "fast-cat-99", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "First Title",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => {
+      expect(workspacesApi.renameWorkspace).toHaveBeenCalledWith("ws-1", "First Title");
+    });
+
+    // Should not be called a second time
+    expect(workspacesApi.renameWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Does not rename when session title is empty ---
+
+  it("does NOT rename workspace when session title is undefined", async () => {
+    vi.clearAllMocks();
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "blue-dog-5", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: undefined,
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => expect(workspacesApi.getSession).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(workspacesApi.renameWorkspace).not.toHaveBeenCalled();
+  });
+
+  // --- Chat header display ---
+
+  it("displays workspace name and session title in header", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespace", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: "Fix the bug",
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("Clone lenaxia/llmsafespace")).toBeInTheDocument();
+      expect(screen.getByText("Fix the bug")).toBeInTheDocument();
+    });
+  });
+
+  it("displays 'New chat' when session has no title", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Workspace", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "sess-1",
+      title: undefined,
+    });
+
+    renderChat("/chat/ws-1/sess-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("My Workspace")).toBeInTheDocument();
+      expect(screen.getByText("New chat")).toBeInTheDocument();
+    });
+  });
+});
