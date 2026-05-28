@@ -159,16 +159,19 @@ export function SecretsTab() {
 
                       {/* Public key display for SSH keys */}
                       {s.metadata?.public_key && (
-                        <div className="mt-2 flex items-center gap-2">
-                          <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
-                            {s.metadata.public_key}
-                          </code>
-                          <button
-                            onClick={() => copyToClipboard(s.metadata.public_key!)}
-                            className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
-                          >
-                            Copy public key
+                        <div className="mt-2">
+                          <span className="text-xs text-muted-foreground font-medium">Public key (safe to share):</span>
+                          <div className="mt-1 flex items-center gap-2">
+                            <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
+                              {s.metadata.public_key}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(s.metadata.public_key!)}
+                              className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                            >
+                              Copy public key
                           </button>
+                          </div>
                         </div>
                       )}
 
