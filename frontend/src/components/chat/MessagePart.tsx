@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Brain, Wrench, Server } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useUserSetting } from "../../hooks/useUserSettings";
 import type { MessagePart as MessagePartType } from "../../api/types";
 
 const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
@@ -54,6 +55,8 @@ interface Props {
 }
 
 export function MessagePart({ part, isUser, isStreaming }: Props) {
+  const wordWrap = useUserSetting("codeBlockWordWrap", false);
+
   if (part.type === "text" && part.text) {
     if (isUser) {
       return <p className="whitespace-pre-wrap text-sm">{part.text}</p>;
@@ -67,7 +70,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
       }
     }
     return (
-      <div className={cn("prose prose-sm dark:prose-invert max-w-none")}>
+      <div className={cn("prose prose-sm dark:prose-invert max-w-none", wordWrap && "[&_pre]:whitespace-pre-wrap [&_pre]:break-words")}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
           {text}
         </ReactMarkdown>
