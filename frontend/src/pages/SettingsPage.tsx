@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { cn } from "../lib/utils";
 import { UserSettingsTab } from "../components/settings/UserSettingsTab";
+import { SecretsTab } from "../components/settings/SecretsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
 import { AdminSettingsPage } from "./AdminSettingsPage";
 import { AdminCredentialsTab } from "../components/settings/AdminCredentialsTab";
@@ -8,6 +9,7 @@ import { useAuth } from "../providers/AuthProvider";
 
 const allTabs = [
   { id: "preferences", label: "Preferences", adminOnly: false },
+  { id: "secrets", label: "Secrets", adminOnly: false },
   { id: "api-keys", label: "API Keys", adminOnly: false },
   { id: "credentials", label: "Credentials", adminOnly: true },
   { id: "admin", label: "Admin", adminOnly: true },
@@ -43,6 +45,7 @@ export function SettingsPage() {
       </nav>
       <div className="flex-1 overflow-y-auto p-6">
         {activeTab === "preferences" && <UserSettingsTab />}
+        {activeTab === "secrets" && <SecretsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
         {activeTab === "credentials" && isAdmin && <AdminCredentialsTab />}
         {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
