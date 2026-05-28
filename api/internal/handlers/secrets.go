@@ -14,12 +14,23 @@ import (
 
 // SecretsHandler handles HTTP requests for the secrets API.
 type SecretsHandler struct {
-	svc *secrets.SecretService
+	svc           *secrets.SecretService
+	podIPResolver PodIPResolver
+}
+
+// PodIPResolver looks up the pod IP for a workspace.
+type PodIPResolver interface {
+	GetWorkspacePodIP(ctx context.Context, userID, workspaceID string) (string, error)
 }
 
 // NewSecretsHandler creates a new SecretsHandler.
 func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
+}
+
+// SetPodIPResolver sets the resolver for looking up pod IPs.
+func (h *SecretsHandler) SetPodIPResolver(r PodIPResolver) {
+	h.podIPResolver = r
 }
 
 // CreateSecret handles POST /api/v1/secrets
@@ -230,10 +241,14 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 		return
 	}
 
-	// Get pod IP from workspace status (passed via header by frontend or looked up)
-	podIP := c.GetHeader("X-Pod-IP")
-	if podIP == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Pod-IP header required"})
+	// Look up pod IP from workspace status
+	if h.podIPResolver == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "secret reload not configured"})
+		return
+	}
+	podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
+	if err != nil || podIP == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "workspace has no running pod"})
 		return
 	}
 
@@ -246,12 +261,23 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent reload failed"})
+	if resp.StatusCode != http.StatusOK {
+		var agentErr struct{ Error string `json:"error"` }
+		json.NewDecoder(resp.Body).Decode(&agentErr)
+		msg := "agent reload failed"
+		if agentErr.Error != "" {
+			msg = agentErr.Error
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	var result struct {
+		Reloaded  int  `json:"reloaded"`
+		Restarted bool `json:"restarted"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	c.JSON(http.StatusOK, gin.H{"reloaded": result.Reloaded, "restarted": result.Restarted})
 }
 
 // SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
