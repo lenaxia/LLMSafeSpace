@@ -118,10 +118,13 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     const borderColor = part.toolState === "error" ? "border-red-500/20 bg-red-500/5" : "border-blue-500/20 bg-blue-500/5";
     const textColor = part.toolState === "error" ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400";
 
-    // Detect file edit tools with oldStr/newStr for diff rendering
+    // Detect file edit tools: opencode uses oldString/newString, others may use oldStr/newStr
     const input = part.input as Record<string, unknown> | undefined;
-    const isFileEdit = input && typeof input === "object" && "oldStr" in input && "newStr" in input;
-    const filePath = input && typeof input === "object" ? (input.path as string) || (input.file_path as string) || "" : "";
+    const isFileEdit = input && typeof input === "object" && (
+      ("oldString" in input && "newString" in input) || ("oldStr" in input && "newStr" in input)
+    );
+    const isFileWrite = !isFileEdit && input && typeof input === "object" && "content" in input && "filePath" in input;
+    const filePath = input && typeof input === "object" ? (input.filePath as string) || (input.path as string) || (input.file_path as string) || "" : "";
 
     if (!hasDetails) {
       return (
@@ -142,7 +145,14 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
         </summary>
         <div className="border-t border-inherit py-1 space-y-1 overflow-hidden">
           {isFileEdit ? (
-            <ToolDiffView oldStr={String(input.oldStr ?? "")} newStr={String(input.newStr ?? "")} />
+            <ToolDiffView
+              oldStr={String((input as Record<string, unknown>).oldString ?? (input as Record<string, unknown>).oldStr ?? "")}
+              newStr={String((input as Record<string, unknown>).newString ?? (input as Record<string, unknown>).newStr ?? "")}
+            />
+          ) : isFileWrite ? (
+            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+              {String((input as Record<string, unknown>).content ?? "")}
+            </pre>
           ) : (
             <>
               {part.input != null && (
