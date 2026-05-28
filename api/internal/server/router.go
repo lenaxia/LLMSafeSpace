@@ -97,7 +97,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	router.Use(middleware.SecurityMiddleware(logger, cfg.SecurityConfig))
 	router.Use(middleware.LoggingMiddleware(logger, cfg.LoggingConfig))
 	router.Use(middleware.MetricsMiddleware(services.GetMetrics()))
-	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig))
+	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig, cfg.InstanceSettings))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
 
 	// Add WebSocket security middleware to WebSocket routes

@@ -20,6 +20,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -40,15 +41,43 @@ func (s *Service) SetKeyService(ks KeyServiceInterface) {
 	s.keyService = ks
 }
 
+// SetInstanceSettings injects the instance settings service for runtime config reads.
+func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
+	s.instanceSettings = svc
+}
+
+// lockoutConfig reads lockout configuration from instance settings (if available),
+// falling back to static config values.
+func (s *Service) lockoutConfig(ctx context.Context) (enabled bool, attempts int, duration time.Duration) {
+	enabled = s.config.Auth.LockoutEnabled
+	attempts = s.config.Auth.LockoutAttempts
+	duration = s.config.Auth.LockoutDuration
+
+	if s.instanceSettings == nil {
+		return
+	}
+	if v, err := s.instanceSettings.GetBool(ctx, "auth.lockoutEnabled"); err == nil {
+		enabled = v
+	}
+	if v, err := s.instanceSettings.GetInt(ctx, "auth.lockoutAttempts"); err == nil && v > 0 {
+		attempts = v
+	}
+	if v, err := s.instanceSettings.GetInt(ctx, "auth.lockoutDurationMinutes"); err == nil && v > 0 {
+		duration = time.Duration(v) * time.Minute
+	}
+	return
+}
+
 // Service handles authentication and authorization
 type Service struct {
-	logger        *logger.Logger
-	config        *config.Config
-	dbService     interfaces.DatabaseService
-	cacheService  interfaces.CacheService
-	jwtSecret     []byte
-	tokenDuration time.Duration
-	keyService    KeyServiceInterface
+	logger           *logger.Logger
+	config           *config.Config
+	dbService        interfaces.DatabaseService
+	cacheService     interfaces.CacheService
+	jwtSecret        []byte
+	tokenDuration    time.Duration
+	keyService       KeyServiceInterface
+	instanceSettings *settings.InstanceService
 }
 
 // Start initializes the auth service
@@ -406,11 +435,12 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 
-	if s.config.Auth.LockoutEnabled {
+	lockoutEnabled, lockoutAttempts, _ := s.lockoutConfig(ctx)
+	if lockoutEnabled {
 		lockoutKey := fmt.Sprintf("lockout:%s", email)
 		if countStr, err := s.cacheService.Get(ctx, lockoutKey); err == nil && countStr != "" {
 			var count int
-			if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil && count >= s.config.Auth.LockoutAttempts {
+			if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil && count >= lockoutAttempts {
 				return nil, errors.New("account temporarily locked due to too many failed attempts")
 			}
 		}
@@ -465,7 +495,8 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 }
 
 func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
-	if !s.config.Auth.LockoutEnabled {
+	enabled, _, duration := s.lockoutConfig(ctx)
+	if !enabled {
 		return
 	}
 	lockoutKey := fmt.Sprintf("lockout:%s", email)
@@ -475,7 +506,6 @@ func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
 		fmt.Sscanf(countStr, "%d", &count)
 	}
 	count++
-	duration := s.config.Auth.LockoutDuration
 	if duration == 0 {
 		duration = 15 * time.Minute
 	}
@@ -485,7 +515,8 @@ func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
 }
 
 func (s *Service) clearFailedAttempts(ctx context.Context, email string) {
-	if !s.config.Auth.LockoutEnabled {
+	enabled, _, _ := s.lockoutConfig(ctx)
+	if !enabled {
 		return
 	}
 	lockoutKey := fmt.Sprintf("lockout:%s", email)

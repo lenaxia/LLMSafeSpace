@@ -46,7 +46,7 @@ func TestRateLimitMiddleware_TokenBucket(t *testing.T) {
 		c.Set("apiKey", "test-key")
 		c.Next()
 	})
-	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config))
+	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config, nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "success")
 	})
@@ -115,7 +115,7 @@ func TestRateLimitMiddleware_FixedWindow(t *testing.T) {
 		c.Set("apiKey", "test-key")
 		c.Next()
 	})
-	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config))
+	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config, nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "success")
 	})
@@ -189,7 +189,7 @@ func TestRateLimitMiddleware_SlidingWindow(t *testing.T) {
 		c.Set("apiKey", "test-key")
 		c.Next()
 	})
-	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config))
+	router.Use(middleware.RateLimitMiddleware(mockRateLimiter, mockLogger, config, nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "success")
 	})
