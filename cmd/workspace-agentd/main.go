@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -22,12 +23,6 @@ const (
 )
 
 var log *zap.Logger
-
-type AgentClient interface {
-	IsHealthy(ctx context.Context) (healthy bool, version string, err error)
-	ConnectedProviders(ctx context.Context) ([]string, error)
-	ConfiguredProviderCount(ctx context.Context) (int, error)
-}
 
 type OpenCodeClient struct {
 	password string
@@ -89,33 +84,74 @@ func (c *OpenCodeClient) ConfiguredProviderCount(ctx context.Context) (int, erro
 	return len(result.Providers), nil
 }
 
+func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo, error) {
+	resp, err := c.doRequest(ctx, "/session")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var sessions []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return nil, err
+	}
+	result := make([]agentd.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = agentd.SessionInfo{ID: s.ID, Title: s.Title, Status: "idle"}
+	}
+	return result, nil
+}
+
 type providerCache struct {
 	mu            sync.Mutex
 	connected     []string
 	configured    int
+	sessions      []agentd.SessionInfo
 	lastFetchedAt time.Time
 }
 
-const connectedCacheTTL = 30 * time.Second
+const connectedCacheTTL = 15 * time.Second
 
-func cachedConnected(ctx context.Context, client AgentClient, cache *providerCache) ([]string, int) {
+func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCache) ([]string, int, []agentd.SessionInfo) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if time.Since(cache.lastFetchedAt) < connectedCacheTTL && cache.connected != nil {
-		return cache.connected, cache.configured
+		return cache.connected, cache.configured, cache.sessions
 	}
 	connected, connErr := client.ConnectedProviders(ctx)
 	configured, cfgErr := client.ConfiguredProviderCount(ctx)
+	sessions, sessErr := client.ListSessions(ctx)
 	if connErr != nil {
 		log.Warn("failed to fetch connected providers", zap.Error(connErr))
 	}
 	if cfgErr != nil {
 		log.Warn("failed to fetch configured provider count", zap.Error(cfgErr))
 	}
+	if sessErr != nil {
+		log.Debug("failed to fetch sessions", zap.Error(sessErr))
+	}
 	cache.connected = connected
 	cache.configured = configured
+	cache.sessions = sessions
 	cache.lastFetchedAt = time.Now()
-	return connected, configured
+	return connected, configured, sessions
+}
+
+const workspacePath = "/workspace"
+
+func getDiskUsage() *agentd.DiskUsage {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(workspacePath, &stat); err != nil {
+		return nil
+	}
+	total := int64(stat.Blocks) * int64(stat.Bsize)
+	free := int64(stat.Bfree) * int64(stat.Bsize)
+	return &agentd.DiskUsage{
+		UsedBytes:  total - free,
+		TotalBytes: total,
+	}
 }
 
 func main() {
@@ -170,7 +206,7 @@ func main() {
 
 	mux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		connected, configured := cachedConnected(r.Context(), client, cache)
+		connected, configured, _ := cachedState(r.Context(), client, cache)
 		healthy, version, _ := client.IsHealthy(r.Context())
 		ready := healthy && len(connected) > 0
 		json.NewEncoder(w).Encode(agentd.ReadyzResponse{
@@ -234,19 +270,29 @@ func main() {
 	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
-		connected, configured := cachedConnected(r.Context(), client, cache)
+		connected, configured, sessions := cachedState(r.Context(), client, cache)
 		ready := healthy && len(connected) > 0
+
+		activeCnt := 0
+		for _, s := range sessions {
+			if s.Status == "busy" {
+				activeCnt++
+			}
+		}
+
 		json.NewEncoder(w).Encode(agentd.StatuszResponse{
 			Healthy:             healthy,
 			Ready:               ready,
 			Connected:           connected,
 			ProvidersConfigured: configured,
-			SessionsActive:      0,
+			Sessions:            sessions,
+			SessionsActive:      activeCnt,
 			SessionsError:       0,
 			LastError:           "",
 			AgentType:           "opencode",
 			AgentVersion:        version,
 			UptimeSeconds:       int(time.Since(startedAt).Seconds()),
+			Disk:                getDiskUsage(),
 		})
 	})
 

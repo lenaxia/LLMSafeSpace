@@ -177,7 +177,7 @@ func TestShouldRunHealthCheck_WithinInterval(t *testing.T) {
 	ws := makeWorkspace("ws-hc", "default", v1.WorkspacePhaseActive)
 	past := metav1.NewTime(time.Now().Add(-5 * time.Minute))
 	ws.Status.StartTime = &past
-	recent := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+	recent := metav1.NewTime(time.Now().Add(-5 * time.Second))
 	ws.Status.LastHealthCheckAt = &recent
 	assert.False(t, r.shouldRunHealthCheck(ws))
 }
@@ -189,11 +189,11 @@ func TestShouldRunHealthCheck_BackoffAfterFailures(t *testing.T) {
 	ws.Status.StartTime = &past
 	ws.Status.ConsecutiveHealthFailures = 3
 
-	withinBackoff := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	withinBackoff := metav1.NewTime(time.Now().Add(-30 * time.Second))
 	ws.Status.LastHealthCheckAt = &withinBackoff
 	assert.False(t, r.shouldRunHealthCheck(ws), "should not run within backoff interval")
 
-	afterBackoff := metav1.NewTime(time.Now().Add(-16 * time.Minute))
+	afterBackoff := metav1.NewTime(time.Now().Add(-90 * time.Second))
 	ws.Status.LastHealthCheckAt = &afterBackoff
 	assert.True(t, r.shouldRunHealthCheck(ws), "should run after backoff interval")
 }

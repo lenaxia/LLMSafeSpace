@@ -179,6 +179,13 @@ type WorkspaceCondition struct {
 	Message            string      `json:"message,omitempty"`
 }
 
+// AgentSessionStatus describes a session reported by the workspace agent.
+type AgentSessionStatus struct {
+	ID     string `json:"id"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status"` // "idle" | "busy"
+}
+
 // WorkspaceStatus defines the observed state of a Workspace.
 type WorkspaceStatus struct {
 	Phase              WorkspacePhase       `json:"phase,omitempty"`
@@ -203,6 +210,11 @@ type WorkspaceStatus struct {
 	CredentialSecretHash      string       `json:"credentialSecretHash,omitempty"`
 	LastHealthCheckAt         *metav1.Time `json:"lastHealthCheckAt,omitempty"`
 	ConsecutiveHealthFailures int32        `json:"consecutiveHealthFailures,omitempty"`
+
+	// Agent-reported fields (populated from agentd /v1/statusz scrape):
+	Sessions      []AgentSessionStatus `json:"sessions,omitempty"`
+	DiskUsedBytes int64                `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes int64               `json:"diskTotalBytes,omitempty"`
 }
 
 // +kubebuilder:object:root=true

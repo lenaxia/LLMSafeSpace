@@ -970,10 +970,10 @@ func (r *WorkspaceReconciler) checkCredentialState(ctx context.Context, ws *v1.W
 }
 
 var (
-	healthCheckInterval         = 5 * time.Minute
-	healthCheckBackoffInterval  = 15 * time.Minute
+	healthCheckInterval         = 15 * time.Second
+	healthCheckBackoffInterval  = 60 * time.Second
 	healthCheckFailureThreshold = int32(3)
-	healthCheckGracePeriod      = 2 * time.Minute
+	healthCheckGracePeriod      = 30 * time.Second
 	agentdPort                  = 4097
 )
 
@@ -1061,6 +1061,21 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			v1.ReasonAgentDegraded, fmt.Sprintf("no providers connected (configured=%d, connected=%v)",
 				status.ProvidersConfigured, status.Connected))
 		return
+	}
+
+	// Populate agent-reported metadata on CRD status.
+	if len(status.Sessions) > 0 {
+		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
+		for i, s := range status.Sessions {
+			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status}
+		}
+		ws.Status.Sessions = sessions
+	} else {
+		ws.Status.Sessions = nil
+	}
+	if status.Disk != nil {
+		ws.Status.DiskUsedBytes = status.Disk.UsedBytes
+		ws.Status.DiskTotalBytes = status.Disk.TotalBytes
 	}
 
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
