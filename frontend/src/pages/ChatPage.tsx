@@ -16,7 +16,7 @@ import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
-import type { Message, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
+import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -69,8 +69,12 @@ export function ChatPage() {
   useEffect(() => {
     console.log("[Workspace] sessionTitle:", sessionTitle, "workspace:", workspace?.name, "pattern match:", workspace?.name ? /^[a-z]+-[a-z]+-\d+$/.test(workspace.name) : "n/a");
     if (!sessionTitle || !workspace || !workspaceId || hasAutoRenamedRef.current) return;
-    // Detect auto-generated name: adjective-noun-number pattern
-    if (/^[a-z]+-[a-z]+-\d+$/.test(workspace.name)) {
+    // Skip temporary opencode titles (e.g. "New session - 2026-05-27T23:03:56.256Z")
+    if (/^New session\s*-\s*\d{4}-/.test(sessionTitle)) return;
+    // Detect auto-generated name: adjective-noun-number OR "New session - <timestamp>"
+    const isAutoName = /^[a-z]+-[a-z]+-\d+$/.test(workspace.name) ||
+      /^New session\s*-\s*\d{4}-/.test(workspace.name);
+    if (isAutoName) {
       hasAutoRenamedRef.current = true;
       console.log("[Workspace] auto-renaming to:", sessionTitle);
       workspacesApi.renameWorkspace(workspaceId, sessionTitle).then(() => {
@@ -230,8 +234,41 @@ export function ChatPage() {
       if (event.status === "idle" && event.session_id) {
         notifySessionIdle(event.session_id);
       }
-    } else if (event.type === "opencode.event" && sessionId) {
-      parseStreamEvent(event as OpenCodeEvent, sessionId);
+    } else if (event.type === "opencode.event" && workspaceId) {
+      const oe = event as OpenCodeEvent;
+      // Handle session.updated — update sidebar title in real-time
+      if (oe.event_type === "session.updated") {
+        const payload = oe.data as Record<string, unknown> | undefined;
+        const props = (payload?.properties ?? (payload?.payload && (payload.payload as Record<string, unknown>)?.properties)) as Record<string, unknown> | undefined;
+        const sid = (props?.id as string) || (props?.sessionID as string);
+        const title = props?.title as string | undefined;
+        if (sid && title) {
+          queryClient.setQueryData<SessionListItem[]>(["sessions", workspaceId], (old) => {
+            if (!old) return old;
+            return old.map((s) => s.id === sid ? { ...s, title } : s);
+          });
+        }
+      }
+      // Handle session.error — surface LLM/provider errors as a message bubble
+      if (oe.event_type === "session.error" && sessionId) {
+        const payload = oe.data as Record<string, unknown> | undefined;
+        const props = (payload?.properties ?? (payload?.payload && (payload.payload as Record<string, unknown>)?.properties)) as Record<string, unknown> | undefined;
+        const sid = (props?.sessionID as string) || (props?.id as string);
+        if (sid === sessionId) {
+          const err = props?.error as Record<string, unknown> | undefined;
+          const errData = err?.data as Record<string, unknown> | undefined;
+          const message = (errData?.message as string) || (err?.name as string) || "Agent error";
+          setLocalMessages((prev) => [...prev, {
+            id: `error-${Date.now()}`,
+            role: "assistant",
+            parts: [{ type: "error" as const, text: `⚠️ ${message}` }],
+          }]);
+        }
+      }
+      // Route streaming events to the active session parser
+      if (sessionId) {
+        parseStreamEvent(oe, sessionId);
+      }
     }
   }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle]);
 

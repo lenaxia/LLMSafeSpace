@@ -857,6 +857,40 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 		EventType: eventType,
 		Data:      parsed,
 	})
+
+	// Persist session title to DB when opencode emits session.updated with a title
+	if eventType == "session.updated" && h.sessionIndex != nil {
+		h.persistTitleFromEvent(workspaceID, rawData)
+	}
+}
+
+// persistTitleFromEvent extracts the session title from a session.updated SSE
+// event and writes it to the session index. This ensures PostgreSQL always has
+// the latest title without requiring a separate fetch from opencode.
+func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
+	// Try flat format: {"type":"session.updated","properties":{"id":"...","title":"..."}}
+	var flat struct {
+		Properties struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal([]byte(rawData), &flat) == nil && flat.Properties.ID != "" && flat.Properties.Title != "" {
+		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, flat.Properties.ID, flat.Properties.Title)
+		return
+	}
+	// Try nested format: {"payload":{"type":"session.updated","properties":{"id":"...","title":"..."}}}
+	var nested struct {
+		Payload struct {
+			Properties struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"properties"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(rawData), &nested) == nil && nested.Payload.Properties.ID != "" && nested.Payload.Properties.Title != "" {
+		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, nested.Payload.Properties.ID, nested.Payload.Properties.Title)
+	}
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
