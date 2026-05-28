@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -107,18 +108,32 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 		var keyService *secrets.KeyService
 		var secretService *secrets.SecretService
+		var auditStore secrets.SecretStore
 		if pgxErr != nil {
 			log.Warn("Failed to create pgxpool for secrets; using in-memory adapters", "error", pgxErr.Error())
+			memStore := &dbSecretStoreAdapter{}
 			keyService = secrets.NewKeyService(&dbKeyStoreAdapter{}, dekCache)
-			secretService = secrets.NewSecretService(keyService, &dbSecretStoreAdapter{})
+			secretService = secrets.NewSecretService(keyService, memStore)
+			auditStore = memStore
 		} else {
+			pgStore := secrets.NewPgSecretStore(secretsPool)
 			keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
-			secretService = secrets.NewSecretService(keyService, secrets.NewPgSecretStore(secretsPool))
+			secretService = secrets.NewSecretService(keyService, pgStore)
+			auditStore = pgStore
 		}
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
+		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
+			entry := &secrets.AuditEntry{
+				UserID:    userID,
+				Action:    action,
+				Metadata:  []byte(`{}`),
+				Timestamp: time.Now(),
+			}
+			auditStore.LogAudit(context.Background(), entry)
+		})
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)

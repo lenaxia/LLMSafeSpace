@@ -233,12 +233,33 @@ func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID str
 		}
 	}
 
+	// Get existing bindings to detect removals
+	existing, _ := s.store.GetBindings(ctx, workspaceID)
+	existingIDs := make(map[string]bool)
+	for _, sec := range existing {
+		existingIDs[sec.ID] = true
+	}
+
 	if err := s.store.SetBindings(ctx, workspaceID, secretIDs); err != nil {
 		return fmt.Errorf("set bindings: %w", err)
 	}
 
+	// Log unbinds (IDs that were bound but are no longer)
+	newIDs := make(map[string]bool)
 	for _, sid := range secretIDs {
-		s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
+		newIDs[sid] = true
+	}
+	for id := range existingIDs {
+		if !newIDs[id] {
+			sid := id
+			s.audit(ctx, userID, "unbind", &sid, &workspaceID, nil)
+		}
+	}
+
+	for _, sid := range secretIDs {
+		if !existingIDs[sid] {
+			s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
+		}
 	}
 	return nil
 }
