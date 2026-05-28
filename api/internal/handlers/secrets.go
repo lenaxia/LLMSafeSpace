@@ -303,8 +303,9 @@ type PasswordHashUpdater interface {
 
 // RotateKeyHandler handles account key management endpoints.
 type RotateKeyHandler struct {
-	keySvc     KeyRotator
-	pwUpdater  PasswordHashUpdater
+	keySvc    KeyRotator
+	pwUpdater PasswordHashUpdater
+	auditFunc func(userID, action string) // optional audit callback
 }
 
 // NewRotateKeyHandler creates a new RotateKeyHandler.
@@ -315,6 +316,11 @@ func NewRotateKeyHandler(keySvc KeyRotator) *RotateKeyHandler {
 // SetPasswordUpdater sets the optional password hash updater.
 func (h *RotateKeyHandler) SetPasswordUpdater(u PasswordHashUpdater) {
 	h.pwUpdater = u
+}
+
+// SetAuditFunc sets an optional audit callback for key operations.
+func (h *RotateKeyHandler) SetAuditFunc(f func(userID, action string)) {
+	h.auditFunc = f
 }
 
 // RotateKey handles POST /api/v1/account/rotate-key
@@ -341,6 +347,10 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "key rotation failed"})
 		return
+	}
+
+	if h.auditFunc != nil {
+		h.auditFunc(userID, "rotate")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"keyVersion": newVersion})
