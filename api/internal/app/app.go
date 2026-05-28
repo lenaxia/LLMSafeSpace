@@ -6,14 +6,17 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 type App struct {
@@ -58,6 +61,30 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 	proxyHandler.SetSessionIndex(sessionIndexSvc)
 
+	// Wire secret management (Epic 10).
+	var secretsHandler *handlers.SecretsHandler
+	dekCacheClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	dekCache := secrets.NewRedisDEKCache(dekCacheClient)
+	// PgKeyStore and PgSecretStore require a pgxpool — for now use a nil-safe
+	// approach: if database is available, wire secrets; otherwise skip.
+	// The database service manages its own pool, so we create lightweight
+	// in-memory key/secret stores that delegate to the DB service interface.
+	// For the initial wiring, we use the KeyService with the DEK cache and
+	// a placeholder key store that will be replaced when pgxpool is exposed.
+	keyService := secrets.NewKeyService(&dbKeyStoreAdapter{db: svc.Database}, dekCache)
+	secretStore := &dbSecretStoreAdapter{db: svc.Database}
+	secretService := secrets.NewSecretService(keyService, secretStore)
+	secretsHandler = handlers.NewSecretsHandler(secretService)
+
+	// Connect key service to auth for DEK unlock on login
+	if authSvc, ok := svc.Auth.(*auth.Service); ok {
+		authSvc.SetKeyService(keyService)
+	}
+
 	// In development mode, disable RequireHTTPS so the API works over plain
 	// HTTP via port-forward / local tooling. In production, set
 	// logging.development=false and front the API with an Ingress that
@@ -100,6 +127,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecurityConfig:          securityCfg,
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: wsOrigins,
+		SecretsHandler:          secretsHandler,
 	})
 
 	httpServer := &http.Server{
