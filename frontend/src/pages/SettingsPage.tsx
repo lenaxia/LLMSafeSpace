@@ -3,10 +3,12 @@ import { cn } from "../lib/utils";
 import { UserSettingsTab } from "../components/settings/UserSettingsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
 import { AdminSettingsPage } from "./AdminSettingsPage";
+import { AdminCredentialsTab } from "../components/settings/AdminCredentialsTab";
 
 const tabs = [
   { id: "preferences", label: "Preferences" },
   { id: "api-keys", label: "API Keys" },
+  { id: "credentials", label: "Credentials" },
   { id: "admin", label: "Admin" },
 ] as const;
 
@@ -38,6 +40,7 @@ export function SettingsPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
+        {activeTab === "credentials" && <AdminCredentialsTab />}
         {activeTab === "admin" && <AdminSettingsPage />}
       </div>
     </div>
