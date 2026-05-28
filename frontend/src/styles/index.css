@@ -94,3 +94,15 @@ html {
   border: 1px solid var(--color-border);
   padding: 0.4em 0.8em;
 }
+
+/* Compact mode: reduce spacing globally */
+[data-compact="true"] {
+  --spacing-scale: 0.75;
+}
+[data-compact="true"] .gap-3 { gap: 0.5rem; }
+[data-compact="true"] .gap-4 { gap: 0.75rem; }
+[data-compact="true"] .py-3 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+[data-compact="true"] .py-4 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+[data-compact="true"] .px-4 { padding-left: 0.75rem; padding-right: 0.75rem; }
+[data-compact="true"] .space-y-4 > * + * { margin-top: 0.75rem; }
+[data-compact="true"] .space-y-6 > * + * { margin-top: 1rem; }

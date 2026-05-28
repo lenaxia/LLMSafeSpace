@@ -39,6 +39,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         if (size && size >= 10 && size <= 24) {
           document.documentElement.style.fontSize = `${size}px`;
         }
+        const compact = res.settings.compactMode as boolean | undefined;
+        document.documentElement.setAttribute("data-compact", String(!!compact));
       })
       .catch(() => {}); // Use localStorage value on failure
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
