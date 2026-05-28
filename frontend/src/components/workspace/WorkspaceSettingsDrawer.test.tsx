@@ -41,20 +41,7 @@ describe("WorkspaceSettingsDrawer", () => {
     expect(screen.queryByText("Workspace Settings")).not.toBeInTheDocument();
   });
 
-  it("shows max sessions input with default value", () => {
-    render(
-      <WorkspaceSettingsDrawer
-        workspace={mockWorkspace}
-        open={true}
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-      />,
-    );
-    const input = screen.getByLabelText("Max Sessions");
-    expect(input).toHaveValue(5);
-  });
-
-  it("shows auto-suspend toggle", () => {
+  it("shows auto-suspend toggle defaulting to on", () => {
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
@@ -93,7 +80,6 @@ describe("WorkspaceSettingsDrawer", () => {
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith({
-        maxActiveSessions: 5,
         autoSuspendEnabled: true,
         autoSuspendIdleMinutes: 60,
       });
