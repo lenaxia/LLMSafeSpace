@@ -15,7 +15,8 @@
     "oidcEnabled": false,
     "ssoProviders": [
       "okta"
-    ]
+    ],
+    "instanceName": ""
   },
   "AuthResponse": {
     "token": "jwt-token",

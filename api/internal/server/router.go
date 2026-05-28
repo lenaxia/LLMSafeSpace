@@ -261,14 +261,24 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 	// Public: feature flag discovery
 	rg.GET("/config", func(c *gin.Context) {
 		regEnabled := true // default
+		instanceName := "LLMSafeSpace"
+		motd := ""
 		if instanceSettings != nil {
 			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
 				regEnabled = v
+			}
+			if v, err := instanceSettings.GetString(c.Request.Context(), "instance.name"); err == nil && v != "" {
+				instanceName = v
+			}
+			if v, err := instanceSettings.GetString(c.Request.Context(), "instance.motd"); err == nil {
+				motd = v
 			}
 		}
 		c.JSON(http.StatusOK, types.AuthConfig{
 			RegistrationEnabled: regEnabled,
 			OIDCEnabled:         false,
+			InstanceName:        instanceName,
+			MOTD:                motd,
 		})
 	})
 
