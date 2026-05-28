@@ -77,6 +77,25 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	}, nil
 }
 
+// GetSecretByName returns secret metadata by name (never the value).
+func (s *SecretService) GetSecretByName(ctx context.Context, userID, name string) (*SecretResponse, error) {
+	secret, err := s.store.GetSecretByName(ctx, userID, name)
+	if err != nil {
+		return nil, err
+	}
+	if secret == nil {
+		return nil, nil
+	}
+	return &SecretResponse{
+		ID:        secret.ID,
+		Name:      secret.Name,
+		Type:      secret.Type,
+		Metadata:  secret.Metadata,
+		CreatedAt: secret.CreatedAt,
+		UpdatedAt: secret.UpdatedAt,
+	}, nil
+}
+
 // GetSecret returns secret metadata (never the value).
 func (s *SecretService) GetSecret(ctx context.Context, userID, secretID string) (*SecretResponse, error) {
 	secret, err := s.store.GetSecret(ctx, userID, secretID)

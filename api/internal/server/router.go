@@ -149,6 +149,11 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		// Bindings are under the workspace group (already authenticated)
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
+
+		// Workspace env overrides
+		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
+		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
+		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
 	}
 
 	// Key rotation endpoint (Epic 10)
@@ -156,6 +161,10 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		accountGroup := router.Group("/api/v1/account")
 		accountGroup.Use(services.GetAuth().AuthMiddleware())
 		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
+		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
+
+		// Recovery is semi-public (no auth required — user forgot password)
+		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
 	}
 
 	// Metrics endpoint
