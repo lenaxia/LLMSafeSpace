@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
+import { WorkspaceSettingsDrawer } from "../workspace/WorkspaceSettingsDrawer";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
 import { KebabMenu } from "../ui/KebabMenu";
 import type { KebabMenuItem } from "../ui/KebabMenu";
@@ -278,7 +279,10 @@ function WorkspaceGroup({
   const isResuming = workspace.phase === "Resuming";
   const isActive = workspace.phase === "Active";
 
+  const [showSettings, setShowSettings] = useState(false);
+
   const kebabItems: KebabMenuItem[] = [
+    { label: "Settings", onClick: () => setShowSettings(true) },
     { label: "Copy new session link", onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspace.id}`) },
     ...(isActive ? [{ label: "Suspend", onClick: onSuspend }] : []),
     ...(isSuspended ? [{ label: "Resume", onClick: onResume }] : []),
@@ -366,6 +370,12 @@ function WorkspaceGroup({
           onRenameSessionConfirm={onRenameSessionConfirm}
         />
       )}
+      <WorkspaceSettingsDrawer
+        workspace={workspace}
+        open={showSettings}
+        onOpenChange={setShowSettings}
+        onSave={async () => {}}
+      />
     </div>
   );
 }
