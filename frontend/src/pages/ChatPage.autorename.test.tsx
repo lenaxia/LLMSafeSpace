@@ -16,7 +16,7 @@ vi.mock("../api/workspaces", () => ({
     suspend: vi.fn().mockResolvedValue({}),
     getSessions: vi.fn().mockResolvedValue([]),
     ensureSession: vi.fn(),
-    renameSession: vi.fn(),
+    renameSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), sendAsync: vi.fn() } }));
