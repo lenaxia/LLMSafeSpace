@@ -14,6 +14,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -43,6 +44,12 @@ type RouterConfig struct {
 
 	// InstanceSettings provides access to instance settings for feature flags
 	InstanceSettings *settings.InstanceService
+
+	// SecretsHandler is the handler for secret management endpoints (optional)
+	SecretsHandler *handlers.SecretsHandler
+
+	// RotateKeyHandler is the handler for key rotation (optional)
+	RotateKeyHandler *handlers.RotateKeyHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -138,6 +145,33 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Settings routes (admin + user)
 	if cfg.SettingsHandler != nil {
 		registerSettingsRoutes(router, services, cfg.SettingsHandler)
+	}
+
+	// Secret management routes (Epic 10)
+	if cfg.SecretsHandler != nil {
+		secretsGroup := router.Group("/api/v1/secrets")
+		secretsGroup.Use(services.GetAuth().AuthMiddleware())
+		secretsGroup.POST("", cfg.SecretsHandler.CreateSecret)
+		secretsGroup.GET("", cfg.SecretsHandler.ListSecrets)
+		secretsGroup.GET("/audit", cfg.SecretsHandler.GetAuditLog)
+		secretsGroup.GET("/:id", cfg.SecretsHandler.GetSecret)
+		secretsGroup.PUT("/:id", cfg.SecretsHandler.UpdateSecret)
+		secretsGroup.DELETE("/:id", cfg.SecretsHandler.DeleteSecret)
+
+		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
+		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
+		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
+		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
+		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
+	}
+
+	// Key rotation endpoint (Epic 10)
+	if cfg.RotateKeyHandler != nil {
+		accountGroup := router.Group("/api/v1/account")
+		accountGroup.Use(services.GetAuth().AuthMiddleware())
+		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
+		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
+		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
 	}
 
 	// Metrics endpoint
@@ -473,6 +507,9 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 	})
 
 	rg.PUT("/:id/credentials", func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "2027-01-01")
+		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -491,6 +528,9 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 	})
 
 	rg.DELETE("/:id/credentials", func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "2027-01-01")
+		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -511,7 +551,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		resp, err := wsSvc.ActivateWorkspace(c.Request.Context(), userID, c.Param("id"))
+		ctx := c.Request.Context()
+		if sid, exists := c.Get("sessionID"); exists {
+			ctx = workspace.ContextWithSessionID(ctx, sid.(string))
+		}
+		resp, err := wsSvc.ActivateWorkspace(ctx, userID, c.Param("id"))
 		if err != nil {
 			respondWithError(c, err)
 			return

@@ -429,4 +429,3 @@ func (in *WorkspaceStorageConfig) DeepCopy() *WorkspaceStorageConfig {
 	in.DeepCopyInto(out)
 	return out
 }
-

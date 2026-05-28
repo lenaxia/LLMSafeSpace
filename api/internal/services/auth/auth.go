@@ -28,6 +28,18 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// KeyServiceInterface abstracts the key service for DEK lifecycle.
+type KeyServiceInterface interface {
+	InitializeUserKeys(ctx context.Context, userID string, password []byte) (recoveryKeyHex string, err error)
+	UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error
+	HasKeys(ctx context.Context, userID string) (bool, error)
+}
+
+// SetKeyService sets the optional key service for secret management.
+func (s *Service) SetKeyService(ks KeyServiceInterface) {
+	s.keyService = ks
+}
+
 // Service handles authentication and authorization
 type Service struct {
 	logger        *logger.Logger
@@ -36,6 +48,7 @@ type Service struct {
 	cacheService  interfaces.CacheService
 	jwtSecret     []byte
 	tokenDuration time.Duration
+	keyService    KeyServiceInterface
 }
 
 // Start initializes the auth service
@@ -373,6 +386,14 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		return nil, errors.New("registration failed")
 	}
 
+	// Initialize encryption keys for secret management (Epic 10)
+	if s.keyService != nil {
+		if _, err := s.keyService.InitializeUserKeys(ctx, userID, []byte(req.Password)); err != nil {
+			s.logger.Error("Register: failed to initialize user keys", err, "user_id", userID)
+			// Non-fatal: user can still use the system, keys will be initialized on first secret creation
+		}
+	}
+
 	token, err := s.GenerateToken(userID)
 	if err != nil {
 		return nil, errors.New("registration failed")
@@ -420,6 +441,17 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	token, err := s.GenerateToken(user.ID)
 	if err != nil {
 		return nil, errors.New("login failed")
+	}
+
+	// Unlock DEK for secret management (Epic 10)
+	if s.keyService != nil {
+		jti := utilities.ExtractJTI(token)
+		if jti != "" {
+			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, s.tokenDuration); err != nil {
+				s.logger.Warn("Login: failed to unlock DEK", "user_id", user.ID, "error", err.Error())
+				// Non-fatal: user can still use the system, just can't manage secrets until re-auth
+			}
+		}
 	}
 
 	user.PasswordHash = ""

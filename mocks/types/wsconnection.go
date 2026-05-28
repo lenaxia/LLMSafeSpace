@@ -2,7 +2,7 @@ package types
 
 import (
 	"time"
-	
+
 	"github.com/stretchr/testify/mock"
 )
 

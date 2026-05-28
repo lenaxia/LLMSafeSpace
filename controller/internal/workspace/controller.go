@@ -266,6 +266,10 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
+	// Clean up ephemeral secrets Secret now that pod is Running.
+	// Plaintext secrets should not linger in etcd.
+	r.deleteEphemeralSecretsSecret(ctx, workspace)
+
 	// Pod running — check timeout.
 	if workspace.Spec.Timeout > 0 && workspace.Status.StartTime != nil {
 		elapsed := time.Since(workspace.Status.StartTime.Time)
@@ -491,6 +495,17 @@ func (r *WorkspaceReconciler) deletePodByName(ctx context.Context, name, namespa
 	_ = r.Delete(ctx, pod)
 }
 
+func (r *WorkspaceReconciler) deleteEphemeralSecretsSecret(ctx context.Context, workspace *v1.Workspace) {
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: workspace.Namespace}, secret); err != nil {
+		return // doesn't exist, nothing to do
+	}
+	if err := r.Delete(ctx, secret); err != nil {
+		log.FromContext(ctx).V(1).Info("Failed to delete ephemeral secrets secret", "name", secretName, "error", err.Error())
+	}
+}
+
 func (r *WorkspaceReconciler) ensurePasswordSecret(ctx context.Context, workspace *v1.Workspace) error {
 	name := passwordSecretName(workspace.Name)
 	secret := &corev1.Secret{}
@@ -668,7 +683,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, credVolume, err := r.buildCredentialSetupInit(ctx, workspace, runtimeImage)
+	credInit, pwVolume, credVolume, userSecretsVol, err := r.buildCredentialSetupInit(ctx, workspace, runtimeImage)
 	if err != nil {
 		return nil, err
 	}
@@ -676,6 +691,9 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	volumes = append(volumes, pwVolume)
 	if credVolume != nil {
 		volumes = append(volumes, *credVolume)
+	}
+	if userSecretsVol != nil {
+		volumes = append(volumes, *userSecretsVol)
 	}
 
 	pod := &corev1.Pod{
@@ -713,10 +731,13 @@ func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext
 	}
 }
 
-func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
+func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, *corev1.Volume, error) {
 	credScript := `
 if [ -f /mnt/secrets/credentials/provider-config ]; then
   cp /mnt/secrets/credentials/provider-config /sandbox-cfg/credentials
+fi
+if [ -f /mnt/secrets/user-secrets/secrets.json ]; then
+  cp /mnt/secrets/user-secrets/secrets.json /sandbox-cfg/secrets.json
 fi
 cp /mnt/secrets/password/password /sandbox-cfg/password
 `
@@ -747,7 +768,26 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 			Name: "cred-secret", MountPath: "/mnt/secrets/credentials", ReadOnly: true,
 		})
 	} else if !errors.IsNotFound(err) {
-		return corev1.Container{}, corev1.Volume{}, nil, fmt.Errorf("checking credentials secret: %w", err)
+		return corev1.Container{}, corev1.Volume{}, nil, nil, fmt.Errorf("checking credentials secret: %w", err)
+	}
+
+	// Epic 10: mount user-secrets if the ephemeral Secret exists.
+	userSecretsName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
+	userSecretsSecret := &corev1.Secret{}
+	var userSecretsVolume *corev1.Volume
+	if err := r.Get(ctx, types.NamespacedName{Name: userSecretsName, Namespace: workspace.Namespace}, userSecretsSecret); err == nil {
+		v := corev1.Volume{
+			Name: "user-secrets",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: userSecretsName},
+			},
+		}
+		userSecretsVolume = &v
+		credMounts = append(credMounts, corev1.VolumeMount{
+			Name: "user-secrets", MountPath: "/mnt/secrets/user-secrets", ReadOnly: true,
+		})
+	} else if !errors.IsNotFound(err) {
+		return corev1.Container{}, corev1.Volume{}, nil, nil, fmt.Errorf("checking user-secrets secret: %w", err)
 	}
 
 	trueVal := true
@@ -764,7 +804,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		},
 		VolumeMounts: credMounts,
 	}
-	return credInit, pwVolume, credVolume, nil
+	return credInit, pwVolume, credVolume, userSecretsVolume, nil
 }
 
 func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev1.Container {

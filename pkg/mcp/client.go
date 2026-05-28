@@ -200,7 +200,6 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		return "", fmt.Errorf("message too large (%d bytes, max %d)", len(message), maxMessageSize)
 	}
 
-
 	// 1. Fire prompt_async
 	body := map[string]string{"message": message}
 	path := fmt.Sprintf("/api/v1/workspaces/%s/sessions/%s/prompt", workspaceID, sessionID)
@@ -275,4 +274,3 @@ func (c *HTTPClient) fallbackHistory(ctx context.Context, workspaceID, sessionID
 	}
 	return "", nil
 }
-
