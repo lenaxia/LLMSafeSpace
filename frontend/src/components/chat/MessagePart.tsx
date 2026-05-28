@@ -126,9 +126,9 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     if (!hasDetails) {
       return (
         <div className={cn("my-1.5 rounded-md border px-3 py-2", borderColor)}>
-          <div className={cn("flex items-center gap-2 text-xs font-medium", textColor)}>
-            <Wrench className="h-3.5 w-3.5" />
-            <span>{statusIcon} {toolName || "tool"}</span>
+          <div className={cn("flex items-center gap-2 text-xs font-medium overflow-hidden", textColor)}>
+            <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="truncate">{statusIcon} {toolName || "tool"}</span>
           </div>
         </div>
       );
@@ -136,9 +136,9 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
 
     return (
       <details className={cn("group my-1.5 rounded-md border", borderColor)}>
-        <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium", textColor)}>
-          <Wrench className="h-3.5 w-3.5" />
-          <span>{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
+        <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium overflow-hidden", textColor)}>
+          <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+          <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
         </summary>
         <div className="border-t border-inherit py-1 space-y-1 overflow-hidden">
           {isFileEdit ? (
