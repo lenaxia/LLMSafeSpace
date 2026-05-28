@@ -355,10 +355,11 @@ type APIKey struct {
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
 type UserUpdates struct {
-	Username *string `json:"username,omitempty"`
-	Email    *string `json:"email,omitempty"`
-	Active   *bool   `json:"active,omitempty"`
-	Role     *string `json:"role,omitempty"`
+	Username     *string `json:"username,omitempty"`
+	Email        *string `json:"email,omitempty"`
+	Active       *bool   `json:"active,omitempty"`
+	Role         *string `json:"role,omitempty"`
+	PasswordHash *string `json:"-"`
 }
 
 // All scalar fields are pointers — nil means "do not update this field".

@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"fmt"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // dbKeyStoreAdapter adapts the DatabaseService interface to secrets.KeyStore.
@@ -218,4 +221,18 @@ func generateID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+// bcryptPasswordUpdater implements handlers.PasswordHashUpdater using the DatabaseService.
+type bcryptPasswordUpdater struct {
+	db interfaces.DatabaseService
+}
+
+func (u *bcryptPasswordUpdater) UpdatePasswordHash(ctx context.Context, userID string, newPassword []byte) error {
+	hash, err := bcrypt.GenerateFromPassword(newPassword, 12)
+	if err != nil {
+		return err
+	}
+	hashStr := string(hash)
+	return u.db.UpdateUser(ctx, userID, types.UserUpdates{PasswordHash: &hashStr})
 }

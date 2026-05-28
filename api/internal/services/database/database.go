@@ -207,6 +207,11 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 		query += fmt.Sprintf(", role = $%d", i)
 		args = append(args, *updates.Role)
 	}
+	if updates.PasswordHash != nil {
+		i++
+		query += fmt.Sprintf(", password_hash = $%d", i)
+		args = append(args, *updates.PasswordHash)
+	}
 
 	if i == 0 {
 		return nil
