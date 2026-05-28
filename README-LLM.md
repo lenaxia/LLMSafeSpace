@@ -964,6 +964,7 @@ Follow this workflow for all epic/story implementation tasks. Steps 2–5 form t
 7. Commit and Push
    └─> git add .
    └─> git commit -m "Descriptive message referencing story/epic"
+   └─> git pull --rebase (if push is rejected due to remote changes)
    └─> git -C /workspace/LLMSafeSpace push origin main
 
 8. Worklog Creation
