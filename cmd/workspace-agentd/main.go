@@ -241,6 +241,8 @@ func materializeSecrets(secrets []struct {
 	os.RemoveAll(sshDir)
 	os.MkdirAll(sshDir, 0700)
 	os.Remove(home + "/.git-credentials")
+	os.Remove("/tmp/agent-config.json")
+	os.Remove("/tmp/secrets-env")
 
 	var envLines []string
 
