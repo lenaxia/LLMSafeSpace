@@ -15,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -37,6 +38,12 @@ type RouterConfig struct {
 
 	// AllowedWebSocketOrigins is a list of allowed origins for WebSocket connections
 	AllowedWebSocketOrigins []string
+
+	// SettingsHandler is the optional settings handler for admin/user settings routes
+	SettingsHandler *handlers.SettingsHandler
+
+	// InstanceSettings provides access to instance settings for feature flags
+	InstanceSettings *settings.InstanceService
 
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
@@ -97,7 +104,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -135,6 +142,11 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		registerProxyRoutes(workspaceGroup, proxyHandler)
 	}
 
+	// Settings routes (admin + user)
+	if cfg.SettingsHandler != nil {
+		registerSettingsRoutes(router, services, cfg.SettingsHandler)
+	}
+
 	// Secret management routes (Epic 10)
 	if cfg.SecretsHandler != nil {
 		secretsGroup := router.Group("/api/v1/secrets")
@@ -146,11 +158,8 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		secretsGroup.PUT("/:id", cfg.SecretsHandler.UpdateSecret)
 		secretsGroup.DELETE("/:id", cfg.SecretsHandler.DeleteSecret)
 
-		// Bindings are under the workspace group (already authenticated)
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
-
-		// Workspace env overrides
 		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
 		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
 		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
@@ -162,8 +171,6 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		accountGroup.Use(services.GetAuth().AuthMiddleware())
 		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
 		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
-
-		// Recovery is semi-public (no auth required — user forgot password)
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
 	}
 
@@ -238,13 +245,19 @@ func setSessionCookie(c *gin.Context, token string) {
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
 	rg.GET("/config", func(c *gin.Context) {
+		regEnabled := true // default
+		if instanceSettings != nil {
+			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
+				regEnabled = v
+			}
+		}
 		c.JSON(http.StatusOK, types.AuthConfig{
-			RegistrationEnabled: false, // TODO: read from config
+			RegistrationEnabled: regEnabled,
 			OIDCEnabled:         false,
 		})
 	})
@@ -538,7 +551,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		// Pass sessionID through context for secret injection during activation.
 		ctx := c.Request.Context()
 		if sid, exists := c.Get("sessionID"); exists {
 			ctx = workspace.ContextWithSessionID(ctx, sid.(string))
@@ -622,4 +634,24 @@ func respondWithError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+}
+
+// registerSettingsRoutes adds admin and user settings routes.
+func registerSettingsRoutes(router *gin.Engine, services interfaces.Services, h *handlers.SettingsHandler) {
+	authMW := services.GetAuth().AuthMiddleware()
+
+	// Admin settings (authenticated + admin guard)
+	admin := router.Group("/api/v1/admin/settings")
+	admin.Use(authMW)
+	admin.Use(middleware.AdminGuard())
+	admin.GET("", h.GetAdminSettings)
+	admin.GET("/schema", h.GetAdminSettingsSchema)
+	admin.PUT("/:key", h.SetAdminSetting)
+
+	// User settings (authenticated)
+	user := router.Group("/api/v1/users/me/settings")
+	user.Use(authMW)
+	user.GET("", h.GetUserSettings)
+	user.GET("/schema", h.GetUserSettingsSchema)
+	user.PUT("/:key", h.SetUserSetting)
 }

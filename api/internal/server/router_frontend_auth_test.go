@@ -27,7 +27,7 @@ func TestAuthConfig_ReturnsFeatureFlags(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var cfg types.AuthConfig
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
-	assert.False(t, cfg.RegistrationEnabled)
+	assert.True(t, cfg.RegistrationEnabled)
 	assert.False(t, cfg.OIDCEnabled)
 }
 

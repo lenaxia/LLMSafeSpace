@@ -32,6 +32,9 @@ type contextKey string
 // always in sync.
 const ContextKeyUserID contextKey = "userID"
 
+// ContextKeyUserRole is the context key used to store the authenticated user's role.
+const ContextKeyUserRole contextKey = "userRole"
+
 // Kubernetes object — there is no TypeMeta or ObjectMeta embedding. The
 // service layer converts a v1.Sandbox CRD into one of these for client
 // responses.

@@ -564,6 +564,14 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 
 		// Set user ID in context
 		c.Set("userID", userID)
+
+		// Load user role into context for AdminGuard and authorization checks.
+		if s.dbService != nil {
+			if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
+				c.Set("userRole", user.Role)
+			}
+		}
+
 		c.Next()
 	}
 }

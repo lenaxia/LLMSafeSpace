@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { Send } from "lucide-react";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
+import { useUserSetting } from "../../hooks/useUserSettings";
 
 interface Props {
   onSend: (text: string) => void;
@@ -13,6 +14,7 @@ interface Props {
 export function Composer({ onSend, disabled, placeholder = "Type a message..." }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendOnEnter = useUserSetting("sendOnEnter", true);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -24,9 +26,18 @@ export function Composer({ onSend, disabled, placeholder = "Type a message..." }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
+    if (sendOnEnter) {
+      // Enter sends, Shift+Enter inserts newline
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    } else {
+      // Shift+Enter sends, Enter inserts newline
+      if (e.key === "Enter" && e.shiftKey) {
+        e.preventDefault();
+        handleSubmit(e);
+      }
     }
   };
 

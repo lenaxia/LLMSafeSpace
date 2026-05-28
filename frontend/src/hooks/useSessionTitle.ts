@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
+import type { SessionListItem } from "../api/types";
 
 /**
  * Fetches the opencode session title for the active session via the proxy.
@@ -45,12 +46,17 @@ export function useSessionTitle(
     prevStreaming.current = streaming;
   }, [streaming, workspaceId, sessionId, active, refetch]);
 
-  // When a title arrives, push it into the sessions list cache so the sidebar
-  // updates without a full refetch of the session list.
+  // When a title arrives, update the sidebar cache immediately.
+  // The backend persists to PostgreSQL via the session.updated SSE event,
+  // so we only need to update the local cache for instant UI feedback.
   useEffect(() => {
-    console.log("[SessionTitle] data:", data?.id, "title:", data?.title);
     if (!data?.title || !workspaceId || !sessionId) return;
-    queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+    queryClient.setQueryData<SessionListItem[]>(["sessions", workspaceId], (old) => {
+      if (!old) return old;
+      return old.map((s) =>
+        s.id === sessionId ? { ...s, title: data.title } : s,
+      );
+    });
   }, [data?.title, workspaceId, sessionId, queryClient]);
 
   return data?.title ?? undefined;
