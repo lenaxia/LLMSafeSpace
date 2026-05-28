@@ -266,6 +266,10 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
+	// Clean up ephemeral secrets Secret now that pod is Running.
+	// Plaintext secrets should not linger in etcd.
+	r.deleteEphemeralSecretsSecret(ctx, workspace)
+
 	// Pod running — check timeout.
 	if workspace.Spec.Timeout > 0 && workspace.Status.StartTime != nil {
 		elapsed := time.Since(workspace.Status.StartTime.Time)
@@ -489,6 +493,17 @@ func (r *WorkspaceReconciler) deletePodByName(ctx context.Context, name, namespa
 	pod.Name = name
 	pod.Namespace = namespace
 	_ = r.Delete(ctx, pod)
+}
+
+func (r *WorkspaceReconciler) deleteEphemeralSecretsSecret(ctx context.Context, workspace *v1.Workspace) {
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: workspace.Namespace}, secret); err != nil {
+		return // doesn't exist, nothing to do
+	}
+	if err := r.Delete(ctx, secret); err != nil {
+		log.FromContext(ctx).V(1).Info("Failed to delete ephemeral secrets secret", "name", secretName, "error", err.Error())
+	}
 }
 
 func (r *WorkspaceReconciler) ensurePasswordSecret(ctx context.Context, workspace *v1.Workspace) error {

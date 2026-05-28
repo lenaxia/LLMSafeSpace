@@ -36,6 +36,7 @@ type Service struct {
 	cacheService   apiinterfaces.CacheService
 	metricsService apiinterfaces.MetricsService
 	sessionIndex   apiinterfaces.SessionIndexService
+	secretInjector SecretInjector
 	config         *Config
 }
 
@@ -115,6 +116,16 @@ func New(
 // SetSessionIndex injects the session index service. Optional — nil disables session tracking.
 func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
 	s.sessionIndex = si
+}
+
+// SecretInjector prepares decrypted secrets for pod injection.
+type SecretInjector interface {
+	PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
+}
+
+// SetSecretInjector injects the secret service for pod secret materialization.
+func (s *Service) SetSecretInjector(si SecretInjector) {
+	s.secretInjector = si
 }
 
 func (s *Service) Start() error {
@@ -734,6 +745,20 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		return nil, err
 	}
 
+	// Inject secrets into ephemeral K8s Secret (Epic 10).
+	// The sessionID comes from the Gin context via the context.Value chain.
+	if s.secretInjector != nil {
+		sessionID, _ := ctx.Value(sessionIDContextKey).(string)
+		if sessionID != "" {
+			secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+			if err != nil {
+				s.logger.Warn("Failed to prepare secrets for injection", "workspaceID", workspaceID, "error", err.Error())
+			} else if len(secretsJSON) > 2 { // more than "[]"
+				s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
+			}
+		}
+	}
+
 	// Resume the target workspace
 	if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
 		return nil, err
@@ -742,6 +767,49 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	return &types.ActivateWorkspaceResponse{
 		Resumed: workspaceID,
 	}, nil
+}
+
+// sessionIDContextKey is used to pass the JWT jti through context for secret injection.
+type sessionIDCtxKey struct{}
+
+var sessionIDContextKey = sessionIDCtxKey{}
+
+// ContextWithSessionID adds the session ID to context for secret injection during activation.
+func ContextWithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionIDContextKey, sessionID)
+}
+
+func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID string, secretsJSON []byte) {
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
+	clientset := s.k8sClient.Clientset()
+	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: s.config.Namespace,
+			Labels: map[string]string{
+				"app":                        "llmsafespace",
+				"llmsafespace.dev/workspace": workspaceID,
+				"llmsafespace.dev/ephemeral": "true",
+			},
+		},
+		Data: map[string][]byte{
+			"secrets.json": secretsJSON,
+		},
+	}
+
+	existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		existing.Data = secret.Data
+		if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			s.logger.Error("Failed to update ephemeral secrets secret", err, "workspaceID", workspaceID)
+		}
+	} else {
+		if _, err := secretClient.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			s.logger.Error("Failed to create ephemeral secrets secret", err, "workspaceID", workspaceID)
+		}
+	}
 }
 
 // ListWorkspaceSessions returns session index entries for a workspace.
