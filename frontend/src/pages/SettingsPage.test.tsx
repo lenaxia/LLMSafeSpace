@@ -3,6 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { ThemeProvider } from "../providers/ThemeProvider";
+import { ToastProvider } from "../providers/ToastProvider";
 import { SettingsPage } from "./SettingsPage";
 
 // Mock auth provider
@@ -33,7 +34,9 @@ vi.mock("../api/credentials", () => ({
 function renderSettings() {
   return render(
     <ThemeProvider>
-      <SettingsPage />
+      <ToastProvider>
+        <SettingsPage />
+      </ToastProvider>
     </ThemeProvider>,
   );
 }

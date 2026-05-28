@@ -49,15 +49,13 @@ interface SettingRowProps {
 
 function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleChange = async (newValue: unknown) => {
     setSaving(true);
-    setError(null);
     try {
       await onSave(def.key, newValue);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Save failed");
+    } catch {
+      // Error handled by parent (toast)
     } finally {
       setSaving(false);
     }
@@ -70,7 +68,6 @@ function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
           {def.label}
         </label>
         <p className="text-xs text-muted-foreground mt-0.5">{def.description}</p>
-        {error && <p className="text-xs text-destructive mt-1">{error}</p>}
       </div>
       <div className="shrink-0">
         <SettingControl def={def} value={value} onChange={handleChange} disabled={disabled || saving} />
