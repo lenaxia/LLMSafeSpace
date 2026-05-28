@@ -220,6 +220,31 @@ spec:
                   format: int64
                 credentialSecretHash:
                   type: string
+                lastHealthCheckAt:
+                  type: string
+                  format: date-time
+                consecutiveHealthFailures:
+                  type: integer
+                  format: int32
+                sessions:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, status]
+                    properties:
+                      id:
+                        type: string
+                      title:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["idle", "busy"]
+                diskUsedBytes:
+                  type: integer
+                  format: int64
+                diskTotalBytes:
+                  type: integer
+                  format: int64
       additionalPrinterColumns:
         - name: Phase
           type: string
