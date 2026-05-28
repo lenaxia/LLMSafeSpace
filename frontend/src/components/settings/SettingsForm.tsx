@@ -3,6 +3,7 @@ import type { SettingDef } from "../../api/settings";
 import { Toggle } from "../ui/Toggle";
 import { NumberInput } from "../ui/NumberInput";
 import { Select } from "../ui/Select";
+import { TagInput } from "../ui/TagInput";
 
 interface SettingsFormProps {
   schema: SettingDef[];
@@ -119,12 +120,11 @@ function SettingControl({ def, value, onChange, disabled }: SettingControlProps)
       );
     case "strings":
       return (
-        <StringInput
+        <TagInput
           id={def.key}
-          value={(value as string[])?.join(", ") ?? ""}
-          onCommit={(v) => onChange((v as string).split(",").map((s) => s.trim()).filter(Boolean))}
+          value={Array.isArray(value) ? (value as string[]) : []}
+          onChange={onChange}
           disabled={disabled}
-          placeholder="comma-separated"
         />
       );
     default:

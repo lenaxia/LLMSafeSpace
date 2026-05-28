@@ -54,6 +54,21 @@ func (m *mockCredStore) UpdateCredentialSet(_ context.Context, id string, update
 	if updates.Name != nil {
 		row.Name = *updates.Name
 	}
+	if updates.ProvidersEncrypted != nil {
+		row.ProvidersEncrypted = *updates.ProvidersEncrypted
+	}
+	if updates.KeyVersion != nil {
+		row.KeyVersion = *updates.KeyVersion
+	}
+	if updates.ModelAllowlist != nil {
+		row.ModelAllowlist = *updates.ModelAllowlist
+	}
+	if updates.AssignedTo != nil {
+		row.AssignedTo = *updates.AssignedTo
+	}
+	if updates.IsDefault != nil {
+		row.IsDefault = *updates.IsDefault
+	}
 	return nil
 }
 
@@ -264,5 +279,139 @@ func TestCredService_RotateKey_Idempotent(t *testing.T) {
 	}
 	if result.AlreadyCurrent != 1 {
 		t.Errorf("expected 1 already current, got %d", result.AlreadyCurrent)
+	}
+}
+
+func TestCredService_Update_Name(t *testing.T) {
+	svc, _ := newTestCredService()
+	ctx := context.Background()
+
+	cs, _ := svc.Create(ctx, CreateCredentialSetRequest{
+		Name:      "original",
+		Providers: ProviderConfig{"openai": {APIKey: "sk-1"}},
+	})
+
+	newName := "renamed"
+	err := svc.Update(ctx, cs.ID, UpdateCredentialSetRequest{Name: &newName})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := svc.Get(ctx, cs.ID)
+	if got.Name != "renamed" {
+		t.Errorf("expected name 'renamed', got %q", got.Name)
+	}
+}
+
+func TestCredService_Update_Providers_ReEncrypts(t *testing.T) {
+	svc, store := newTestCredService()
+	ctx := context.Background()
+
+	cs, _ := svc.Create(ctx, CreateCredentialSetRequest{
+		Name:      "reencrypt",
+		Providers: ProviderConfig{"openai": {APIKey: "sk-old"}},
+	})
+
+	oldEncrypted := make([]byte, len(store.sets[cs.ID].ProvidersEncrypted))
+	copy(oldEncrypted, store.sets[cs.ID].ProvidersEncrypted)
+
+	newProviders := ProviderConfig{"anthropic": {APIKey: "sk-new"}}
+	err := svc.Update(ctx, cs.ID, UpdateCredentialSetRequest{Providers: &newProviders})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Encrypted bytes should differ
+	if string(store.sets[cs.ID].ProvidersEncrypted) == string(oldEncrypted) {
+		t.Error("expected providers to be re-encrypted")
+	}
+
+	// Verify provider names updated
+	got, _ := svc.Get(ctx, cs.ID)
+	if len(got.Providers) != 1 || got.Providers[0] != "anthropic" {
+		t.Errorf("expected [anthropic], got %v", got.Providers)
+	}
+}
+
+func TestCredService_Update_NotFound(t *testing.T) {
+	svc, _ := newTestCredService()
+	name := "x"
+	err := svc.Update(context.Background(), "nonexistent", UpdateCredentialSetRequest{Name: &name})
+	if err == nil {
+		t.Error("expected error for nonexistent credential set")
+	}
+}
+
+func TestCredService_GetDefault_Exists(t *testing.T) {
+	svc, _ := newTestCredService()
+	ctx := context.Background()
+
+	cs, _ := svc.Create(ctx, CreateCredentialSetRequest{
+		Name:      "default-one",
+		Providers: ProviderConfig{"x": {APIKey: "k"}},
+		IsDefault: true,
+	})
+
+	got, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != cs.ID {
+		t.Errorf("expected ID %q, got %q", cs.ID, got.ID)
+	}
+}
+
+func TestCredService_GetDefault_NoneSet(t *testing.T) {
+	svc, _ := newTestCredService()
+
+	got, err := svc.GetDefault(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil when no default, got %+v", got)
+	}
+}
+
+func TestCredService_ListForUser_All(t *testing.T) {
+	svc, _ := newTestCredService()
+	ctx := context.Background()
+
+	svc.Create(ctx, CreateCredentialSetRequest{
+		Name:       "for-all",
+		Providers:  ProviderConfig{"x": {APIKey: "k"}},
+		AssignedTo: "all",
+	})
+	svc.Create(ctx, CreateCredentialSetRequest{
+		Name:       "for-specific",
+		Providers:  ProviderConfig{"y": {APIKey: "k"}},
+		AssignedTo: []string{"user-1"},
+	})
+
+	list, err := svc.ListForUser(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("expected 2 (all + specific), got %d", len(list))
+	}
+}
+
+func TestCredService_ListForUser_ExcludesOtherUsers(t *testing.T) {
+	svc, _ := newTestCredService()
+	ctx := context.Background()
+
+	svc.Create(ctx, CreateCredentialSetRequest{
+		Name:       "for-user1",
+		Providers:  ProviderConfig{"x": {APIKey: "k"}},
+		AssignedTo: []string{"user-1"},
+	})
+
+	list, err := svc.ListForUser(ctx, "user-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected 0 for user-2, got %d", len(list))
 	}
 }

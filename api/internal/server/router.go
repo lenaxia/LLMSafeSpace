@@ -48,6 +48,9 @@ type RouterConfig struct {
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
 
+	// CredentialsHandler is the handler for credential set CRUD (optional)
+	CredentialsHandler *handlers.CredentialsHandler
+
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 }
@@ -145,6 +148,11 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Settings routes (admin + user)
 	if cfg.SettingsHandler != nil {
 		registerSettingsRoutes(router, services, cfg.SettingsHandler)
+	}
+
+	// Credential set CRUD routes (admin only)
+	if cfg.CredentialsHandler != nil {
+		registerCredentialRoutes(router, services, cfg.CredentialsHandler)
 	}
 
 	// Secret management routes (Epic 10)
@@ -654,4 +662,20 @@ func registerSettingsRoutes(router *gin.Engine, services interfaces.Services, h 
 	user.GET("", h.GetUserSettings)
 	user.GET("/schema", h.GetUserSettingsSchema)
 	user.PUT("/:key", h.SetUserSetting)
+}
+
+// registerCredentialRoutes adds admin credential set CRUD routes.
+func registerCredentialRoutes(router *gin.Engine, services interfaces.Services, h *handlers.CredentialsHandler) {
+	authMW := services.GetAuth().AuthMiddleware()
+
+	creds := router.Group("/api/v1/admin/credentials")
+	creds.Use(authMW)
+	creds.Use(middleware.AdminGuard())
+	creds.POST("", h.CreateCredentialSet)
+	creds.GET("", h.ListCredentialSets)
+	creds.GET("/:id", h.GetCredentialSet)
+	creds.PUT("/:id", h.UpdateCredentialSet)
+	creds.DELETE("/:id", h.DeleteCredentialSet)
+	creds.PUT("/:id/default", h.SetDefaultCredentialSet)
+	creds.POST("/rotate-key", h.RotateCredentialKey)
 }
