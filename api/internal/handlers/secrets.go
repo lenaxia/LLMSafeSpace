@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -161,6 +163,105 @@ func (h *SecretsHandler) GetBindings(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
+// Creates or updates env-secret type secrets bound to this workspace.
+func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
+	userID, sessionID := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	workspaceID := c.Param("id")
+	var req struct {
+		Vars map[string]string `json:"vars" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "vars map required"})
+		return
+	}
+
+	for varName, value := range req.Vars {
+		secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
+		metadata, _ := json.Marshal(map[string]string{"var_name": varName})
+
+		// Try to update existing, create if not found
+		existing, _ := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
+		if existing != nil {
+			h.svc.UpdateSecret(c.Request.Context(), userID, sessionID, existing.ID, secrets.UpdateSecretRequest{Value: value})
+		} else {
+			created, err := h.svc.CreateSecret(c.Request.Context(), userID, sessionID, secrets.CreateSecretRequest{
+				Name: secretName, Type: secrets.SecretTypeEnvSecret, Value: value,
+				Metadata: metadata,
+			})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set env var: " + varName})
+				return
+			}
+			// Auto-bind to workspace
+			currentBindings, _ := h.svc.GetBindings(c.Request.Context(), userID, workspaceID)
+			ids := []string{created.ID}
+			for _, b := range currentBindings.Bindings {
+				ids = append(ids, b.SecretID)
+			}
+			h.svc.SetBindings(c.Request.Context(), userID, workspaceID, ids)
+		}
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// GetWorkspaceEnv handles GET /api/v1/workspaces/:id/env
+// Returns env var names (never values) bound to this workspace.
+func (h *SecretsHandler) GetWorkspaceEnv(c *gin.Context) {
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	workspaceID := c.Param("id")
+	resp, err := h.svc.GetBindings(c.Request.Context(), userID, workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get env"})
+		return
+	}
+
+	vars := []string{}
+	for _, b := range resp.Bindings {
+		if b.Type == secrets.SecretTypeEnvSecret {
+			vars = append(vars, b.Name)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"vars": vars})
+}
+
+// DeleteWorkspaceEnv handles DELETE /api/v1/workspaces/:id/env/:name
+func (h *SecretsHandler) DeleteWorkspaceEnv(c *gin.Context) {
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	workspaceID := c.Param("id")
+	varName := c.Param("name")
+	secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
+
+	existing, _ := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "env var not found"})
+		return
+	}
+
+	if err := h.svc.DeleteSecret(c.Request.Context(), userID, existing.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete env var"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 // GetAuditLog handles GET /api/v1/secrets/audit
 func (h *SecretsHandler) GetAuditLog(c *gin.Context) {
 	userID, _ := extractAuth(c)
@@ -191,9 +292,11 @@ func (h *SecretsHandler) GetAuditLog(c *gin.Context) {
 // KeyRotator is the interface needed by the rotation handler.
 type KeyRotator interface {
 	RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (int, error)
+	ChangePassword(ctx context.Context, userID string, oldPassword, newPassword []byte) error
+	ResetWithRecoveryKey(ctx context.Context, userID string, recoveryKeyHex string, newPassword []byte) (string, error)
 }
 
-// RotateKeyHandler handles POST /api/v1/account/rotate-key
+// RotateKeyHandler handles account key management endpoints.
 type RotateKeyHandler struct {
 	keySvc KeyRotator
 }
@@ -203,7 +306,7 @@ func NewRotateKeyHandler(keySvc KeyRotator) *RotateKeyHandler {
 	return &RotateKeyHandler{keySvc: keySvc}
 }
 
-// RotateKey handles the key rotation request.
+// RotateKey handles POST /api/v1/account/rotate-key
 func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 	userID, sessionID := extractAuth(c)
 	if userID == "" {
@@ -230,6 +333,58 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"keyVersion": newVersion})
+}
+
+// ChangePassword handles POST /api/v1/account/change-password
+func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	var req struct {
+		OldPassword string `json:"oldPassword" binding:"required"`
+		NewPassword string `json:"newPassword" binding:"required,min=8"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "oldPassword and newPassword (min 8 chars) required"})
+		return
+	}
+
+	if err := h.keySvc.ChangePassword(c.Request.Context(), userID, []byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
+		if contains(err.Error(), "unwrap DEK") || contains(err.Error(), "invalid") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid current password"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password change failed"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// RecoverAccount handles POST /api/v1/account/recover
+func (h *RotateKeyHandler) RecoverAccount(c *gin.Context) {
+	// This is a public-ish endpoint (user forgot password) but still needs some identity.
+	// In practice, this would be called after email verification. For now, require userID in body.
+	var req struct {
+		UserID      string `json:"userId" binding:"required"`
+		RecoveryKey string `json:"recoveryKey" binding:"required"`
+		NewPassword string `json:"newPassword" binding:"required,min=8"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userId, recoveryKey, and newPassword required"})
+		return
+	}
+
+	newRecoveryKey, err := h.keySvc.ResetWithRecoveryKey(c.Request.Context(), req.UserID, req.RecoveryKey, []byte(req.NewPassword))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid recovery key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"recoveryKey": newRecoveryKey})
 }
 
 // extractAuth gets userID and sessionID (jti) from the Gin context.
