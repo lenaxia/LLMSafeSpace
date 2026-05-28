@@ -1,6 +1,6 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useUserSettings } from "./useUserSettings";
+import { useUserSettings, _resetStoreFromStorage } from "./useUserSettings";
 
 const mockGetUserSettings = vi.fn();
 const mockSetUserSetting = vi.fn();
@@ -16,6 +16,7 @@ vi.mock("../api/settings", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  _resetStoreFromStorage();
 });
 
 describe("useUserSettings", () => {
@@ -49,6 +50,7 @@ describe("useUserSettings", () => {
 
   it("reads from localStorage cache on mount", () => {
     localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "light" }));
+    _resetStoreFromStorage();
     mockGetUserSettings.mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useUserSettings());
@@ -57,6 +59,7 @@ describe("useUserSettings", () => {
 
   it("API overrides localStorage cache", async () => {
     localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "light" }));
+    _resetStoreFromStorage();
     mockGetUserSettings.mockResolvedValue({ settings: { theme: "dark" }, schemaVersion: 1 });
 
     const { result } = renderHook(() => useUserSettings());
@@ -82,6 +85,7 @@ describe("useUserSettings", () => {
 
   it("falls back to cache when API fails", async () => {
     localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "cached" }));
+    _resetStoreFromStorage();
     mockGetUserSettings.mockRejectedValue(new Error("network"));
 
     const { result } = renderHook(() => useUserSettings());
