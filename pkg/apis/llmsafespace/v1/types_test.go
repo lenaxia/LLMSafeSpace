@@ -24,7 +24,7 @@ func TestSchemeRegistration(t *testing.T) {
 		name string
 		obj  runtime.Object
 		kind string
-	}{		{"RuntimeEnvironment", &RuntimeEnvironment{}, "RuntimeEnvironment"},
+	}{{"RuntimeEnvironment", &RuntimeEnvironment{}, "RuntimeEnvironment"},
 		{"RuntimeEnvironmentList", &RuntimeEnvironmentList{}, "RuntimeEnvironmentList"},
 		{"Workspace", &Workspace{}, "Workspace"},
 		{"WorkspaceList", &WorkspaceList{}, "WorkspaceList"},
@@ -217,9 +217,9 @@ func TestWorkspace_JSONRoundTrip(t *testing.T) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "Workspace"},
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
 		Spec: WorkspaceSpec{
-			Owner:          WorkspaceOwner{UserID: "user-1"},
-			Runtime: "python:3.11",
-			SecurityLevel:  "standard",
+			Owner:         WorkspaceOwner{UserID: "user-1"},
+			Runtime:       "python:3.11",
+			SecurityLevel: "standard",
 			Storage: WorkspaceStorageConfig{
 				Size:             "10Gi",
 				StorageClassName: "fast",
@@ -274,8 +274,6 @@ func TestWorkspace_JSONRoundTrip(t *testing.T) {
 
 // TestSandbox_DeepCopy verifies generated DeepCopy creates an independent copy.
 
-
-
 func TestWorkspace_DeepCopy(t *testing.T) {
 	original := &Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1"},
@@ -328,7 +326,6 @@ func TestRuntimeEnvironment_DeepCopy(t *testing.T) {
 	copy.Spec.ResourceRequirements.MinCPU = "1000m"
 	assert.Equal(t, "100m", original.Spec.ResourceRequirements.MinCPU)
 }
-
 
 // TestList_DeepCopy verifies DeepCopy on List types.
 func TestList_DeepCopy(t *testing.T) {

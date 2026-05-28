@@ -10,15 +10,15 @@ import (
 )
 
 type Service struct {
-	logger              pkginterfaces.LoggerInterface
-	requestCounter      *prometheus.CounterVec
-	requestDuration     *prometheus.HistogramVec
-	responseSize        *prometheus.HistogramVec
-	activeConnections   *prometheus.GaugeVec
+	logger               pkginterfaces.LoggerInterface
+	requestCounter       *prometheus.CounterVec
+	requestDuration      *prometheus.HistogramVec
+	responseSize         *prometheus.HistogramVec
+	activeConnections    *prometheus.GaugeVec
 	workspacesCreated    *prometheus.CounterVec
 	workspacesTerminated *prometheus.CounterVec
-	errorsTotal         *prometheus.CounterVec
-	resourceUsage       *prometheus.GaugeVec
+	errorsTotal          *prometheus.CounterVec
+	resourceUsage        *prometheus.GaugeVec
 }
 
 func New(log pkginterfaces.LoggerInterface) *Service {

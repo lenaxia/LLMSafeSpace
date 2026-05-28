@@ -1,7 +1,6 @@
 package utilities
 
-import (
-)
+import ()
 
 // MaskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
 func MaskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
@@ -15,7 +14,7 @@ func MaskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []
 			}
 		}
 	}
-	
+
 	// Also check nested maps
 	for _, v := range data {
 		if nestedMap, ok := v.(map[string]interface{}); ok {
@@ -43,4 +42,3 @@ func MaskString(s string) string {
 		return s[:4] + "..." + s[len(s)-4:]
 	}
 }
-      

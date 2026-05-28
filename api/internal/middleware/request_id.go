@@ -13,7 +13,7 @@ func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check if request ID is already set
 		requestID := c.GetHeader("X-Request-ID")
-		
+
 		// Validate existing request ID or generate a new one
 		if requestID == "" || !uuidRegex.MatchString(requestID) {
 			// Generate a new UUID v4
@@ -24,13 +24,13 @@ func RequestIDMiddleware() gin.HandlerFunc {
 			}
 			requestID = id.String()
 		}
-		
+
 		// Set request ID in context
 		c.Set("request_id", requestID)
-		
+
 		// Set request ID in response header
 		c.Writer.Header().Set("X-Request-ID", requestID)
-		
+
 		c.Next()
 	}
 }

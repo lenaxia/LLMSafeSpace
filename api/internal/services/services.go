@@ -67,7 +67,6 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		return nil, fmt.Errorf("failed to initialize auth service: %w", err)
 	}
 
-
 	workspaceConfig := &workspace.Config{
 		Namespace: cfg.Kubernetes.Namespace,
 	}

@@ -194,8 +194,8 @@ func TestSessionOperations(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "test_session_id"
 	session := types.CachedSession{
-		SessionID: sessionID,
-		UserID:    "user123",
+		SessionID:   sessionID,
+		UserID:      "user123",
 		WorkspaceID: "workspace456",
 	}
 
@@ -287,8 +287,8 @@ func TestSetSession_GetSession_TTLExpiry(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "expiring-session"
 	session := types.CachedSession{
-		SessionID: sessionID,
-		UserID:    "user-ttl",
+		SessionID:   sessionID,
+		UserID:      "user-ttl",
 		WorkspaceID: "ws-ttl",
 	}
 

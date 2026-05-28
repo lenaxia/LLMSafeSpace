@@ -58,10 +58,10 @@ type AuditEntry struct {
 
 // CreateSecretRequest is the API request for creating a secret.
 type CreateSecretRequest struct {
-	Name      string          `json:"name" binding:"required,min=1,max=255"`
-	Type      SecretType      `json:"type" binding:"required"`
-	Value     string          `json:"value" binding:"required"` // plaintext, encrypted before storage
-	Metadata  json.RawMessage `json:"metadata"`
+	Name     string          `json:"name" binding:"required,min=1,max=255"`
+	Type     SecretType      `json:"type" binding:"required"`
+	Value    string          `json:"value" binding:"required"` // plaintext, encrypted before storage
+	Metadata json.RawMessage `json:"metadata"`
 }
 
 // UpdateSecretRequest is the API request for updating a secret value.

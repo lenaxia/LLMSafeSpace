@@ -12,25 +12,25 @@ import (
 type CORSConfig struct {
 	// AllowedOrigins is a list of origins a cross-domain request can be executed from
 	AllowedOrigins []string
-	
+
 	// AllowedMethods is a list of methods the client is allowed to use
 	AllowedMethods []string
-	
+
 	// AllowedHeaders is a list of headers the client is allowed to use
 	AllowedHeaders []string
-	
+
 	// ExposedHeaders is a list of headers that are safe to expose
 	ExposedHeaders []string
-	
+
 	// AllowCredentials indicates whether the request can include user credentials
 	AllowCredentials bool
-	
+
 	// MaxAge indicates how long the results of a preflight request can be cached
 	MaxAge int
-	
+
 	// OptionsPassthrough instructs preflight to let other handlers handle OPTIONS
 	OptionsPassthrough bool
-	
+
 	// Debug enables debugging
 	Debug bool
 }
@@ -43,9 +43,9 @@ func DefaultCORSConfig() CORSConfig {
 		AllowedHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
 		ExposedHeaders:     []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
 		AllowCredentials:   true,
-		MaxAge:            86400,
+		MaxAge:             86400,
 		OptionsPassthrough: false,
-		Debug:             false,
+		Debug:              false,
 	}
 }
 

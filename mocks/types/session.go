@@ -2,26 +2,26 @@ package types
 
 import (
 	"github.com/stretchr/testify/mock"
-	
+
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // MockSession is a mock implementation of Session
 type MockSession struct {
 	mock.Mock
-	ID        string
-	UserID    string
+	ID          string
+	UserID      string
 	WorkspaceID string
-	Conn      types.WSConnection
+	Conn        types.WSConnection
 }
 
 // NewMockSession creates a new mock session
 func NewMockSession(id, userId, workspaceId string) *MockSession {
 	return &MockSession{
-		ID:        id,
-		UserID:    userId,
+		ID:          id,
+		UserID:      userId,
 		WorkspaceID: workspaceId,
-		Conn:      NewMockWSConnection(),
+		Conn:        NewMockWSConnection(),
 	}
 }
 
