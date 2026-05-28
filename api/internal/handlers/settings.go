@@ -26,7 +26,15 @@ func NewSettingsHandler(instanceSvc *settings.InstanceService, userSvc *settings
 func (h *SettingsHandler) GetAdminSettings(c *gin.Context) {
 	all, err := h.instanceSvc.GetAll(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load settings"})
+		// Graceful degradation: return schema defaults if DB unavailable
+		defaults := make(map[string]any)
+		for _, def := range h.instanceSvc.Schema() {
+			defaults[def.Key] = def.Default
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"settings":      defaults,
+			"schemaVersion": settings.SchemaVersion,
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -79,7 +87,15 @@ func (h *SettingsHandler) GetUserSettings(c *gin.Context) {
 
 	all, err := h.userSvc.GetAll(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load settings"})
+		// Graceful degradation: return schema defaults if DB unavailable
+		defaults := make(map[string]any)
+		for _, def := range h.userSvc.Schema() {
+			defaults[def.Key] = def.Default
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"settings":      defaults,
+			"schemaVersion": settings.SchemaVersion,
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
