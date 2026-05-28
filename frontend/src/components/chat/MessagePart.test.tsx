@@ -95,17 +95,21 @@ describe("MessagePart", () => {
     const STORAGE_KEY = "llmsafespace_user_settings";
     const codeMarkdown = "```js\nconst x = 1;\n```";
 
-    it("does not apply word-wrap classes when setting is false", () => {
+    it("does not apply word-wrap classes when setting is false", async () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: false }));
+      const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+      _resetStoreFromStorage();
       const { container } = render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
       const prose = container.querySelector(".prose");
-      expect(prose).not.toHaveClass("[&_pre]:whitespace-pre-wrap");
+      expect(prose?.className).not.toContain("whitespace-pre-wrap");
     });
 
-    it("applies word-wrap classes when setting is true", () => {
+    it("applies word-wrap classes when setting is true", async () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: true }));
+      const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+      _resetStoreFromStorage();
       const { container } = render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
@@ -113,8 +117,10 @@ describe("MessagePart", () => {
       expect(prose?.className).toContain("whitespace-pre-wrap");
     });
 
-    it("defaults to no word-wrap when setting is absent", () => {
+    it("defaults to no word-wrap when setting is absent", async () => {
       localStorage.removeItem(STORAGE_KEY);
+      const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+      _resetStoreFromStorage();
       const { container } = render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
