@@ -102,3 +102,18 @@ func TestAuthConfig_RegistrationDisabledFromSettings(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
 	assert.False(t, cfg.RegistrationEnabled)
 }
+
+func TestAuthConfig_EmptyInstanceName_FallsBackToDefault(t *testing.T) {
+	router := newAuthConfigWithSettings(t, map[string]any{
+		"instance.name": "", // explicitly empty
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cfg types.AuthConfig
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
+	assert.Equal(t, "LLMSafeSpace", cfg.InstanceName) // falls back to default
+}

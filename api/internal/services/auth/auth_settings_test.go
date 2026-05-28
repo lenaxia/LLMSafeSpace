@@ -138,3 +138,25 @@ func TestRecordFailedAttempt_UsesSettingsDuration(t *testing.T) {
 	svc.recordFailedAttempt(ctx, "x@e.com")
 	mockCache.AssertExpectations(t)
 }
+
+func TestClearFailedAttempts_SettingsDisabled_NoOp(t *testing.T) {
+	svc, _, mockCache := newLockoutServiceWithSettings(t, map[string]any{
+		"auth.lockoutEnabled": false,
+	})
+	ctx := context.Background()
+
+	// Should NOT call Delete on cache when lockout is disabled
+	svc.clearFailedAttempts(ctx, "test@e.com")
+	mockCache.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+func TestClearFailedAttempts_SettingsEnabled_DeletesKey(t *testing.T) {
+	svc, _, mockCache := newLockoutServiceWithSettings(t, map[string]any{
+		"auth.lockoutEnabled": true,
+	})
+	ctx := context.Background()
+
+	mockCache.On("Delete", ctx, "lockout:test@e.com").Return(nil)
+	svc.clearFailedAttempts(ctx, "test@e.com")
+	mockCache.AssertCalled(t, "Delete", ctx, "lockout:test@e.com")
+}
