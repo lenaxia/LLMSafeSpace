@@ -4,43 +4,32 @@ import { SettingsForm } from "./SettingsForm";
 import { Spinner } from "../ui/Spinner";
 import { useTheme } from "../../providers/ThemeProvider";
 import { useToast } from "../../providers/ToastProvider";
+import { useUserSettings } from "../../hooks/useUserSettings";
 
 export function UserSettingsTab() {
   const [schema, setSchema] = useState<SettingDef[]>([]);
-  const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { setTheme } = useTheme();
   const { toast } = useToast();
+  const { settings: values, setSetting } = useUserSettings();
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [schemaRes, valuesRes] = await Promise.all([
-          settingsApi.getUserSchema(),
-          settingsApi.getUserSettings(),
-        ]);
-        setSchema(schemaRes.settings);
-        setValues(valuesRes.settings);
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Failed to load settings");
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+    settingsApi.getUserSchema()
+      .then((res) => setSchema(res.settings))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load schema"))
+      .finally(() => setLoading(false));
   }, []);
 
   const handleSave = async (key: string, value: unknown) => {
     try {
-      await settingsApi.setUserSetting(key, value);
-      setValues((prev) => ({ ...prev, [key]: value }));
-
-      // Apply side effects after successful persist
+      // Update shared reactive store + persist to API
+      await setSetting(key, value);
+      // Apply immediate side effects
       applySideEffect(key, value);
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : "Failed to save setting", "error");
-      throw e; // Re-throw so SettingRow shows inline error too
+      throw e;
     }
   };
 
@@ -55,7 +44,7 @@ export function UserSettingsTab() {
         }
         break;
       case "compactMode":
-        document.documentElement.classList.toggle("compact", value === true);
+        document.documentElement.setAttribute("data-compact", String(!!value));
         break;
     }
   };

@@ -44,6 +44,11 @@ export function _resetStoreFromStorage() {
   notify();
 }
 
+/** Update the shared store directly. Used by ThemeProvider to sync API data. */
+export function _updateSettingsCache(settings: Record<string, unknown>) {
+  updateCache(settings);
+}
+
 // --- Hooks ---
 
 /** Reads user settings with localStorage-first strategy (instant render, API sync on mount).
