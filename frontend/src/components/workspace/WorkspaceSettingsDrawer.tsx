@@ -15,13 +15,19 @@ interface Props {
 }
 
 export interface WorkspaceSettings {
-  maxActiveSessions?: number;
   autoSuspendEnabled?: boolean;
   autoSuspendIdleMinutes?: number;
 }
 
+const SECRET_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
+  "llm-provider": { label: "LLM Providers", icon: "🤖" },
+  "ssh-key": { label: "SSH Keys", icon: "🔑" },
+  "git-credential": { label: "Git Credentials", icon: "📦" },
+  "secret-file": { label: "Secret Files", icon: "📄" },
+  "env-secret": { label: "Environment Variables", icon: "⚙️" },
+};
+
 export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave }: Props) {
-  const [maxSessions, setMaxSessions] = useState(workspace.maxActiveSessions ?? 5);
   const [autoSuspend, setAutoSuspend] = useState(true);
   const [idleMinutes, setIdleMinutes] = useState(60);
   const [saving, setSaving] = useState(false);
@@ -32,7 +38,6 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
 
   useEffect(() => {
     if (!open) return;
-    // Fetch user's secrets and current bindings for this workspace
     Promise.all([
       secretsApi.list(),
       api.get<{ bindings: { secretId: string }[] }>(`/workspaces/${workspace.id}/bindings`),
@@ -47,7 +52,6 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
     setError(null);
     try {
       await onSave({
-        maxActiveSessions: maxSessions,
         autoSuspendEnabled: autoSuspend,
         autoSuspendIdleMinutes: idleMinutes,
       });
@@ -72,6 +76,15 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
     setBindingsChanged(true);
   };
 
+  // Group secrets by type
+  const grouped = Object.entries(SECRET_TYPE_LABELS)
+    .map(([type, meta]) => ({
+      type,
+      ...meta,
+      secrets: allSecrets.filter((s) => s.type === type),
+    }))
+    .filter((g) => g.secrets.length > 0);
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -92,48 +105,56 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
           <p className="text-xs text-muted-foreground mb-6 truncate">{workspace.name}</p>
 
           <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium" htmlFor="maxSessions">Max Sessions</label>
-                <p className="text-xs text-muted-foreground">Concurrent sessions</p>
-              </div>
-              <NumberInput id="maxSessions" value={maxSessions} onChange={setMaxSessions} min={1} max={20} />
-            </div>
-
+            {/* Auto-suspend */}
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-sm font-medium" htmlFor="autoSuspend">Auto-Suspend</label>
-                <p className="text-xs text-muted-foreground">Suspend when idle</p>
+                <p className="text-xs text-muted-foreground">Suspend when no activity</p>
               </div>
-              <Toggle id="autoSuspend" checked={autoSuspend} onCheckedChange={setAutoSuspend} />
+              <Toggle id="autoSuspend" checked={autoSuspend} onCheckedChange={(v) => { setAutoSuspend(v); }} />
             </div>
+
+            {!autoSuspend && (
+              <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 rounded px-2 py-1.5">
+                ⚠️ Disabling auto-suspend will keep this workspace running indefinitely, consuming compute minutes and potentially causing unexpected costs.
+              </p>
+            )}
 
             {autoSuspend && (
               <div className="flex items-center justify-between">
                 <div>
                   <label className="text-sm font-medium" htmlFor="idleMinutes">Idle Timeout (min)</label>
-                  <p className="text-xs text-muted-foreground">Minutes before suspend</p>
+                  <p className="text-xs text-muted-foreground">Minutes of zero traffic before suspend. Active LLM conversations and streaming keep the workspace alive.</p>
                 </div>
                 <NumberInput id="idleMinutes" value={idleMinutes} onChange={setIdleMinutes} min={5} max={10080} />
               </div>
             )}
 
+            {/* Attached Secrets - grouped by type */}
             {allSecrets.length > 0 && (
               <div className="border-t border-border pt-4">
                 <label className="text-sm font-medium">Attached Secrets</label>
-                <p className="text-xs text-muted-foreground mb-2">Secrets injected when this workspace starts</p>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {allSecrets.map((s) => (
-                    <label key={s.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={boundIds.has(s.id)}
-                        onChange={() => toggleBinding(s.id)}
-                        className="rounded border-border"
-                      />
-                      <span className="text-sm">{s.name}</span>
-                      <span className="text-xs text-muted-foreground">{s.type}</span>
-                    </label>
+                <p className="text-xs text-muted-foreground mb-3">Secrets injected when this workspace starts</p>
+                <div className="space-y-3 max-h-64 overflow-y-auto">
+                  {grouped.map((group) => (
+                    <div key={group.type}>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">
+                        {group.icon} {group.label}
+                      </p>
+                      <div className="space-y-0.5 ml-1">
+                        {group.secrets.map((s) => (
+                          <label key={s.id} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-accent/50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={boundIds.has(s.id)}
+                              onChange={() => toggleBinding(s.id)}
+                              className="rounded border-border"
+                            />
+                            <span className="text-sm">{s.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
