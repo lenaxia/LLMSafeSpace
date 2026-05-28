@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { settingsApi } from "../api/settings";
+import { _updateSettingsCache } from "../hooks/useUserSettings";
 
 type Theme = "light" | "dark" | "system";
 
@@ -30,6 +31,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!hasSession) return;
     settingsApi.getUserSettings()
       .then((res) => {
+        // Push all settings into the shared reactive store so other
+        // consumers (Composer, MessagePart) have fresh values immediately.
+        _updateSettingsCache(res.settings);
+
         const apiTheme = res.settings.theme as Theme | undefined;
         if (apiTheme && apiTheme !== theme) {
           localStorage.setItem("lsp-theme", apiTheme);
