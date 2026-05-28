@@ -24,6 +24,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 9 | Configuration & Settings — tiered config system, admin/user settings, credential sets, Radix UI | Epic 6 |
 | 10 | Multi-Tenant Trust & Secret Management — zero-knowledge secret store, key wrapping, virtual namespaces, S3 shared folder, audit logging | Epics 6, 8 |
 | 12 | Usage Metering & Billing — per-tenant usage tracking, compute/LLM/storage/API metering, quota enforcement, billing provider interface | Epics 6, 10 |
+| 13 | Settings Enforcement — wire all 29 inert settings to their side effects (workspace defaults, user prefs, security hot-reload, lifecycle automation) | Epic 9 |
 
 ## V2.1 (Deferred)
 
