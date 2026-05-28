@@ -36,6 +36,9 @@ type RouterConfig struct {
 
 	// AllowedWebSocketOrigins is a list of allowed origins for WebSocket connections
 	AllowedWebSocketOrigins []string
+
+	// SettingsHandler is the optional settings handler for admin/user settings routes
+	SettingsHandler *handlers.SettingsHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -126,6 +129,11 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Proxy routes — registered within workspace group when a ProxyHandler is provided
 	if proxyHandler != nil {
 		registerProxyRoutes(workspaceGroup, proxyHandler)
+	}
+
+	// Settings routes (admin + user)
+	if cfg.SettingsHandler != nil {
+		registerSettingsRoutes(router, services, cfg.SettingsHandler)
 	}
 
 	// Metrics endpoint
@@ -572,4 +580,24 @@ func respondWithError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+}
+
+// registerSettingsRoutes adds admin and user settings routes.
+func registerSettingsRoutes(router *gin.Engine, services interfaces.Services, h *handlers.SettingsHandler) {
+	authMW := services.GetAuth().AuthMiddleware()
+
+	// Admin settings (authenticated + admin guard)
+	admin := router.Group("/api/v1/admin/settings")
+	admin.Use(authMW)
+	admin.Use(middleware.AdminGuard())
+	admin.GET("", h.GetAdminSettings)
+	admin.GET("/schema", h.GetAdminSettingsSchema)
+	admin.PUT("/:key", h.SetAdminSetting)
+
+	// User settings (authenticated)
+	user := router.Group("/api/v1/users/me/settings")
+	user.Use(authMW)
+	user.GET("", h.GetUserSettings)
+	user.GET("/schema", h.GetUserSettingsSchema)
+	user.PUT("/:key", h.SetUserSetting)
 }
