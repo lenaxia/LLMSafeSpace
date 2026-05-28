@@ -510,11 +510,50 @@ This interface is the extension point. Adding Vault later means implementing `Va
 
 ---
 
+## Organization/Team Extension Point
+
+Epic 10 is user-scoped. Organizations layer on top without restructuring:
+
+**Design constraint for this epic:** The secret provider interface and database schema must use `owner_id` + `owner_type` (user | org) rather than hardcoding `user_id` as the only ownership dimension. This allows Epic 11 (Organizations) to add org-level secrets without rewriting the encryption or injection layers.
+
+**What Epic 11 adds (not built here):**
+- `organizations` + `org_memberships` tables
+- Org DEK (separate from user DEK), wrapped with every org admin's KEK
+- `org_secrets` table (same schema as `user_secrets`, keyed by `org_id`)
+- Workspace bindings can reference both user secrets and org secrets
+- Pod injection merges both: user secrets + org secrets bound to that workspace
+- Org-level S3 shared folder (team prefix, mounted alongside user prefix)
+- Org-level resource quotas
+
+**What does NOT change when orgs are added:**
+- User secrets remain user-scoped and user-encrypted
+- Virtual namespace isolation remains per-user (org members still get separate namespaces)
+- Pod startup flow is identical (just more secrets to materialize)
+- Audit logging schema works as-is (already has `user_id` + `workspace_id`; add `org_id` column later)
+
+**Implementation note:** In `user_secrets` and the `SecretProvider` interface, use:
+```go
+type SecretOwner struct {
+    ID   string    // user ID or org ID
+    Type OwnerType // "user" or "org"
+}
+
+type OwnerType string
+const (
+    OwnerTypeUser OwnerType = "user"
+    OwnerTypeOrg  OwnerType = "org"
+)
+```
+
+This keeps the door open without building anything prematurely.
+
+---
+
 ## Non-Requirements (Explicitly Out of Scope)
 
 - **Vault integration** — design the interface, don't build it
 - **TEE / hardware enclaves** — v3+
 - **Per-secret expiry / auto-rotation** — v2 (nice to have, not blocking)
-- **Secret sharing between users** — not planned (each user manages their own)
+- **Secret sharing between users** — not planned (each user manages their own); org-level sharing deferred to Epic 11
 - **Client-side encryption in browser** — server-side encryption is sufficient; the trust boundary is "platform at rest," not "platform in memory during active session"
 - **HSM-backed key storage** — enterprise tier, future
