@@ -99,7 +99,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			Password: cfg.Redis.Password,
 			DB:       cfg.Redis.DB,
 		})
-		dekCache := secrets.NewRedisDEKCache(dekCacheClient)
+		dekCache := secrets.NewRedisDEKCache(dekCacheClient, dekMasterKey())
 
 		// Create pgxpool for secret stores (same DB, separate pool for pgx native queries).
 		pgxDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
