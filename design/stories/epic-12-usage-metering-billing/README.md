@@ -762,6 +762,32 @@ type NoopBillingProvider struct{}
 
 ---
 
+### US-12.14: Structured Request Logging & Correlation
+
+**Goal:** Ensure every request produces one structured log line with correlation keys, and all downstream components propagate context for end-to-end traceability.
+
+**Scope:**
+- Enhance logging middleware to emit one JSON log line per request with: `request_id`, `user_id`, `owner_id`, `owner_type`, `workspace_id`, `method`, `path`, `status`, `duration_ms`, `client_ip`, `request_size`, `response_size`, `slow` (bool, >5s threshold)
+- On 5xx: log at ERROR with error message
+- On slow (>5s): log at WARN with `"slow": true`
+- Create enriched logger per request (`logger.With(request_id, user_id, workspace_id)`) and propagate via Gin context — all downstream service calls use this logger, not a fresh one
+- Forward `X-Request-ID` header through proxy to opencode pod
+- Include `request_id` in metering `request_context` JSONB (already planned in US-12.2)
+- Add structured log points for: auth events, workspace transitions, proxy rejections/retries, metering failures, quota events, canary probes (see Logging Strategy section)
+- Ensure no request/response bodies, auth headers, or tokens are ever logged
+
+**Acceptance Criteria:**
+- Every request produces exactly one INFO log line with all correlation fields
+- Given a `request_id`, all related log lines (auth, proxy, metering, errors) are findable via grep
+- 5xx requests logged at ERROR; slow requests logged at WARN
+- `X-Request-ID` present in opencode pod access logs for proxied requests
+- No secrets in any log line (verify with `pkg/redact` patterns)
+- Log output is valid JSON (parseable by fluentbit/Loki)
+- Performance: logging adds <0.5ms p99 to request latency (Zap buffered writer)
+- Integration test: send request → verify structured log line with all fields → verify request_id in metering event
+
+---
+
 ## Dependency Graph
 
 ```
@@ -781,13 +807,14 @@ US-12.10 (Admin/DLQ) ── requires US-12.1 ───────────�
 
 US-12.12 (Dependency Health Metrics) ── independent, no dependencies
 US-12.13 (Synthetic Canary) ── requires working API + workspace (Epic 6)
+US-12.14 (Structured Logging) ── independent, no dependencies
 ```
 
 **Critical path:** US-12.1 → US-12.2 + US-12.3 (parallel) → US-12.6 → US-12.7
 
 **Parallelizable after US-12.1:** US-12.2, US-12.3, US-12.5, US-12.11
 
-**Fully independent (can start anytime):** US-12.12, US-12.13
+**Fully independent (can start anytime):** US-12.12, US-12.13, US-12.14
 
 **Deferred until provider chosen:** US-12.8 real implementation (beyond Noop), US-12.9
 
@@ -810,6 +837,111 @@ When Epic 11 adds organizations:
 - Reconciliation, DLQ, quota enforcement logic
 
 ---
+
+
+---
+
+## Structured Logging Strategy
+
+### Principles
+
+1. **Log decisions, not data.** Log *why* something happened (auth rejected, quota exceeded, retry triggered), not request/response bodies.
+2. **Structured always.** Every log line is JSON. No `fmt.Sprintf` messages.
+3. **Correlation keys on every line.** `request_id`, `user_id`, `workspace_id` — grep one request's entire journey.
+4. **Levels mean something.** Production runs at INFO. DEBUG is off unless actively troubleshooting.
+5. **Never log secrets.** Use `pkg/redact` for any user-provided content that might contain credentials.
+6. **One log line per request.** The request summary is the primary INFO log. Additional lines only for errors/warnings.
+
+### Log Levels
+
+| Level | What | Production? |
+|-------|------|-------------|
+| **ERROR** | Something broke that requires investigation | Yes — alerts fire on these |
+| **WARN** | Degraded but functional; may need attention if sustained | Yes |
+| **INFO** | Significant state changes + one-line request summaries | Yes |
+| **DEBUG** | Detailed flow for troubleshooting | No — enable per-pod via config |
+
+### Request Log Format (one line per request at INFO)
+
+```json
+{
+  "level": "info",
+  "msg": "request",
+  "request_id": "req-abc123",
+  "method": "POST",
+  "path": "/api/v1/workspaces/ws-1/sessions/s-1/message",
+  "status": 200,
+  "duration_ms": 1523,
+  "user_id": "user-456",
+  "owner_id": "user-456",
+  "owner_type": "user",
+  "workspace_id": "ws-1",
+  "client_ip": "10.0.1.5",
+  "user_agent": "llmsafespace-sdk/1.0",
+  "request_size": 245,
+  "response_size": 8192,
+  "slow": false,
+  "error": ""
+}
+```
+
+Conditional behavior:
+- On 5xx: log at ERROR with error message (no stack trace unless panic)
+- On slow requests (>5s): add `"slow": true`, log at WARN
+- On 4xx: log at INFO (normal client errors)
+- Never log: request/response bodies, auth headers, tokens
+
+### Key Logging Points
+
+| Component | Event | Level | Key Fields |
+|-----------|-------|-------|------------|
+| Auth | Login success/failure | INFO | `user_id`, `method`, `result`, `client_ip` |
+| Auth | Account lockout | WARN | `user_id`, `attempts`, `lockout_duration` |
+| Workspace | Phase transition | INFO | `workspace_id`, `owner_id`, `from_phase`, `to_phase`, `duration_ms` |
+| Workspace | Stuck in transition >60s | WARN | `workspace_id`, `phase`, `stuck_seconds` |
+| Proxy | Connection rejected | WARN | `workspace_id`, `user_id`, `reason` |
+| Proxy | Retry with fresh pod IP | WARN | `workspace_id`, `old_ip`, `new_ip` |
+| Proxy | LLM error from opencode | WARN | `workspace_id`, `status`, `error_type`, `provider` |
+| Metering | Batch write failed (retrying) | WARN | `batch_size`, `error` |
+| Metering | Event moved to DLQ | ERROR | `event_type`, `error`, `retry_count` |
+| Metering | Reconciliation gap detected | WARN | `workspace_id`, `gap_seconds` |
+| Quota | Quota exceeded | INFO | `owner_id`, `event_type`, `limit`, `used` |
+| Quota | Quota >90% consumed | WARN | `owner_id`, `event_type`, `percent_used` |
+| Billing export | Batch completed | INFO | `events_exported`, `cursor_position` |
+| Billing export | Export failed | ERROR | `error`, `last_cursor` |
+| Controller | Reconciliation error | ERROR | `resource`, `name`, `error` |
+| Controller | Workqueue depth >50 | WARN | `controller`, `depth` |
+| Startup | Service started | INFO | `service`, `duration_ms` |
+| Startup | Service failed to start | ERROR | `service`, `error` |
+| Canary | Probe failed | WARN | `step`, `error`, `consecutive_failures` |
+
+### Correlation Chain
+
+```
+Request arrives
+  → request_id middleware assigns ID
+  → logging middleware creates logger with {request_id, user_id, workspace_id}
+  → all downstream code uses this enriched logger
+  → metering events include request_id in request_context JSONB
+  → proxy forwards X-Request-ID header to opencode pod
+
+Given a user complaint:
+  1. Find request by user_id + timestamp in logs
+  2. Get request_id
+  3. Grep all log lines with that request_id (auth, proxy, metering, errors)
+  4. Find metering event with request_id in request_context
+  5. Find opencode-side logs by forwarded X-Request-ID
+```
+
+### Performance
+
+| Concern | Mitigation |
+|---------|-----------|
+| Log volume | INFO only in prod. One line per request. |
+| Allocation | Zap `With()` pre-allocates. Create enriched logger once per request, reuse. |
+| Disk I/O | Zap buffered async writer. Flush on graceful shutdown. |
+| Shipping | JSON → fluentbit sidecar → Loki/ELK. Not app-level concern. |
+| Body logging | Never. Use request_id to correlate with metering events. |
 
 ## Non-Requirements (Explicitly Out of Scope)
 
