@@ -15,7 +15,7 @@ const tabs = [
 type TabId = (typeof tabs)[number]["id"];
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("preferences");
+  const [activeTab, setActiveTab] = useState<TabId>("api-keys");
 
   return (
     <div className="flex h-full">

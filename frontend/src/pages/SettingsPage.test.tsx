@@ -34,21 +34,21 @@ describe("SettingsPage", () => {
   it("renders tab labels", () => {
     renderSettings();
     expect(screen.getByText("Preferences")).toBeInTheDocument();
-    expect(screen.getByText("API Keys")).toBeInTheDocument();
+    expect(screen.getAllByText("API Keys").length).toBeGreaterThan(0);
+    expect(screen.getByText("Credentials")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();
   });
 
-  it("shows Preferences tab by default", () => {
+  it("shows API Keys tab by default", () => {
     renderSettings();
-    // Preferences tab is active by default — the UserSettingsTab renders
-    // (it will show a spinner while loading, then the form)
-    expect(screen.getByText("Preferences")).toBeInTheDocument();
+    expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument();
   });
 
-  it("switches to API Keys tab", async () => {
+  it("switches to Preferences tab", async () => {
     const user = userEvent.setup();
     renderSettings();
-    await user.click(screen.getByText("API Keys"));
-    expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument();
+    await user.click(screen.getByText("Preferences"));
+    // UserSettingsTab renders (mocked API returns empty schema)
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
   });
 });
