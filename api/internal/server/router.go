@@ -14,6 +14,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -39,6 +40,9 @@ type RouterConfig struct {
 
 	// SettingsHandler is the optional settings handler for admin/user settings routes
 	SettingsHandler *handlers.SettingsHandler
+
+	// InstanceSettings provides access to instance settings for feature flags
+	InstanceSettings *settings.InstanceService
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -93,7 +97,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -207,13 +211,19 @@ func setSessionCookie(c *gin.Context, token string) {
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
 	rg.GET("/config", func(c *gin.Context) {
+		regEnabled := true // default
+		if instanceSettings != nil {
+			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
+				regEnabled = v
+			}
+		}
 		c.JSON(http.StatusOK, types.AuthConfig{
-			RegistrationEnabled: false, // TODO: read from config
+			RegistrationEnabled: regEnabled,
 			OIDCEnabled:         false,
 		})
 	})
