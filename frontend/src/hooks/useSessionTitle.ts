@@ -46,9 +46,8 @@ export function useSessionTitle(
     prevStreaming.current = streaming;
   }, [streaming, workspaceId, sessionId, active, refetch]);
 
-  // When a title arrives, update the sidebar cache immediately.
-  // The backend persists to PostgreSQL via the session.updated SSE event,
-  // so we only need to update the local cache for instant UI feedback.
+  // When a title arrives, update the sidebar cache and persist to DB.
+  const persistedRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!data?.title || !workspaceId || !sessionId) return;
     queryClient.setQueryData<SessionListItem[]>(["sessions", workspaceId], (old) => {
@@ -57,6 +56,11 @@ export function useSessionTitle(
         s.id === sessionId ? { ...s, title: data.title } : s,
       );
     });
+    // Persist to PostgreSQL so title survives page reload
+    if (persistedRef.current !== data.title) {
+      persistedRef.current = data.title;
+      workspacesApi.renameSession(workspaceId, sessionId, data.title).catch(() => {});
+    }
   }, [data?.title, workspaceId, sessionId, queryClient]);
 
   return data?.title ?? undefined;
