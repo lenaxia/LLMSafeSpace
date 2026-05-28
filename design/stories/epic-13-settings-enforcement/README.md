@@ -458,88 +458,51 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 
 ## Phase D: Lifecycle Automation
 
-### US-13.13: Auto-suspend background job
+### US-13.13: ~~Auto-suspend background job~~ → ELIMINATED
 
-**New file:** `api/internal/services/workspace/auto_suspend.go`
-
-**Current behavior:** No background job exists. `WorkspaceSpec.AutoSuspend` is set on the CRD but nothing acts on it (the controller may or may not implement this — needs verification).
-
-**Assumption to validate before implementation:** Does the controller already implement auto-suspend based on `spec.autoSuspend`? Check `controller/internal/workspace/controller.go`.
-
-**If controller does NOT implement it:**
-- API server needs a background goroutine that:
-  1. Lists all Active workspaces
-  2. For each, checks `lastActivityAt` against `idleTimeoutSeconds`
-  3. If idle > timeout, calls SuspendWorkspace
-
-**If controller DOES implement it:**
-- This story reduces to just wiring the settings into `buildWorkspaceCRD` (already covered in US-13.6).
-
-**Implementation (if API-side):**
+**Finding:** The controller already implements auto-suspend in `handleActive()` (controller/internal/workspace/controller.go, ~line 200):
 ```go
-type AutoSuspendWorker struct {
-    logger           pkginterfaces.LoggerInterface
-    k8sClient        pkginterfaces.KubernetesClient
-    instanceSettings *settings.InstanceService
-    namespace        string
-    stopCh           chan struct{}
-}
-
-func (w *AutoSuspendWorker) Start() {
-    go w.run()
-}
-
-func (w *AutoSuspendWorker) run() {
-    ticker := time.NewTicker(60 * time.Second)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-w.stopCh: return
-        case <-ticker.C: w.sweep()
+if workspace.Spec.AutoSuspend != nil && workspace.Spec.AutoSuspend.Enabled {
+    timeout := workspace.Spec.AutoSuspend.IdleTimeoutSeconds
+    if workspace.Status.LastActivityAt != nil {
+        idle := time.Since(workspace.Status.LastActivityAt.Time)
+        if idle > time.Duration(timeout)*time.Second {
+            workspace.Status.Phase = v1.WorkspacePhaseSuspending
         }
     }
 }
-
-func (w *AutoSuspendWorker) sweep() {
-    enabled, _ := w.instanceSettings.GetBool(context.Background(), "workspace.autoSuspend.enabled")
-    if !enabled { return }
-    // List active workspaces, check lastActivityAt, suspend idle ones
-}
 ```
 
-**Tests:**
-1. Happy: Workspace idle > timeout → suspended
-2. Happy: Workspace active (recent activity) → not suspended
-3. Happy: Setting enabled=false → no suspensions
-4. Unhappy: K8s API error → logged, continues next cycle
+**Conclusion:** No new background job needed. US-13.6 (wiring settings into `buildWorkspaceCRD`) is sufficient — the controller reads `spec.autoSuspend` and acts on it.
 
 ---
 
-### US-13.14: TTL cleanup for suspended workspaces
+### US-13.14: ~~TTL cleanup for suspended workspaces~~ → ELIMINATED
 
-**File:** Same as US-13.13 (part of the sweep loop)
-
-**Current behavior:** Suspended workspaces persist indefinitely.
-
-**Desired behavior:** If `workspace.ttlDaysAfterSuspended > 0` and workspace has been suspended for > N days, delete it.
-
-**Implementation:**
+**Finding:** The controller already implements TTL in `handleSuspended()` (controller/internal/workspace/controller.go):
 ```go
-// In the sweep loop, after auto-suspend check:
-ttlDays, _ := w.instanceSettings.GetInt(ctx, "workspace.ttlDaysAfterSuspended")
-if ttlDays > 0 {
-    // List suspended workspaces where SuspendedAt + ttlDays < now
-    // Delete each (PVC included)
+func (r *WorkspaceReconciler) handleSuspended(...) {
+    if workspace.Spec.TTLSecondsAfterSuspended <= 0 || workspace.Status.SuspendedAt == nil {
+        return ctrl.Result{}, nil
+    }
+    elapsed := time.Since(workspace.Status.SuspendedAt.Time)
+    ttl := time.Duration(workspace.Spec.TTLSecondsAfterSuspended) * time.Second
+    if elapsed >= ttl {
+        workspace.Status.Phase = v1.WorkspacePhaseTerminating
+    }
 }
 ```
 
-**Uses:** `WorkspaceStatus.SuspendedAt` (validated in A18).
+**Conclusion:** No new cleanup job needed. We just need to wire `workspace.ttlDaysAfterSuspended` into `buildWorkspaceCRD`:
+```go
+if s.instanceSettings != nil {
+    if days, err := s.instanceSettings.GetInt(ctx, "workspace.ttlDaysAfterSuspended"); err == nil && days > 0 {
+        crd.Spec.TTLSecondsAfterSuspended = int64(days) * 86400
+    }
+}
+```
 
-**Tests:**
-1. Happy: Suspended 10 days ago, TTL=7 → deleted
-2. Happy: Suspended 3 days ago, TTL=7 → not deleted
-3. Happy: TTL=0 → no deletions ever
-4. Unhappy: SuspendedAt nil → skip (don't delete)
+This is a one-liner addition to US-13.6's implementation. No separate story needed.
 
 ---
 
@@ -622,17 +585,17 @@ Frontend reads on app init and displays in header/login page.
 
 | Priority | Stories | Effort | Impact |
 |----------|---------|--------|--------|
-| **P0** | US-13.0 – US-13.7 | ~2 hrs | Every workspace creation uses correct defaults |
+| **P0** | US-13.0 – US-13.7 | ~2 hrs | Every workspace creation uses correct defaults + auto-suspend/TTL wired |
 | **P1** | US-13.8, US-13.9 | ~30 min | Users see preferences take effect |
 | **P2** | US-13.11, US-13.12, US-13.15 | ~3 hrs | Security hot-reload + auto-provision |
-| **P3** | US-13.13, US-13.14 | ~4 hrs | Lifecycle automation (new component) |
-| **P4** | US-13.16 | ~30 min | Branding |
+| **P3** | US-13.16 | ~30 min | Branding |
 | **Deferred** | US-13.10 | — | Blocked on model picker component |
+| **Eliminated** | US-13.13, US-13.14 | — | Controller already implements; covered by US-13.6 |
 
 ---
 
-## Open Questions (must validate before implementing Phase C/D)
+## Open Questions — RESOLVED
 
-1. **Does the controller already implement auto-suspend?** Check `controller/internal/workspace/controller.go` for idle timeout logic. If yes, US-13.13 is just "wire settings into CRD" (already done in US-13.6).
-2. **Does the controller read `TTLSecondsAfterSuspended` from the CRD?** If yes, US-13.14 reduces to wiring the setting into `buildWorkspaceCRD`.
-3. **Rate limit middleware signature change** — is there a way to inject instanceSettings without changing the function signature? Could use a wrapper struct instead.
+1. **Does the controller already implement auto-suspend?** ✅ YES — `handleActive()` checks `spec.autoSuspend.idleTimeoutSeconds` against `status.lastActivityAt`. No API-side job needed.
+2. **Does the controller read `TTLSecondsAfterSuspended` from the CRD?** ✅ YES — `handleSuspended()` transitions to Terminating when TTL exceeded. No API-side job needed.
+3. **Rate limit middleware signature change** — confirmed acceptable per user. Will change signature and update all callers (only `router.go`).
