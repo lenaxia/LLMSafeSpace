@@ -11,23 +11,27 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
 type App struct {
-	config          *config.Config
-	logger          *logger.Logger
-	router          *gin.Engine
-	server          *http.Server
-	k8sClient       *kubernetes.Client
-	services        *services.Services
-	proxyHandler    *handlers.ProxyHandler
-	sessionIndexSvc *sessionindex.Service
-	shutdownCh      chan struct{}
-	ctx             context.Context
-	cancel          context.CancelFunc
+	config           *config.Config
+	logger           *logger.Logger
+	router           *gin.Engine
+	server           *http.Server
+	k8sClient        *kubernetes.Client
+	services         *services.Services
+	proxyHandler     *handlers.ProxyHandler
+	sessionIndexSvc  *sessionindex.Service
+	instanceSettings *settings.InstanceService
+	userSettings     *settings.UserService
+	shutdownCh       chan struct{}
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
@@ -57,6 +61,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		wsSvc.SetSessionIndex(sessionIndexSvc)
 	}
 	proxyHandler.SetSessionIndex(sessionIndexSvc)
+
+	// Initialize settings services (backed by the same DB service).
+	dbSvc := svc.Database.(*database.Service)
+	instanceSettings := settings.NewInstanceService(dbSvc, log)
+	userSettings := settings.NewUserService(dbSvc, log)
+
+	// Inject instance settings into workspace service for enforcement.
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc.SetInstanceSettings(instanceSettings)
+	}
+
+	// Create settings handler for API routes.
+	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
 
 	// In development mode, disable RequireHTTPS so the API works over plain
 	// HTTP via port-forward / local tooling. In production, set
@@ -100,6 +117,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecurityConfig:          securityCfg,
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: wsOrigins,
+		SettingsHandler:         settingsHandler,
 	})
 
 	httpServer := &http.Server{
@@ -108,23 +126,38 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	return &App{
-		config:          cfg,
-		logger:          log,
-		router:          router,
-		server:          httpServer,
-		k8sClient:       k8sClient,
-		services:        svc,
-		proxyHandler:    proxyHandler,
-		sessionIndexSvc: sessionIndexSvc,
-		shutdownCh:      make(chan struct{}),
-		ctx:             ctx,
-		cancel:          cancel,
+		config:           cfg,
+		logger:           log,
+		router:           router,
+		server:           httpServer,
+		k8sClient:        k8sClient,
+		services:         svc,
+		proxyHandler:     proxyHandler,
+		sessionIndexSvc:  sessionIndexSvc,
+		instanceSettings: instanceSettings,
+		userSettings:     userSettings,
+		shutdownCh:       make(chan struct{}),
+		ctx:              ctx,
+		cancel:           cancel,
 	}, nil
 }
 
 func (a *App) Run() error {
 	if err := a.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Start instance settings (loads cache from DB).
+	if err := a.instanceSettings.Start(); err != nil {
+		a.logger.Warn("Instance settings failed to start (will use defaults)", "error", err.Error())
+		// Non-fatal: settings will fall back to schema defaults.
+	}
+
+	// Seed instance settings defaults (idempotent).
+	if result, err := settings.Seed(a.ctx, a.services.Database.(*database.Service), a.logger); err != nil {
+		a.logger.Warn("Settings seed failed", "error", err.Error())
+	} else {
+		a.logger.Info("Settings seed complete", "inserted", result.Inserted, "skipped", result.Skipped, "orphaned", len(result.Orphaned))
 	}
 
 	if err := a.k8sClient.Start(); err != nil {
