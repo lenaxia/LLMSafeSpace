@@ -69,9 +69,12 @@ EOF
         secret-file)
             MOUNT_PATH=$(echo "$METADATA" | jq -r '.mount_path')
             if [[ -n "$MOUNT_PATH" && "$MOUNT_PATH" != "null" ]]; then
-                mkdir -p "$(dirname "$MOUNT_PATH")"
-                echo "$PLAINTEXT" > "$MOUNT_PATH"
-                chmod 600 "$MOUNT_PATH"
+                # Force secret files under safe tmpfs directory
+                SAFE_PATH="$HOME/.secrets/${MOUNT_PATH##*/home/sandbox/.secrets/}"
+                SAFE_PATH="${SAFE_PATH//\.\.\//}"
+                mkdir -p "$(dirname "$SAFE_PATH")"
+                echo "$PLAINTEXT" > "$SAFE_PATH"
+                chmod 600 "$SAFE_PATH"
             fi
             ;;
 

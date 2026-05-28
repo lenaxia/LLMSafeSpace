@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -211,6 +212,46 @@ func (h *SecretsHandler) GetBindings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// ReloadSecrets handles POST /api/v1/workspaces/:id/reload-secrets
+// Decrypts bound secrets and pushes them to the running pod's agentd.
+func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
+	userID, sessionID := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	workspaceID := c.Param("id")
+	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
+	if err != nil {
+		handleSecretError(c, err)
+		return
+	}
+
+	// Get pod IP from workspace status (passed via header by frontend or looked up)
+	podIP := c.GetHeader("X-Pod-IP")
+	if podIP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Pod-IP header required"})
+		return
+	}
+
+	// Call agentd reload endpoint
+	agentdURL := fmt.Sprintf("http://%s:4097/v1/reload-secrets", podIP)
+	resp, err := http.Post(agentdURL, "application/json", bytes.NewReader(secretsJSON))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach workspace agent"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent reload failed"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 // SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
