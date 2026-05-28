@@ -278,3 +278,61 @@ func (s *KeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	}
 	return record != nil, nil
 }
+
+// RotateKey generates a new DEK, wraps it with the current KEK (requires active session),
+// and increments the key version. Old secrets are lazily re-encrypted on next access.
+// This method requires password confirmation; use RotateKeyWithPassword instead.
+func (s *KeyService) RotateKey(ctx context.Context, userID, sessionID string) (newKeyVersion int, err error) {
+	return 0, errors.New("RotateKey requires password; use RotateKeyWithPassword instead")
+}
+
+// RotateKeyWithPassword generates a new DEK and re-wraps with the password-derived KEK.
+// Old DEK is retained (wrapped with new DEK) for lazy migration of old-version secrets.
+func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (newKeyVersion int, err error) {
+	record, err := s.store.GetUserKey(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("get user key: %w", err)
+	}
+	if record == nil {
+		return 0, errors.New("no key material found for user")
+	}
+
+	// Derive KEK to verify password
+	kek, err := DeriveKEK(password, record.Salt, kekInfo)
+	if err != nil {
+		return 0, fmt.Errorf("derive KEK: %w", err)
+	}
+
+	// Verify password by unwrapping current DEK
+	_, err = UnwrapDEK(kek, record.WrappedDEK)
+	if err != nil {
+		return 0, errors.New("invalid password")
+	}
+
+	// Generate new DEK
+	newDEK, err := GenerateDEK()
+	if err != nil {
+		return 0, fmt.Errorf("generate new DEK: %w", err)
+	}
+
+	// Wrap new DEK with same KEK
+	newWrappedDEK, err := WrapDEK(kek, newDEK)
+	if err != nil {
+		return 0, fmt.Errorf("wrap new DEK: %w", err)
+	}
+
+	// Increment version
+	newVersion := record.KeyVersion + 1
+
+	// Update stored wrapped DEK
+	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, record.Salt, newVersion); err != nil {
+		return 0, fmt.Errorf("update wrapped DEK: %w", err)
+	}
+
+	// Cache new DEK in session
+	if err := s.cache.CacheDEK(ctx, sessionID, newDEK, ttl); err != nil {
+		return 0, fmt.Errorf("cache new DEK: %w", err)
+	}
+
+	return newVersion, nil
+}

@@ -474,6 +474,9 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 	})
 
 	rg.PUT("/:id/credentials", func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "2027-01-01")
+		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -492,6 +495,9 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 	})
 
 	rg.DELETE("/:id/credentials", func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "2027-01-01")
+		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})

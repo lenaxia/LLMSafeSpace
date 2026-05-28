@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
@@ -184,6 +186,50 @@ func (h *SecretsHandler) GetAuditLog(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"entries": entries})
+}
+
+// KeyRotator is the interface needed by the rotation handler.
+type KeyRotator interface {
+	RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (int, error)
+}
+
+// RotateKeyHandler handles POST /api/v1/account/rotate-key
+type RotateKeyHandler struct {
+	keySvc KeyRotator
+}
+
+// NewRotateKeyHandler creates a new RotateKeyHandler.
+func NewRotateKeyHandler(keySvc KeyRotator) *RotateKeyHandler {
+	return &RotateKeyHandler{keySvc: keySvc}
+}
+
+// RotateKey handles the key rotation request.
+func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
+	userID, sessionID := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password required for key rotation"})
+		return
+	}
+
+	newVersion, err := h.keySvc.RotateKeyWithPassword(c.Request.Context(), userID, []byte(req.Password), sessionID, 24*time.Hour)
+	if err != nil {
+		if contains(err.Error(), "invalid password") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid password"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "key rotation failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"keyVersion": newVersion})
 }
 
 // extractAuth gets userID and sessionID (jti) from the Gin context.
