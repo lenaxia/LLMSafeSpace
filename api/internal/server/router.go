@@ -14,6 +14,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -39,6 +40,9 @@ type RouterConfig struct {
 
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
+
+	// RotateKeyHandler is the handler for key rotation (optional)
+	RotateKeyHandler *handlers.RotateKeyHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -145,6 +149,13 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		// Bindings are under the workspace group (already authenticated)
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
+	}
+
+	// Key rotation endpoint (Epic 10)
+	if cfg.RotateKeyHandler != nil {
+		accountGroup := router.Group("/api/v1/account")
+		accountGroup.Use(services.GetAuth().AuthMiddleware())
+		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
 	}
 
 	// Metrics endpoint
@@ -518,7 +529,12 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		resp, err := wsSvc.ActivateWorkspace(c.Request.Context(), userID, c.Param("id"))
+		// Pass sessionID through context for secret injection during activation.
+		ctx := c.Request.Context()
+		if sid, exists := c.Get("sessionID"); exists {
+			ctx = workspace.ContextWithSessionID(ctx, sid.(string))
+		}
+		resp, err := wsSvc.ActivateWorkspace(ctx, userID, c.Param("id"))
 		if err != nil {
 			respondWithError(c, err)
 			return

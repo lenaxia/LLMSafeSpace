@@ -85,6 +85,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		authSvc.SetKeyService(keyService)
 	}
 
+	rotateKeyHandler := handlers.NewRotateKeyHandler(keyService)
+
+	// Wire secret injector into workspace service for pod activation
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc.SetSecretInjector(secretService)
+	}
+
 	// In development mode, disable RequireHTTPS so the API works over plain
 	// HTTP via port-forward / local tooling. In production, set
 	// logging.development=false and front the API with an Ingress that
@@ -128,6 +135,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
 		AllowedWebSocketOrigins: wsOrigins,
 		SecretsHandler:          secretsHandler,
+		RotateKeyHandler:        rotateKeyHandler,
 	})
 
 	httpServer := &http.Server{
