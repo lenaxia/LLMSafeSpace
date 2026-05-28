@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useToast } from "../../providers/ToastProvider";
 import { secretsApi, type SecretResponse } from "../../api/secrets";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -22,6 +23,7 @@ export function SecretsTab() {
   const [revealingId, setRevealingId] = useState<string | null>(null);
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
   const [revealPassword, setRevealPassword] = useState("");
+  const { toast } = useToast();
 
   const fetchSecrets = async () => {
     try {
@@ -67,6 +69,7 @@ export function SecretsTab() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
+    toast("Copied to clipboard");
   };
 
   const toggleGroup = (type: string) => {
@@ -252,6 +255,7 @@ async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: st
 }
 
 function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onError: (e: string) => void }) {
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [type, setType] = useState<SecretType>("llm-provider");
   const [value, setValue] = useState("");
@@ -307,7 +311,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             {createdValue}
           </code>
           <button
-            onClick={() => navigator.clipboard.writeText(createdValue)}
+            onClick={() => { navigator.clipboard.writeText(createdValue); toast("Copied to clipboard"); }}
             className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
           >
             Copy
@@ -320,7 +324,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
               {metadata.public_key}
             </code>
             <button
-              onClick={() => navigator.clipboard.writeText(metadata.public_key ?? "")}
+              onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }}
               className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
             >
               Copy
@@ -400,7 +404,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
               {metadata.public_key}
             </code>
-            <button type="button" onClick={() => navigator.clipboard.writeText(metadata.public_key ?? "")} className="text-xs text-blue-600">
+            <button type="button" onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }} className="text-xs text-blue-600">
               Copy
             </button>
           </div>
