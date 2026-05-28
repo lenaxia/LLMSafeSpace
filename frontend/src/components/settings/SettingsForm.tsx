@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { SettingDef } from "../../api/settings";
 import { Toggle } from "../ui/Toggle";
 import { NumberInput } from "../ui/NumberInput";
@@ -144,6 +144,8 @@ function StringInput({ id, value, onCommit, disabled, placeholder }: {
   placeholder?: string;
 }) {
   const [local, setLocal] = useState(value);
+  // Sync when value prop changes externally (e.g. API response)
+  useEffect(() => { setLocal(value); }, [value]);
   return (
     <input
       id={id}

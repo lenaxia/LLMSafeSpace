@@ -39,8 +39,19 @@ export function useUserSettings() {
   return { settings, loading, setSetting };
 }
 
-/** Convenience: get a single typed setting with a default fallback. */
+/** Convenience: get a single typed setting with a default fallback.
+ * Reads from localStorage synchronously — no API call. Use useUserSettings()
+ * for the full reactive hook with API sync. */
 export function useUserSetting<T>(key: string, defaultValue: T): T {
-  const { settings } = useUserSettings();
-  return (settings[key] as T) ?? defaultValue;
+  const [value] = useState<T>(() => {
+    try {
+      const cached = localStorage.getItem(STORAGE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return (parsed[key] as T) ?? defaultValue;
+      }
+    } catch { /* ignore */ }
+    return defaultValue;
+  });
+  return value;
 }

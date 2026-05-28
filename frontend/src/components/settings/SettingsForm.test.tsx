@@ -55,12 +55,13 @@ describe("SettingsForm", () => {
     });
   });
 
-  it("calls onSave when number input changes", async () => {
+  it("calls onSave when number input is changed and blurred", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<SettingsForm schema={mockSchema} values={{ "test.int": 14 }} onSave={onSave} />);
 
     const input = screen.getByRole("spinbutton");
     fireEvent.change(input, { target: { value: "20" } });
+    fireEvent.blur(input);
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith("test.int", 20);
