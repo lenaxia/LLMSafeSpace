@@ -42,7 +42,7 @@ describe("settingsApi", () => {
 
       const result = await settingsApi.getUserSchema();
       expect(result.settings).toHaveLength(1);
-      expect(result.settings[0].key).toBe("theme");
+      expect(result.settings[0]!.key).toBe("theme");
     });
   });
 
