@@ -43,6 +43,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		limit := config.DefaultLimit
 		burst := config.BurstSize
 		strategy := config.Strategy
+		window := config.DefaultWindow
 		if instanceSettings != nil {
 			if v, err := instanceSettings.GetBool(c.Request.Context(), "rateLimiting.enabled"); err == nil {
 				enabled = v
@@ -56,12 +57,19 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			if v, err := instanceSettings.GetString(c.Request.Context(), "rateLimiting.strategy"); err == nil && v != "" {
 				strategy = v
 			}
+			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.windowMinutes"); err == nil && v > 0 {
+				window = time.Duration(v) * time.Minute
+			}
 		}
 
 		if !enabled {
 			c.Next()
 			return
 		}
+
+		// Apply window override to config copy for sub-functions
+		effectiveConfig := config
+		effectiveConfig.DefaultWindow = window
 
 		// Skip rate limiting for exempt paths (e.g. long-lived SSE connections)
 		reqPath := c.FullPath()
@@ -94,9 +102,9 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		case "token_bucket":
 			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
 		case "fixed_window":
-			err = applyFixedWindowRateLimit(c, rl, config, hashedKey, limit, log)
+			err = applyFixedWindowRateLimit(c, rl, effectiveConfig, hashedKey, limit, log)
 		case "sliding_window":
-			err = applySlidingWindowRateLimit(c, rl, config, hashedKey, limit, log)
+			err = applySlidingWindowRateLimit(c, rl, effectiveConfig, hashedKey, limit, log)
 		case "":
 			// Default to token bucket if no strategy specified
 			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
@@ -108,7 +116,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			if apiErr, ok := err.(*errors.APIError); ok && apiErr.Type == errors.ErrorTypeRateLimit {
 				c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 				c.Header("X-RateLimit-Remaining", "0")
-				c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(config.DefaultWindow).Unix(), 10))
+				c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(window).Unix(), 10))
 				c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 					"error": gin.H{
 						"code":    apiErr.Code,
