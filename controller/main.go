@@ -93,8 +93,6 @@ func main() {
 	// the nil decoder.
 	webhookDecoder := admission.NewDecoder(mgr.GetScheme())
 
-
-
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &webhooks.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
 	})

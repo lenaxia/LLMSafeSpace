@@ -20,13 +20,13 @@ func TestLoggingMiddleware_RequestResponse(t *testing.T) {
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("Info", "Request received", mock.Anything).Once()
 	mockLogger.On("Info", "Request completed", mock.Anything).Once()
-	
+
 	config := middleware.LoggingConfig{
 		LogRequestBody:  true,
 		LogResponseBody: true,
 		MaxBodyLogSize:  1024,
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.LoggingMiddleware(mockLogger, config))
 	router.POST("/test", func(c *gin.Context) {
@@ -35,18 +35,18 @@ func TestLoggingMiddleware_RequestResponse(t *testing.T) {
 			c.JSON(http.StatusOK, gin.H{"message": "success", "data": data})
 		}
 	})
-	
+
 	// Execute
 	w := httptest.NewRecorder()
 	reqBody := `{"name": "test", "value": 123}`
 	req, _ := http.NewRequest("POST", "/test", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "success")
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -54,17 +54,17 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	// Capture the log fields for inspection
 	var requestFields []interface{}
 	var responseFields []interface{}
-	
+
 	mockLogger.On("Info", "Request received", mock.Anything).Run(func(args mock.Arguments) {
 		// Get the variadic arguments
 		requestFields = args.Get(1).([]interface{})
 		t.Logf("Request fields captured: %+v", requestFields)
 	}).Once()
-	
+
 	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
 		// Get the variadic arguments
 		responseFields = args.Get(1).([]interface{})
@@ -77,7 +77,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		SensitiveFields: []string{"password", "token", "email", "api_key", "credit_card"},
 		MaxBodyLogSize:  4096, // Ensure bodies aren't truncated
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.LoggingMiddleware(mockLogger, config))
 	router.POST("/login", func(c *gin.Context) {
@@ -85,14 +85,14 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		if err := c.ShouldBindJSON(&data); err == nil {
 			c.JSON(http.StatusOK, gin.H{
 				"message": "logged in",
-				"token": "test_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
-				"user": data["username"],
-				"email": data["email"],
+				"token":   "test_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+				"user":    data["username"],
+				"email":   data["email"],
 				"api_key": "test_api_key",
 			})
 		}
 	})
-	
+
 	// Execute
 	w := httptest.NewRecorder()
 	reqBody := `{
@@ -105,10 +105,10 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/login", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	// Find request body in log fields
 	var requestBody map[string]interface{}
 	for i := 0; i < len(requestFields); i += 2 {
@@ -123,7 +123,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 			}
 		}
 	}
-	
+
 	// Find response body in log fields
 	var responseBody map[string]interface{}
 	for i := 0; i < len(responseFields); i += 2 {
@@ -138,7 +138,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 			}
 		}
 	}
-	
+
 	// Check that sensitive fields are masked
 	assert.NotNil(t, requestBody, "Request body should not be nil")
 	if requestBody != nil {
@@ -152,7 +152,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		assert.NotEqual(t, "pk_test_51NXxbTLxmNAjIcThJV9PmvWR9ybXlPfVzBkgJqhcRnWM5ujZEAiLwwrgvgUgtGgQXqnPwGKpK1R", requestBody["api_key"], "API key should be masked")
 		assert.Contains(t, requestBody["api_key"].(string), "...", "API key should use MaskString format")
 	}
-	
+
 	assert.NotNil(t, responseBody, "Response body should not be nil")
 	if responseBody != nil {
 		assert.NotEqual(t, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ", responseBody["token"], "Token should be masked")
@@ -163,7 +163,7 @@ func TestLoggingMiddleware_SensitiveDataRedaction(t *testing.T) {
 		assert.NotEqual(t, "test_api_key", responseBody["api_key"], "API key should be masked")
 		assert.Contains(t, responseBody["api_key"].(string), "...", "API key should use MaskString format")
 	}
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -171,36 +171,36 @@ func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
-	
+
 	// Capture the log fields for inspection
 	var requestFields []interface{}
-	
+
 	mockLogger.On("Info", "Request received", mock.Anything).Run(func(args mock.Arguments) {
 		requestFields = args.Get(1).([]interface{})
 	}).Once()
-	
+
 	mockLogger.On("Info", "Request completed", mock.Anything).Once()
-	
+
 	config := middleware.LoggingConfig{
 		LogRequestBody: true,
 		MaxBodyLogSize: 20, // Very small to force truncation
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.LoggingMiddleware(mockLogger, config))
 	router.POST("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
-	
+
 	// Execute with large body
 	w := httptest.NewRecorder()
 	largeBody := strings.Repeat("abcdefghij", 10) // 100 characters
 	req, _ := http.NewRequest("POST", "/test", bytes.NewBufferString(largeBody))
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	// Find request body in log fields
 	var requestBodyStr string
 	var requestBodySize int
@@ -216,12 +216,12 @@ func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 			}
 		}
 	}
-	
+
 	// Check that body was truncated
 	assert.Contains(t, requestBodyStr, "... (truncated)")
 	assert.Equal(t, 100, requestBodySize)
 	assert.True(t, len(requestBodyStr) < 100)
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -230,11 +230,11 @@ func TestLoggingMiddleware_SkipPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
 	// No log calls expected for skipped paths
-	
+
 	config := middleware.LoggingConfig{
 		SkipPaths: []string{"/health", "/metrics"},
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.LoggingMiddleware(mockLogger, config))
 	router.GET("/health", func(c *gin.Context) {
@@ -243,23 +243,23 @@ func TestLoggingMiddleware_SkipPaths(t *testing.T) {
 	router.GET("/api", func(c *gin.Context) {
 		c.String(http.StatusOK, "api")
 	})
-	
+
 	// Execute request to skipped path
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/health", nil)
 	router.ServeHTTP(w, req)
-	
+
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	// Execute request to non-skipped path
 	mockLogger.On("Info", "Request received", mock.Anything).Once()
 	mockLogger.On("Info", "Request completed", mock.Anything).Once()
-	
+
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest("GET", "/api", nil)
 	router.ServeHTTP(w, req)
-	
+
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	mockLogger.AssertExpectations(t)
 }

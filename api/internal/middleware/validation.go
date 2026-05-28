@@ -3,14 +3,14 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
 	"strings"
-	"fmt"
 	"time"
 	"unicode"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
@@ -24,13 +24,13 @@ var validate = validator.New()
 type ValidationConfig struct {
 	// CustomValidators is a map of custom validation functions
 	CustomValidators map[string]validator.Func
-	
+
 	// CustomErrorMessages is a map of custom error messages for validation tags
 	CustomErrorMessages map[string]string
-	
+
 	// ValidateQueryParams indicates whether to validate query parameters
 	ValidateQueryParams bool
-	
+
 	// ValidatePathParams indicates whether to validate path parameters
 	ValidatePathParams bool
 }
@@ -50,7 +50,7 @@ func init() {
 	validate.RegisterValidation("nohtml", validateNoHTML)
 	validate.RegisterValidation("alphanum_space", validateAlphanumSpace)
 	validate.RegisterValidation("iso8601", validateISO8601)
-	
+
 	// Register custom tag name function
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
@@ -68,28 +68,28 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	// Register custom validators
 	for tag, fn := range cfg.CustomValidators {
 		validate.RegisterValidation(tag, fn)
 	}
-	
+
 	return func(c *gin.Context) {
 		// Skip validation for GET, DELETE, and OPTIONS requests
-		if c.Request.Method == http.MethodGet || 
-		   c.Request.Method == http.MethodDelete || 
-		   c.Request.Method == http.MethodOptions {
+		if c.Request.Method == http.MethodGet ||
+			c.Request.Method == http.MethodDelete ||
+			c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
 		}
-		
+
 		// Get the model to validate from the context
 		model, exists := c.Get("validationModel")
 		if !exists {
 			c.Next()
 			return
 		}
-		
+
 		// Read request body
 		var bodyBytes []byte
 		if c.Request.Body != nil {
@@ -97,20 +97,20 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 			// Restore the body
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
-		
+
 		// Skip if no body
 		if len(bodyBytes) == 0 {
 			c.Next()
 			return
 		}
-		
+
 		// Create a new instance of the model
 		modelType := reflect.TypeOf(model)
 		if modelType.Kind() == reflect.Ptr {
 			modelType = modelType.Elem()
 		}
 		modelValue := reflect.New(modelType).Interface()
-		
+
 		// Unmarshal the request body into the model
 		if err := json.Unmarshal(bodyBytes, modelValue); err != nil {
 			apiErr := errors.NewValidationError("Invalid request body", map[string]interface{}{
@@ -136,7 +136,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 				for _, verr := range verrors {
 					// Use the JSON field name (lowercase) instead of struct field name
 					fieldName := verr.Field()
-					
+
 					// Get the JSON tag name for this field
 					field, _ := modelType.FieldByName(fieldName)
 					jsonTag := field.Tag.Get("json")
@@ -151,7 +151,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 						// If no JSON tag, use the lowercase field name
 						fieldName = strings.ToLower(fieldName[:1]) + fieldName[1:]
 					}
-					
+
 					validationErrors[fieldName] = getValidationErrorMessage(verr, cfg.CustomErrorMessages)
 				}
 			}
@@ -171,7 +171,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 
 		// Set the validated model in context for handler to use
 		c.Set("validatedModel", modelValue)
-		
+
 		// Validate query parameters if configured
 		if cfg.ValidateQueryParams {
 			if err := validateQueryParams(c); err != nil {
@@ -179,7 +179,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 				return
 			}
 		}
-		
+
 		// Validate path parameters if configured
 		if cfg.ValidatePathParams {
 			if err := validatePathParams(c); err != nil {
@@ -187,7 +187,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 				return
 			}
 		}
-		
+
 		c.Next()
 	}
 }
@@ -196,7 +196,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 func ValidateRequest(c *gin.Context, model interface{}) error {
 	// Set the validation model in the context
 	c.Set("validationModel", model)
-	
+
 	// Read request body
 	var bodyBytes []byte
 	if c.Request.Body != nil {
@@ -204,12 +204,12 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 		// Restore the body
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	}
-	
+
 	// Skip if no body
 	if len(bodyBytes) == 0 {
 		return errors.NewValidationError("Request body is required", nil, nil)
 	}
-	
+
 	// Unmarshal the request body into the model
 	if err := json.Unmarshal(bodyBytes, model); err != nil {
 		return errors.NewValidationError("Invalid request body", map[string]interface{}{
@@ -218,7 +218,7 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 			},
 		}, err)
 	}
-	
+
 	// Validate the model
 	if err := validate.Struct(model); err != nil {
 		// Convert validation errors to a map
@@ -229,12 +229,12 @@ func ValidateRequest(c *gin.Context, model interface{}) error {
 				validationErrors[fieldName] = getValidationErrorMessage(verr, nil)
 			}
 		}
-		
+
 		return errors.NewValidationError("Validation failed", map[string]interface{}{
 			"errors": validationErrors,
 		}, err)
 	}
-	
+
 	return nil
 }
 
@@ -245,19 +245,19 @@ func validateQueryParams(c *gin.Context) error {
 	if !exists {
 		return nil
 	}
-	
+
 	// Validate query parameters
 	validationErrors := make(map[string]string)
-	
+
 	// Implement query parameter validation logic here
 	// This is a placeholder for the actual implementation
-	
+
 	if len(validationErrors) > 0 {
 		return errors.NewValidationError("Invalid query parameters", map[string]interface{}{
 			"errors": validationErrors,
 		}, nil)
 	}
-	
+
 	return nil
 }
 
@@ -268,19 +268,19 @@ func validatePathParams(c *gin.Context) error {
 	if !exists {
 		return nil
 	}
-	
+
 	// Validate path parameters
 	validationErrors := make(map[string]string)
-	
+
 	// Implement path parameter validation logic here
 	// This is a placeholder for the actual implementation
-	
+
 	if len(validationErrors) > 0 {
 		return errors.NewValidationError("Invalid path parameters", map[string]interface{}{
 			"errors": validationErrors,
 		}, nil)
 	}
-	
+
 	return nil
 }
 
@@ -292,7 +292,7 @@ func getValidationErrorMessage(err validator.FieldError, customMessages map[stri
 			return msg
 		}
 	}
-	
+
 	switch err.Tag() {
 	case "required":
 		return "This field is required"
@@ -343,7 +343,7 @@ func validateNoHTML(fl validator.FieldLevel) bool {
 	if field.Kind() != reflect.String {
 		return true
 	}
-	
+
 	value := field.String()
 	return !strings.Contains(value, "<") || !strings.Contains(value, ">")
 }
@@ -354,7 +354,7 @@ func validateAlphanumSpace(fl validator.FieldLevel) bool {
 	if field.Kind() != reflect.String {
 		return true
 	}
-	
+
 	value := field.String()
 	for _, r := range value {
 		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsSpace(r) {
@@ -370,7 +370,7 @@ func validateISO8601(fl validator.FieldLevel) bool {
 	if field.Kind() != reflect.String {
 		return true
 	}
-	
+
 	value := field.String()
 	_, err := time.Parse(time.RFC3339, value)
 	return err == nil

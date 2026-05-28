@@ -9,7 +9,9 @@ import (
 
 // TestGenerateContractFixtures outputs JSON fixtures that the frontend
 // contract test validates against. Run with:
-//   go test -run TestGenerateContractFixtures ./pkg/types/ -v
+//
+//	go test -run TestGenerateContractFixtures ./pkg/types/ -v
+//
 // The output file is consumed by frontend/src/api/contract.test.ts
 func TestGenerateContractFixtures(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)

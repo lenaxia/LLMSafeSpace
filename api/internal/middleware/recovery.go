@@ -17,10 +17,10 @@ import (
 type RecoveryConfig struct {
 	// IncludeStackTrace indicates whether to include stack traces in error responses
 	IncludeStackTrace bool
-	
+
 	// LogStackTrace indicates whether to log stack traces
 	LogStackTrace bool
-	
+
 	// CustomRecoveryHandler is a custom function to handle recovery
 	CustomRecoveryHandler func(*gin.Context, interface{})
 }
@@ -28,8 +28,8 @@ type RecoveryConfig struct {
 // DefaultRecoveryConfig returns the default recovery configuration
 func DefaultRecoveryConfig() RecoveryConfig {
 	return RecoveryConfig{
-		IncludeStackTrace: false,
-		LogStackTrace:     true,
+		IncludeStackTrace:     false,
+		LogStackTrace:         true,
 		CustomRecoveryHandler: nil,
 	}
 }
@@ -41,7 +41,7 @@ func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
@@ -59,10 +59,10 @@ func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig
 
 				// Get stack trace
 				stack := string(debug.Stack())
-				
+
 				// Create error message
 				errMsg := fmt.Sprintf("%v", err)
-				
+
 				// Log the error
 				httpRequest := fmt.Sprintf("%s %s", c.Request.Method, c.Request.URL.Path)
 				if brokenPipe {
@@ -78,23 +78,23 @@ func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig
 						"request_id", c.GetString("request_id"),
 						"error", errMsg,
 					}
-					
+
 					if cfg.LogStackTrace {
 						logFields = append(logFields, "stack", stack)
 					}
-					
+
 					log.Error("Recovery from panic", fmt.Errorf("%v", err), logFields...)
-					
+
 					// Log to OpenTelemetry if available
 					// Commented out until we properly import trace and attribute packages
 					/*
-					if span := trace.SpanFromContext(c.Request.Context()); span != nil {
-						span.RecordError(fmt.Errorf("%v", err))
-						span.SetStatus(trace.StatusCodeError, "panic recovered")
-						if cfg.LogStackTrace {
-							span.SetAttributes(attribute.String("error.stack", stack))
+						if span := trace.SpanFromContext(c.Request.Context()); span != nil {
+							span.RecordError(fmt.Errorf("%v", err))
+							span.SetStatus(trace.StatusCodeError, "panic recovered")
+							if cfg.LogStackTrace {
+								span.SetAttributes(attribute.String("error.stack", stack))
+							}
 						}
-					}
 					*/
 				}
 
@@ -112,14 +112,14 @@ func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig
 
 				// Create API error
 				apiErr := errors.NewInternalError("Internal server error", fmt.Errorf("%v", err))
-				
+
 				// Include stack trace in response if configured
 				if cfg.IncludeStackTrace {
 					apiErr.Details = map[string]interface{}{
 						"stack": strings.Split(stack, "\n"),
 					}
 				}
-				
+
 				// Send error response
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": gin.H{
@@ -131,7 +131,7 @@ func RecoveryMiddleware(log interfaces.LoggerInterface, config ...RecoveryConfig
 				c.Abort()
 			}
 		}()
-		
+
 		c.Next()
 	}
 }

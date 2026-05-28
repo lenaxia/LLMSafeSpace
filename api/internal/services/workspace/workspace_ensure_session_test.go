@@ -12,9 +12,9 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 

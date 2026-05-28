@@ -5,10 +5,9 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	
+
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
-
 
 // Logger provides structured logging
 type Logger struct {

@@ -6,15 +6,18 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
 	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
@@ -75,6 +78,26 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create settings handler for API routes.
 	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
 
+	// Wire secret management (Epic 10).
+	dekCacheClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	dekCache := secrets.NewRedisDEKCache(dekCacheClient)
+	keyService := secrets.NewKeyService(&dbKeyStoreAdapter{db: svc.Database}, dekCache)
+	secretStore := &dbSecretStoreAdapter{db: svc.Database}
+	secretService := secrets.NewSecretService(keyService, secretStore)
+	secretsHandler := handlers.NewSecretsHandler(secretService)
+	rotateKeyHandler := handlers.NewRotateKeyHandler(keyService)
+
+	if authSvc, ok := svc.Auth.(*auth.Service); ok {
+		authSvc.SetKeyService(keyService)
+	}
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc.SetSecretInjector(secretService)
+	}
+
 	// In development mode, disable RequireHTTPS so the API works over plain
 	// HTTP via port-forward / local tooling. In production, set
 	// logging.development=false and front the API with an Ingress that
@@ -119,6 +142,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AllowedWebSocketOrigins: wsOrigins,
 		SettingsHandler:         settingsHandler,
 		InstanceSettings:        instanceSettings,
+		SecretsHandler:          secretsHandler,
+		RotateKeyHandler:        rotateKeyHandler,
 	})
 
 	httpServer := &http.Server{

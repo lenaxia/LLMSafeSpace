@@ -78,7 +78,6 @@ func (m *MockWorkspaceService) ActivateWorkspace(ctx context.Context, userID, wo
 	return args.Get(0).(*types.ActivateWorkspaceResponse), args.Error(1)
 }
 
-
 func (m *MockWorkspaceService) ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error) {
 	args := m.Called(ctx, userID, workspaceID)
 	if args.Get(0) == nil {

@@ -103,6 +103,12 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 		// Store authentication result in Gin context (for middleware/handlers)
 		// and in the request context (for service layer via ctx.Value).
 		c.Set("userID", userID)
+
+		// Extract JWT's jti claim as sessionID for DEK cache lookup.
+		if jti := utilities.ExtractJTI(token); jti != "" {
+			c.Set("sessionID", jti)
+		}
+
 		ctx := context.WithValue(c.Request.Context(), types.ContextKeyUserID, userID)
 		c.Request = c.Request.WithContext(ctx)
 

@@ -17,15 +17,15 @@ func TestTracingMiddleware_RequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
-	
+
 	config := middleware.TracingConfig{
-		HeaderName:        "X-Request-ID",
-		PropagateHeader:   true,
-		GenerateIfMissing: true,
-		UseUUID:           true,
+		HeaderName:          "X-Request-ID",
+		PropagateHeader:     true,
+		GenerateIfMissing:   true,
+		UseUUID:             true,
 		EnableOpenTelemetry: false,
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
@@ -36,20 +36,20 @@ func TestTracingMiddleware_RequestID(t *testing.T) {
 			c.String(http.StatusInternalServerError, "No request ID found")
 		}
 	})
-	
+
 	// Execute
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/test", nil)
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Request ID:")
-	
+
 	// Check that request ID is in response header
 	requestID := w.Header().Get("X-Request-ID")
 	assert.NotEmpty(t, requestID)
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -58,13 +58,13 @@ func TestTracingMiddleware_ExistingRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger).Maybe()
-	
+
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",
 		PropagateHeader:   true,
 		GenerateIfMissing: true,
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
@@ -75,18 +75,18 @@ func TestTracingMiddleware_ExistingRequestID(t *testing.T) {
 			c.String(http.StatusInternalServerError, "No request ID found")
 		}
 	})
-	
+
 	// Execute with existing request ID
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/test", nil)
 	req.Header.Set("X-Request-ID", "existing-id-12345")
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Request ID: existing-id-12345")
 	assert.Equal(t, "existing-id-12345", w.Header().Get("X-Request-ID"))
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -98,13 +98,13 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 		// Check that the first argument is "request_id"
 		return len(args) >= 2 && args[0] == "request_id"
 	})).Return(mockLogger).Maybe()
-	
+
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",
 		PropagateHeader:   true,
 		GenerateIfMissing: true,
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
@@ -115,16 +115,16 @@ func TestTracingMiddleware_LoggerContext(t *testing.T) {
 			c.String(http.StatusInternalServerError, "No logger found")
 		}
 	})
-	
+
 	// Execute
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/test", nil)
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Logger found")
-	
+
 	mockLogger.AssertExpectations(t)
 }
 
@@ -133,13 +133,13 @@ func TestTracingMiddleware_StartTime(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockLogger := logmock.NewMockLogger()
 	mockLogger.On("With", mock.Anything).Return(mockLogger)
-	
+
 	config := middleware.TracingConfig{
 		HeaderName:        "X-Request-ID",
 		PropagateHeader:   true,
 		GenerateIfMissing: true,
 	}
-	
+
 	router := gin.New()
 	router.Use(middleware.TracingMiddleware(mockLogger, config))
 	router.GET("/test", func(c *gin.Context) {
@@ -150,15 +150,15 @@ func TestTracingMiddleware_StartTime(t *testing.T) {
 			c.String(http.StatusInternalServerError, "No start time found")
 		}
 	})
-	
+
 	// Execute
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/test", nil)
 	router.ServeHTTP(w, req)
-	
+
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Start time found")
-	
+
 	mockLogger.AssertExpectations(t)
 }

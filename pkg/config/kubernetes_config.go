@@ -48,10 +48,10 @@ type Config struct {
 
 // KubernetesConfig defines configuration for Kubernetes client
 type KubernetesConfig struct {
-	ConfigPath     string        `mapstructure:"configPath"`
-	InCluster      bool          `mapstructure:"inCluster"`
-	Namespace      string        `mapstructure:"namespace"`
-	PodName        string        `mapstructure:"podName"`
+	ConfigPath     string `mapstructure:"configPath"`
+	InCluster      bool   `mapstructure:"inCluster"`
+	Namespace      string `mapstructure:"namespace"`
+	PodName        string `mapstructure:"podName"`
 	LeaderElection struct {
 		Enabled       bool          `mapstructure:"enabled"`
 		LeaseDuration time.Duration `mapstructure:"leaseDuration"`

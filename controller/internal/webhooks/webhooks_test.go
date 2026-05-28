@@ -38,12 +38,6 @@ func newAdmissionRequest(t *testing.T, obj runtime.Object) admission.Request {
 	}
 }
 
-
-
-
-
-
-
 func TestRuntimeEnvironmentValidator_Allowed(t *testing.T) {
 	s := newScheme(t)
 	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s)}
@@ -84,9 +78,6 @@ func TestRuntimeEnvironmentValidator_DeniesEmptyLanguage(t *testing.T) {
 	assert.False(t, resp.Allowed)
 	assert.Contains(t, resp.Result.Message, "language is required")
 }
-
-
-
 
 // TestInjectDecoder verifies the legacy InjectDecoder no-op still sets the
 // Decoder field. Required for tests or callers still using the old DI path.

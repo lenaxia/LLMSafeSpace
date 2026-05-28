@@ -54,8 +54,6 @@ func TestRecordRequest(t *testing.T) {
 	assert.InDelta(t, 1024.0, histogramSum(obs.(prometheus.Histogram)), 0.1)
 }
 
-
-
 func TestRecordError(t *testing.T) {
 	metricsService.RecordError("api_error", "/api/v1/workspaces", "404")
 

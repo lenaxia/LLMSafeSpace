@@ -39,7 +39,7 @@ func SetupLeaderElection(cfg *LeaderElectionConfig, kubeClient kubernetes.Interf
 			RenewDeadline: 10 * time.Second,
 			RetryPeriod:   2 * time.Second,
 			Namespace:     "llmsafespace",
-			Name:         "llmsafespace-controller",
+			Name:          "llmsafespace-controller",
 		}
 	}
 
