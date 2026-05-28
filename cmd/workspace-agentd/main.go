@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -124,11 +125,19 @@ func main() {
 	}
 	defer log.Sync()
 
+	supervise := len(os.Args) > 1 && os.Args[1] == "--supervise"
+
 	pw, err := os.ReadFile("/sandbox-cfg/password")
 	if err != nil {
 		log.Warn("failed to read password file", zap.String("path", "/sandbox-cfg/password"), zap.Error(err))
 	}
 	password := strings.TrimSpace(string(pw))
+
+	var proc *managedProcess
+	if supervise {
+		proc = &managedProcess{}
+		proc.start()
+	}
 
 	client := &OpenCodeClient{
 		password: password,
@@ -193,6 +202,20 @@ func main() {
 			return
 		}
 		log.Info("secrets reloaded", zap.Int("count", len(secrets)))
+
+		// If env vars or LLM config changed, restart opencode to pick them up
+		hasEnvOrLLM := false
+		for _, s := range secrets {
+			if s.Type == "env-secret" || s.Type == "llm-provider" {
+				hasEnvOrLLM = true
+				break
+			}
+		}
+		if hasEnvOrLLM && proc != nil {
+			log.Info("env/llm secrets changed, restarting opencode")
+			proc.restart()
+		}
+
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -219,6 +242,71 @@ func main() {
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal("workspace-agentd server failed", zap.Error(err))
 	}
+}
+
+// managedProcess supervises the opencode serve process.
+type managedProcess struct {
+	mu  sync.Mutex
+	cmd *exec.Cmd
+}
+
+func (p *managedProcess) start() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096")
+	p.cmd.Stdout = os.Stdout
+	p.cmd.Stderr = os.Stderr
+	p.cmd.Env = buildEnv()
+	if err := p.cmd.Start(); err != nil {
+		log.Error("failed to start opencode", zap.Error(err))
+		return
+	}
+	log.Info("opencode started", zap.Int("pid", p.cmd.Process.Pid))
+	// Monitor in background — restart on unexpected exit
+	go func() {
+		err := p.cmd.Wait()
+		log.Warn("opencode exited", zap.Error(err))
+		// Auto-restart after 1s unless we're shutting down
+		time.Sleep(time.Second)
+		p.start()
+	}()
+}
+
+func (p *managedProcess) restart() {
+	p.mu.Lock()
+	if p.cmd != nil && p.cmd.Process != nil {
+		log.Info("stopping opencode for restart", zap.Int("pid", p.cmd.Process.Pid))
+		p.cmd.Process.Signal(os.Interrupt)
+		// Wait up to 5s for graceful shutdown
+		done := make(chan struct{})
+		go func() { p.cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			p.cmd.Process.Kill()
+		}
+	}
+	p.mu.Unlock()
+	// start() will be called by the goroutine monitoring the exit
+}
+
+func buildEnv() []string {
+	env := os.Environ()
+	// Source secrets-env file if it exists
+	data, err := os.ReadFile("/tmp/secrets-env")
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "export ") {
+				kv := strings.TrimPrefix(line, "export ")
+				// Remove surrounding quotes from value
+				kv = strings.Replace(kv, "='", "=", 1)
+				kv = strings.TrimSuffix(kv, "'")
+				env = append(env, kv)
+			}
+		}
+	}
+	return env
 }
 
 const secretsBaseDir = "/home/sandbox/.secrets"
