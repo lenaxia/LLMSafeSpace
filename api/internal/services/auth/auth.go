@@ -447,9 +447,15 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	if s.keyService != nil {
 		jti := utilities.ExtractJTI(token)
 		if jti != "" {
+			// Auto-initialize keys for pre-Epic 10 users on first login
+			hasKeys, _ := s.keyService.HasKeys(ctx, user.ID)
+			if !hasKeys {
+				if _, err := s.keyService.InitializeUserKeys(ctx, user.ID, []byte(req.Password)); err != nil {
+					s.logger.Warn("Login: failed to auto-init keys", "user_id", user.ID, "error", err.Error())
+				}
+			}
 			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, s.tokenDuration); err != nil {
 				s.logger.Warn("Login: failed to unlock DEK", "user_id", user.ID, "error", err.Error())
-				// Non-fatal: user can still use the system, just can't manage secrets until re-auth
 			}
 		}
 	}
@@ -564,6 +570,11 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 
 		// Set user ID in context
 		c.Set("userID", userID)
+
+		// Set session ID (JWT jti) for DEK cache lookup in secret management.
+		if jti := utilities.ExtractJTI(tokenString); jti != "" {
+			c.Set("sessionID", jti)
+		}
 
 		// Load user role into context for AdminGuard and authorization checks.
 		if s.dbService != nil {
