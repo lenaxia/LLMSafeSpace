@@ -130,7 +130,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 			}
 			c.JSON(http.StatusOK, types.ActiveSessionsResponse{
 				Active:    active,
-				MaxActive: 5, // default; could read from workspace CRD
+				MaxActive: getMaxActiveSessions(c.Request.Context(), cfg.InstanceSettings),
 			})
 		})
 	}
@@ -678,4 +678,14 @@ func registerCredentialRoutes(router *gin.Engine, services interfaces.Services, 
 	creds.DELETE("/:id", h.DeleteCredentialSet)
 	creds.PUT("/:id/default", h.SetDefaultCredentialSet)
 	creds.POST("/rotate-key", h.RotateCredentialKey)
+}
+
+// getMaxActiveSessions reads the max active sessions setting, falling back to 5.
+func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.InstanceService) int {
+	if instanceSettings != nil {
+		if v, err := instanceSettings.GetInt(ctx, "workspace.defaultMaxActiveSessions"); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 5
 }
