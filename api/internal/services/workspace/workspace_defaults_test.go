@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -281,6 +282,215 @@ func TestCreateWorkspace_DefaultNetworkAccess_Applied(t *testing.T) {
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
 
 	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+}
+
+// === Unhappy paths: settings service errors ===
+
+func TestCreateWorkspace_SettingsError_GracefulDegradation(t *testing.T) {
+	// Settings store that returns errors
+	errStore := &errorSettingsStore{}
+	var log pkginterfaces.LoggerInterface = lmocks.NewMockLogger()
+	errSvc := settings.NewInstanceService(errStore, log)
+
+	f := newFixture(t)
+	f.svc.SetInstanceSettings(errSvc)
+	ctx := context.Background()
+
+	// Should still create workspace with request values (no defaults applied)
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.Runtime == "base" && ws.Spec.Storage.Size == "1Gi"
+	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+}
+
+// errorSettingsStore always returns an error.
+type errorSettingsStore struct{}
+
+func (s *errorSettingsStore) GetAllInstanceSettings(_ context.Context) (map[string]json.RawMessage, error) {
+	return nil, fmt.Errorf("database connection refused")
+}
+func (s *errorSettingsStore) SetInstanceSetting(_ context.Context, _ string, _ json.RawMessage) error {
+	return fmt.Errorf("database connection refused")
+}
+
+// === Edge cases ===
+
+func TestCreateWorkspace_DefaultStorageSize_ExceedsMax_Rejected(t *testing.T) {
+	// Admin misconfigured: default > max
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultStorageSize": "20Gi",
+		"workspace.maxStorageSize":     "10Gi",
+	})
+	ctx := context.Background()
+
+	req := types.CreateWorkspaceRequest{Name: "test", Runtime: "base"} // no storageSize
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum")
+}
+
+func TestCreateWorkspace_PartialResources_OnlyCPU(t *testing.T) {
+	// Only cpu is set in settings, memory/ephemeral use schema defaults
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultResources.cpu": "2000m",
+		// memory and ephemeral will come from schema defaults
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.Resources != nil && ws.Spec.Resources.CPU == "2000m"
+	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+}
+
+func TestCreateWorkspace_TTLZero_NotSetOnCRD(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.ttlDaysAfterSuspended": 0,
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.TTLSecondsAfterSuspended == 0
+	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+}
+
+func TestCreateWorkspace_EmptyEgressDomains_NoNetworkAccess(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultNetworkAccess.ingress":       false,
+		"workspace.defaultNetworkAccess.egressDomains": []string{},
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.NetworkAccess == nil
+	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+}
+
+func TestCreateWorkspace_AutoSuspendTimeout_MinutesToSeconds(t *testing.T) {
+	// Verify the minutes→seconds conversion for various values
+	tests := []struct {
+		name           string
+		minutes        int
+		expectSeconds  int64
+	}{
+		{"1 minute", 1, 60},
+		{"60 minutes", 60, 3600},
+		{"1440 minutes (1 day)", 1440, 86400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newDefaultsFixture(t, map[string]any{
+				"workspace.autoSuspend.idleTimeoutMinutes": tt.minutes,
+			})
+			ctx := context.Background()
+
+			f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+				return ws.Spec.AutoSuspend != nil &&
+					ws.Spec.AutoSuspend.IdleTimeoutSeconds == tt.expectSeconds
+			})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+			f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+			req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+			_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+			assert.NoError(t, err)
+			f.ws.AssertExpectations(t)
+		})
+	}
+}
+
+// === Integration: all defaults applied together ===
+
+func TestCreateWorkspace_AllDefaults_AppliedTogether(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultImage":                       "custom:latest",
+		"workspace.defaultStorageSize":                 "5Gi",
+		"workspace.maxStorageSize":                     "50Gi",
+		"workspace.defaultStorageClass":                "premium",
+		"workspace.defaultSecurityLevel":               "high",
+		"workspace.defaultResources.cpu":               "2000m",
+		"workspace.defaultResources.memory":            "2Gi",
+		"workspace.defaultResources.ephemeralStorage":  "4Gi",
+		"workspace.autoSuspend.enabled":                true,
+		"workspace.autoSuspend.idleTimeoutMinutes":     120,
+		"workspace.ttlDaysAfterSuspended":              14,
+		"workspace.defaultNetworkAccess.ingress":       true,
+		"workspace.defaultNetworkAccess.egressDomains": []string{"api.openai.com"},
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.Runtime == "custom:latest" &&
+			ws.Spec.Storage.Size == "5Gi" &&
+			ws.Spec.Storage.StorageClassName == "premium" &&
+			ws.Spec.SecurityLevel == "high" &&
+			ws.Spec.Resources != nil &&
+			ws.Spec.Resources.CPU == "2000m" &&
+			ws.Spec.Resources.Memory == "2Gi" &&
+			ws.Spec.Resources.EphemeralStorage == "4Gi" &&
+			ws.Spec.AutoSuspend != nil &&
+			ws.Spec.AutoSuspend.Enabled == true &&
+			ws.Spec.AutoSuspend.IdleTimeoutSeconds == 7200 &&
+			ws.Spec.TTLSecondsAfterSuspended == 14*86400 &&
+			ws.Spec.NetworkAccess != nil &&
+			ws.Spec.NetworkAccess.Ingress == true &&
+			len(ws.Spec.NetworkAccess.Egress) == 1
+	})).Return(crdWorkspace("ws-1", "default", "user1", "5Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	// Request with NO optional fields — all should come from settings
+	req := types.CreateWorkspaceRequest{Name: "full-defaults-test"}
+	result, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	f.ws.AssertExpectations(t)
+}
+
+func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultImage":        "default:latest",
+		"workspace.defaultStorageSize":  "1Gi",
+		"workspace.maxStorageSize":      "50Gi",
+		"workspace.defaultStorageClass": "slow",
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.Runtime == "python:3.11" &&
+			ws.Spec.Storage.Size == "10Gi" &&
+			ws.Spec.Storage.StorageClassName == "fast"
+	})).Return(crdWorkspace("ws-1", "default", "user1", "10Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{
+		Name:         "explicit",
+		Runtime:      "python:3.11",
+		StorageSize:  "10Gi",
+		StorageClass: "fast",
+	}
 	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
