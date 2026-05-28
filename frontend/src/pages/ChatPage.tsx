@@ -366,14 +366,16 @@ export function ChatPage() {
           <Spinner />
         </div>
       ) : (
-        <ChatView
-          messages={allMessages}
-          streaming={streaming}
-          streamParts={sseStreamParts}
-          disabled={!workspaceId || !sessionId || isSuspended}
-          onSend={handleSend}
-          onAbort={abort}
-        />
+        <div className="flex-1 min-h-0">
+          <ChatView
+            messages={allMessages}
+            streaming={streaming}
+            streamParts={sseStreamParts}
+            disabled={!workspaceId || !sessionId || isSuspended}
+            onSend={handleSend}
+            onAbort={abort}
+          />
+        </div>
       )}
     </div>
   );
