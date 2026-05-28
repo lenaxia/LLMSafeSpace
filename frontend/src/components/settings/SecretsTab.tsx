@@ -284,7 +284,9 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       });
       setCreatedValue(value);
     } catch (err: any) {
-      onError(err.message);
+      onError(err.message === "encryption key not available; re-authenticate"
+        ? "Session expired. Please log out and log back in to manage secrets."
+        : err.message);
     } finally {
       setSubmitting(false);
     }
