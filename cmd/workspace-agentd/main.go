@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -193,17 +194,21 @@ func main() {
 			Plaintext string          `json:"plaintext"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&secrets); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid json: " + err.Error()})
 			return
 		}
 		if err := materializeSecrets(secrets); err != nil {
-			log.Error("reload-secrets failed", zap.Error(err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Error("reload-secrets: materialize failed", zap.Error(err))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
 		log.Info("secrets reloaded", zap.Int("count", len(secrets)))
 
-		// If env vars or LLM config changed, restart opencode to pick them up
+		// If env vars or LLM config present, restart opencode to pick them up
 		hasEnvOrLLM := false
 		for _, s := range secrets {
 			if s.Type == "env-secret" || s.Type == "llm-provider" {
@@ -211,12 +216,19 @@ func main() {
 				break
 			}
 		}
+		restarted := false
 		if hasEnvOrLLM && proc != nil {
 			log.Info("env/llm secrets changed, restarting opencode")
 			proc.restart()
+			restarted = true
 		}
 
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"reloaded":  len(secrets),
+			"restarted": restarted,
+		})
 	})
 
 	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
@@ -246,13 +258,22 @@ func main() {
 
 // managedProcess supervises the opencode serve process.
 type managedProcess struct {
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu             sync.Mutex
+	cmd            *exec.Cmd
+	restartCount   int
+	lastRestartAt  time.Time
+	stopping       bool
 }
+
+const (
+	maxBackoffSec  = 30
+	healthCheckURL = "http://localhost:4096/v1/readyz"
+)
 
 func (p *managedProcess) start() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stopping = false
 	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096")
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr
@@ -261,33 +282,79 @@ func (p *managedProcess) start() {
 		log.Error("failed to start opencode", zap.Error(err))
 		return
 	}
-	log.Info("opencode started", zap.Int("pid", p.cmd.Process.Pid))
-	// Monitor in background — restart on unexpected exit
+	p.lastRestartAt = time.Now()
+	log.Info("opencode started", zap.Int("pid", p.cmd.Process.Pid), zap.Int("restartCount", p.restartCount))
+
+	// Monitor in background
 	go func() {
 		err := p.cmd.Wait()
-		log.Warn("opencode exited", zap.Error(err))
-		// Auto-restart after 1s unless we're shutting down
-		time.Sleep(time.Second)
+		p.mu.Lock()
+		stopping := p.stopping
+		p.mu.Unlock()
+		if stopping {
+			return // intentional stop, restart() will handle it
+		}
+		log.Warn("opencode exited unexpectedly", zap.Error(err), zap.Int("restartCount", p.restartCount))
+		p.restartCount++
+		// Exponential backoff: 1s, 2s, 4s, 8s, ... max 30s
+		backoff := time.Duration(1<<min(p.restartCount, 5)) * time.Second
+		if backoff > maxBackoffSec*time.Second {
+			backoff = maxBackoffSec * time.Second
+		}
+		// Reset counter if last restart was >60s ago (stable period)
+		if time.Since(p.lastRestartAt) > 60*time.Second {
+			p.restartCount = 0
+			backoff = time.Second
+		}
+		log.Info("restarting opencode", zap.Duration("backoff", backoff))
+		time.Sleep(backoff)
 		p.start()
 	}()
 }
 
 func (p *managedProcess) restart() {
 	p.mu.Lock()
-	if p.cmd != nil && p.cmd.Process != nil {
-		log.Info("stopping opencode for restart", zap.Int("pid", p.cmd.Process.Pid))
-		p.cmd.Process.Signal(os.Interrupt)
-		// Wait up to 5s for graceful shutdown
+	p.stopping = true
+	cmd := p.cmd
+	p.mu.Unlock()
+
+	if cmd != nil && cmd.Process != nil {
+		log.Info("stopping opencode for restart", zap.Int("pid", cmd.Process.Pid))
+		cmd.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
-		go func() { p.cmd.Wait(); close(done) }()
+		go func() { cmd.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			p.cmd.Process.Kill()
+			cmd.Process.Kill()
+			<-done
 		}
 	}
-	p.mu.Unlock()
-	// start() will be called by the goroutine monitoring the exit
+
+	p.restartCount = 0
+	p.start()
+
+	// Verify opencode came back up (health check with timeout)
+	go func() {
+		for i := 0; i < 10; i++ {
+			time.Sleep(time.Second)
+			resp, err := http.Get(healthCheckURL)
+			if err == nil && resp.StatusCode == 200 {
+				resp.Body.Close()
+				log.Info("opencode healthy after restart")
+				return
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+		log.Warn("opencode did not become healthy within 10s after restart")
+	}()
+}
+
+func min(a, b int) int {
+	if a < b { return a }
+	return b
 }
 
 func buildEnv() []string {
@@ -323,7 +390,7 @@ func materializeSecrets(secrets []struct {
 	}
 	sshDir := home + "/.ssh"
 
-	// Clean previous secret files (full replace semantics)
+	// Full replace: clean everything first
 	os.RemoveAll(secretsBaseDir)
 	os.MkdirAll(secretsBaseDir, 0700)
 	os.RemoveAll(sshDir)
@@ -332,15 +399,21 @@ func materializeSecrets(secrets []struct {
 	os.Remove("/tmp/agent-config.json")
 	os.Remove("/tmp/secrets-env")
 
-	var envLines []string
+	var errors []string
 
 	for _, s := range secrets {
 		var meta map[string]string
 		json.Unmarshal(s.Metadata, &meta)
 
+		if s.Name == "" {
+			errors = append(errors, fmt.Sprintf("%s: empty name", s.Type))
+			continue
+		}
+
+		var err error
 		switch s.Type {
 		case "llm-provider":
-			os.WriteFile("/tmp/agent-config.json", []byte(s.Plaintext), 0600)
+			err = os.WriteFile("/tmp/agent-config.json", []byte(s.Plaintext), 0600)
 
 		case "ssh-key":
 			keyType := meta["key_type"]
@@ -348,15 +421,20 @@ func materializeSecrets(secrets []struct {
 				keyType = "ed25519"
 			}
 			keyPath := sshDir + "/id_" + keyType + "_" + s.Name
-			os.WriteFile(keyPath, []byte(s.Plaintext), 0600)
+			if err = os.WriteFile(keyPath, []byte(s.Plaintext), 0600); err != nil {
+				break
+			}
 			host := meta["host"]
 			if host == "" {
 				host = "github.com"
 			}
 			configEntry := "Host " + host + "\n    IdentityFile " + keyPath + "\n    StrictHostKeyChecking accept-new\n"
-			f, _ := os.OpenFile(sshDir+"/config", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-			f.WriteString(configEntry)
-			f.Close()
+			var f *os.File
+			f, err = os.OpenFile(sshDir+"/config", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			if err == nil {
+				f.WriteString(configEntry)
+				f.Close()
+			}
 
 		case "git-credential":
 			host := meta["host"]
@@ -368,37 +446,59 @@ func materializeSecrets(secrets []struct {
 				protocol = "https"
 			}
 			line := protocol + "://oauth2:" + s.Plaintext + "@" + host + "\n"
-			f, _ := os.OpenFile(home+"/.git-credentials", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-			f.WriteString(line)
-			f.Close()
+			var f *os.File
+			f, err = os.OpenFile(home+"/.git-credentials", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			if err == nil {
+				f.WriteString(line)
+				f.Close()
+			}
 
 		case "secret-file":
 			mountPath := meta["mount_path"]
 			if mountPath == "" {
+				errors = append(errors, fmt.Sprintf("secret-file '%s': missing mount_path", s.Name))
 				continue
 			}
 			// Force all secret files under the safe base dir
 			if !strings.HasPrefix(mountPath, secretsBaseDir) {
 				mountPath = secretsBaseDir + "/" + strings.TrimPrefix(mountPath, "/")
 			}
-			os.MkdirAll(mountPath[:strings.LastIndex(mountPath, "/")], 0700)
-			os.WriteFile(mountPath, []byte(s.Plaintext), 0600)
+			// Prevent path traversal
+			if strings.Contains(mountPath, "..") {
+				errors = append(errors, fmt.Sprintf("secret-file '%s': path traversal not allowed", s.Name))
+				continue
+			}
+			dir := mountPath[:strings.LastIndex(mountPath, "/")]
+			if err = os.MkdirAll(dir, 0700); err == nil {
+				err = os.WriteFile(mountPath, []byte(s.Plaintext), 0600)
+			}
 
 		case "env-secret":
 			varName := meta["var_name"]
-			if varName != "" {
-				envLines = append(envLines, "export "+varName+"='"+s.Plaintext+"'")
-				os.Setenv(varName, s.Plaintext)
+			if varName == "" {
+				errors = append(errors, fmt.Sprintf("env-secret '%s': missing var_name", s.Name))
+				continue
 			}
+			var f *os.File
+			f, err = os.OpenFile("/tmp/secrets-env", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			if err == nil {
+				fmt.Fprintf(f, "export %s='%s'\n", varName, s.Plaintext)
+				f.Close()
+			}
+			os.Setenv(varName, s.Plaintext)
+
+		default:
+			errors = append(errors, fmt.Sprintf("unknown type '%s' for secret '%s'", s.Type, s.Name))
+			continue
+		}
+
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s '%s': %v", s.Type, s.Name, err))
 		}
 	}
 
-	// Write env file
-	if len(envLines) > 0 {
-		os.WriteFile("/tmp/secrets-env", []byte(strings.Join(envLines, "\n")+"\n"), 0600)
-	} else {
-		os.Remove("/tmp/secrets-env")
+	if len(errors) > 0 {
+		return fmt.Errorf("partial failure: %s", strings.Join(errors, "; "))
 	}
-
 	return nil
 }
