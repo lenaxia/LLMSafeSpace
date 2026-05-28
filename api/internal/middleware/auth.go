@@ -206,34 +206,7 @@ func RequirePermissions(permissions ...string) gin.HandlerFunc {
 	}
 }
 
-// RequireRoles returns a middleware that requires specific roles
-func RequireRoles(roles ...string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userRole, exists := c.Get("userRole")
-		if !exists {
-			apiErr := errors.NewForbiddenError("Authorization required", nil)
-			HandleAPIError(c, apiErr)
-			return
-		}
 
-		// Check if user has one of the required roles
-		hasRole := false
-		for _, role := range roles {
-			if userRole == role {
-				hasRole = true
-				break
-			}
-		}
-
-		if !hasRole {
-			apiErr := errors.NewForbiddenError("Insufficient permissions", nil)
-			HandleAPIError(c, apiErr)
-			return
-		}
-
-		c.Next()
-	}
-}
 
 // shouldSkipAuth checks if authentication should be skipped for a path
 func shouldSkipAuth(path string, skipPaths, skipPathPrefixes []string) bool {

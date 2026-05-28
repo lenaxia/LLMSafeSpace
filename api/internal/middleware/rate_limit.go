@@ -20,7 +20,6 @@ type RateLimitConfig struct {
 	DefaultWindow time.Duration
 	BurstSize     int
 	Strategy      string
-	ExemptRoles   []string
 	ExemptPaths   []string // path prefixes exempt from rate limiting (e.g. SSE endpoints)
 	CustomLimits  map[string]int
 	CustomBursts  map[string]int
@@ -49,16 +48,6 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			if strings.HasSuffix(reqPath, exempt) || reqPath == exempt {
 				c.Next()
 				return
-			}
-		}
-
-		// Check for exempt roles
-		if role, exists := c.Get("userRole"); exists {
-			for _, exemptRole := range config.ExemptRoles {
-				if role == exemptRole {
-					c.Next()
-					return
-				}
 			}
 		}
 
