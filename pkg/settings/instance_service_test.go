@@ -14,11 +14,12 @@ import (
 
 // mockInstanceStore is a test double for InstanceStore.
 type mockInstanceStore struct {
-	mu        sync.Mutex
-	data      map[string]json.RawMessage
-	getErr    error
-	setErr    error
-	getCalls  int64
+	mu         sync.Mutex
+	data       map[string]json.RawMessage
+	getErr     error
+	setErr     error
+	getCalls   int64
+	getLatency time.Duration
 }
 
 func newMockStore() *mockInstanceStore {
@@ -29,6 +30,11 @@ func (m *mockInstanceStore) GetAllInstanceSettings(_ context.Context) (map[strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	atomic.AddInt64(&m.getCalls, 1)
+	if m.getLatency > 0 {
+		m.mu.Unlock()
+		time.Sleep(m.getLatency)
+		m.mu.Lock()
+	}
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
@@ -286,6 +292,7 @@ func TestInstanceService_Set_InvalidatesCache(t *testing.T) {
 func TestInstanceService_Singleflight_PreventsDuplicateDBCalls(t *testing.T) {
 	store := newMockStore()
 	store.set("auth.registrationEnabled", true)
+	store.getLatency = 10 * time.Millisecond // simulate DB latency so singleflight can coalesce
 	svc := newTestService(store)
 	// Set TTL to 0 to force cache miss every time
 	svc.ttl = 0
