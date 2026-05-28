@@ -195,6 +195,11 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		return ctrl.Result{RequeueAfter: requeueCreating}, nil
 	}
 
+	// Delete ephemeral secrets as soon as init containers complete (minimize etcd exposure).
+	if allInitContainersComplete(existingPod) {
+		r.deleteEphemeralSecretsSecret(ctx, workspace)
+	}
+
 	// Pod exists — check if running.
 	if existingPod.Status.Phase == corev1.PodRunning && existingPod.Status.PodIP != "" {
 		now := metav1.Now()
@@ -266,8 +271,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
-	// Clean up ephemeral secrets Secret now that pod is Running.
-	// Plaintext secrets should not linger in etcd.
+	// Clean up ephemeral secrets Secret (safety net — should already be deleted in handleCreating).
 	r.deleteEphemeralSecretsSecret(ctx, workspace)
 
 	// Pod running — check timeout.
@@ -504,6 +508,18 @@ func (r *WorkspaceReconciler) deleteEphemeralSecretsSecret(ctx context.Context, 
 	if err := r.Delete(ctx, secret); err != nil {
 		log.FromContext(ctx).V(1).Info("Failed to delete ephemeral secrets secret", "name", secretName, "error", err.Error())
 	}
+}
+
+func allInitContainersComplete(pod *corev1.Pod) bool {
+	if len(pod.Status.InitContainerStatuses) == 0 {
+		return false
+	}
+	for _, s := range pod.Status.InitContainerStatuses {
+		if s.State.Terminated == nil || s.State.Terminated.ExitCode != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *WorkspaceReconciler) ensurePasswordSecret(ctx context.Context, workspace *v1.Workspace) error {
