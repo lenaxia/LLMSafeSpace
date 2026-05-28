@@ -21,7 +21,7 @@ export function SettingsForm({ schema, values, onSave, disabled }: SettingsFormP
           <h3 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
             {category}
           </h3>
-          <div className="space-y-4">
+          <div className="divide-y divide-border rounded-md border border-border">
             {schema
               .filter((s) => s.category === category)
               .map((def) => (
@@ -64,12 +64,12 @@ function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+    <div className="flex items-center justify-between gap-4 px-4 py-3">
       <div className="flex-1 min-w-0">
         <label className="text-sm font-medium" htmlFor={def.key}>
           {def.label}
         </label>
-        <p className="text-xs text-muted-foreground">{def.description}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{def.description}</p>
         {error && <p className="text-xs text-destructive mt-1">{error}</p>}
       </div>
       <div className="shrink-0">
@@ -113,29 +113,48 @@ function SettingControl({ def, value, onChange, disabled }: SettingControlProps)
       );
     case "string":
       return (
-        <input
+        <StringInput
           id={def.key}
-          type="text"
           value={value as string}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={(e) => onChange(e.target.value)}
+          onCommit={onChange}
           disabled={disabled}
-          className="w-48 rounded-md border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
         />
       );
     case "strings":
       return (
-        <input
+        <StringInput
           id={def.key}
-          type="text"
           value={(value as string[])?.join(", ") ?? ""}
-          onChange={(e) => onChange(e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
+          onCommit={(v) => onChange((v as string).split(",").map((s) => s.trim()).filter(Boolean))}
           disabled={disabled}
           placeholder="comma-separated"
-          className="w-48 rounded-md border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
         />
       );
     default:
       return <span className="text-xs text-muted-foreground">unsupported</span>;
   }
+}
+
+/** Text input that only commits on blur or Enter — avoids saving on every keystroke. */
+function StringInput({ id, value, onCommit, disabled, placeholder }: {
+  id: string;
+  value: string;
+  onCommit: (value: unknown) => void;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [local, setLocal] = useState(value);
+  return (
+    <input
+      id={id}
+      type="text"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => { if (local !== value) onCommit(local); }}
+      onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
+      disabled={disabled}
+      placeholder={placeholder}
+      className="h-8 w-48 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+    />
+  );
 }
