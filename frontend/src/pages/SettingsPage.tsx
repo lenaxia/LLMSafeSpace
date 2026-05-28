@@ -4,18 +4,22 @@ import { UserSettingsTab } from "../components/settings/UserSettingsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
 import { AdminSettingsPage } from "./AdminSettingsPage";
 import { AdminCredentialsTab } from "../components/settings/AdminCredentialsTab";
+import { useAuth } from "../providers/AuthProvider";
 
-const tabs = [
-  { id: "preferences", label: "Preferences" },
-  { id: "api-keys", label: "API Keys" },
-  { id: "credentials", label: "Credentials" },
-  { id: "admin", label: "Admin" },
+const allTabs = [
+  { id: "preferences", label: "Preferences", adminOnly: false },
+  { id: "api-keys", label: "API Keys", adminOnly: false },
+  { id: "credentials", label: "Credentials", adminOnly: true },
+  { id: "admin", label: "Admin", adminOnly: true },
 ] as const;
 
-type TabId = (typeof tabs)[number]["id"];
+type TabId = (typeof allTabs)[number]["id"];
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("api-keys");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const tabs = allTabs.filter((t) => !t.adminOnly || isAdmin);
+  const [activeTab, setActiveTab] = useState<TabId>("preferences");
 
   return (
     <div className="flex h-full">
@@ -40,8 +44,8 @@ export function SettingsPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
-        {activeTab === "credentials" && <AdminCredentialsTab />}
-        {activeTab === "admin" && <AdminSettingsPage />}
+        {activeTab === "credentials" && isAdmin && <AdminCredentialsTab />}
+        {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
       </div>
     </div>
   );
