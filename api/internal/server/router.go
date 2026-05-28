@@ -36,6 +36,9 @@ type RouterConfig struct {
 
 	// AllowedWebSocketOrigins is a list of allowed origins for WebSocket connections
 	AllowedWebSocketOrigins []string
+
+	// SecretsHandler is the handler for secret management endpoints (optional)
+	SecretsHandler *handlers.SecretsHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -126,6 +129,22 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Proxy routes — registered within workspace group when a ProxyHandler is provided
 	if proxyHandler != nil {
 		registerProxyRoutes(workspaceGroup, proxyHandler)
+	}
+
+	// Secret management routes (Epic 10)
+	if cfg.SecretsHandler != nil {
+		secretsGroup := router.Group("/api/v1/secrets")
+		secretsGroup.Use(services.GetAuth().AuthMiddleware())
+		secretsGroup.POST("", cfg.SecretsHandler.CreateSecret)
+		secretsGroup.GET("", cfg.SecretsHandler.ListSecrets)
+		secretsGroup.GET("/audit", cfg.SecretsHandler.GetAuditLog)
+		secretsGroup.GET("/:id", cfg.SecretsHandler.GetSecret)
+		secretsGroup.PUT("/:id", cfg.SecretsHandler.UpdateSecret)
+		secretsGroup.DELETE("/:id", cfg.SecretsHandler.DeleteSecret)
+
+		// Bindings are under the workspace group (already authenticated)
+		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
+		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
 	}
 
 	// Metrics endpoint
