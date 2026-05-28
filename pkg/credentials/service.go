@@ -136,6 +136,104 @@ func (s *Service) SetDefault(ctx context.Context, id string) error {
 	return s.store.SetDefault(ctx, id)
 }
 
+// GetDefault returns the default credential set, or nil if none is set.
+func (s *Service) GetDefault(ctx context.Context) (*CredentialSet, error) {
+	row, err := s.store.GetDefault(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+	return rowToCredentialSet(row, s.keySet), nil
+}
+
+// Update performs a partial update on a credential set. If providers are changed,
+// they are re-encrypted with the active key.
+func (s *Service) Update(ctx context.Context, id string, req UpdateCredentialSetRequest) error {
+	updates := CredentialSetUpdates{}
+
+	if req.Name != nil {
+		updates.Name = req.Name
+	}
+	if req.ModelAllowlist != nil {
+		updates.ModelAllowlist = req.ModelAllowlist
+	}
+	if req.AssignedTo != nil {
+		raw, _ := json.Marshal(req.AssignedTo)
+		rawMsg := json.RawMessage(raw)
+		updates.AssignedTo = &rawMsg
+	}
+	if req.IsDefault != nil {
+		updates.IsDefault = req.IsDefault
+	}
+
+	if req.Providers != nil {
+		// Need the row's name for AAD
+		row, err := s.store.GetCredentialSet(ctx, id)
+		if err != nil {
+			return fmt.Errorf("failed to get credential set for re-encryption: %w", err)
+		}
+		if row == nil {
+			return fmt.Errorf("credential set %q not found", id)
+		}
+
+		aadName := row.Name
+		if req.Name != nil {
+			aadName = *req.Name
+		}
+
+		plaintext, err := MarshalProviders(*req.Providers)
+		if err != nil {
+			return fmt.Errorf("failed to marshal providers: %w", err)
+		}
+		encrypted, keyVersion, err := Encrypt(s.keySet, plaintext, []byte(aadName))
+		if err != nil {
+			return fmt.Errorf("failed to encrypt providers: %w", err)
+		}
+		updates.ProvidersEncrypted = &encrypted
+		updates.KeyVersion = &keyVersion
+	}
+
+	return s.store.UpdateCredentialSet(ctx, id, updates)
+}
+
+// ListForUser returns credential sets assigned to "all" or to the given user ID.
+func (s *Service) ListForUser(ctx context.Context, userID string) ([]*CredentialSet, error) {
+	rows, err := s.store.ListCredentialSets(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []*CredentialSet
+	for _, row := range rows {
+		if isAssignedToUser(row.AssignedTo, userID) {
+			result = append(result, rowToCredentialSet(row, s.keySet))
+		}
+	}
+	return result, nil
+}
+
+// isAssignedToUser checks if the assignedTo JSON value includes the given user.
+func isAssignedToUser(assignedTo json.RawMessage, userID string) bool {
+	var val any
+	if err := json.Unmarshal(assignedTo, &val); err != nil {
+		return false
+	}
+
+	switch v := val.(type) {
+	case string:
+		return v == "all"
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s == userID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // RotateEncryptionKey re-encrypts all credential sets with the active key.
 func (s *Service) RotateEncryptionKey(ctx context.Context) (*RotateKeyResult, error) {
 	active, err := s.keySet.ActiveKey()

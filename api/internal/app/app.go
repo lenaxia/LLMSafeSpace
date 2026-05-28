@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -16,6 +19,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/pkg/credentials"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -77,6 +81,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// Create settings handler for API routes.
 	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
+
+	// Create credential sets handler (Epic 9 Phase C).
+	credKeySet := loadCredentialKeySet(cfg)
+	credSvc := credentials.NewService(dbSvc, credKeySet, log)
+	credentialsHandler := handlers.NewCredentialsHandler(credSvc)
 
 	// Wire secret management (Epic 10).
 	dekCacheClient := redis.NewClient(&redis.Options{
@@ -142,6 +151,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AllowedWebSocketOrigins: wsOrigins,
 		SettingsHandler:         settingsHandler,
 		InstanceSettings:        instanceSettings,
+		CredentialsHandler:      credentialsHandler,
 		SecretsHandler:          secretsHandler,
 		RotateKeyHandler:        rotateKeyHandler,
 	})
@@ -241,4 +251,25 @@ func (a *App) Shutdown() error {
 
 	a.logger.Info("Application shutdown complete")
 	return nil
+}
+
+// loadCredentialKeySet loads the credential encryption key set from the
+// LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY environment variable (hex-encoded 32 bytes).
+// If not set, generates a random key (suitable for development only).
+func loadCredentialKeySet(cfg *config.Config) *credentials.EncryptionKeySet {
+	keyHex := os.Getenv("LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY")
+	if keyHex != "" {
+		key, err := hex.DecodeString(keyHex)
+		if err == nil && len(key) == 32 {
+			return &credentials.EncryptionKeySet{
+				Keys: []credentials.EncryptionKey{{Version: 1, Key: key}},
+			}
+		}
+	}
+	// Fallback: generate a random key (development only — not persisted across restarts).
+	key := make([]byte, 32)
+	rand.Read(key)
+	return &credentials.EncryptionKeySet{
+		Keys: []credentials.EncryptionKey{{Version: 1, Key: key}},
+	}
 }
