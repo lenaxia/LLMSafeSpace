@@ -415,3 +415,32 @@ func TestCredService_ListForUser_ExcludesOtherUsers(t *testing.T) {
 		t.Errorf("expected 0 for user-2, got %d", len(list))
 	}
 }
+
+func TestCredService_GetDecryptedProviders(t *testing.T) {
+	svc, _ := newTestCredService()
+	ctx := context.Background()
+
+	cs, _ := svc.Create(ctx, CreateCredentialSetRequest{
+		Name:      "decrypt-test",
+		Providers: ProviderConfig{"openai": {APIKey: "sk-secret-123", BaseURL: "https://api.openai.com/v1"}},
+	})
+
+	config, err := svc.GetDecryptedProviders(ctx, cs.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if config["openai"].APIKey != "sk-secret-123" {
+		t.Errorf("expected sk-secret-123, got %q", config["openai"].APIKey)
+	}
+	if config["openai"].BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("expected base URL, got %q", config["openai"].BaseURL)
+	}
+}
+
+func TestCredService_GetDecryptedProviders_NotFound(t *testing.T) {
+	svc, _ := newTestCredService()
+	_, err := svc.GetDecryptedProviders(context.Background(), "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent credential set")
+	}
+}

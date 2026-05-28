@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
@@ -494,4 +496,95 @@ func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
 	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
+}
+
+// === US-13.15: credentials.autoProvision ===
+
+type mockCredProvisioner struct {
+	id     string
+	config []byte
+	err    error
+}
+
+func (m *mockCredProvisioner) GetDefault(_ context.Context) (string, []byte, error) {
+	return m.id, m.config, m.err
+}
+
+func TestCreateWorkspace_AutoProvision_Enabled_InjectsCredentials(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"credentials.autoProvision": true,
+	})
+	f.svc.SetCredentialProvisioner(&mockCredProvisioner{
+		id:     "cred-1",
+		config: []byte(`{"provider":"openai","apiKey":"sk-test"}`),
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	clientset := k8sfake.NewSimpleClientset()
+	f.k8s.On("Clientset").Return(clientset)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+
+	// Verify a credential secret was created
+	secret, err := clientset.CoreV1().Secrets("default").Get(ctx, "workspace-creds-ws-1", metav1.GetOptions{})
+	assert.NoError(t, err)
+	assert.NotNil(t, secret)
+	assert.Equal(t, []byte(`{"provider":"openai","apiKey":"sk-test"}`), secret.Data["provider-config"])
+}
+
+func TestCreateWorkspace_AutoProvision_Disabled_NoCredentials(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"credentials.autoProvision": false,
+	})
+	f.svc.SetCredentialProvisioner(&mockCredProvisioner{
+		id:     "cred-1",
+		config: []byte(`{"provider":"openai","apiKey":"sk-test"}`),
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
+	// Clientset should NOT be called (no secret creation)
+	f.k8s.AssertNotCalled(t, "Clientset")
+}
+
+func TestCreateWorkspace_AutoProvision_NoDefault_NoError(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"credentials.autoProvision": true,
+	})
+	f.svc.SetCredentialProvisioner(&mockCredProvisioner{
+		id: "", config: nil, err: nil, // no default set
+	})
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err) // should not fail even if no default
+}
+
+func TestCreateWorkspace_AutoProvision_NilProvisioner_NoError(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"credentials.autoProvision": true,
+	})
+	// No provisioner set
+	ctx := context.Background()
+
+	f.ws.On("Create", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
+	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "1Gi", Runtime: "base"}
+	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	assert.NoError(t, err)
 }

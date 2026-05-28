@@ -31,15 +31,16 @@ func init() {
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
-	logger           pkginterfaces.LoggerInterface
-	k8sClient        pkginterfaces.KubernetesClient
-	dbService        apiinterfaces.DatabaseService
-	cacheService     apiinterfaces.CacheService
-	metricsService   apiinterfaces.MetricsService
-	sessionIndex     apiinterfaces.SessionIndexService
-	secretInjector   SecretInjector
-	instanceSettings *settings.InstanceService
-	config           *Config
+	logger                pkginterfaces.LoggerInterface
+	k8sClient             pkginterfaces.KubernetesClient
+	dbService             apiinterfaces.DatabaseService
+	cacheService          apiinterfaces.CacheService
+	metricsService        apiinterfaces.MetricsService
+	sessionIndex          apiinterfaces.SessionIndexService
+	secretInjector        SecretInjector
+	credentialProvisioner CredentialProvisioner
+	instanceSettings      *settings.InstanceService
+	config                *Config
 }
 
 func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
@@ -125,9 +126,52 @@ type SecretInjector interface {
 	PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
 }
 
+// CredentialProvisioner provides default credentials for auto-provisioning.
+type CredentialProvisioner interface {
+	GetDefault(ctx context.Context) (id string, config []byte, err error)
+}
+
 // SetSecretInjector injects the secret service for pod secret materialization.
 func (s *Service) SetSecretInjector(si SecretInjector) {
 	s.secretInjector = si
+}
+
+// SetCredentialProvisioner injects the credential provisioner for auto-provision on create.
+func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
+	s.credentialProvisioner = cp
+}
+
+// autoProvisionCredentials injects the default credential set into a new workspace
+// if the credentials.autoProvision setting is enabled. Non-fatal on failure.
+// Creates the K8s Secret directly (skips agent validation since credentials are trusted from the store).
+func (s *Service) autoProvisionCredentials(ctx context.Context, userID, workspaceID string) {
+	if s.instanceSettings == nil || s.credentialProvisioner == nil {
+		return
+	}
+	autoProvision, err := s.instanceSettings.GetBool(ctx, "credentials.autoProvision")
+	if err != nil || !autoProvision {
+		return
+	}
+	_, config, err := s.credentialProvisioner.GetDefault(ctx)
+	if err != nil || config == nil {
+		return
+	}
+
+	secretName := fmt.Sprintf("workspace-creds-%s", workspaceID)
+	secretData := map[string][]byte{"provider-config": config}
+
+	clientset := s.k8sClient.Clientset()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: s.config.Namespace,
+		},
+		Data: secretData,
+	}
+	if _, err := clientset.CoreV1().Secrets(s.config.Namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		s.logger.Warn("auto-provision credentials failed (non-fatal)",
+			"workspaceID", workspaceID, "error", err.Error())
+	}
 }
 
 func (s *Service) Start() error {
@@ -218,6 +262,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
 	s.syncPhase(created.Name, created.Status.Phase)
+
+	// Auto-provision default credentials if enabled
+	s.autoProvisionCredentials(ctx, userID, created.Name)
 
 	ws := &types.Workspace{
 		ID:          meta.ID,
