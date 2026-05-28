@@ -296,14 +296,25 @@ type KeyRotator interface {
 	ResetWithRecoveryKey(ctx context.Context, userID string, recoveryKeyHex string, newPassword []byte) (string, error)
 }
 
+// PasswordHashUpdater updates the user's bcrypt hash in the database.
+type PasswordHashUpdater interface {
+	UpdatePasswordHash(ctx context.Context, userID string, newPassword []byte) error
+}
+
 // RotateKeyHandler handles account key management endpoints.
 type RotateKeyHandler struct {
-	keySvc KeyRotator
+	keySvc     KeyRotator
+	pwUpdater  PasswordHashUpdater
 }
 
 // NewRotateKeyHandler creates a new RotateKeyHandler.
 func NewRotateKeyHandler(keySvc KeyRotator) *RotateKeyHandler {
 	return &RotateKeyHandler{keySvc: keySvc}
+}
+
+// SetPasswordUpdater sets the optional password hash updater.
+func (h *RotateKeyHandler) SetPasswordUpdater(u PasswordHashUpdater) {
+	h.pwUpdater = u
 }
 
 // RotateKey handles POST /api/v1/account/rotate-key
@@ -361,6 +372,14 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Also update the bcrypt hash in the user database
+	if h.pwUpdater != nil {
+		if err := h.pwUpdater.UpdatePasswordHash(c.Request.Context(), userID, []byte(req.NewPassword)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "password change failed"})
+			return
+		}
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -382,6 +401,14 @@ func (h *RotateKeyHandler) RecoverAccount(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid recovery key"})
 		return
+	}
+
+	// Also update the bcrypt hash so the user can login with the new password
+	if h.pwUpdater != nil {
+		if err := h.pwUpdater.UpdatePasswordHash(c.Request.Context(), req.UserID, []byte(req.NewPassword)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "recovery failed"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"recoveryKey": newRecoveryKey})

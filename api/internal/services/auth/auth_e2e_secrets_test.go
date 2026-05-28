@@ -348,7 +348,15 @@ func (m *memSecretStore) SetBindings(_ context.Context, ws string, ids []string)
 	return nil
 }
 func (m *memSecretStore) GetBindings(_ context.Context, ws string) ([]*secrets.UserSecret, error) {
-	return nil, nil
+	sids := m.bindings[ws]
+	var result []*secrets.UserSecret
+	for _, sid := range sids {
+		if s, ok := m.secrets[sid]; ok {
+			cp := *s
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
 }
 func (m *memSecretStore) GetBindingsForSecret(context.Context, string) ([]string, error) {
 	return nil, nil
