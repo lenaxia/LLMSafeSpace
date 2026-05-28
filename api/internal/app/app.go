@@ -137,6 +137,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)
+			authSvc.SetInstanceSettings(instanceSettings)
 		}
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)

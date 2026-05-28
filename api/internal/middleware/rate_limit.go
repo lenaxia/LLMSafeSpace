@@ -11,6 +11,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
@@ -35,9 +36,29 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig) gin.HandlerFunc {
+func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.LoggerInterface, config RateLimitConfig, instanceSettings *settings.InstanceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !config.Enabled {
+		// Read runtime overrides from instance settings (cached, ~0 cost)
+		enabled := config.Enabled
+		limit := config.DefaultLimit
+		burst := config.BurstSize
+		strategy := config.Strategy
+		if instanceSettings != nil {
+			if v, err := instanceSettings.GetBool(c.Request.Context(), "rateLimiting.enabled"); err == nil {
+				enabled = v
+			}
+			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.defaultLimit"); err == nil && v > 0 {
+				limit = v
+			}
+			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.burstSize"); err == nil && v > 0 {
+				burst = v
+			}
+			if v, err := instanceSettings.GetString(c.Request.Context(), "rateLimiting.strategy"); err == nil && v != "" {
+				strategy = v
+			}
+		}
+
+		if !enabled {
 			c.Next()
 			return
 		}
@@ -59,10 +80,8 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			keyStr = c.ClientIP()
 		}
 		hashedKey := utilities.HashString(keyStr)
-		limit := config.DefaultLimit
-		burst := config.BurstSize
 
-		// Check for custom limits
+		// Check for custom limits (per-key overrides from static config)
 		if customLimit, ok := config.CustomLimits[keyStr]; ok {
 			limit = customLimit
 		}
@@ -71,7 +90,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		}
 
 		var err error
-		switch config.Strategy {
+		switch strategy {
 		case "token_bucket":
 			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
 		case "fixed_window":
@@ -82,7 +101,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 			// Default to token bucket if no strategy specified
 			err = applyTokenBucketRateLimit(c, rl, hashedKey, limit, burst, log)
 		default:
-			err = fmt.Errorf("unsupported rate limit strategy: %s", config.Strategy)
+			err = fmt.Errorf("unsupported rate limit strategy: %s", strategy)
 		}
 
 		if err != nil {
