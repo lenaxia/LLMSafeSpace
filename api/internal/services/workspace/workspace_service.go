@@ -157,12 +157,24 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 			fmt.Errorf("name is empty"),
 		)
 	}
+	if req.StorageSize == "" && s.instanceSettings != nil {
+		if size, err := s.instanceSettings.GetString(ctx, "workspace.defaultStorageSize"); err == nil && size != "" {
+			req.StorageSize = size
+		}
+	}
 	if req.StorageSize == "" {
 		return nil, apierrors.NewValidationError(
 			"storage size is required",
 			map[string]interface{}{"field": "storageSize"},
 			fmt.Errorf("storageSize is empty"),
 		)
+	}
+
+	// Apply default runtime from settings if not specified
+	if req.Runtime == "" && s.instanceSettings != nil {
+		if img, err := s.instanceSettings.GetString(ctx, "workspace.defaultImage"); err == nil && img != "" {
+			req.Runtime = img
+		}
 	}
 
 	// Enforce max storage size from instance settings
@@ -173,6 +185,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	workspaceID := uuid.New().String()
 
 	crd := buildWorkspaceCRD(workspaceID, userID, req, s.config.Namespace)
+
+	// Apply defaults from instance settings to the CRD spec
+	s.applyWorkspaceDefaults(ctx, crd)
 
 	s.logger.Info("Creating workspace in Kubernetes", "userID", userID, "name", req.Name)
 
@@ -622,6 +637,75 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 			},
 		},
 		Spec: spec,
+	}
+}
+
+// applyWorkspaceDefaults reads instance settings and applies defaults to the
+// CRD spec for fields not already set by the request. Gracefully degrades if
+// settings are unavailable.
+func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace) {
+	if s.instanceSettings == nil {
+		return
+	}
+
+	// Security level
+	if crd.Spec.SecurityLevel == "" {
+		if level, err := s.instanceSettings.GetString(ctx, "workspace.defaultSecurityLevel"); err == nil && level != "" {
+			crd.Spec.SecurityLevel = level
+		}
+	}
+
+	// Storage class
+	if crd.Spec.Storage.StorageClassName == "" {
+		if sc, err := s.instanceSettings.GetString(ctx, "workspace.defaultStorageClass"); err == nil && sc != "" {
+			crd.Spec.Storage.StorageClassName = sc
+		}
+	}
+
+	// Resources
+	if crd.Spec.Resources == nil {
+		cpu, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.cpu")
+		mem, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.memory")
+		eph, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.ephemeralStorage")
+		if cpu != "" || mem != "" || eph != "" {
+			crd.Spec.Resources = &v1.ResourceRequirements{
+				CPU: cpu, Memory: mem, EphemeralStorage: eph,
+			}
+		}
+	}
+
+	// Auto-suspend
+	autoSuspendEnabled := true
+	idleTimeout := int64(86400)
+	if v, err := s.instanceSettings.GetBool(ctx, "workspace.autoSuspend.enabled"); err == nil {
+		autoSuspendEnabled = v
+	}
+	if v, err := s.instanceSettings.GetInt(ctx, "workspace.autoSuspend.idleTimeoutMinutes"); err == nil && v > 0 {
+		idleTimeout = int64(v) * 60
+	}
+	crd.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
+		Enabled:            autoSuspendEnabled,
+		IdleTimeoutSeconds: idleTimeout,
+	}
+
+	// TTL after suspended
+	if days, err := s.instanceSettings.GetInt(ctx, "workspace.ttlDaysAfterSuspended"); err == nil && days > 0 {
+		crd.Spec.TTLSecondsAfterSuspended = int64(days) * 86400
+	}
+
+	// Network access
+	if crd.Spec.NetworkAccess == nil {
+		ingress, _ := s.instanceSettings.GetBool(ctx, "workspace.defaultNetworkAccess.ingress")
+		domains, _ := s.instanceSettings.GetStrings(ctx, "workspace.defaultNetworkAccess.egressDomains")
+		if ingress || len(domains) > 0 {
+			egress := make([]v1.WorkspaceEgressRule, len(domains))
+			for i, d := range domains {
+				egress[i] = v1.WorkspaceEgressRule{Domain: d}
+			}
+			crd.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+				Ingress: ingress, Egress: egress,
+			}
+		}
 	}
 }
 
