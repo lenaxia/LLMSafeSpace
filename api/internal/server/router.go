@@ -166,6 +166,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 		secretsGroup.PUT("/:id", cfg.SecretsHandler.UpdateSecret)
 		secretsGroup.DELETE("/:id", cfg.SecretsHandler.DeleteSecret)
 		secretsGroup.POST("/:id/reveal", cfg.SecretsHandler.RevealSecret)
+		secretsGroup.GET("/:id/bindings", cfg.SecretsHandler.GetSecretBindings)
 
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)

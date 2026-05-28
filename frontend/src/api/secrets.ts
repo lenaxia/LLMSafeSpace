@@ -28,6 +28,7 @@ export const secretsApi = {
   update: (id: string, req: UpdateSecretRequest) => api.put<void>(`/secrets/${id}`, req),
   delete: (id: string) => api.delete<void>(`/secrets/${id}`),
   reveal: (id: string, password: string) => api.post<{ value: string }>(`/secrets/${id}/reveal`, { password }),
+  getSecretBindings: (id: string) => api.get<{ workspaces: string[] }>(`/secrets/${id}/bindings`),
   audit: () => api.get<{ entries: { action: string; timestamp: string; metadata: Record<string, string> }[] }>("/secrets/audit"),
   rotateKey: (password: string) => api.post<{ keyVersion: number }>("/account/rotate-key", { password }),
   changePassword: (oldPassword: string, newPassword: string) =>
