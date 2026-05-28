@@ -5,7 +5,12 @@ import { render } from "@testing-library/react";
 import { ThemeProvider } from "../providers/ThemeProvider";
 import { SettingsPage } from "./SettingsPage";
 
-// Mock the settings API to avoid network calls
+// Mock auth provider
+vi.mock("../providers/AuthProvider", () => ({
+  useAuth: () => ({ user: { id: "1", role: "admin" }, loading: false }),
+}));
+
+// Mock settings API
 vi.mock("../api/settings", () => ({
   settingsApi: {
     getUserSettings: () => Promise.resolve({ settings: {}, schemaVersion: 1 }),
@@ -14,6 +19,14 @@ vi.mock("../api/settings", () => ({
     getAdminSchema: () => Promise.resolve({ settings: [], schemaVersion: 1 }),
     setUserSetting: vi.fn().mockResolvedValue({}),
     setAdminSetting: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+// Mock credentials API
+vi.mock("../api/credentials", () => ({
+  credentialsApi: {
+    list: () => Promise.resolve([]),
+    rotateKey: vi.fn(),
   },
 }));
 
@@ -31,24 +44,23 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("renders tab labels", () => {
+  it("renders all tabs for admin user", () => {
     renderSettings();
     expect(screen.getByText("Preferences")).toBeInTheDocument();
-    expect(screen.getAllByText("API Keys").length).toBeGreaterThan(0);
     expect(screen.getByText("Credentials")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();
   });
 
-  it("shows API Keys tab by default", () => {
+  it("shows Preferences tab by default", () => {
     renderSettings();
-    expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument();
+    // Preferences is active — UserSettingsTab renders
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
   });
 
-  it("switches to Preferences tab", async () => {
+  it("switches to API Keys tab", async () => {
     const user = userEvent.setup();
     renderSettings();
-    await user.click(screen.getByText("Preferences"));
-    // UserSettingsTab renders (mocked API returns empty schema)
-    expect(screen.getByText("Preferences")).toBeInTheDocument();
+    await user.click(screen.getByText("API Keys"));
+    expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument();
   });
 });
