@@ -1,21 +1,21 @@
 import { useState } from "react";
 import { cn } from "../lib/utils";
-import { AppearanceTab } from "../components/settings/AppearanceTab";
+import { UserSettingsTab } from "../components/settings/UserSettingsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
-import { ComingSoonTab } from "../components/settings/ComingSoonTab";
+import { AdminSettingsPage } from "./AdminSettingsPage";
+import { AdminCredentialsTab } from "../components/settings/AdminCredentialsTab";
 
 const tabs = [
+  { id: "preferences", label: "Preferences" },
   { id: "api-keys", label: "API Keys" },
-  { id: "appearance", label: "Appearance" },
-  { id: "profile", label: "Profile" },
-  { id: "mcp", label: "MCP Servers" },
-  { id: "presets", label: "Presets" },
+  { id: "credentials", label: "Credentials" },
+  { id: "admin", label: "Admin" },
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("api-keys");
+  const [activeTab, setActiveTab] = useState<TabId>("preferences");
 
   return (
     <div className="flex h-full">
@@ -38,11 +38,10 @@ export function SettingsPage() {
         </ul>
       </nav>
       <div className="flex-1 overflow-y-auto p-6">
+        {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
-        {activeTab === "appearance" && <AppearanceTab />}
-        {(activeTab === "profile" || activeTab === "mcp" || activeTab === "presets") && (
-          <ComingSoonTab name={tabs.find((t) => t.id === activeTab)!.label} />
-        )}
+        {activeTab === "credentials" && <AdminCredentialsTab />}
+        {activeTab === "admin" && <AdminSettingsPage />}
       </div>
     </div>
   );
