@@ -37,17 +37,13 @@ export function AppShell() {
       const dx = touch.clientX - touchStartX.current;
       const dy = Math.abs(touch.clientY - touchStartY.current);
 
+      // If primarily vertical, let it scroll normally
       if (dy > Math.abs(dx)) return;
 
-      if (isEdgeSwipe.current && dx > 10) {
-        e.preventDefault();
-      }
-
-      if (sidebarOpen && dx < -10) {
-        e.preventDefault();
-      }
+      // Prevent browser back/forward navigation on horizontal swipes
+      e.preventDefault();
     },
-    [isMobile, sidebarOpen],
+    [isMobile],
   );
 
   const handleTouchEnd = useCallback(
@@ -70,7 +66,8 @@ export function AppShell() {
 
   return (
     <div
-      className="flex h-screen overflow-hidden"
+      className="flex h-screen overflow-hidden overscroll-none"
+      style={{ touchAction: "pan-y" }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}

@@ -77,7 +77,7 @@ export function MessageList({ messages, streaming, streamingBubble }: Props) {
     <div className="relative flex-1 overflow-hidden">
       <div
         ref={scrollRef}
-        className="h-full overflow-y-auto"
+        className="h-full overflow-y-auto overscroll-contain"
         role="log"
         aria-live="polite"
         aria-label="Chat messages"
