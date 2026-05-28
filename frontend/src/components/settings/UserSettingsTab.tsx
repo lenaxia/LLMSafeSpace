@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { settingsApi, type SettingDef } from "../../api/settings";
 import { SettingsForm } from "./SettingsForm";
 import { Spinner } from "../ui/Spinner";
+import { useTheme } from "../../providers/ThemeProvider";
 
 export function UserSettingsTab() {
   const [schema, setSchema] = useState<SettingDef[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { setTheme } = useTheme();
 
   useEffect(() => {
     async function load() {
@@ -30,6 +32,14 @@ export function UserSettingsTab() {
   const handleSave = async (key: string, value: unknown) => {
     await settingsApi.setUserSetting(key, value);
     setValues((prev) => ({ ...prev, [key]: value }));
+
+    // Apply side effects for settings that change live behavior
+    if (key === "theme") {
+      setTheme(value as "light" | "dark" | "system");
+    }
+    if (key === "fontSize" && typeof value === "number") {
+      document.documentElement.style.fontSize = `${value}px`;
+    }
   };
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;
