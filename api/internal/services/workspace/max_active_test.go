@@ -241,3 +241,112 @@ func (m *mockWSInterfaceForMaxActive) UpdateStatus(ws *v1.Workspace) (*v1.Worksp
 	m.workspaces[ws.Name] = ws
 	return ws, nil
 }
+
+func TestParseStorageSize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"1Gi", 1 * 1024 * 1024 * 1024},
+		{"10Gi", 10 * 1024 * 1024 * 1024},
+		{"512Mi", 512 * 1024 * 1024},
+		{"1Mi", 1 * 1024 * 1024},
+		{"", 0},
+		{"x", 0},
+		{"GB", 0},
+		{"5TB", 0},
+	}
+	for _, tt := range tests {
+		got := parseStorageSize(tt.input)
+		if got != tt.want {
+			t.Errorf("parseStorageSize(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestEnforceMaxStorage_BelowMax_Passes(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal("10Gi")
+	store.data["workspace.maxStorageSize"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+	}
+
+	err := svc.enforceMaxStorageSize(context.Background(), "5Gi")
+	if err != nil {
+		t.Errorf("expected no error for 5Gi <= 10Gi, got %v", err)
+	}
+}
+
+func TestEnforceMaxStorage_AtMax_Passes(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal("10Gi")
+	store.data["workspace.maxStorageSize"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+	}
+
+	err := svc.enforceMaxStorageSize(context.Background(), "10Gi")
+	if err != nil {
+		t.Errorf("expected no error for 10Gi == 10Gi, got %v", err)
+	}
+}
+
+func TestEnforceMaxStorage_AboveMax_Fails(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal("10Gi")
+	store.data["workspace.maxStorageSize"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+	}
+
+	err := svc.enforceMaxStorageSize(context.Background(), "20Gi")
+	if err == nil {
+		t.Error("expected error for 20Gi > 10Gi")
+	}
+}
+
+func TestEnforceMaxStorage_NilSettings_Passes(t *testing.T) {
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: nil,
+	}
+
+	err := svc.enforceMaxStorageSize(context.Background(), "100Gi")
+	if err != nil {
+		t.Errorf("expected no error when settings nil, got %v", err)
+	}
+}
+
+func TestEnforceMaxStorage_MiVsGi(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal("1Gi")
+	store.data["workspace.maxStorageSize"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+	}
+
+	// 512Mi < 1Gi — should pass
+	err := svc.enforceMaxStorageSize(context.Background(), "512Mi")
+	if err != nil {
+		t.Errorf("expected 512Mi <= 1Gi to pass, got %v", err)
+	}
+
+	// 2048Mi > 1Gi — should fail
+	err = svc.enforceMaxStorageSize(context.Background(), "2048Mi")
+	if err == nil {
+		t.Error("expected 2048Mi > 1Gi to fail")
+	}
+}

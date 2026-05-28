@@ -154,6 +154,11 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		)
 	}
 
+	// Enforce max storage size from instance settings
+	if err := s.enforceMaxStorageSize(ctx, req.StorageSize); err != nil {
+		return nil, err
+	}
+
 	workspaceID := uuid.New().String()
 
 	crd := buildWorkspaceCRD(workspaceID, userID, req, s.config.Namespace)
