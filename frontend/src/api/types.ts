@@ -90,6 +90,15 @@ export interface WorkspaceStatus {
   endpoint?: string;
   credentialState?: CredentialState;
   agentHealth?: AgentHealth;
+  sessions?: AgentSessionInfo[];
+  diskUsedBytes?: number;
+  diskTotalBytes?: number;
+}
+
+export interface AgentSessionInfo {
+  id: string;
+  title?: string;
+  status: string; // "idle" | "busy"
 }
 
 export interface CredentialState {

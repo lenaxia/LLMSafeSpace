@@ -515,6 +515,14 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	result.CredentialState = credStateFromConditions(crd.Status.Conditions)
 	result.AgentHealth = agentHealthFromConditions(crd.Status.Conditions, crd.Status.LastHealthCheckAt)
 
+	for _, s := range crd.Status.Sessions {
+		result.Sessions = append(result.Sessions, types.SessionStatusItem{
+			ID: s.ID, Title: s.Title, Status: s.Status,
+		})
+	}
+	result.DiskUsedBytes = crd.Status.DiskUsedBytes
+	result.DiskTotalBytes = crd.Status.DiskTotalBytes
+
 	s.syncPhase(workspaceID, crd.Status.Phase)
 
 	return result, nil

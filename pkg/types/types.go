@@ -436,6 +436,16 @@ type WorkspaceStatusResult struct {
 	Conditions      []WorkspaceConditionResult `json:"conditions,omitempty"`
 	CredentialState CredentialStateResult      `json:"credentialState"`
 	AgentHealth     AgentHealthResult          `json:"agentHealth"`
+	Sessions        []SessionStatusItem        `json:"sessions,omitempty"`
+	DiskUsedBytes   int64                      `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes  int64                      `json:"diskTotalBytes,omitempty"`
+}
+
+// SessionStatusItem describes a session reported by the workspace agent.
+type SessionStatusItem struct {
+	ID     string `json:"id"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status"`
 }
 
 type CredentialStateResult struct {
