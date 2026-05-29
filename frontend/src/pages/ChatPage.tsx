@@ -159,8 +159,6 @@ export function ChatPage() {
     }
   }, [sessionTitle, workspace, workspaceId, queryClient]);
   const [sseStreamParts, setSseStreamParts] = useState<StreamPart[]>([]);
-  const sseStreamPartsRef = useRef<StreamPart[]>([]);
-  useEffect(() => { sseStreamPartsRef.current = sseStreamParts; }, [sseStreamParts]);
   // Store the text the user just sent so we can strip the user echo from
   // the SSE stream. Opencode echoes the user's message as the first
   // message.part.updated event(s) before the assistant response begins.
@@ -416,24 +414,19 @@ export function ChatPage() {
       parts: [{ type: "text", text }],
     };
     setLocalMessages((prev) => [...prev, userMsg]);
-    send(text, (assistantMsg) => {
-      // Prefer streaming parts (preserves thinking/tool structure) over
-      // history-only message which may strip them
-      const streamedParts = sseStreamPartsRef.current.filter(p => p.text || p.type === "tool");
-      const finalMsg: Message = streamedParts.length > 0
-        ? {
-            id: assistantMsg.id,
-            role: "assistant",
-            parts: streamedParts.map(p => ({
-              type: p.type === "tool" ? "tool_use" as const : p.type,
-              text: p.text,
-              ...(p.toolState ? { toolState: p.toolState } : {}),
-              ...(p.toolInput != null ? { input: p.toolInput } : {}),
-              ...(p.toolOutput ? { toolOutput: p.toolOutput } : {}),
-            })),
-          }
-        : assistantMsg;
-      setLocalMessages((prev) => [...prev, finalMsg]);
+    // Note: we deliberately do NOT add the assistant response to
+    // localMessages here. The streaming bubble shows it during streaming,
+    // and reconcileOnIdle's history refetch is authoritative once idle.
+    // Adding it here causes a race with reconcileOnIdle: if reconcile's
+    // refetch resolves first (clears localMessages, populates history),
+    // then this onComplete re-adds the assistant message → it renders
+    // twice (once from history, once from localMessages).
+    // The user message stays in localMessages until reconcileOnIdle clears
+    // it (after history catches up), preserving optimistic UX.
+    send(text, () => {
+      // No-op: the assistant message is delivered via the streaming bubble
+      // (live) and via history (after reconcile). We don't need to manage
+      // it in localMessages.
     });
   };
 

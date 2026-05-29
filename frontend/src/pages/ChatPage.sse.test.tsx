@@ -246,6 +246,87 @@ describe("ChatPage SSE event handler", () => {
         expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1);
       }, { timeout: 5_000 });
     });
+
+    it("REGRESSION: assistant response is not duplicated when reconcileOnIdle's history fetch resolves BEFORE useChatStream's onComplete", async () => {
+      // Validated against production via DevTools Network panel:
+      // After session.status idle, two GET /message requests fire — one
+      // from useChatStream.send (line 70 of useChatStream.ts) and one
+      // from reconcileOnIdle's queryClient.refetchQueries.
+      //
+      // Race: if reconcileOnIdle's fetch resolves first, it clears
+      // localMessages and populates history. Then useChatStream.send's
+      // onComplete callback fires and re-adds the assistant message to
+      // localMessages → assistant renders TWICE (history + localMessages).
+      //
+      // Fix: handleSend's onComplete must NOT add the assistant message
+      // to localMessages. The streaming bubble shows it during streaming;
+      // history (refetched by reconcileOnIdle) is authoritative after.
+      const user = userEvent.setup();
+      const qc = makeQueryClient();
+
+      // history fetch resolution order:
+      //   call 1 (initial mount) → empty
+      //   call 2 (reconcileOnIdle's refetch) → [user, assistant]
+      //   call 3 (useChatStream.send's await) → [user, assistant]
+      // The race is the order of resolution between calls 2 and 3.
+      //
+      // Simulate the production race: reconcileOnIdle's fetch resolves
+      // first (e.g., its Promise hits microtask queue earlier), then
+      // useChatStream.send's fetch resolves second. We deliberately order
+      // resolutions to expose the bug.
+      let resolveCall3!: (history: unknown[]) => void;
+      let historyCallCount = 0;
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        historyCallCount++;
+        if (historyCallCount === 1) return Promise.resolve([]);
+        if (historyCallCount === 2) {
+          // reconcileOnIdle's refetch — resolve immediately
+          return Promise.resolve([
+            { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+            { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+          ]);
+        }
+        // call 3: useChatStream.send's history fetch — defer resolution
+        return new Promise<unknown[]>((res) => { resolveCall3 = res; });
+      });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { container } = renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("textarea")).not.toBeDisabled());
+
+      await user.click(container.querySelector("textarea")!);
+      await user.type(container.querySelector("textarea")!, "ping");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+      // Idle SSE — drives BOTH paths concurrently:
+      //   1. notifySessionIdle → useChatStream.send's await resolves → call 3 begins
+      //   2. reconcileOnIdle → call 2 fires
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      // Wait for reconcileOnIdle's refetch (call 2) to land and update history
+      await waitFor(() => expect(historyCallCount).toBeGreaterThanOrEqual(3));
+
+      // Now resolve useChatStream.send's history fetch (call 3) AFTER
+      // reconcileOnIdle has cleared localMessages. This causes onComplete
+      // to fire and re-add the assistant message to the just-cleared
+      // localMessages — exactly the production race.
+      await act(async () => {
+        resolveCall3([
+          { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+          { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+        ]);
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+      // Critical assertion: assistant renders EXACTLY ONCE despite the race
+      const view = container.querySelector('[data-testid="chat-view"]');
+      const messagesAttr = view?.getAttribute("data-messages") ?? "[]";
+      const messages = JSON.parse(messagesAttr) as Array<{ id: string; role: string; parts: Array<{ text?: string }> }>;
+      expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+      expect(messages.filter((m) => m.role === "user")).toHaveLength(1);
+    });
   });
 
   describe("opencode.event with message.part.updated", () => {
