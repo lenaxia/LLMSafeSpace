@@ -377,18 +377,6 @@ webhooks:
   timeoutSeconds: 10
 
 
-# --- Default credentials (copied to each new workspace) ---
-defaultCredentials:
-  # If true and existingSecret or config is set, the controller copies
-  # the secret to each new workspace that lacks workspace-creds-{id}.
-  enabled: false
-  # Reference an existing secret in the release namespace.
-  # Must contain a `provider-config` key with agent-formatted JSON.
-  existingSecret: ""
-  # Inline config (used when existingSecret is empty).
-  # The value is stored as the `provider-config` key in the secret.
-  # Format depends on the agent (opencode JSON, claude-code env, etc).
-  config: ""
 
 # --- Runtime Environments (seeded CRDs) ---
 runtimeEnvironments:

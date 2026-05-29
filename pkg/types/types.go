@@ -9,7 +9,6 @@
 package types
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -469,12 +468,6 @@ type WorkspaceConditionResult struct {
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
-}
-
-// SetCredentialsRequest is the request body for setting workspace credentials.
-type SetCredentialsRequest struct {
-	Provider string          `json:"provider"`
-	Config   json.RawMessage `json:"config"`
 }
 
 // WorkspaceMetadata is the database record for a workspace.

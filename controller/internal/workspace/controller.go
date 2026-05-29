@@ -2,15 +2,12 @@ package workspace
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,7 +21,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
@@ -158,11 +154,6 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
 
-	if err := r.copyDefaultCredentials(ctx, workspace); err != nil {
-		logger.Error(err, "Failed to copy default credentials")
-		return ctrl.Result{}, err
-	}
-
 	// Check if pod already exists.
 	existingPod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, existingPod)
@@ -239,22 +230,6 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
 	}
 
-	if changed, newHash := r.credentialSecretChanged(ctx, workspace); changed {
-		logger.Info("Credential secret changed; restarting pod")
-		r.deletePodByName(ctx, name, workspace.Namespace)
-		workspace.Status.Phase = v1.WorkspacePhaseCreating
-		workspace.Status.PodIP = ""
-		workspace.Status.Endpoint = ""
-		workspace.Status.CredentialSecretHash = newHash
-		workspace.Status.RestartCount++
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
-	} else if newHash != "" && workspace.Status.CredentialSecretHash == "" {
-		workspace.Status.CredentialSecretHash = newHash
-		if err := r.Status().Update(ctx, workspace); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Check pod exists and is running.
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, pod)
@@ -315,20 +290,6 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 
 	// Reset transient failure counter if stable long enough.
 	r.maybeResetTransientCounter(workspace)
-
-	// Check credential state (cheap — K8s API call only).
-	r.checkCredentialState(ctx, workspace)
-
-	if workspace.Annotations[AnnotationSuspendOnCredLoss] == "true" {
-		for _, c := range workspace.Status.Conditions {
-			if c.Type == v1.WorkspaceConditionCredentialsAvailable && c.Status == "False" {
-				logger.Info("Credential loss detected; suspending workspace per annotation")
-				workspace.Status.Phase = v1.WorkspacePhaseSuspending
-				return ctrl.Result{}, r.Status().Update(ctx, workspace)
-			}
-		}
-	}
-
 	// Check agent health (HTTP to daemon — rate-limited).
 	r.checkAgentHealth(ctx, workspace)
 
@@ -468,37 +429,6 @@ func (r *WorkspaceReconciler) maybeResetTransientCounter(workspace *v1.Workspace
 		workspace.Status.TransientFailureCount = 0
 		workspace.Status.LastTransientFailureAt = nil
 	}
-}
-
-// --- Credential secret change detection ---
-
-func (r *WorkspaceReconciler) credentialSecretChanged(ctx context.Context, workspace *v1.Workspace) (bool, string) {
-	credsName := fmt.Sprintf("workspace-creds-%s", workspace.Name)
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: credsName, Namespace: workspace.Namespace}, secret); err != nil {
-		return false, ""
-	}
-	newHash := hashSecretData(secret.Data)
-	if workspace.Status.CredentialSecretHash == "" {
-		return false, newHash
-	}
-	return newHash != workspace.Status.CredentialSecretHash, newHash
-}
-
-func hashSecretData(data map[string][]byte) string {
-	h := sha256.New()
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		h.Write([]byte(k))
-		h.Write([]byte{0})
-		h.Write(data[k])
-		h.Write([]byte{0})
-	}
-	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // --- Pod management helpers ---
@@ -710,15 +640,12 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, credVolume, userSecretsVol, err := r.buildCredentialSetupInit(ctx, workspace, runtimeImage)
+	credInit, pwVolume, userSecretsVol, err := r.buildCredentialSetupInit(ctx, workspace, runtimeImage)
 	if err != nil {
 		return nil, err
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
-	if credVolume != nil {
-		volumes = append(volumes, *credVolume)
-	}
 	if userSecretsVol != nil {
 		volumes = append(volumes, *userSecretsVol)
 	}
@@ -758,11 +685,8 @@ func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext
 	}
 }
 
-func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, *corev1.Volume, error) {
+func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
 	credScript := `
-if [ -f /mnt/secrets/credentials/provider-config ]; then
-  cp /mnt/secrets/credentials/provider-config /sandbox-cfg/credentials
-fi
 if [ -f /mnt/secrets/user-secrets/secrets.json ]; then
   cp /mnt/secrets/user-secrets/secrets.json /sandbox-cfg/secrets.json
 fi
@@ -778,24 +702,6 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	credMounts := []corev1.VolumeMount{
 		{Name: "sandbox-cfg", MountPath: "/sandbox-cfg"},
 		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
-	}
-
-	var credVolume *corev1.Volume
-	credsSecretName := fmt.Sprintf("workspace-creds-%s", workspace.Name)
-	credSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: credsSecretName, Namespace: workspace.Namespace}, credSecret); err == nil {
-		v := corev1.Volume{
-			Name: "cred-secret",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{SecretName: credsSecretName},
-			},
-		}
-		credVolume = &v
-		credMounts = append(credMounts, corev1.VolumeMount{
-			Name: "cred-secret", MountPath: "/mnt/secrets/credentials", ReadOnly: true,
-		})
-	} else if !errors.IsNotFound(err) {
-		return corev1.Container{}, corev1.Volume{}, nil, nil, fmt.Errorf("checking credentials secret: %w", err)
 	}
 
 	// Epic 10: mount user-secrets if the ephemeral Secret exists.
@@ -814,7 +720,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 			Name: "user-secrets", MountPath: "/mnt/secrets/user-secrets", ReadOnly: true,
 		})
 	} else if !errors.IsNotFound(err) {
-		return corev1.Container{}, corev1.Volume{}, nil, nil, fmt.Errorf("checking user-secrets secret: %w", err)
+		return corev1.Container{}, corev1.Volume{}, nil, fmt.Errorf("checking user-secrets secret: %w", err)
 	}
 
 	trueVal := true
@@ -831,7 +737,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		},
 		VolumeMounts: credMounts,
 	}
-	return credInit, pwVolume, credVolume, userSecretsVolume, nil
+	return credInit, pwVolume, userSecretsVolume, nil
 }
 
 func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev1.Container {
@@ -893,22 +799,9 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1.Workspace{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Secret{}).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapCredSecretToWorkspaces)).
 		Complete(r)
 }
 
-func (r *WorkspaceReconciler) mapCredSecretToWorkspaces(ctx context.Context, obj client.Object) []ctrl.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-	const prefix = "workspace-creds-"
-	if !strings.HasPrefix(secret.Name, prefix) {
-		return nil
-	}
-	workspaceName := secret.Name[len(prefix):]
-	return []ctrl.Request{{NamespacedName: types.NamespacedName{Name: workspaceName, Namespace: secret.Namespace}}}
-}
 
 // sanitizeLabelValue replaces characters invalid in K8s label values.
 func sanitizeLabelValue(s string) string {
@@ -938,47 +831,6 @@ func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.Workspa
 	})
 }
 
-func (r *WorkspaceReconciler) checkCredentialState(ctx context.Context, ws *v1.Workspace) {
-	a, err := agent.Get(agent.AgentTypeOpenCode)
-	if err != nil {
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
-			v1.ReasonCredentialCheckError, "agent runtime not available")
-		return
-	}
-
-	secretName := fmt.Sprintf("workspace-creds-%s", ws.Name)
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ws.Namespace}, secret); err != nil {
-		if errors.IsNotFound(err) {
-			r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
-				v1.ReasonCredentialSecretNotFound, "No workspace credential secret exists")
-			return
-		}
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
-			v1.ReasonCredentialCheckError, err.Error())
-		return
-	}
-
-	rawConfig := secret.Data[CredentialSecretDataKey]
-	result, err := a.ValidateCredentials(rawConfig)
-	if err != nil {
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "Unknown",
-			v1.ReasonCredentialValidationError, err.Error())
-		return
-	}
-
-	switch result.State {
-	case agent.CredentialStateMissing:
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
-			v1.ReasonCredentialEmpty, result.Message)
-	case agent.CredentialStateInvalid:
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "False",
-			v1.ReasonCredentialInvalid, result.Message)
-	case agent.CredentialStatePresent:
-		r.setCondition(ws, v1.WorkspaceConditionCredentialsAvailable, "True",
-			v1.ReasonCredentialsValid, "")
-	}
-}
 
 var (
 	healthCheckInterval         = 15 * time.Second

@@ -15,7 +15,6 @@ import (
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
@@ -38,7 +37,6 @@ type Service struct {
 	metricsService        apiinterfaces.MetricsService
 	sessionIndex          apiinterfaces.SessionIndexService
 	secretInjector        SecretInjector
-	credentialProvisioner CredentialProvisioner
 	instanceSettings      *settings.InstanceService
 	config                *Config
 }
@@ -126,53 +124,12 @@ type SecretInjector interface {
 	PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
 }
 
-// CredentialProvisioner provides default credentials for auto-provisioning.
-type CredentialProvisioner interface {
-	GetDefault(ctx context.Context) (id string, config []byte, err error)
-}
-
 // SetSecretInjector injects the secret service for pod secret materialization.
 func (s *Service) SetSecretInjector(si SecretInjector) {
 	s.secretInjector = si
 }
 
-// SetCredentialProvisioner injects the credential provisioner for auto-provision on create.
-func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
-	s.credentialProvisioner = cp
-}
 
-// autoProvisionCredentials injects the default credential set into a new workspace
-// if the credentials.autoProvision setting is enabled. Non-fatal on failure.
-// Creates the K8s Secret directly (skips agent validation since credentials are trusted from the store).
-func (s *Service) autoProvisionCredentials(ctx context.Context, userID, workspaceID string) {
-	if s.instanceSettings == nil || s.credentialProvisioner == nil {
-		return
-	}
-	autoProvision, err := s.instanceSettings.GetBool(ctx, "credentials.autoProvision")
-	if err != nil || !autoProvision {
-		return
-	}
-	_, config, err := s.credentialProvisioner.GetDefault(ctx)
-	if err != nil || config == nil {
-		return
-	}
-
-	secretName := fmt.Sprintf("workspace-creds-%s", workspaceID)
-	secretData := map[string][]byte{"provider-config": config}
-
-	clientset := s.k8sClient.Clientset()
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: s.config.Namespace,
-		},
-		Data: secretData,
-	}
-	if _, err := clientset.CoreV1().Secrets(s.config.Namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-		s.logger.Warn("auto-provision credentials failed (non-fatal)",
-			"workspaceID", workspaceID, "error", err.Error())
-	}
-}
 
 func (s *Service) Start() error {
 	s.logger.Info("Starting workspace service")
@@ -264,7 +221,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	s.syncPhase(created.Name, created.Status.Phase)
 
 	// Auto-provision default credentials if enabled
-	s.autoProvisionCredentials(ctx, userID, created.Name)
 
 	ws := &types.Workspace{
 		ID:          meta.ID,
@@ -538,115 +494,6 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	return result, nil
 }
 
-// SetCredentials creates or updates a Kubernetes Secret holding workspace credentials.
-// The Secret is named workspace-creds-{workspaceID} and owner-referenced to the Workspace CRD.
-func (s *Service) SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error {
-	start := time.Now()
-	defer func() {
-		if s.metricsService != nil {
-			s.metricsService.RecordRequest("SetCredentials", "", 0, time.Since(start), 0)
-		}
-	}()
-
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
-		return err
-	}
-
-	a, err := agent.Get(agent.AgentTypeOpenCode)
-	if err != nil {
-		return apierrors.NewInternalError("agent_runtime_failed", err)
-	}
-	result, err := a.ValidateCredentials(req.Config)
-	if err != nil {
-		return apierrors.NewValidationError("credential validation failed", nil, err)
-	}
-	if result.State != agent.CredentialStatePresent {
-		return apierrors.NewValidationError(
-			fmt.Sprintf("invalid credentials: %s", result.Message),
-			nil,
-			fmt.Errorf("credential state: %s", result.State),
-		)
-	}
-
-	formatted, err := a.FormatCredentials(req.Config)
-	if err != nil {
-		return apierrors.NewInternalError("credential_format_failed", err)
-	}
-
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
-	if err != nil {
-		return apierrors.NewInternalError("workspace_get_failed", err)
-	}
-
-	secretName := fmt.Sprintf("workspace-creds-%s", workspaceID)
-	secretData := map[string][]byte{
-		"provider-config": formatted,
-	}
-
-	ownerRef := metav1.OwnerReference{
-		APIVersion: "llmsafespace.dev/v1",
-		Kind:       "Workspace",
-		Name:       crd.Name,
-		UID:        crd.UID,
-	}
-
-	clientset := s.k8sClient.Clientset()
-	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
-
-	existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return apierrors.NewInternalError("credential_get_failed", err)
-		}
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:            secretName,
-				Namespace:       s.config.Namespace,
-				OwnerReferences: []metav1.OwnerReference{ownerRef},
-			},
-			Data: secretData,
-		}
-		if _, err := secretClient.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-			s.logger.Error("Failed to create credential secret", err, "workspaceID", workspaceID)
-			return apierrors.NewInternalError("credential_create_failed", err)
-		}
-	} else {
-		existing.Data = secretData
-		if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
-			s.logger.Error("Failed to update credential secret", err, "workspaceID", workspaceID)
-			return apierrors.NewInternalError("credential_update_failed", err)
-		}
-	}
-
-	s.logger.Info("Credentials set", "workspaceID", workspaceID, "userID", userID)
-	return nil
-}
-
-// DeleteCredentials removes the Kubernetes Secret holding workspace credentials.
-// It is not an error if the Secret does not exist.
-func (s *Service) DeleteCredentials(ctx context.Context, userID, workspaceID string) error {
-	start := time.Now()
-	defer func() {
-		if s.metricsService != nil {
-			s.metricsService.RecordRequest("DeleteCredentials", "", 0, time.Since(start), 0)
-		}
-	}()
-
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
-		return err
-	}
-
-	secretName := fmt.Sprintf("workspace-creds-%s", workspaceID)
-	clientset := s.k8sClient.Clientset()
-	err := clientset.CoreV1().Secrets(s.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !k8serrors.IsNotFound(err) {
-		s.logger.Error("Failed to delete credential secret", err, "workspaceID", workspaceID)
-		return apierrors.NewInternalError("credential_delete_failed", err)
-	}
-
-	s.logger.Info("Credentials deleted", "workspaceID", workspaceID, "userID", userID)
-	return nil
-}
 
 // verifyOwner returns a forbidden or not-found error if the user does not own
 // the workspace. Returns nil when the user is the owner.

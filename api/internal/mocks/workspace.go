@@ -59,14 +59,6 @@ func (m *MockWorkspaceService) GetWorkspaceStatus(ctx context.Context, userID, w
 	return args.Get(0).(*types.WorkspaceStatusResult), args.Error(1)
 }
 
-func (m *MockWorkspaceService) SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error {
-	return m.Called(ctx, userID, workspaceID, req).Error(0)
-}
-
-func (m *MockWorkspaceService) DeleteCredentials(ctx context.Context, userID, workspaceID string) error {
-	return m.Called(ctx, userID, workspaceID).Error(0)
-}
-
 func (m *MockWorkspaceService) Start() error { return m.Called().Error(0) }
 func (m *MockWorkspaceService) Stop() error  { return m.Called().Error(0) }
 

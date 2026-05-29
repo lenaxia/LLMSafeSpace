@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -142,7 +141,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
-			wsSvc.SetCredentialProvisioner(&credProvisionerAdapter{credSvc: credSvc})
 		}
 	}
 
@@ -292,29 +290,6 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-// credProvisionerAdapter adapts credentials.Service to workspace.CredentialProvisioner.
-type credProvisionerAdapter struct {
-	credSvc *credentials.Service
-}
-
-func (a *credProvisionerAdapter) GetDefault(ctx context.Context) (string, []byte, error) {
-	cs, err := a.credSvc.GetDefault(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	if cs == nil {
-		return "", nil, nil
-	}
-	config, err := a.credSvc.GetDecryptedProviders(ctx, cs.ID)
-	if err != nil {
-		return "", nil, err
-	}
-	raw, err := json.Marshal(config)
-	if err != nil {
-		return "", nil, err
-	}
-	return cs.ID, raw, nil
-}
 
 // loadCredentialKeySet loads the credential encryption key set from the
 // LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY environment variable (hex-encoded 32 bytes).

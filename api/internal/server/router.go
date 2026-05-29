@@ -527,45 +527,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 		c.JSON(http.StatusOK, status)
 	})
 
-	rg.PUT("/:id/credentials", func(c *gin.Context) {
-		c.Header("Deprecation", "true")
-		c.Header("Sunset", "2027-01-01")
-		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
-		userID := authSvc.GetUserID(c)
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-			return
-		}
-		var req types.SetCredentialsRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if err := wsSvc.SetCredentials(c.Request.Context(), userID, c.Param("id"), req); err != nil {
-			respondWithError(c, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-
-	rg.DELETE("/:id/credentials", func(c *gin.Context) {
-		c.Header("Deprecation", "true")
-		c.Header("Sunset", "2027-01-01")
-		c.Header("Link", `</api/v1/secrets>; rel="successor-version"`)
-		userID := authSvc.GetUserID(c)
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-			return
-		}
-		if err := wsSvc.DeleteCredentials(c.Request.Context(), userID, c.Param("id")); err != nil {
-			respondWithError(c, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-
-	// --- Frontend routes (Phase A) ---
-
 	rg.POST("/:id/activate", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
