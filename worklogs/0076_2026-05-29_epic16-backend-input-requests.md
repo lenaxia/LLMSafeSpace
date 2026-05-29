@@ -79,7 +79,8 @@ Implement the backend portions of Epic 16 (Agent Input Requests — Questions & 
 1. **Dialect as nil-safe**: All handlers check `h.dialect == nil` and return 500 if not configured. This prevents panics if the handler is used without proper initialization.
 2. **Auto-approve is workspace-level setting, not subscriber-count heuristic**: Explicit, deterministic, inspectable, testable. See US-16.5 design doc for rationale.
 3. **Permission ID regex allows underscores in suffix**: `^per_[a-zA-Z0-9_]+$` because opencode permission IDs can contain timestamps with underscores (e.g., `per_1748012345000_abc`).
-4. **No US-16.2b (proxy.go split) or US-16.4 (pending state recovery) in this session**: US-16.2b is a pure refactor with no new functionality — lower priority. US-16.4 requires more careful integration with the SSE connection lifecycle and should be done after the core stories are validated.
+4. **No US-16.2b (proxy.go split) in this session**: Pure refactor with no new functionality — lower priority. Can be done as a follow-up.
+5. **Pending recovery skips permissions when auto-approve is enabled**: No point fetching and publishing permission prompts that will be immediately auto-approved.
 
 ---
 
@@ -107,9 +108,8 @@ Specific test counts:
 ## Next Steps
 
 1. **US-16.2b**: Split proxy.go into focused files + migrate session handlers to use dialect paths (pure refactor, no new tests needed)
-2. **US-16.4**: Pending state recovery on SSE connect — fetch pending questions/permissions from pod when browser reconnects
-3. **US-16.7**: Modify `SendMessage` in MCP client to detect `question.asked` events and return early with question data (currently deferred — requires more careful SSE parsing changes)
-4. **Frontend stories (US-16.8–16.12)**: Depend on Epic 15 completion
+2. **Frontend stories (US-16.8–16.12)**: Depend on Epic 15 completion
+3. **US-16.13**: E2E integration tests (after frontend is done)
 
 ---
 
