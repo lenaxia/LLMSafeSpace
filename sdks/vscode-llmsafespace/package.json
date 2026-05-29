@@ -64,10 +64,12 @@
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0",
+    "@types/ws": "^8.5.13",
     "esbuild": "^0.24.2",
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "@llmsafespace/sdk": "file:../typescript"
+    "@llmsafespace/sdk": "file:../typescript",
+    "ws": "^8.18.0"
   }
 }

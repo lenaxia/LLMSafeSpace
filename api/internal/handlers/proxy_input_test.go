@@ -274,7 +274,18 @@ func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 }
 
 func TestNormalizedEvents_PermissionAsked(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	ws := &v1.Workspace{
+		Spec:   v1.WorkspaceSpec{AutoApprovePermissions: false},
+		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive, PodIP: "10.0.0.1"},
+	}
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
