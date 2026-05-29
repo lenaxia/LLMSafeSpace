@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { MoreHorizontal } from "lucide-react";
+import { Copy, MoreHorizontal } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 export interface KebabMenuItem {
@@ -103,7 +103,7 @@ export function KebabMenu({ items, align = "right", footer }: Props) {
                   aria-label="Copy version info"
                   title="Copy version info"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  <Copy className="h-3 w-3" />
                 </button>
               </div>
             </div>
