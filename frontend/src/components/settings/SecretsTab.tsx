@@ -516,7 +516,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
                 <div className="flex items-center gap-0">
                   <span className="rounded-l-md border border-r-0 border-border bg-accent px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">/home/sandbox/.secrets/</span>
                   <Input
-                    value={(metadata[field] || "").replace(/^\/workspace\/\.secrets\//, "")}
+                    value={(metadata[field] || "").replace(/^\/home\/sandbox\/\.secrets\//, "")}
                     onChange={(e) => setMetadata({ ...metadata, [field]: `/home/sandbox/.secrets/${e.target.value.replace(/^\/+/, "").replace(/\.\.\//g, "")}` })}
                     placeholder="cert.pem"
                     required
