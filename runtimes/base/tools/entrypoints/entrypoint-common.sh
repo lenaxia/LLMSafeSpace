@@ -16,7 +16,7 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
     else
         echo '{}' > /tmp/agent-config.json
     fi
-    exit 0
+    return 0 2>/dev/null || true
 fi
 
 # Initialize
