@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -428,4 +429,100 @@ func TestHTTPClient_GetHistory_AcceptsOpenCodeSessionID(t *testing.T) {
 	msgs, err := client.GetHistory(context.Background(), "ws-1", "ses_18b28260affeoxXrX1iwPH8wFg")
 	require.NoError(t, err)
 	assert.Len(t, msgs, 1)
+}
+
+// ===== US-16.7: SendMessage Question Detection =====
+
+func TestHTTPClient_SendMessage_QuestionDetected(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Agent asks a question
+		questionData := `{"id":"que_abc","session_id":"sess-1","questions":[{"question":"What language?","header":"Choose","options":[{"label":"Go","description":"Fast"}]}]}`
+		fmt.Fprintf(w, "data: {\"type\":\"agent.question\",\"data\":%s}\n\n", questionData)
+		flusher.Flush()
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "create project", 5*time.Second)
+	require.NoError(t, err)
+
+	// Should return structured question result
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp), &result))
+	assert.Equal(t, "question", result["type"])
+	// request should contain the question data
+	reqData, _ := json.Marshal(result["request"])
+	assert.Contains(t, string(reqData), "que_abc")
+	assert.Contains(t, string(reqData), "What language?")
+}
+
+func TestHTTPClient_SendMessage_QuestionForDifferentSession_Ignored(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Question for a DIFFERENT session — should be ignored
+		fmt.Fprintf(w, "data: {\"type\":\"agent.question\",\"data\":{\"id\":\"que_abc\",\"session_id\":\"sess-OTHER\",\"questions\":[]}}\n\n")
+		flusher.Flush()
+		// Then idle for our session
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
+		flusher.Flush()
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]Message{{Role: "assistant", Content: "done"}})
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "hi", 5*time.Second)
+	require.NoError(t, err)
+	// Should NOT return question data — should get normal response
+	assert.Equal(t, "done", resp)
+}
+
+func TestHTTPClient_SendMessage_PermissionAutoApproved(t *testing.T) {
+	var permissionReplied atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Permission event
+		fmt.Fprintf(w, "data: {\"type\":\"agent.permission\",\"data\":{\"id\":\"per_xyz\",\"session_id\":\"sess-1\",\"permission\":\"shell\",\"patterns\":[\"ls\"]}}\n\n")
+		flusher.Flush()
+		// Then idle
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
+		flusher.Flush()
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/permission/per_xyz/reply", func(w http.ResponseWriter, r *http.Request) {
+		permissionReplied.Store(true)
+		w.Write([]byte(`true`))
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/message", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]Message{{Role: "assistant", Content: "done after permission"}})
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "run ls", 5*time.Second)
+	require.NoError(t, err)
+	// Should continue to idle and return normal response
+	assert.Equal(t, "done after permission", resp)
+	// Give the goroutine time to fire
+	time.Sleep(50 * time.Millisecond)
+	assert.True(t, permissionReplied.Load(), "permission should have been auto-approved")
 }
