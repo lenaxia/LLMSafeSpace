@@ -802,7 +802,6 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-
 // sanitizeLabelValue replaces characters invalid in K8s label values.
 func sanitizeLabelValue(s string) string {
 	return strings.ReplaceAll(s, ":", "_")
@@ -830,7 +829,6 @@ func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.Workspa
 		LastTransitionTime: metav1.Now(),
 	})
 }
-
 
 var (
 	healthCheckInterval         = 15 * time.Second

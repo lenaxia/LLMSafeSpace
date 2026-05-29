@@ -463,7 +463,6 @@ func TestInitContainerScript_NoElseBranch(t *testing.T) {
 	assert.NotContains(t, script, "workspace-creds-", "legacy credential secret should not be referenced")
 }
 
-
 func makeRuntimeEnv(name string) *v1.RuntimeEnvironment {
 	return &v1.RuntimeEnvironment{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

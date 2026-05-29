@@ -9,9 +9,9 @@ import (
 )
 
 type mockCredStore struct {
-	sets    map[string]*CredentialSetRow
-	nextID  int
-	delErr  error
+	sets     map[string]*CredentialSetRow
+	nextID   int
+	delErr   error
 	refCount int
 }
 

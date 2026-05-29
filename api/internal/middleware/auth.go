@@ -212,8 +212,6 @@ func RequirePermissions(permissions ...string) gin.HandlerFunc {
 	}
 }
 
-
-
 // shouldSkipAuth checks if authentication should be skipped for a path
 func shouldSkipAuth(path string, skipPaths, skipPathPrefixes []string) bool {
 	// Check exact paths

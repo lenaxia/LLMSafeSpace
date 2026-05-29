@@ -68,9 +68,9 @@ func newLockoutServiceWithSettings(t *testing.T, settingsData map[string]any) (*
 func TestLogin_LockoutFromSettings_Enabled(t *testing.T) {
 	// Static config has lockout DISABLED, but settings enable it with 2 attempts
 	svc, _, mockCache := newLockoutServiceWithSettings(t, map[string]any{
-		"auth.lockoutEnabled":          true,
-		"auth.lockoutAttempts":         2,
-		"auth.lockoutDurationMinutes":  5,
+		"auth.lockoutEnabled":         true,
+		"auth.lockoutAttempts":        2,
+		"auth.lockoutDurationMinutes": 5,
 	})
 	ctx := context.Background()
 

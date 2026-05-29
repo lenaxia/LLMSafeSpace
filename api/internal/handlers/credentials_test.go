@@ -15,8 +15,8 @@ import (
 )
 
 type mockCredentialService struct {
-	sets     map[string]*credentials.CredentialSet
-	nextID   int
+	sets      map[string]*credentials.CredentialSet
+	nextID    int
 	createErr error
 	getErr    error
 	updateErr error
