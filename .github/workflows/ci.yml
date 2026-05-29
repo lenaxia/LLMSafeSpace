@@ -32,6 +32,121 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+      - name: Validate OpenAPI spec
+        run: make openapi-validate
+
+  sdk-contract:
+    name: SDK Contract Tests
+    runs-on: ubuntu-latest
+    needs: [test]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: llmsafespace
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: llmsafespace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run DB migrations
+        env:
+          DATABASE_URL: postgres://llmsafespace:testpass@localhost:5432/llmsafespace?sslmode=disable
+        run: |
+          for f in api/migrations/*.up.sql; do
+            psql "$DATABASE_URL" -f "$f"
+          done
+
+      - name: Build and start API server
+        env:
+          LLMSAFESPACE_SERVER_HOST: 0.0.0.0
+          LLMSAFESPACE_SERVER_PORT: "8080"
+          LLMSAFESPACE_DATABASE_HOST: localhost
+          LLMSAFESPACE_DATABASE_PORT: "5432"
+          LLMSAFESPACE_DATABASE_USER: llmsafespace
+          LLMSAFESPACE_DATABASE_PASSWORD: testpass
+          LLMSAFESPACE_DATABASE_DATABASE: llmsafespace
+          LLMSAFESPACE_DATABASE_SSLMODE: disable
+          LLMSAFESPACE_REDIS_HOST: localhost
+          LLMSAFESPACE_REDIS_PORT: "6379"
+          LLMSAFESPACE_AUTH_JWTSECRET: ci-test-secret-32-chars-minimum!!
+          LLMSAFESPACE_LOGGING_DEVELOPMENT: "true"
+        run: |
+          go build -o /tmp/api-server ./api/cmd/api/
+          /tmp/api-server &
+          # Wait for API to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/livez > /dev/null 2>&1; then
+              echo "API ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Create test user and API key
+        run: |
+          # Register a test user
+          RESP=$(curl -sf -X POST http://localhost:8080/api/v1/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"username":"ci-test","email":"ci@test.com","password":"testpass123"}')
+          TOKEN=$(echo "$RESP" | jq -r '.token')
+
+          # Create an API key
+          KEY_RESP=$(curl -sf -X POST http://localhost:8080/api/v1/auth/api-keys \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"ci-sdk-test"}')
+          API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
+
+          echo "API_KEY=$API_KEY" >> "$GITHUB_ENV"
+          echo "API_URL=http://localhost:8080" >> "$GITHUB_ENV"
+
+      - name: Go SDK contract test
+        working-directory: sdks/go
+        run: |
+          go test -timeout 30s -race ./...
+
+      - name: TypeScript SDK install and test
+        working-directory: sdks/typescript
+        run: |
+          npm ci
+          npx vitest run
+
+      - name: Python SDK install and test
+        working-directory: sdks/python
+        run: |
+          pip install -e ".[dev]" -q
+          pytest tests/test_client.py -q
+
   # Compute a single unix timestamp shared by all image-build jobs in this run
   # so every artifact built from one workflow invocation carries the same
   # `ts-<unix>` tag. Sortable lexicographically as a 10-digit number until
