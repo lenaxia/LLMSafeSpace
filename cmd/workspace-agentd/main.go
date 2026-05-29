@@ -334,9 +334,9 @@ func main() {
 
 	supervise := len(os.Args) > 1 && os.Args[1] == "--supervise"
 
-	pw, err := os.ReadFile("/sandbox-cfg/password")
+	pw, err := os.ReadFile(agentd.PasswordPath)
 	if err != nil {
-		log.Warn("failed to read password file", zap.String("path", "/sandbox-cfg/password"), zap.Error(err))
+		log.Warn("failed to read password file", zap.String("path", agentd.PasswordPath), zap.Error(err))
 	}
 	password := strings.TrimSpace(string(pw))
 
@@ -578,7 +578,7 @@ func min(a, b int) int {
 func buildEnv() []string {
 	env := os.Environ()
 	// Source secrets-env file if it exists
-	data, err := os.ReadFile("/tmp/secrets-env")
+	data, err := os.ReadFile(agentd.SecretsEnvPath)
 	if err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
@@ -594,7 +594,7 @@ func buildEnv() []string {
 	return env
 }
 
-const secretsBaseDir = "/home/sandbox/.secrets"
+var secretsBaseDir = agentd.SecretsBasePath
 
 func materializeSecrets(secrets []struct {
 	Type      string          `json:"type"`
@@ -614,8 +614,8 @@ func materializeSecrets(secrets []struct {
 	os.RemoveAll(sshDir)
 	os.MkdirAll(sshDir, 0700)
 	os.Remove(home + "/.git-credentials")
-	os.Remove("/tmp/agent-config.json")
-	os.Remove("/tmp/secrets-env")
+	os.Remove(agentd.AgentConfigPath)
+	os.Remove(agentd.SecretsEnvPath)
 
 	var errors []string
 
@@ -631,7 +631,7 @@ func materializeSecrets(secrets []struct {
 		var err error
 		switch s.Type {
 		case "llm-provider":
-			err = os.WriteFile("/tmp/agent-config.json", []byte(s.Plaintext), 0600)
+			err = os.WriteFile(agentd.AgentConfigPath, []byte(s.Plaintext), 0600)
 
 		case "ssh-key":
 			keyType := meta["key_type"]
@@ -698,7 +698,7 @@ func materializeSecrets(secrets []struct {
 				continue
 			}
 			var f *os.File
-			f, err = os.OpenFile("/tmp/secrets-env", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			f, err = os.OpenFile(agentd.SecretsEnvPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 			if err == nil {
 				fmt.Fprintf(f, "export %s='%s'\n", varName, s.Plaintext)
 				f.Close()
