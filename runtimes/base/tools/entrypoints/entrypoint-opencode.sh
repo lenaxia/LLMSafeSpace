@@ -9,6 +9,7 @@ if [[ -f /sandbox-cfg/env ]]; then
     source /sandbox-cfg/env
 fi
 # Also source hot-reloaded env if present
+# Path must match pkg/agentd/types.go SecretsEnvPath
 if [[ -f /tmp/secrets-env ]]; then
     source /tmp/secrets-env
 fi

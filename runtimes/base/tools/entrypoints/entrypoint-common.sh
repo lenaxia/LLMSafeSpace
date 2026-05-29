@@ -7,6 +7,7 @@ set -euo pipefail
 SECRETS_FILE="/sandbox-cfg/secrets.json"
 CREDS_FILE="/sandbox-cfg/credentials"
 ENV_FILE="/tmp/secrets-env"
+# ↑ These paths must match pkg/agentd/types.go constants (SecretsEnvPath, AgentConfigPath, PasswordPath)
 SSH_DIR="$HOME/.ssh"
 
 # Legacy path: if only credentials file exists (no secrets.json), use it directly

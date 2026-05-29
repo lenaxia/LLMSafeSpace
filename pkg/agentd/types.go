@@ -1,5 +1,14 @@
 package agentd
 
+// Well-known paths shared between entrypoint scripts and agentd.
+// Shell scripts reference these by convention — keep in sync.
+const (
+	SecretsEnvPath   = "/tmp/secrets-env"
+	AgentConfigPath  = "/tmp/agent-config.json"
+	PasswordPath     = "/sandbox-cfg/password"
+	SecretsBasePath  = "/home/sandbox/.secrets"
+)
+
 // HealthzResponse is the response for GET /v1/healthz.
 type HealthzResponse struct {
 	Healthy       bool   `json:"healthy"`
