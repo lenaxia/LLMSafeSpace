@@ -155,3 +155,21 @@ func TestCheckAgentHealth_SessionsWithoutTitles(t *testing.T) {
 	assert.Equal(t, "", ws.Status.Sessions[0].Title)
 	assert.Equal(t, "busy", ws.Status.Sessions[0].Status)
 }
+
+func TestCheckAgentHealth_SetsActiveSessions(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Sessions: []agentd.SessionInfo{
+			{ID: "ses_1", Status: "busy"},
+			{ID: "ses_2", Status: "idle"},
+			{ID: "ses_3", Status: "busy"},
+		},
+		SessionsActive: 2,
+	})
+	defer server.Close()
+
+	r.checkAgentHealth(context.Background(), ws)
+
+	assert.Equal(t, int32(2), ws.Status.ActiveSessions)
+}
