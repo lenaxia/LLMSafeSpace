@@ -1064,6 +1064,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 	}
 
 	// Populate agent-reported metadata on CRD status.
+	ws.Status.ActiveSessions = int32(status.SessionsActive)
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
 		for i, s := range status.Sessions {

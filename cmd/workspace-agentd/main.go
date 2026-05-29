@@ -209,6 +209,7 @@ func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenC
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			eventData.WriteString(strings.TrimPrefix(line, "data: "))
+			eventData.WriteString("\n")
 		} else if line == "" && eventData.Len() > 0 {
 			t.processEvent(eventData.String())
 			eventData.Reset()
