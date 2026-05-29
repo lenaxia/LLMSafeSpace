@@ -399,9 +399,13 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
     e.preventDefault();
     setSubmitting(true);
     try {
+      const submitMetadata = { ...metadata };
+      if (submitMetadata.mount_path) {
+        submitMetadata.mount_path = `/home/sandbox/.secrets/${submitMetadata.mount_path}`;
+      }
       await secretsApi.create({
         name, type, value,
-        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        metadata: Object.keys(submitMetadata).length > 0 ? submitMetadata : undefined,
       });
       setCreatedValue(value);
     } catch (err: any) {
@@ -516,8 +520,8 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
                 <div className="flex items-center gap-0">
                   <span className="rounded-l-md border border-r-0 border-border bg-accent px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">/home/sandbox/.secrets/</span>
                   <Input
-                    value={(metadata[field] || "").replace(/^\/home\/sandbox\/\.secrets\//, "")}
-                    onChange={(e) => setMetadata({ ...metadata, [field]: `/home/sandbox/.secrets/${e.target.value.replace(/^\/+/, "").replace(/\.\.\//g, "")}` })}
+                    value={metadata[field] || ""}
+                    onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value.replace(/^\/+/, "").replace(/\.\.\//g, "") })}
                     placeholder="cert.pem"
                     required
                     className="rounded-l-none"
