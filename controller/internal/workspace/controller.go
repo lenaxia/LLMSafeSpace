@@ -348,6 +348,8 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.Endpoint = ""
 	workspace.Status.SuspendedAt = &now
 	workspace.Status.TransientFailureCount = 0
+	workspace.Status.Sessions = nil
+	workspace.Status.ActiveSessions = 0
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)
 }
 
@@ -403,6 +405,10 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 	workspace.Status.PodName = ""
 	workspace.Status.PodIP = ""
 	workspace.Status.Endpoint = ""
+	workspace.Status.Sessions = nil
+	workspace.Status.ActiveSessions = 0
+	workspace.Status.DiskUsedBytes = 0
+	workspace.Status.DiskTotalBytes = 0
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		return ctrl.Result{}, err
 	}

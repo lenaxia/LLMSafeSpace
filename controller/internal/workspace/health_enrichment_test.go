@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -172,4 +173,63 @@ func TestCheckAgentHealth_SetsActiveSessions(t *testing.T) {
 	r.checkAgentHealth(context.Background(), ws)
 
 	assert.Equal(t, int32(2), ws.Status.ActiveSessions)
+}
+
+// === Suspend/Terminate clears agent-reported fields ===
+
+func TestSuspending_ClearsSessionsAndActiveSessions(t *testing.T) {
+	r, ws, _ := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Sessions:       []agentd.SessionInfo{{ID: "ses_1", Status: "busy"}},
+		SessionsActive: 1,
+		Disk:           &agentd.DiskUsage{UsedBytes: 500, TotalBytes: 1000},
+	})
+
+	// Simulate active workspace with populated fields
+	r.checkAgentHealth(context.Background(), ws)
+	assert.Len(t, ws.Status.Sessions, 1)
+	assert.Equal(t, int32(1), ws.Status.ActiveSessions)
+	assert.Equal(t, int64(500), ws.Status.DiskUsedBytes)
+
+	// Now suspend
+	now := metav1.Now()
+	ws.Status.Phase = v1.WorkspacePhaseSuspended
+	ws.Status.PodName = ""
+	ws.Status.PodIP = ""
+	ws.Status.Endpoint = ""
+	ws.Status.SuspendedAt = &now
+	ws.Status.Sessions = nil
+	ws.Status.ActiveSessions = 0
+
+	// Verify cleared
+	assert.Nil(t, ws.Status.Sessions)
+	assert.Equal(t, int32(0), ws.Status.ActiveSessions)
+	// Disk stays (PVC persists during suspend)
+	assert.Equal(t, int64(500), ws.Status.DiskUsedBytes)
+}
+
+func TestTerminating_ClearsAllAgentFields(t *testing.T) {
+	r, ws, _ := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Sessions:       []agentd.SessionInfo{{ID: "ses_1", Status: "idle"}},
+		SessionsActive: 0,
+		Disk:           &agentd.DiskUsage{UsedBytes: 999, TotalBytes: 2000},
+	})
+
+	r.checkAgentHealth(context.Background(), ws)
+	assert.Equal(t, int64(999), ws.Status.DiskUsedBytes)
+
+	// Simulate terminate (clears everything including disk since PVC is deleted)
+	ws.Status.Phase = v1.WorkspacePhaseTerminated
+	ws.Status.Sessions = nil
+	ws.Status.ActiveSessions = 0
+	ws.Status.DiskUsedBytes = 0
+	ws.Status.DiskTotalBytes = 0
+
+	assert.Nil(t, ws.Status.Sessions)
+	assert.Equal(t, int32(0), ws.Status.ActiveSessions)
+	assert.Equal(t, int64(0), ws.Status.DiskUsedBytes)
+	assert.Equal(t, int64(0), ws.Status.DiskTotalBytes)
 }
