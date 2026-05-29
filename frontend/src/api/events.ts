@@ -117,18 +117,3 @@ export function createEventStream(
     channel.close();
   };
 }
-
-/**
- * Sends an abort signal via sendBeacon on tab close.
- * Used to notify the server that an in-flight stream should be cancelled.
- */
-export function registerTabCloseAbort(workspaceId: string, sessionId: string): () => void {
-  const handler = () => {
-    const { apiBaseUrl } = getEnv();
-    const url = `${apiBaseUrl}/workspaces/${workspaceId}/sessions/${sessionId}/abort`;
-    navigator.sendBeacon(url);
-  };
-
-  window.addEventListener("beforeunload", handler);
-  return () => window.removeEventListener("beforeunload", handler);
-}
