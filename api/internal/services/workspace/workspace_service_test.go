@@ -681,7 +681,6 @@ func TestE2E_SuspendWorkspace_OnlyActiveAllowed(t *testing.T) {
 	}{
 		{"Active_allowed", v1.WorkspacePhaseActive, false},
 		{"Resuming_rejected", v1.WorkspacePhaseResuming, true},
-		{"Suspended_rejected", v1.WorkspacePhaseSuspended, true},
 		{"Pending_rejected", v1.WorkspacePhasePending, true},
 		{"Terminating_rejected", v1.WorkspacePhaseTerminating, true},
 		{"Terminated_rejected", v1.WorkspacePhaseTerminated, true},
@@ -719,8 +718,6 @@ func TestE2E_ResumeWorkspace_OnlySuspendedAllowed(t *testing.T) {
 		wantErr bool
 	}{
 		{"Suspended_allowed", v1.WorkspacePhaseSuspended, false},
-		{"Active_rejected", v1.WorkspacePhaseActive, true},
-		{"Resuming_rejected", v1.WorkspacePhaseResuming, true},
 		{"Pending_rejected", v1.WorkspacePhasePending, true},
 		{"Terminating_rejected", v1.WorkspacePhaseTerminating, true},
 		{"Terminated_rejected", v1.WorkspacePhaseTerminated, true},
@@ -749,6 +746,81 @@ func TestE2E_ResumeWorkspace_OnlySuspendedAllowed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSuspendWorkspace_Idempotent_AlreadySuspended(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
+
+	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestSuspendWorkspace_Idempotent_AlreadySuspending(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	suspendingCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendingCrd.Status.Phase = v1.WorkspacePhaseSuspending
+	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendingCrd, nil)
+
+	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestResumeWorkspace_Idempotent_AlreadyActive(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+
+	err := f.svc.ResumeWorkspace(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestResumeWorkspace_Idempotent_AlreadyResuming(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	resumingCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	resumingCrd.Status.Phase = v1.WorkspacePhaseResuming
+	f.ws.On("Get", "ws-1", mock.Anything).Return(resumingCrd, nil)
+
+	err := f.svc.ResumeWorkspace(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestResumeWorkspace_Idempotent_AlreadyCreating(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	creatingCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	creatingCrd.Status.Phase = v1.WorkspacePhaseCreating
+	f.ws.On("Get", "ws-1", mock.Anything).Return(creatingCrd, nil)
+
+	err := f.svc.ResumeWorkspace(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	f.ws.AssertNotCalled(t, "UpdateStatus")
 }
 
 func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {

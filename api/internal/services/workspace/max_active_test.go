@@ -59,7 +59,7 @@ func TestEnforceMaxActive_BelowCap_NoSuspension(t *testing.T) {
 	svc := &Service{
 		logger:           &testLogger{},
 		instanceSettings: instanceSvc,
-		dbService:        &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		dbService: &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
 			{ID: "ws-1", Phase: "Running", UpdatedAt: time.Now().Add(-1 * time.Hour)},
 			{ID: "ws-2", Phase: "Running", UpdatedAt: time.Now()},
 		}},
@@ -87,11 +87,14 @@ func TestEnforceMaxActive_AtCap_SuspendsStalest(t *testing.T) {
 		{ID: "ws-new", UserID: "user-1", Phase: "Running", UpdatedAt: now},
 	}}
 
-	// Provide a K8s mock that returns a workspace CRD in Active phase
 	k8sMock := &mockK8sForMaxActive{
 		workspaces: map[string]*v1.Workspace{
 			"ws-old": {
 				ObjectMeta: metav1.ObjectMeta{Name: "ws-old"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+			"ws-new": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-new"},
 				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
 			},
 		},
@@ -187,10 +190,144 @@ func TestEnforceMaxActive_SuspendedWorkspacesNotCounted(t *testing.T) {
 	}
 }
 
+func TestEnforceMaxActive_StaleDBPhase_SkipsAlreadySuspended(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal(2)
+	store.data["workspace.maxActiveWorkspacesPerUser"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+
+	now := time.Now()
+	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		{ID: "ws-stale", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-real", UserID: "user-1", Phase: "Running", UpdatedAt: now},
+	}}
+
+	k8sMock := &mockK8sForMaxActive{
+		workspaces: map[string]*v1.Workspace{
+			"ws-stale": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-stale"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
+			},
+			"ws-real": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-real"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+		},
+	}
+
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+		dbService:        db,
+		k8sClient:        k8sMock,
+		config:           &Config{Namespace: "default"},
+	}
+
+	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended != "" {
+		t.Errorf("expected no suspension (ws-stale is actually Suspended, so only 1 active < cap 2), got %q", suspended)
+	}
+}
+
+func TestEnforceMaxActive_StaleDBPhase_AllStale_NoSuspension(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal(1)
+	store.data["workspace.maxActiveWorkspacesPerUser"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+
+	now := time.Now()
+	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		{ID: "ws-stale-1", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-stale-2", UserID: "user-1", Phase: "Active", UpdatedAt: now.Add(-1 * time.Hour)},
+	}}
+
+	k8sMock := &mockK8sForMaxActive{
+		workspaces: map[string]*v1.Workspace{
+			"ws-stale-1": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-stale-1"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
+			},
+			"ws-stale-2": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-stale-2"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
+			},
+		},
+	}
+
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+		dbService:        db,
+		k8sClient:        k8sMock,
+		config:           &Config{Namespace: "default"},
+	}
+
+	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended != "" {
+		t.Errorf("expected no suspension (all stale, 0 truly active < cap 1), got %q", suspended)
+	}
+}
+
+func TestEnforceMaxActive_StaleDBPhase_Mixed_SuspendsCorrectStalest(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal(2)
+	store.data["workspace.maxActiveWorkspacesPerUser"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+
+	now := time.Now()
+	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		{ID: "ws-stale", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-3 * time.Hour)},
+		{ID: "ws-real-1", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "ws-real-2", UserID: "user-1", Phase: "Active", UpdatedAt: now},
+	}}
+
+	k8sMock := &mockK8sForMaxActive{
+		workspaces: map[string]*v1.Workspace{
+			"ws-stale": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-stale"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
+			},
+			"ws-real-1": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-real-1"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+			"ws-real-2": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-real-2"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+		},
+	}
+
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+		dbService:        db,
+		k8sClient:        k8sMock,
+		config:           &Config{Namespace: "default"},
+	}
+
+	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended != "ws-real-1" {
+		t.Errorf("expected ws-real-1 (stalest truly active) to be suspended, got %q", suspended)
+	}
+}
+
 // mockDBForMaxActive implements the subset of DatabaseService needed for enforcement tests.
 type mockDBForMaxActive struct {
 	apiinterfaces.DatabaseService // embed to satisfy interface
-	workspaces                   []*types.WorkspaceMetadata
+	workspaces                    []*types.WorkspaceMetadata
 }
 
 func (m *mockDBForMaxActive) ListWorkspaces(_ context.Context, _ string, _, _ int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
@@ -204,6 +341,15 @@ func (m *mockDBForMaxActive) GetWorkspace(_ context.Context, workspaceID string)
 		}
 	}
 	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockDBForMaxActive) SyncWorkspacePhase(_ context.Context, workspaceID, phase, _ string) {
+	for _, ws := range m.workspaces {
+		if ws.ID == workspaceID {
+			ws.Phase = phase
+			return
+		}
+	}
 }
 
 // mockK8sForMaxActive satisfies the k8s client interface for suspend calls.

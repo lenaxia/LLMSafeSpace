@@ -6,6 +6,9 @@ import (
 	"sort"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -38,7 +41,6 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 		return "", fmt.Errorf("failed to list workspaces for enforcement: %w", err)
 	}
 
-	// Count active (Running) workspaces, excluding the target
 	var active []*types.WorkspaceMetadata
 	for _, ws := range result {
 		if ws.ID == targetWorkspaceID {
@@ -49,7 +51,11 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 		}
 	}
 
-	// If under the cap, no action needed
+	if len(active) < maxActive {
+		return "", nil
+	}
+
+	active = s.verifyActivePhases(ctx, active)
 	if len(active) < maxActive {
 		return "", nil
 	}
@@ -127,4 +133,28 @@ func parseStorageSize(s string) int64 {
 	default:
 		return 0
 	}
+}
+
+func isActivePhase(p v1.WorkspacePhase) bool {
+	return p == v1.WorkspacePhaseActive || p == v1.WorkspacePhaseCreating || p == v1.WorkspacePhaseResuming
+}
+
+func (s *Service) verifyActivePhases(ctx context.Context, candidates []*types.WorkspaceMetadata) []*types.WorkspaceMetadata {
+	if s.k8sClient == nil {
+		return candidates
+	}
+	var verified []*types.WorkspaceMetadata
+	for _, ws := range candidates {
+		crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(ws.ID, metav1.GetOptions{})
+		if err != nil {
+			verified = append(verified, ws)
+			continue
+		}
+		if isActivePhase(crd.Status.Phase) {
+			verified = append(verified, ws)
+		} else {
+			s.syncPhase(ws.ID, crd.Status.Phase)
+		}
+	}
+	return verified
 }
