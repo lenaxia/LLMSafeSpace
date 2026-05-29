@@ -413,6 +413,11 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		return apierrors.NewInternalError("workspace_get_failed", err)
 	}
 
+	if crd.Status.Phase == v1.WorkspacePhaseSuspended || crd.Status.Phase == v1.WorkspacePhaseSuspending {
+		s.syncPhase(workspaceID, crd.Status.Phase)
+		return nil
+	}
+
 	if crd.Status.Phase != v1.WorkspacePhaseActive {
 		return apierrors.NewConflictError(
 			"workspace",
@@ -449,6 +454,11 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return apierrors.NewInternalError("workspace_get_failed", err)
+	}
+
+	if isActivePhase(crd.Status.Phase) {
+		s.syncPhase(workspaceID, crd.Status.Phase)
+		return nil
 	}
 
 	if crd.Status.Phase != v1.WorkspacePhaseSuspended {
