@@ -311,14 +311,16 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 	items := make([]types.WorkspaceListItem, 0, len(metas))
 	for _, m := range metas {
 		items = append(items, types.WorkspaceListItem{
-			ID:          m.ID,
-			Name:        m.Name,
-			UserID:      m.UserID,
-			Runtime:     m.Runtime,
-			StorageSize: m.StorageSize,
-			Phase:       m.Phase,
-			CreatedAt:   m.CreatedAt,
-			UpdatedAt:   m.UpdatedAt,
+			ID:           m.ID,
+			Name:         m.Name,
+			UserID:       m.UserID,
+			Runtime:      m.Runtime,
+			StorageSize:  m.StorageSize,
+			Phase:        m.Phase,
+			ImageTag:     m.ImageTag,
+			AgentVersion: m.AgentVersion,
+			CreatedAt:    m.CreatedAt,
+			UpdatedAt:    m.UpdatedAt,
 		})
 	}
 
@@ -507,6 +509,11 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	result.DiskTotalBytes = crd.Status.DiskTotalBytes
 
 	s.syncPhase(workspaceID, crd.Status.Phase)
+
+	// Persist version info to DB so it's available in workspace list without extra K8s calls
+	if result.ImageTag != "" || result.AgentHealth.AgentVersion != "" {
+		s.dbService.SyncWorkspaceVersionInfo(ctx, workspaceID, result.ImageTag, result.AgentHealth.AgentVersion)
+	}
 
 	return result, nil
 }

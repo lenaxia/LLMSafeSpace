@@ -316,7 +316,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		return nil, nil
 	}
 	query := `
-        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
         FROM workspaces
         WHERE id = $1
     `
@@ -329,6 +329,8 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.StorageSize,
 		&ws.Phase,
 		&ws.PVCState,
+		&ws.ImageTag,
+		&ws.AgentVersion,
 		&ws.CreatedAt,
 		&ws.UpdatedAt,
 	)
@@ -416,6 +418,22 @@ func (s *Service) SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pv
 	}
 }
 
+// SyncWorkspaceVersionInfo updates the image_tag and agent_version columns.
+// Called when the workspace status is fetched and version info is available.
+func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string) {
+	if workspaceID == "" || (imageTag == "" && agentVersion == "") {
+		return
+	}
+	_, err := s.DB.ExecContext(ctx,
+		"UPDATE workspaces SET image_tag = $1, agent_version = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
+		imageTag, agentVersion, workspaceID)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Error("failed to sync workspace version info to DB", err, "workspaceID", workspaceID)
+		}
+	}
+}
+
 // MarkWorkspaceDeleted soft-deletes a workspace by setting deleted_at.
 func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) {
 	if workspaceID == "" {
@@ -451,7 +469,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		return []*types.WorkspaceMetadata{}, pagination, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `
-        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
         FROM workspaces
         WHERE user_id = $1 AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -467,6 +485,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		if err := rows.Scan(
 			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
 			&ws.StorageSize, &ws.Phase, &ws.PVCState,
+			&ws.ImageTag, &ws.AgentVersion,
 			&ws.CreatedAt, &ws.UpdatedAt,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)

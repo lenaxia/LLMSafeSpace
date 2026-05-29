@@ -43,6 +43,8 @@ export interface WorkspaceListItem {
   createdAt: string;
   updatedAt: string;
   phase?: string;
+  imageTag?: string;
+  agentVersion?: string;
   maxActiveSessions?: number;
 }
 
