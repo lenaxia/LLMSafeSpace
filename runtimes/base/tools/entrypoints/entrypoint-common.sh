@@ -6,7 +6,7 @@ set -euo pipefail
 
 SECRETS_FILE="/sandbox-cfg/secrets.json"
 CREDS_FILE="/sandbox-cfg/credentials"
-ENV_FILE="/sandbox-cfg/env"
+ENV_FILE="/tmp/secrets-env"
 SSH_DIR="$HOME/.ssh"
 
 # Legacy path: if only credentials file exists (no secrets.json), use it directly
@@ -36,9 +36,7 @@ for i in $(seq 0 $((SECRET_COUNT - 1))); do
 
     case "$TYPE" in
         llm-provider)
-            # Write to agent config path
             echo "$PLAINTEXT" > /tmp/agent-config.json
-            echo "$PLAINTEXT" > "$CREDS_FILE"
             ;;
 
         ssh-key)
