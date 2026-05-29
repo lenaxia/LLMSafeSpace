@@ -110,8 +110,6 @@ type WorkspaceService interface {
 	SuspendWorkspace(ctx context.Context, userID, workspaceID string) error
 	ResumeWorkspace(ctx context.Context, userID, workspaceID string) error
 	GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error)
-	SetCredentials(ctx context.Context, userID, workspaceID string, req types.SetCredentialsRequest) error
-	DeleteCredentials(ctx context.Context, userID, workspaceID string) error
 	ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error)
 	EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error)
 	ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error)

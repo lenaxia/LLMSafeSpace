@@ -4,10 +4,6 @@ import "time"
 
 const WorkspaceFinalizer = "workspace.llmsafespace.dev/finalizer"
 
-const AnnotationSuspendOnCredLoss = "llmsafespace.dev/suspend-on-cred-loss"
-
-const CredentialSecretDataKey = "provider-config"
-
 // Pod naming: {workspaceName}-{uid[:8]}
 const podNameSuffix = 8
 
