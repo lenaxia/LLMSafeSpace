@@ -2,8 +2,8 @@ import * as vscode from "vscode";
 import type { WorkspaceListItem } from "@llmsafespace/sdk";
 import { ApiService } from "../services/api";
 
-export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<WorkspaceTreeItem | undefined>();
+export class WorkspaceTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   constructor(private apiService: ApiService) {}
@@ -12,13 +12,20 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
 
-  async getChildren(): Promise<WorkspaceTreeItem[]> {
-    const workspaces = await this.apiService.listWorkspaces();
-    return workspaces.map((ws) => new WorkspaceTreeItem(ws));
+  async getChildren(): Promise<vscode.TreeItem[]> {
+    try {
+      const workspaces = await this.apiService.listWorkspaces();
+      if (workspaces.length === 0) {
+        return [new MessageTreeItem("No workspaces. Use command palette to create one.")];
+      }
+      return workspaces.map((ws) => new WorkspaceTreeItem(ws));
+    } catch {
+      return [new MessageTreeItem("⚠️ Disconnected — click Refresh or Configure")];
+    }
   }
 }
 
@@ -41,5 +48,12 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
       default:
         this.iconPath = new vscode.ThemeIcon("circle-outline");
     }
+  }
+}
+
+class MessageTreeItem extends vscode.TreeItem {
+  constructor(message: string) {
+    super(message, vscode.TreeItemCollapsibleState.None);
+    this.contextValue = "message";
   }
 }

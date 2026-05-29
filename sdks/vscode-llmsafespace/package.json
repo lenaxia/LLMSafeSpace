@@ -28,6 +28,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "llmsafespace.workspaces",
+        "contents": "No LLMSafeSpace connection configured.\n[Configure](command:llmsafespace.configure)"
+      }
+    ],
     "commands": [
       { "command": "llmsafespace.createWorkspace", "title": "LLMSafeSpace: Create Workspace" },
       { "command": "llmsafespace.suspendWorkspace", "title": "LLMSafeSpace: Suspend Workspace" },
@@ -36,7 +42,8 @@
       { "command": "llmsafespace.terminateWorkspace", "title": "LLMSafeSpace: Terminate Workspace" },
       { "command": "llmsafespace.refresh", "title": "LLMSafeSpace: Refresh" },
       { "command": "llmsafespace.configure", "title": "LLMSafeSpace: Configure" },
-      { "command": "llmsafespace.openTerminal", "title": "LLMSafeSpace: Open Terminal" }
+      { "command": "llmsafespace.openTerminal", "title": "LLMSafeSpace: Open Terminal" },
+      { "command": "llmsafespace.copyId", "title": "LLMSafeSpace: Copy Workspace ID" }
     ],
     "menus": {
       "view/item/context": [
@@ -44,7 +51,8 @@
         { "command": "llmsafespace.resumeWorkspace", "when": "viewItem == workspace-suspended" },
         { "command": "llmsafespace.activateWorkspace", "when": "viewItem == workspace-suspended" },
         { "command": "llmsafespace.terminateWorkspace", "when": "viewItem =~ /workspace-/" },
-        { "command": "llmsafespace.openTerminal", "when": "viewItem == workspace-active" }
+        { "command": "llmsafespace.openTerminal", "when": "viewItem == workspace-active" },
+        { "command": "llmsafespace.copyId", "when": "viewItem =~ /workspace-/" }
       ]
     },
     "configuration": {
@@ -56,7 +64,16 @@
           "description": "LLMSafeSpace API URL"
         }
       }
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "llmsafespace.agent",
+        "name": "llmsafespace",
+        "fullName": "LLMSafeSpace Agent",
+        "description": "Route prompts to your LLMSafeSpace sandbox agent",
+        "isSticky": false
+      }
+    ]
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
