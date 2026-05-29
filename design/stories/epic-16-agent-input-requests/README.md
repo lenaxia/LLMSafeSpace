@@ -100,11 +100,12 @@ interface PermissionRequest {
 | EA1 | opencode v1.15.12 is deployed | ✅ | Worklog 0071 |
 | EA2 | SSE events for `question.asked` and `permission.asked` already reach the browser as `opencode.event` | ✅ | Verified: `onRawEvent` in proxy.go publishes all events to broker; browser receives them |
 | EA3 | The proxy can forward requests to `/question/:id/reply` using the same `proxyToWorkspace` pattern | ✅ | Verified: `proxyToWorkspace` is path-agnostic; only needs workspace ID + target path |
-| EA4 | The `WorkspaceEventBroker` has no subscriber-count method | ✅ | Verified: only `Subscribe`, `Unsubscribe`, `Publish` exist |
-| EA5 | Proxy routes have auth middleware but no ownership middleware | ✅ | Verified: `workspaceGroup.Use(services.GetAuth().AuthMiddleware())` only; pre-existing pattern |
-| EA6 | Epic 15 will be completed before the frontend stories in this epic | ✅ | Decision: backend work parallelizes; frontend depends on Epic 15 |
-| EA7 | The MCP `SendMessage` currently waits for `session.idle` via SSE | ✅ | Verified: `client.go:SendMessage` subscribes to SSE and breaks on `session.idle` |
-| EA8 | `validID` regex in MCP client accepts opencode IDs (`que_...`, `per_...`, `ses_...`) | ⚠️ | `validID = ^[a-zA-Z0-9][a-zA-Z0-9.\-]{0,252}$` — underscores NOT matched. Must fix or use separate validation for opencode IDs. |
+| EA4 | Proxy routes have auth middleware but no ownership middleware | ✅ | Verified: `workspaceGroup.Use(services.GetAuth().AuthMiddleware())` only; pre-existing pattern |
+| EA5 | Epic 15 will be completed before the frontend stories in this epic | ✅ | Decision: backend work parallelizes; frontend depends on Epic 15 |
+| EA6 | MCP `SendMessage` SSE parsing is BROKEN — looks for `"session.idle"` event type but real wire format is `{"type":"session.status","status":"idle"}` | ❌ BUG | Verified: `client.go:248` checks `event.Type == "session.idle"` but broker emits `WorkspaceSSEEvent{Type:"session.status", Status:"idle"}`. Tests pass only because mocks emit fake event type. Must fix in US-16.0. |
+| EA7 | `validID` regex in MCP client rejects opencode IDs — underscores not matched | ❌ BUG | `validID = ^[a-zA-Z0-9][a-zA-Z0-9.\-]{0,252}$` excludes `_`. Real IDs: `ses_18b28260affeoxXrX1iwPH8wFg`. Must fix in US-16.0. |
+| EA8 | Permissions only fire when workspace has explicit `mode.permissions` config with `"ask"` rules | ✅ | Verified live (worklog 0069): default config auto-approves everything. Permission prompts require explicit configuration. |
+| EA9 | A second agent (claude-code or similar) will be added soon | ✅ | Decision from user: keep Dialect interface for extensibility |
 
 ## Design Decisions
 
@@ -113,7 +114,7 @@ interface PermissionRequest {
 | **Agent Dialect interface** for route mapping + event classification | Single point of change when swapping agents. Extensible to all future agent APIs. |
 | **Normalized events** (`agent.question`, `agent.permission`) emitted alongside raw `opencode.event` | Frontend depends on stable contract; raw events continue for streaming/tools |
 | **Render ALL questions at once** (not tabbed) | User sees full context; simpler UX than opencode's TUI tabs |
-| **Headless auto-approve for permissions** | Programmatic callers shouldn't block on permission prompts |
+| **Headless auto-approve for permissions** | Programmatic callers shouldn't block on permission prompts. Controlled by workspace-level `autoApprovePermissions` setting (not subscriber count heuristic). |
 | **MCP surfaces questions as tool results** | MCP callers need to see the question and respond with a separate tool call |
 | **Pending state recovery on SSE connect** | Page refresh while question pending must show the prompt immediately |
 | **Clear prompts on session idle/error** | Pod restart or agent crash must not leave stale prompts |
@@ -149,7 +150,7 @@ interface PermissionRequest {
 5. MCP caller reads the question, invokes session_question_reply tool
 6. MCP server calls POST /question/:id/reply with answers
 7. Agent unblocks, continues processing
-8. MCP server (still subscribed to SSE) receives session.idle → returns final response
+8. MCP server (still subscribed to SSE) receives session.status idle → returns final response
 ```
 
 ### Data Flow: Permission (Headless Auto-Approve)
@@ -185,7 +186,7 @@ interface PermissionRequest {
 │                      ← New: emitPendingInputRequests (on SSE connect)    │
 │                      ← New: autoApprovePermission (headless mode)        │
 │                                                                          │
-│  event_broker.go     ← New: SubscriberCount(workspaceID) int             │
+│  event_broker.go     ← No changes needed                                 │
 │                                                                          │
 │  session_tracker.go  ← No changes (already forwards all events)          │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -224,19 +225,20 @@ interface PermissionRequest {
 
 | Story | Title | Layer | Priority | Depends On |
 |-------|-------|-------|----------|------------|
+| US-16.0 | Fix MCP client: SSE parsing + validID regex | Backend | Critical | — |
 | US-16.1 | Agent Dialect interface + OpenCode implementation | Backend | Critical | — |
 | US-16.2 | Question/Permission proxy routes | Backend | Critical | US-16.1 |
 | US-16.3 | Normalized event emission (agent.question, agent.permission) | Backend | Critical | US-16.1 |
 | US-16.4 | Pending state recovery on SSE connect | Backend | High | US-16.2, US-16.3 |
 | US-16.5 | Headless permission auto-approve | Backend | High | US-16.2, US-16.3 |
-| US-16.6 | MCP tools for question/permission reply | Backend | High | US-16.2 |
-| US-16.7 | MCP SendMessage question detection | Backend | High | US-16.6 |
+| US-16.6 | MCP tools for question/permission reply | Backend | High | US-16.0, US-16.2 |
+| US-16.7 | MCP SendMessage question detection | Backend | High | US-16.0, US-16.6 |
 | US-16.8 | Frontend types + API client | Frontend | Critical | US-16.2 (API exists) |
 | US-16.9 | QuestionPrompt component | Frontend | Critical | US-16.8, Epic 15 |
 | US-16.10 | PermissionPrompt component | Frontend | High | US-16.8, Epic 15 |
 | US-16.11 | ChatPage integration (event handling, prompt lifecycle) | Frontend | Critical | US-16.9, US-16.10, Epic 15 |
 | US-16.12 | Clear prompts on session idle/error | Frontend | High | US-16.11 |
-| US-16.13 | E2E integration tests | Both | High | US-16.1–16.12 |
+| US-16.13 | E2E integration tests | Both | High | US-16.0–16.12 |
 
 ## Non-Goals
 
@@ -245,6 +247,14 @@ interface PermissionRequest {
 - **Multi-tab coordination for questions** — If two tabs are open, both show the prompt. First to answer wins; second gets 200 (idempotent no-op) and the prompt dismisses via the `question.replied` SSE event.
 - **Custom question tool registration** — We use opencode's built-in question tool as-is.
 - **Permission audit logging** — Logging which permissions were approved/denied is deferred to Epic 10 (audit system).
+
+## Known Limitations
+
+1. **Pod restart while question pending**: If the pod restarts after `question.asked` but before the user answers, the question is lost (opencode's in-memory deferred is gone). The session stays busy until opencode's internal tool timeout fires (typically 5 minutes), then goes idle with an error. The frontend clears the stale prompt on idle. Recovery is slow but automatic.
+
+2. **No ownership check on proxy routes**: Pre-existing — any authenticated user can proxy to any workspace by ID. This epic inherits the same pattern. Multi-tenant isolation depends on workspace IDs being unguessable (UUIDs).
+
+3. **Permission prompts require explicit config**: Default opencode config auto-approves all tool calls. The permission UI will only be exercised when workspaces are configured with `mode.permissions` rules containing `"ask"` actions.
 
 ## Success Criteria
 
