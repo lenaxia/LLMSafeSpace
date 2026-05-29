@@ -92,17 +92,33 @@ func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo
 	}
 	defer resp.Body.Close()
 	var sessions []struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
+		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
 		return nil, err
 	}
 	result := make([]agentd.SessionInfo, len(sessions))
 	for i, s := range sessions {
-		result[i] = agentd.SessionInfo{ID: s.ID, Title: s.Title, Status: "idle"}
+		result[i] = agentd.SessionInfo{ID: s.ID, Status: "idle"}
+		// Fetch title from individual session endpoint (GET /session list doesn't include it)
+		if title := c.fetchSessionTitle(ctx, s.ID); title != "" {
+			result[i].Title = title
+		}
 	}
 	return result, nil
+}
+
+func (c *OpenCodeClient) fetchSessionTitle(ctx context.Context, sessionID string) string {
+	resp, err := c.doRequest(ctx, "/session/"+sessionID)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var s struct {
+		Title string `json:"title"`
+	}
+	json.NewDecoder(resp.Body).Decode(&s)
+	return s.Title
 }
 
 type providerCache struct {
