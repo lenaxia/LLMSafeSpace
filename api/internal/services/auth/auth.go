@@ -199,10 +199,27 @@ func (s *Service) RevokeToken(token string) error {
 		return errors.New("token has already expired")
 	}
 
-	// Add token to blacklist
-	err = s.cacheService.Set(ctx, "token:"+jti, "revoked", remainingTime)
-	if err != nil {
-		return fmt.Errorf("failed to revoke token: %w", err)
+	// G18 (Epic 17): Add token to blacklist under BOTH cache keys so the
+	// revocation is visible to:
+	//   1. ValidateToken's hash-based cache fast-path (token:<hash(token)>)
+	//   2. ValidateToken's jti-based revocation check (token:<jti>)
+	// Without writing both, ValidateToken's fast-path would still return the
+	// cached userID and revocation would be silently ignored. See worklog 0078
+	// and `auth_revocation_test.go` for the regression that locks this in.
+	hashKey := "token:" + hashToken(token)
+	jtiKey := "token:" + jti
+	if err := s.cacheService.Set(ctx, hashKey, "revoked", remainingTime); err != nil {
+		return fmt.Errorf("failed to revoke token (hash key): %w", err)
+	}
+	if err := s.cacheService.Set(ctx, jtiKey, "revoked", remainingTime); err != nil {
+		// Best-effort cleanup of the hash key so we don't leak a half-revoked
+		// state. If the cleanup itself fails, log it; the hash key has the
+		// same TTL as the JWT so it will expire on its own.
+		if cleanupErr := s.cacheService.Delete(ctx, hashKey); cleanupErr != nil {
+			s.logger.Error("Failed to cleanup hash-key after jti-key revoke failure",
+				cleanupErr, "hash_key", hashKey)
+		}
+		return fmt.Errorf("failed to revoke token (jti key): %w", err)
 	}
 
 	return nil
@@ -305,6 +322,17 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	userID, ok := claims["sub"].(string)
 	if !ok {
 		return "", errors.New("invalid user ID in token")
+	}
+
+	// G18 (Epic 17): Defense-in-depth revocation check by jti AFTER parsing.
+	// RevokeToken stores under both token:<hash> (fast-path above) AND
+	// token:<jti> (this check). The jti check protects against eviction of
+	// the hash-key cache entry (e.g., Redis memory pressure) — without it,
+	// revocation could be silently bypassed under cache pressure.
+	if jti, ok := claims["jti"].(string); ok && jti != "" {
+		if status, gerr := s.cacheService.Get(ctx, "token:"+jti); gerr == nil && status == "revoked" {
+			return "", errors.New("token has been revoked")
+		}
 	}
 
 	// Get expiration time

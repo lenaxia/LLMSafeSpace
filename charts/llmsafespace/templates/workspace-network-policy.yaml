@@ -1,0 +1,94 @@
+{{- if .Values.networkPolicy.enabled }}
+# Epic 17 G16: Default-deny ingress for sandbox workspace pods.
+#
+# Without this, any pod in the cluster — including other tenants'
+# workspaces and any user-controlled pods in the same namespace — can
+# initiate connections to a sandbox pod. That breaks the multi-tenant
+# trust model: agent state, opencode SSE streams, and the agentd HTTP
+# API would all be reachable cross-tenant.
+#
+# Allowances:
+#   - The API server pod (proxy) can reach sandbox pods on agentd port
+#     4097 and opencode port 4096. The selector is configurable via
+#     .networkPolicy.apiPodLabelSelector to support deployments where
+#     the API server runs in a different namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-workspace-default-deny-ingress
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workspace-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmsafespace.workspacePodSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.apiPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 4096
+        - protocol: TCP
+          port: 4097
+---
+# Epic 17 G16: Workspace egress allow-list.
+#
+# Sandbox pods need:
+#   - DNS resolution (otherwise nothing else can connect by name)
+#   - Egress to LLM endpoints and operator-allowlisted CIDRs
+#
+# The policy explicitly forbids egress to:
+#   - kube-apiserver and other in-cluster services (via blockedEgressCIDRs)
+#   - cloud metadata endpoint (169.254.169.254)
+# A hostile agent in a sandbox can still reach the public internet via the
+# allowed CIDRs; that's accepted risk per threat-model §4.4.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-workspace-egress
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workspace-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmsafespace.workspacePodSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS — required for any external host resolution.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dnsNamespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # External egress: allowedEgressCIDRs minus blockedEgressCIDRs.
+    {{- if .Values.networkPolicy.allowedEgressCIDRs }}
+    - to:
+        {{- range .Values.networkPolicy.allowedEgressCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+            {{- with $.Values.networkPolicy.blockedEgressCIDRs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
