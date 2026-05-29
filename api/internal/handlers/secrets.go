@@ -204,6 +204,8 @@ func (h *SecretsHandler) SetBindings(c *gin.Context) {
 		return
 	}
 
+	h.pushSecretsToAgent(c, userID, workspaceID)
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -241,43 +243,73 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 		return
 	}
 
-	// Look up pod IP from workspace status
-	if h.podIPResolver == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "secret reload not configured"})
-		return
-	}
-	podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
-	if err != nil || podIP == "" {
-		c.JSON(http.StatusConflict, gin.H{"error": "workspace has no running pod"})
+	result, err := h.doReload(c.Request.Context(), userID, workspaceID, secretsJSON)
+	if err != nil {
+		switch {
+		case err == errPodIPResolverNotConfigured:
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "secret reload not configured"})
+		case err == errNoRunningPod:
+			c.JSON(http.StatusConflict, gin.H{"error": "workspace has no running pod"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
-	// Call agentd reload endpoint
+	c.JSON(http.StatusOK, result)
+}
+
+var (
+	errPodIPResolverNotConfigured = fmt.Errorf("secret reload not configured")
+	errNoRunningPod               = fmt.Errorf("workspace has no running pod")
+)
+
+type reloadResult struct {
+	Reloaded  int  `json:"reloaded"`
+	Restarted bool `json:"restarted"`
+}
+
+func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID string) {
+	sessionID, _ := extractAuth(c)
+	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
+	if err != nil || len(secretsJSON) <= 2 {
+		return
+	}
+
+	_, _ = h.doReload(c.Request.Context(), userID, workspaceID, secretsJSON)
+}
+
+func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID string, secretsJSON []byte) (*reloadResult, error) {
+	if h.podIPResolver == nil {
+		return nil, errPodIPResolverNotConfigured
+	}
+	podIP, err := h.podIPResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
+	if err != nil || podIP == "" {
+		return nil, errNoRunningPod
+	}
+
 	agentdURL := fmt.Sprintf("http://%s:4097/v1/reload-secrets", podIP)
 	resp, err := http.Post(agentdURL, "application/json", bytes.NewReader(secretsJSON))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach workspace agent"})
-		return
+		return nil, fmt.Errorf("failed to reach workspace agent: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var agentErr struct{ Error string `json:"error"` }
+		var agentErr struct {
+			Error string `json:"error"`
+		}
 		json.NewDecoder(resp.Body).Decode(&agentErr)
 		msg := "agent reload failed"
 		if agentErr.Error != "" {
 			msg = agentErr.Error
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
-		return
+		return nil, fmt.Errorf("%s", msg)
 	}
 
-	var result struct {
-		Reloaded  int  `json:"reloaded"`
-		Restarted bool `json:"restarted"`
-	}
+	var result reloadResult
 	json.NewDecoder(resp.Body).Decode(&result)
-	c.JSON(http.StatusOK, gin.H{"reloaded": result.Reloaded, "restarted": result.Restarted})
+	return &result, nil
 }
 
 // SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
