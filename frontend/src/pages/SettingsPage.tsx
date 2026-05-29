@@ -24,16 +24,17 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("preferences");
 
   return (
-    <div className="flex h-full">
-      <nav className="w-48 border-r border-border p-4">
-        <h2 className="mb-4 text-sm font-semibold">Settings</h2>
-        <ul className="flex flex-col gap-1">
+    <div className="flex h-full flex-col md:flex-row">
+      {/* Mobile: horizontal tab bar. Desktop: vertical sidebar */}
+      <nav className="border-b border-border p-2 md:border-b-0 md:border-r md:w-48 md:p-4 md:shrink-0">
+        <h2 className="hidden md:block mb-4 text-sm font-semibold">Settings</h2>
+        <ul className="flex gap-1 overflow-x-auto md:flex-col">
           {tabs.map((tab) => (
             <li key={tab.id}>
               <button
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "w-full rounded-md px-3 py-1.5 text-left text-sm transition-colors",
+                  "whitespace-nowrap rounded-md px-3 py-1.5 text-left text-sm transition-colors",
                   activeTab === tab.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
                 )}
               >
@@ -43,7 +44,7 @@ export function SettingsPage() {
           ))}
         </ul>
       </nav>
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "secrets" && <SecretsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
