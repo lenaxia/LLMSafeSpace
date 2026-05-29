@@ -62,8 +62,76 @@ export function ChatPage() {
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
-  const { send, abort, streaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId);
+
+  // US-15.1: Derive serverBusy from workspace status
+  const sessionStatus = status?.sessions?.find((s) => s.id === sessionId);
+  const [serverBusy, setServerBusy] = useState(false);
+  // Track whether SSE has taken over serverBusy (to avoid status poll overriding SSE)
+  const sseHasDrivenBusy = useRef(false);
+
+  // Sync serverBusy from status poll (on mount / after invalidation)
+  // Only applies when SSE hasn't already driven the state
+  useEffect(() => {
+    if (sessionStatus && !sseHasDrivenBusy.current) {
+      setServerBusy(sessionStatus.status === "busy");
+    }
+  }, [sessionStatus]);
+
+  // Reset SSE-driven flag on session change
+  useEffect(() => {
+    sseHasDrivenBusy.current = false;
+  }, [sessionId]);
+
+  const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
+
+  // US-15.3: Compute historyPartIds from fetched history for boundary detection
+  const historyPartIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set<string>();
+    if (history) {
+      for (const msg of history) {
+        for (const part of msg.parts) {
+          if (part.id) ids.add(part.id);
+        }
+      }
+    }
+    historyPartIds.current = ids;
+  }, [history]);
+
+  // US-15.4: Reconnect mode — active when page loads into a busy session
+  const isReconnectMode = useRef(false);
+  const knownLivePartIds = useRef<Set<string>>(new Set());
+
+  // Enter reconnect mode when session is busy on mount (serverBusy from status poll)
+  useEffect(() => {
+    if (serverBusy && !localStreaming) {
+      isReconnectMode.current = true;
+    }
+  }, [serverBusy, localStreaming]);
+
+  // Reset reconnect state on session change
+  useEffect(() => {
+    isReconnectMode.current = false;
+    knownLivePartIds.current.clear();
+  }, [sessionId]);
+
+  // US-15.5: Reconcile on idle — fetch authoritative history and clear streaming state
+  const reconcileOnIdle = useCallback(async () => {
+    if (!workspaceId || !sessionId) return;
+    try {
+      await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
+      setSseStreamParts([]);
+      isReconnectMode.current = false;
+      knownLivePartIds.current.clear();
+      sentTextRef.current = "";
+      activePartTypeRef.current = null;
+      currentThinkingIdxRef.current = -1;
+      currentTextIdxRef.current = -1;
+    } catch {
+      // History fetch failed — keep streaming parts visible
+    }
+  }, [workspaceId, sessionId, queryClient]);
 
   // Auto-rename workspace from first session title if name is still auto-generated
   const hasAutoRenamedRef = useRef(false);
@@ -110,6 +178,28 @@ export function ChatPage() {
 
     const eventSessionId = (props.sessionID as string) || (props.session_id as string);
     if (eventSessionId && eventSessionId !== currentSessionId) return;
+
+    // US-15.4: Boundary detection gate — in reconnect mode, ignore events for parts already in history
+    if (isReconnectMode.current) {
+      if (payload.type === "message.part.updated") {
+        const part = props.part as Record<string, unknown> | undefined;
+        const partId = part?.id as string | undefined;
+        if (partId && historyPartIds.current.has(partId)) {
+          return; // Already rendered from history
+        }
+        if (partId) {
+          knownLivePartIds.current.add(partId);
+        }
+      } else if (payload.type === "message.part.delta") {
+        const partId = props.partID as string | undefined;
+        if (partId && historyPartIds.current.has(partId)) {
+          return; // Delta for a history part — ignore
+        }
+        if (partId && !knownLivePartIds.current.has(partId)) {
+          return; // Orphan delta — ignore
+        }
+      }
+    }
 
     if (payload.type === "message.part.delta") {
       const delta = props.delta as string | undefined;
@@ -232,8 +322,16 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     } else if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (event.status === "idle" && event.session_id) {
-        notifySessionIdle(event.session_id);
+      if (event.session_id === sessionId) {
+        if (event.status === "idle") {
+          sseHasDrivenBusy.current = true;
+          notifySessionIdle(event.session_id);
+          setServerBusy(false);
+          reconcileOnIdle();
+        } else if (event.status === "busy") {
+          sseHasDrivenBusy.current = true;
+          setServerBusy(true);
+        }
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
@@ -271,9 +369,17 @@ export function ChatPage() {
         parseStreamEvent(oe, sessionId);
       }
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle]);
 
-  useEventStream(activeWorkspaceId, handleSSEEvent);
+  // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
+  const handleSSEReconnect = useCallback(() => {
+    if (workspaceId) {
+      sseHasDrivenBusy.current = false;
+      queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
+    }
+  }, [queryClient, workspaceId]);
+
+  useEventStream(activeWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
   const allMessages = [...(history ?? []), ...localMessages];
 
@@ -295,6 +401,8 @@ export function ChatPage() {
     activePartTypeRef.current = null;
     currentThinkingIdxRef.current = -1;
     currentTextIdxRef.current = -1;
+    isReconnectMode.current = false;
+    knownLivePartIds.current.clear();
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
