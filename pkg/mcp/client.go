@@ -27,8 +27,9 @@ const (
 	maxMessageSize = 1 * 1024 * 1024 // 1MB
 )
 
-// validID matches safe Kubernetes-style identifiers (alphanumeric, hyphens, dots, max 253 chars).
-var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-]{0,252}$`)
+// validID matches safe identifiers (alphanumeric, hyphens, dots, underscores, max 253 chars).
+// Underscores are required for opencode IDs (ses_abc, que_xyz, per_123).
+var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,252}$`)
 
 // validateID checks that an ID is safe to embed in a URL path.
 func validateID(id, fieldName string) error {
@@ -241,11 +242,15 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
 			var event struct {
-				Type    string `json:"type"`
-				Content string `json:"content"`
+				Type      string `json:"type"`
+				SessionID string `json:"session_id"`
+				Status    string `json:"status"`
+				EventType string `json:"event_type"`
+				Content   string `json:"content"`
 			}
 			if json.Unmarshal([]byte(data), &event) == nil {
-				if event.Type == "session.idle" {
+				// Detect session idle: direct session.status event from broker
+				if event.Type == "session.status" && event.Status == "idle" && event.SessionID == sessionID {
 					break
 				}
 				if event.Content != "" {

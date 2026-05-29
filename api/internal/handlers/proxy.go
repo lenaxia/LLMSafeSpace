@@ -18,6 +18,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
@@ -36,8 +37,9 @@ const (
 )
 
 type workspaceConfig struct {
-	workspaceID       string
-	maxActiveSessions int
+	workspaceID            string
+	maxActiveSessions      int
+	autoApprovePermissions bool
 }
 
 type ProxyHandler struct {
@@ -45,6 +47,7 @@ type ProxyHandler struct {
 	httpClient *http.Client
 	logger     pkginterfaces.LoggerInterface
 	namespace  string
+	dialect    agent.Dialect
 
 	pwCache   map[string]string
 	pwCacheMu sync.RWMutex
@@ -73,6 +76,7 @@ func NewProxyHandler(
 	logger pkginterfaces.LoggerInterface,
 	namespace string,
 	httpClient *http.Client,
+	dialect agent.Dialect,
 ) (*ProxyHandler, error) {
 	if k8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client cannot be nil")
@@ -97,6 +101,7 @@ func NewProxyHandler(
 		httpClient: httpClient,
 		logger:     logger,
 		namespace:  namespace,
+		dialect:    dialect,
 		pwCache:    make(map[string]string),
 		wsConfig:   make(map[string]workspaceConfig),
 		activeSess: make(map[string]map[string]bool),
@@ -873,6 +878,140 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 	if eventType == "session.updated" && h.sessionIndex != nil {
 		h.persistTitleFromEvent(workspaceID, rawData)
 	}
+
+	// Emit normalized input request events for questions/permissions
+	if h.dialect != nil {
+		h.emitNormalizedInputEvent(workspaceID, eventType, rawData)
+	}
+}
+
+// emitNormalizedInputEvent detects question/permission events from the agent
+// and publishes stable, agent-agnostic events for the frontend.
+func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData string) {
+	properties := json.RawMessage(rawData)
+
+	if h.dialect.IsQuestionAsked(eventType) {
+		req, err := h.dialect.ParseQuestionRequest(eventType, properties)
+		if err != nil {
+			h.logger.Warn("Failed to parse question event", "error", err, "workspaceID", workspaceID)
+			return
+		}
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type: "agent.question",
+			Data: req,
+		})
+	} else if h.dialect.IsQuestionResolved(eventType) {
+		var resolution struct {
+			ID        string `json:"id"`
+			SessionID string `json:"sessionID"`
+		}
+		json.Unmarshal(properties, &resolution)
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type: "agent.question.resolved",
+			Data: map[string]string{
+				"request_id": resolution.ID,
+				"session_id": resolution.SessionID,
+			},
+		})
+	} else if h.dialect.IsPermissionAsked(eventType) {
+		req, err := h.dialect.ParsePermissionRequest(eventType, properties)
+		if err != nil {
+			h.logger.Warn("Failed to parse permission event", "error", err, "workspaceID", workspaceID)
+			return
+		}
+
+		// Auto-approve if workspace has the setting enabled
+		if h.shouldAutoApprovePermissions(workspaceID) {
+			go h.autoApprovePermission(workspaceID, req.ID)
+			return
+		}
+
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type: "agent.permission",
+			Data: req,
+		})
+	} else if h.dialect.IsPermissionResolved(eventType) {
+		var resolution struct {
+			ID        string `json:"id"`
+			SessionID string `json:"sessionID"`
+			Reply     string `json:"reply"`
+		}
+		json.Unmarshal(properties, &resolution)
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type: "agent.permission.resolved",
+			Data: map[string]string{
+				"request_id": resolution.ID,
+				"session_id": resolution.SessionID,
+				"reply":      resolution.Reply,
+			},
+		})
+	}
+}
+
+// shouldAutoApprovePermissions checks the workspace CRD for the auto-approve setting.
+// Uses the wsConfig cache; falls back to a K8s read on cache miss.
+func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
+	h.wsConfigMu.RLock()
+	if cfg, ok := h.wsConfig[workspaceID]; ok {
+		h.wsConfigMu.RUnlock()
+		return cfg.autoApprovePermissions
+	}
+	h.wsConfigMu.RUnlock()
+
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return false // fail closed
+	}
+
+	h.wsConfigMu.Lock()
+	cfg := h.wsConfig[workspaceID]
+	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
+	h.wsConfig[workspaceID] = cfg
+	h.wsConfigMu.Unlock()
+
+	return workspace.Spec.AutoApprovePermissions
+}
+
+// autoApprovePermission sends a POST to the pod to approve a permission request.
+func (h *ProxyHandler) autoApprovePermission(workspaceID, requestID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil || workspace.Status.PodIP == "" {
+		h.logger.Warn("Cannot auto-approve permission: workspace not reachable",
+			"workspaceID", workspaceID, "requestID", requestID)
+		return
+	}
+
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		h.logger.Warn("Cannot auto-approve permission: password unavailable",
+			"workspaceID", workspaceID, "requestID", requestID)
+		return
+	}
+
+	targetPath := h.dialect.PermissionReplyPath(requestID)
+	targetURL := fmt.Sprintf("http://%s:%d%s", workspace.Status.PodIP, opencodePort, targetPath)
+
+	body := []byte(`{"reply":"always"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth("opencode", password)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Warn("Auto-approve permission failed", "error", err,
+			"workspaceID", workspaceID, "requestID", requestID)
+		return
+	}
+	resp.Body.Close()
+
+	h.logger.Info("Auto-approved permission",
+		"workspaceID", workspaceID, "requestID", requestID)
 }
 
 // persistTitleFromEvent extracts the session title from a session.updated SSE

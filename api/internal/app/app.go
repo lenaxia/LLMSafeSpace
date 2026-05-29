@@ -21,6 +21,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/credentials"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
@@ -58,7 +59,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize services: %w", err)
 	}
 
-	proxyHandler, err := handlers.NewProxyHandler(k8sClient, log, cfg.Kubernetes.Namespace, nil)
+	proxyHandler, err := handlers.NewProxyHandler(k8sClient, log, cfg.Kubernetes.Namespace, nil, &agentoc.Dialect{})
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
