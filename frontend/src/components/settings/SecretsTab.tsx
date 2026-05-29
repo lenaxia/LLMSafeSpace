@@ -508,12 +508,12 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
               <label className="text-sm font-medium inline-flex items-center gap-1">
                 {field === "mount_path" ? "File path" : field.replace(/_/g, " ")}
                 {FIELD_INFO[field] && (
-                  <span className="relative group cursor-help">
+                  <button type="button" className="relative group/tip cursor-help focus:outline-none" aria-label="More info">
                     <span className="text-muted-foreground text-xs">ⓘ</span>
-                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-50">
+                    <span className="absolute bottom-full left-0 mb-1 hidden group-focus-within/tip:block group-hover/tip:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-[100] font-normal">
                       {FIELD_INFO[field]}
                     </span>
-                  </span>
+                  </button>
                 )}
               </label>
               {field === "mount_path" ? (
@@ -566,12 +566,12 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       <div>
         <label className="text-sm font-medium inline-flex items-center gap-1">
           Notes
-          <span className="relative group cursor-help">
+          <button type="button" className="relative group/tip cursor-help focus:outline-none" aria-label="More info">
             <span className="text-muted-foreground text-xs">ⓘ</span>
-            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-50">
+            <span className="absolute bottom-full left-0 mb-1 hidden group-focus-within/tip:block group-hover/tip:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-[100] font-normal">
               {FIELD_INFO.notes}
             </span>
-          </span>
+          </button>
         </label>
         <Input
           value={metadata.notes || ""}
