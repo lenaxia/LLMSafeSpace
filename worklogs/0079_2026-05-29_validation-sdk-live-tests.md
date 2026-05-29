@@ -140,4 +140,4 @@ None.
 - `sdks/typescript/tests/live-integration.test.ts` — custom http.Agent fetch wrapper, retry on post-resume session, tolerant delete-phase assertion
 
 ### Worklog
-- `worklogs/0077_2026-05-29_validation-and-formatting.md`
+- `worklogs/0079_2026-05-29_validation-sdk-live-tests.md`
