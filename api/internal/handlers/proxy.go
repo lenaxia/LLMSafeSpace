@@ -247,6 +247,11 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		h.sseTracker.EnsureWatching(workspaceID)
 	}
 
+	// Emit any pending input requests so reconnecting browsers see them immediately.
+	if h.dialect != nil {
+		go h.emitPendingInputRequests(workspaceID)
+	}
+
 	ctx := c.Request.Context()
 	for {
 		select {

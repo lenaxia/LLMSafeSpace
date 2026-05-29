@@ -242,17 +242,47 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
 			var event struct {
-				Type      string `json:"type"`
-				SessionID string `json:"session_id"`
-				Status    string `json:"status"`
-				EventType string `json:"event_type"`
-				Content   string `json:"content"`
+				Type      string          `json:"type"`
+				SessionID string          `json:"session_id"`
+				Status    string          `json:"status"`
+				EventType string          `json:"event_type"`
+				Content   string          `json:"content"`
+				Data      json.RawMessage `json:"data"`
 			}
 			if json.Unmarshal([]byte(data), &event) == nil {
 				// Detect session idle: direct session.status event from broker
 				if event.Type == "session.status" && event.Status == "idle" && event.SessionID == sessionID {
 					break
 				}
+
+				// Detect question asked: agent is waiting for user input
+				if event.Type == "agent.question" {
+					// Verify it's for our session by checking the data
+					var qData struct {
+						SessionID string `json:"session_id"`
+					}
+					if json.Unmarshal(event.Data, &qData) == nil && qData.SessionID == sessionID {
+						// Return structured question result
+						result := map[string]interface{}{
+							"type":    "question",
+							"request": json.RawMessage(event.Data),
+						}
+						out, _ := json.Marshal(result)
+						return string(out), nil
+					}
+				}
+
+				// Detect permission asked: auto-approve in headless mode
+				if event.Type == "agent.permission" {
+					var pData struct {
+						ID        string `json:"id"`
+						SessionID string `json:"session_id"`
+					}
+					if json.Unmarshal(event.Data, &pData) == nil && pData.SessionID == sessionID {
+						go c.PermissionReply(ctx, workspaceID, pData.ID, "always", "")
+					}
+				}
+
 				if event.Content != "" {
 					response.WriteString(event.Content)
 				}
@@ -278,4 +308,43 @@ func (c *HTTPClient) fallbackHistory(ctx context.Context, workspaceID, sessionID
 		return msgs[len(msgs)-1].Content, nil
 	}
 	return "", nil
+}
+
+// validQuestionID matches opencode question request IDs.
+var validQuestionID = regexp.MustCompile(`^que_[a-zA-Z0-9]+$`)
+
+// validPermissionID matches opencode permission request IDs.
+var validPermissionID = regexp.MustCompile(`^per_[a-zA-Z0-9_]+$`)
+
+func (c *HTTPClient) QuestionReply(ctx context.Context, workspaceID, requestID string, answers [][]string) error {
+	if !validQuestionID.MatchString(requestID) {
+		return fmt.Errorf("invalid question request ID: %s", requestID)
+	}
+	body := map[string]interface{}{"answers": answers}
+	path := fmt.Sprintf("/api/v1/workspaces/%s/question/%s/reply", workspaceID, requestID)
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
+}
+
+func (c *HTTPClient) QuestionReject(ctx context.Context, workspaceID, requestID string) error {
+	if !validQuestionID.MatchString(requestID) {
+		return fmt.Errorf("invalid question request ID: %s", requestID)
+	}
+	path := fmt.Sprintf("/api/v1/workspaces/%s/question/%s/reject", workspaceID, requestID)
+	return c.doJSON(ctx, http.MethodPost, path, nil, nil)
+}
+
+func (c *HTTPClient) PermissionReply(ctx context.Context, workspaceID, requestID, reply, message string) error {
+	if !validPermissionID.MatchString(requestID) {
+		return fmt.Errorf("invalid permission request ID: %s", requestID)
+	}
+	validReplies := map[string]bool{"once": true, "always": true, "reject": true}
+	if !validReplies[reply] {
+		return fmt.Errorf("reply must be 'once', 'always', or 'reject'")
+	}
+	body := map[string]interface{}{"reply": reply}
+	if message != "" {
+		body["message"] = message
+	}
+	path := fmt.Sprintf("/api/v1/workspaces/%s/permission/%s/reply", workspaceID, requestID)
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }

@@ -1,10 +1,17 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/lenaxia/llmsafespace/pkg/agent"
 )
 
 var (
@@ -70,4 +77,91 @@ func (h *ProxyHandler) PermissionReply(c *gin.Context) {
 		return
 	}
 	h.proxyToWorkspace(c, h.dialect.PermissionReplyPath(requestID), false, "")
+}
+
+// emitPendingInputRequests fetches pending questions and permissions from the pod
+// and publishes them as synthetic events so reconnecting browsers see them immediately.
+func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		return
+	}
+
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+
+	podIP := workspace.Status.PodIP
+
+	// Fetch and emit pending questions
+	if body, err := h.fetchFromPod(ctx, podIP, password, h.dialect.QuestionListPath()); err == nil {
+		for _, req := range h.parseQuestionList(body) {
+			h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.question", Data: req})
+		}
+	}
+
+	// Fetch and emit pending permissions (only if not auto-approving)
+	if !h.shouldAutoApprovePermissions(workspaceID) {
+		if body, err := h.fetchFromPod(ctx, podIP, password, h.dialect.PermissionListPath()); err == nil {
+			for _, req := range h.parsePermissionList(body) {
+				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.permission", Data: req})
+			}
+		}
+	}
+}
+
+// fetchFromPod makes a GET request to the workspace pod.
+func (h *ProxyHandler) fetchFromPod(ctx context.Context, podIP, password, path string) ([]byte, error) {
+	url := "http://" + podIP + ":" + "4096" + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Warn("Failed to fetch pending input requests", "error", err, "path", path)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, err
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// parseQuestionList parses the response from GET /question into normalized requests.
+func (h *ProxyHandler) parseQuestionList(body []byte) []*agent.QuestionRequest {
+	var raw []json.RawMessage
+	if json.Unmarshal(body, &raw) != nil {
+		return nil
+	}
+	var results []*agent.QuestionRequest
+	for _, r := range raw {
+		if req, err := h.dialect.ParseQuestionRequest("question.asked", r); err == nil {
+			results = append(results, req)
+		}
+	}
+	return results
+}
+
+// parsePermissionList parses the response from GET /permission into normalized requests.
+func (h *ProxyHandler) parsePermissionList(body []byte) []*agent.PermissionRequest {
+	var raw []json.RawMessage
+	if json.Unmarshal(body, &raw) != nil {
+		return nil
+	}
+	var results []*agent.PermissionRequest
+	for _, r := range raw {
+		if req, err := h.dialect.ParsePermissionRequest("permission.asked", r); err == nil {
+			results = append(results, req)
+		}
+	}
+	return results
 }
