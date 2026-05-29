@@ -49,7 +49,10 @@ func (s *SessionsService) Ensure(ctx context.Context, workspaceID string) (*Ensu
 }
 
 func (s *SessionsService) SendMessage(ctx context.Context, workspaceID, sessionID, content string) (*MessageResponse, error) {
-	body := map[string]string{"content": content}
+	body := map[string]any{
+		"content": content,
+		"parts":   []map[string]string{{"type": "text", "text": content}},
+	}
 	var raw json.RawMessage
 	err := s.c.do(ctx, "POST", fmt.Sprintf("/workspaces/%s/sessions/%s/message", workspaceID, sessionID), body, &raw)
 	if err != nil {

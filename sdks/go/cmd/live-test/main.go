@@ -111,7 +111,7 @@ func main() {
 
 	c := NewClient(apiURL, apiKey)
 
-	fmt.Println("=== Go SDK Live Integration Test ===\n")
+	fmt.Println("=== Go SDK Live Integration Test ===")
 
 	// --- 1. Auth ---
 	fmt.Println("--- Auth ---")

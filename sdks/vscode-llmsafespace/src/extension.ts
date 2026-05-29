@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { WorkspaceTreeProvider } from "./providers/workspace-tree";
+import { registerChatParticipant } from "./providers/chat-participant";
+import { registerTerminalCommand } from "./providers/terminal-provider";
 import { ApiService } from "./services/api";
 import {
   registerCreateWorkspaceCommand,
@@ -30,7 +32,11 @@ export function activate(context: vscode.ExtensionContext) {
     registerResumeCommand(apiService, treeProvider),
     registerActivateCommand(apiService, treeProvider),
     registerTerminateCommand(apiService, treeProvider),
+    registerTerminalCommand(context, apiService),
   );
+
+  // Register chat participant
+  registerChatParticipant(context, apiService);
 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import WebSocket from "ws";
 import { ApiService } from "../services/api";
 
 /**
@@ -56,9 +57,9 @@ class WebSocketPty implements vscode.Pseudoterminal {
   open(): void {
     this.ws = new WebSocket(this.url);
 
-    this.ws.onmessage = (event) => {
+    this.ws.on("message", (data: WebSocket.Data) => {
       try {
-        const msg = JSON.parse(event.data as string);
+        const msg = JSON.parse(data.toString());
         switch (msg.type) {
           case "output":
             this.writeEmitter.fire(msg.data);
@@ -74,16 +75,16 @@ class WebSocketPty implements vscode.Pseudoterminal {
       } catch {
         // Non-JSON message, ignore
       }
-    };
+    });
 
-    this.ws.onerror = () => {
+    this.ws.on("error", () => {
       this.writeEmitter.fire("\r\n[Connection error]\r\n");
       this.closeEmitter.fire(1);
-    };
+    });
 
-    this.ws.onclose = () => {
+    this.ws.on("close", () => {
       this.closeEmitter.fire(0);
-    };
+    });
   }
 
   close(): void {

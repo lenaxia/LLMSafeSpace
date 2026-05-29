@@ -112,7 +112,7 @@ export class LLMSafeSpace {
       }
     }
 
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204 || res.status === 202) return undefined as T;
     return res.json() as Promise<T>;
   }
 
@@ -195,7 +195,7 @@ class SessionsAPI {
     const raw = await this.client.request<unknown>(
       "POST",
       `/workspaces/${workspaceId}/sessions/${sessionId}/message`,
-      { content },
+      { content, parts: [{ type: "text", text: content }] },
     );
     return { raw, content: extractTextContent(raw) };
   }

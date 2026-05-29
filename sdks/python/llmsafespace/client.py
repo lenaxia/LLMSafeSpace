@@ -167,7 +167,7 @@ class _SessionsAPI:
         return self._c._request("GET", f"/workspaces/{workspace_id}/sessions")
 
     def send_message(self, workspace_id: str, session_id: str, content: str) -> MessageResponse:
-        raw = self._c._request("POST", f"/workspaces/{workspace_id}/sessions/{session_id}/message", json={"content": content})
+        raw = self._c._request("POST", f"/workspaces/{workspace_id}/sessions/{session_id}/message", json={"content": content, "parts": [{"type": "text", "text": content}]})
         text = _extract_text(raw)
         return MessageResponse(raw=raw, content=text)
 
