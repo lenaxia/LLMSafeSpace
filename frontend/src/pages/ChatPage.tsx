@@ -468,7 +468,10 @@ export function ChatPage() {
           <span className="text-muted-foreground/50 mx-1">/</span>
           <span>{sessionDisplayName}</span>
         </h2>
-        <KebabMenu items={kebabItems} />
+        <KebabMenu items={kebabItems} footer={[
+          ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
+          ...(workspace?.runtime ? [`runtime: ${workspace.runtime}`] : []),
+        ]} />
       </div>
 
       {isSuspended && (

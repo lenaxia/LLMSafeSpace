@@ -13,9 +13,10 @@ export interface KebabMenuItem {
 interface Props {
   items: KebabMenuItem[];
   align?: "left" | "right";
+  footer?: string[];
 }
 
-export function KebabMenu({ items, align = "right" }: Props) {
+export function KebabMenu({ items, align = "right", footer }: Props) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -62,7 +63,7 @@ export function KebabMenu({ items, align = "right" }: Props) {
           style={{ top: pos.top, left: pos.left }}
           role="menu"
         >
-          {items.map((item, i) => (
+          {items.filter(i => !i.destructive).map((item, i) => (
             <button
               key={i}
               role="menuitem"
@@ -76,9 +77,40 @@ export function KebabMenu({ items, align = "right" }: Props) {
               }}
               className={cn(
                 "flex w-full items-center px-3 py-1.5 text-left text-xs transition-colors",
-                item.destructive
-                  ? "text-destructive hover:bg-destructive/10"
-                  : "text-foreground hover:bg-accent",
+                "text-foreground hover:bg-accent",
+                item.disabled && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+          {footer && footer.length > 0 && (
+            <div className="border-t border-border mx-2 my-1 pt-1">
+              {footer.map((line, i) => (
+                <div key={i} className="px-3 py-0.5 text-[10px] text-muted-foreground select-text">
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+          {items.filter(i => i.destructive).length > 0 && (
+            <div className="border-t border-border mx-2 my-1" />
+          )}
+          {items.filter(i => i.destructive).map((item, i) => (
+            <button
+              key={`d-${i}`}
+              role="menuitem"
+              disabled={item.disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!item.disabled) {
+                  item.onClick();
+                  setOpen(false);
+                }
+              }}
+              className={cn(
+                "flex w-full items-center px-3 py-1.5 text-left text-xs transition-colors",
+                "text-destructive hover:bg-destructive/10",
                 item.disabled && "opacity-50 cursor-not-allowed",
               )}
             >
