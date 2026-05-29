@@ -20,6 +20,7 @@ type SessionIdleCallback func(workspaceID, sessionID string)
 type RawEventCallback func(workspaceID, eventType, rawData string)
 
 type sseEvent struct {
+	ID         string          `json:"id"`
 	Type       string          `json:"type"`
 	Properties json.RawMessage `json:"properties"`
 }

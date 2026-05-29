@@ -349,6 +349,10 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 
 	podIP := workspace.Status.PodIP
+	// NOTE: stripPatch is intentionally false (streaming mode). If re-enabled,
+	// you MUST strip Accept-Encoding from the upstream request because opencode
+	// v1.15+ compresses JSON responses >1KB via gzip/deflate, which would break
+	// json.Unmarshal in stripPatchParts(). See worklog 0070 for full analysis.
 	stripPatch := false
 	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
@@ -487,6 +491,12 @@ func stripVerboseQuery(rawQuery string) string {
 		return rawQuery
 	}
 	values.Del("verbose")
+	// Strip workspace routing params — LLMSafeSpace manages workspace routing
+	// at the pod level (OPENCODE_WORKSPACE_ID env var), not via query params.
+	// opencode v1.15+ validates these with Effect Schema and returns 400 for
+	// invalid values, so stripping prevents accidental client-originated errors.
+	values.Del("workspace")
+	values.Del("directory")
 	return values.Encode()
 }
 
@@ -869,28 +879,20 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 // event and writes it to the session index. This ensures PostgreSQL always has
 // the latest title without requiring a separate fetch from opencode.
 func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
-	// Try flat format: {"type":"session.updated","properties":{"id":"...","title":"..."}}
-	var flat struct {
+	// opencode session.updated event shape (both v1.2 and v1.15):
+	//   {"type":"session.updated","properties":{"sessionID":"ses_...","info":{"id":"ses_...","title":"..."}}}
+	// v1.15 also has a top-level "id" field (ignored by Go JSON decoder).
+	var evt struct {
 		Properties struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		} `json:"properties"`
-	}
-	if json.Unmarshal([]byte(rawData), &flat) == nil && flat.Properties.ID != "" && flat.Properties.Title != "" {
-		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, flat.Properties.ID, flat.Properties.Title)
-		return
-	}
-	// Try nested format: {"payload":{"type":"session.updated","properties":{"id":"...","title":"..."}}}
-	var nested struct {
-		Payload struct {
-			Properties struct {
+			SessionID string `json:"sessionID"`
+			Info      struct {
 				ID    string `json:"id"`
 				Title string `json:"title"`
-			} `json:"properties"`
-		} `json:"payload"`
+			} `json:"info"`
+		} `json:"properties"`
 	}
-	if json.Unmarshal([]byte(rawData), &nested) == nil && nested.Payload.Properties.ID != "" && nested.Payload.Properties.Title != "" {
-		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, nested.Payload.Properties.ID, nested.Payload.Properties.Title)
+	if json.Unmarshal([]byte(rawData), &evt) == nil && evt.Properties.Info.ID != "" && evt.Properties.Info.Title != "" {
+		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, evt.Properties.Info.ID, evt.Properties.Info.Title)
 	}
 }
 
