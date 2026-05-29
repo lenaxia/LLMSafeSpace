@@ -13,8 +13,13 @@ import {
 
 let refreshInterval: ReturnType<typeof setInterval> | undefined;
 let apiService: ApiService | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  outputChannel = vscode.window.createOutputChannel("LLMSafeSpace");
+  context.subscriptions.push(outputChannel);
+  outputChannel.appendLine(`LLMSafeSpace extension activated (v${context.extension.packageJSON.version})`);
+
   apiService = new ApiService(context);
   const treeProvider = new WorkspaceTreeProvider(apiService);
 
