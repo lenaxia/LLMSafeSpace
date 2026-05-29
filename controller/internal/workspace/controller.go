@@ -198,6 +198,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspace.Status.PodName = existingPod.Name
 		workspace.Status.PodNamespace = existingPod.Namespace
 		workspace.Status.PodIP = existingPod.Status.PodIP
+		workspace.Status.ImageTag = imageTagFromPod(existingPod)
 		workspace.Status.Endpoint = fmt.Sprintf("http://%s:4096", existingPod.Status.PodIP)
 		workspace.Status.StartTime = &now
 		workspace.Status.Message = ""
@@ -805,6 +806,20 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // sanitizeLabelValue replaces characters invalid in K8s label values.
 func sanitizeLabelValue(s string) string {
 	return strings.ReplaceAll(s, ":", "_")
+}
+
+// imageTagFromPod extracts the image tag (portion after the last colon) from
+// the first container's image reference. Returns the full image ref if no tag
+// separator is found.
+func imageTagFromPod(pod *corev1.Pod) string {
+	if len(pod.Spec.Containers) == 0 {
+		return ""
+	}
+	image := pod.Spec.Containers[0].Image
+	if i := strings.LastIndex(image, ":"); i >= 0 {
+		return image[i+1:]
+	}
+	return image
 }
 
 func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.WorkspaceConditionType, status, reason, message string) {

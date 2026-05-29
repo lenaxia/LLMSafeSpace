@@ -91,6 +91,7 @@ export interface WorkspaceStatus {
   credentialState?: CredentialState;
   agentHealth?: AgentHealth;
   sessions?: AgentSessionInfo[];
+  imageTag?: string;
   diskUsedBytes?: number;
   diskTotalBytes?: number;
 }

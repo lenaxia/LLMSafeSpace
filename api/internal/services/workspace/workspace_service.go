@@ -462,6 +462,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 		PVCName:        crd.Status.PVCName,
 		ActiveSessions: int(crd.Status.ActiveSessions),
 		Message:        crd.Status.Message,
+		ImageTag:       crd.Status.ImageTag,
 	}
 	if crd.Status.LastActivityAt != nil {
 		t := crd.Status.LastActivityAt.Time

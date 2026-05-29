@@ -436,6 +436,7 @@ type WorkspaceStatusResult struct {
 	CredentialState CredentialStateResult      `json:"credentialState"`
 	AgentHealth     AgentHealthResult          `json:"agentHealth"`
 	Sessions        []SessionStatusItem        `json:"sessions,omitempty"`
+	ImageTag        string                     `json:"imageTag,omitempty"`
 	DiskUsedBytes   int64                      `json:"diskUsedBytes,omitempty"`
 	DiskTotalBytes  int64                      `json:"diskTotalBytes,omitempty"`
 }

@@ -207,6 +207,7 @@ type WorkspaceStatus struct {
 	PodName                   string       `json:"podName,omitempty"`
 	PodNamespace              string       `json:"podNamespace,omitempty"`
 	PodIP                     string       `json:"podIP,omitempty"`
+	ImageTag                  string       `json:"imageTag,omitempty"`
 	Endpoint                  string       `json:"endpoint,omitempty"`
 	StartTime                 *metav1.Time `json:"startTime,omitempty"`
 	RestartCount              int32        `json:"restartCount,omitempty"`
