@@ -280,6 +280,15 @@ function WorkspaceGroup({
   const isActive = workspace.phase === "Active";
 
   const [showSettings, setShowSettings] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Read cached status (populated by ChatPage's useWorkspaceStatus) — no extra fetch
+  const cachedStatus = queryClient.getQueryData<{ agentHealth?: { agentVersion?: string }; imageTag?: string }>(["workspace-status", workspace.id]);
+
+  const versionFooter: string[] = [
+    ...(cachedStatus?.agentHealth?.agentVersion ? [`opencode v${cachedStatus.agentHealth.agentVersion}`] : []),
+    ...(cachedStatus?.imageTag ? [`image: ${cachedStatus.imageTag}`] : []),
+  ];
 
   const kebabItems: KebabMenuItem[] = [
     { label: "Settings", onClick: () => setShowSettings(true) },
@@ -350,7 +359,7 @@ function WorkspaceGroup({
             </button>
           )}
           <div className="mr-1">
-            <KebabMenu items={kebabItems} align="left" />
+            <KebabMenu items={kebabItems} align="left" footer={versionFooter.length > 0 ? versionFooter : undefined} />
           </div>
         </div>
       )}
