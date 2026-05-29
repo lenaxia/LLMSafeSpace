@@ -35,11 +35,12 @@ FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f206
 ARG TARGETARCH=amd64
 
 # Override to use a different release: --build-arg OPENCODE_VERSION=<version>
-# Pinned to 1.2.27 (March 2026) — matches the version validated against the
-# proxy code in api/internal/handlers/proxy.go. Newer releases may introduce
-# HTTP API changes; bump deliberately and re-validate the proxy session/event
-# paths before changing this default.
-ARG OPENCODE_VERSION=1.2.27
+# Pinned to 1.15.12 (May 2026) — validated against the proxy code in
+# api/internal/handlers/proxy.go and session_tracker.go. See worklog 0070
+# for the full v1.2.27→v1.15.12 impact analysis (15 items, all non-breaking).
+# Key changes: Effect HttpApi replaces Hono, events gain "id" field, responses
+# may be gzip-compressed (proxy streams transparently).
+ARG OPENCODE_VERSION=1.15.12
 
 ARG MISE_VERSION=2026.5.15
 
