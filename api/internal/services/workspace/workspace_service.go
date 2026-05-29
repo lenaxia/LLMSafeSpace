@@ -464,6 +464,24 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 		Message:        crd.Status.Message,
 		ImageTag:       crd.Status.ImageTag,
 	}
+
+	// Fallback: if controller hasn't set ImageTag yet (pre-upgrade pods), read from pod spec
+	if result.ImageTag == "" && crd.Status.PodName != "" {
+		ns := crd.Status.PodNamespace
+		if ns == "" {
+			ns = s.config.Namespace
+		}
+		if pod, podErr := s.k8sClient.Clientset().CoreV1().Pods(ns).Get(ctx, crd.Status.PodName, metav1.GetOptions{}); podErr == nil {
+			if len(pod.Spec.Containers) > 0 {
+				image := pod.Spec.Containers[0].Image
+				if i := strings.LastIndex(image, ":"); i >= 0 {
+					result.ImageTag = image[i+1:]
+				} else {
+					result.ImageTag = image
+				}
+			}
+		}
+	}
 	if crd.Status.LastActivityAt != nil {
 		t := crd.Status.LastActivityAt.Time
 		result.LastActivityAt = &t
