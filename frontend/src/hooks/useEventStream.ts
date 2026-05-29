@@ -7,9 +7,12 @@ const MAX_RECONNECT_MS = 30_000;
 export function useEventStream(
   workspaceId: string | undefined,
   onEvent: (data: unknown) => void,
+  options?: { onReconnect?: () => void },
 ) {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const onReconnectRef = useRef(options?.onReconnect);
+  onReconnectRef.current = options?.onReconnect;
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -18,6 +21,7 @@ export function useEventStream(
     let retryDelay = MIN_RECONNECT_MS;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let abortCtrl = new AbortController();
+    let hasConnectedOnce = false;
 
     async function connect() {
       if (cancelled) return;
@@ -39,6 +43,12 @@ export function useEventStream(
 
         // Successful connection — reset backoff
         retryDelay = MIN_RECONNECT_MS;
+
+        // Fire onReconnect on subsequent connections (not the first)
+        if (hasConnectedOnce) {
+          onReconnectRef.current?.();
+        }
+        hasConnectedOnce = true;
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();

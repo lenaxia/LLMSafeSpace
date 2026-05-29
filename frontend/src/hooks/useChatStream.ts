@@ -8,8 +8,8 @@ import type { Message } from "../api/types";
 // back to getHistory after this many ms.
 const IDLE_WAIT_TIMEOUT_MS = 60_000;
 
-export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined) {
-  const [streaming, setStreaming] = useState(false);
+export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined, serverBusy = false) {
+  const [localStreaming, setLocalStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -27,7 +27,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const send = useCallback(
     async (text: string, onComplete: (msg: Message) => void) => {
       if (!workspaceId || !sessionId) return;
-      setStreaming(true);
+      setLocalStreaming(true);
       setError(null);
       setAtCapRetryAfter(null);
       abortRef.current = new AbortController();
@@ -77,7 +77,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           setError(message);
         }
       } finally {
-        setStreaming(false);
+        setLocalStreaming(false);
         idleResolverRef.current = null;
         abortRef.current = null;
         cleanupBeaconRef.current?.();
@@ -94,10 +94,14 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const clearError = useCallback(() => setError(null), []);
   const clearAtCap = useCallback(() => setAtCapRetryAfter(null), []);
 
+  // effectiveStreaming: local send takes priority; server state supplements
+  const effectiveStreaming = localStreaming || serverBusy;
+
   return {
     send,
     abort,
-    streaming,
+    streaming: effectiveStreaming,
+    localStreaming,
     notifySessionIdle,
     error,
     clearError,
