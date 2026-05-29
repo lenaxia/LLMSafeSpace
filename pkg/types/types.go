@@ -420,6 +420,8 @@ type WorkspaceListItem struct {
 	Runtime           string    `json:"runtime"`
 	StorageSize       string    `json:"storageSize"`
 	Phase             string    `json:"phase,omitempty"`
+	ImageTag          string    `json:"imageTag,omitempty"`
+	AgentVersion      string    `json:"agentVersion,omitempty"`
 	MaxActiveSessions int       `json:"maxActiveSessions,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -473,15 +475,17 @@ type WorkspaceConditionResult struct {
 
 // WorkspaceMetadata is the database record for a workspace.
 type WorkspaceMetadata struct {
-	ID          string    `json:"id" db:"id"`
-	UserID      string    `json:"userId" db:"user_id"`
-	Name        string    `json:"name" db:"name"`
-	Runtime     string    `json:"runtime" db:"runtime"`
-	StorageSize string    `json:"storageSize" db:"storage_size"`
-	Phase       string    `json:"phase" db:"phase"`
-	PVCState    string    `json:"pvcState" db:"pvc_state"`
-	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
+	ID           string    `json:"id" db:"id"`
+	UserID       string    `json:"userId" db:"user_id"`
+	Name         string    `json:"name" db:"name"`
+	Runtime      string    `json:"runtime" db:"runtime"`
+	StorageSize  string    `json:"storageSize" db:"storage_size"`
+	Phase        string    `json:"phase" db:"phase"`
+	PVCState     string    `json:"pvcState" db:"pvc_state"`
+	ImageTag     string    `json:"imageTag" db:"image_tag"`
+	AgentVersion string    `json:"agentVersion" db:"agent_version"`
+	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
 }
 
 // WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.

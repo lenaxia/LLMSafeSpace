@@ -280,14 +280,10 @@ function WorkspaceGroup({
   const isActive = workspace.phase === "Active";
 
   const [showSettings, setShowSettings] = useState(false);
-  const queryClient = useQueryClient();
-
-  // Read cached status (populated by ChatPage's useWorkspaceStatus) — no extra fetch
-  const cachedStatus = queryClient.getQueryData<{ agentHealth?: { agentVersion?: string }; imageTag?: string }>(["workspace-status", workspace.id]);
 
   const versionFooter: string[] = [
-    ...(cachedStatus?.agentHealth?.agentVersion ? [`opencode v${cachedStatus.agentHealth.agentVersion}`] : []),
-    ...(cachedStatus?.imageTag ? [`image: ${cachedStatus.imageTag}`] : []),
+    ...(workspace.agentVersion ? [`opencode v${workspace.agentVersion}`] : []),
+    ...(workspace.imageTag ? [`image: ${workspace.imageTag}`] : []),
   ];
 
   const kebabItems: KebabMenuItem[] = [
