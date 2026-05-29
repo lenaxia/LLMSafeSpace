@@ -171,93 +171,53 @@ func TestGenerateToken(t *testing.T) {
 	assert.NotEmpty(t, claims["iat"])
 }
 
+// TestValidateToken_LegacyCases covers the original ValidateToken paths.
+// The G18 fix made cache call counts harder to assert with mock matchers
+// (an additional jti-keyed Get fires on the success path), so this test now
+// uses the in-memory cache from auth_revocation_test.go for clarity. The
+// dedicated G18 regression tests live in auth_revocation_test.go.
 func TestValidateToken(t *testing.T) {
-	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
-
-	// Create service
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "test-secret"
 	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
 
-	// Create mock service instances
-	mockDbService := new(mocks.MockDatabaseService)
-	mockCacheService := new(mocks.MockCacheService)
+	mockDB := new(mocks.MockDatabaseService)
+	cache := newMemCache()
 
-	// Create service with mocks
-	service, err := New(cfg, log, mockDbService, mockCacheService)
-	assert.NoError(t, err)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
 
-	// Generate a valid token
 	userID := "user123"
-	token, _ := service.GenerateToken(userID)
+	token, err := service.GenerateToken(userID)
+	require.NoError(t, err)
 
-	// Test case: Valid token
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.MatchedBy(func(k string) bool {
-		return strings.HasPrefix(k, "token:")
-	})).Return("", errors.New("not found")).Once()
-	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.MatchedBy(func(k string) bool {
-		return strings.HasPrefix(k, "token:")
-	}), userID, mock.Anything).Return(nil).Once()
+	// Valid token round-trip.
+	got, err := service.ValidateToken(token)
+	require.NoError(t, err)
+	require.Equal(t, userID, got)
 
-	// Configure the service to recognize API keys
-	service.config.Auth.APIKeyPrefix = "api_"
+	// Invalid token format (treated as JWT but parses fail; not API key).
+	mockDB.On("GetUserByAPIKey", mock.Anything, "invalid-token").
+		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
+	got, err = service.ValidateToken("invalid-token")
+	require.Error(t, err)
+	require.Empty(t, got)
 
-	extractedUserID, err := service.ValidateToken(token)
-	assert.NoError(t, err)
-	assert.Equal(t, userID, extractedUserID)
-
-	// Test case: Invalid token
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.MatchedBy(func(k string) bool {
-		return strings.HasPrefix(k, "token:")
-	})).Return("", errors.New("not found")).Once()
-
-	// For API key format tokens, we need to mock the database call
-	user := (*types.User)(nil)
-	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "invalid-token").
-		Return(user, errors.New("invalid API key")).Maybe()
-
-	extractedUserID, err = service.ValidateToken("invalid-token")
-	assert.Error(t, err)
-	assert.Equal(t, "", extractedUserID)
-
-	// Test case: Expired token
-	// Create a token that's already expired
-	expiredToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	// Expired token.
+	expired := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": userID,
 		"exp": time.Now().Add(-1 * time.Hour).Unix(),
 		"iat": time.Now().Add(-2 * time.Hour).Unix(),
 	})
-	tokenString, _ := expiredToken.SignedString(service.jwtSecret)
-
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.MatchedBy(func(k string) bool {
-		return strings.HasPrefix(k, "token:")
-	})).Return("", errors.New("not found")).Once()
-
-	// For API key format tokens, we need to mock the database call
-	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), tokenString).
+	expiredString, _ := expired.SignedString(service.jwtSecret)
+	mockDB.On("GetUserByAPIKey", mock.Anything, expiredString).
 		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
-
-	extractedUserID, err = service.ValidateToken(tokenString)
-	assert.Error(t, err)
-	assert.Equal(t, "", extractedUserID)
-	assert.Contains(t, err.Error(), "token is expired", "should detect expired token")
-
-	// Test case: Revoked token
-	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), mock.MatchedBy(func(k string) bool {
-		return strings.HasPrefix(k, "token:")
-	})).Return("revoked", nil).Once()
-
-	// For API key format tokens, we need to mock the database call
-	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), token).
-		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
-
-	extractedUserID, err = service.ValidateToken(token)
-	assert.Error(t, err)
-	assert.Equal(t, "", extractedUserID)
-	assert.Contains(t, err.Error(), "token has been revoked")
-
-	mockCacheService.AssertExpectations(t)
+	got, err = service.ValidateToken(expiredString)
+	require.Error(t, err)
+	require.Empty(t, got)
+	require.Contains(t, err.Error(), "token is expired")
 }
 
 func TestRevokeToken(t *testing.T) {
@@ -301,10 +261,10 @@ func TestRevokeToken(t *testing.T) {
 		t.Fatal("invalid expiration time format in token")
 	}
 
-	// Test token revocation
+	// Test token revocation: G18 fix writes BOTH token:<hash> and token:<jti>.
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }),
-		mock.MatchedBy(func(key string) bool { return key[:6] == "token:" }),
-		"revoked", mock.Anything).Return(nil).Once()
+		mock.MatchedBy(func(key string) bool { return len(key) > 6 && key[:6] == "token:" }),
+		"revoked", mock.Anything).Return(nil).Twice()
 
 	err = service.RevokeToken(token)
 	assert.NoError(t, err)

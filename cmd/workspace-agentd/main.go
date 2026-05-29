@@ -331,6 +331,16 @@ func main() {
 	}
 	defer log.Sync()
 
+	// Subcommand dispatch. The materialize subcommand reads
+	// /sandbox-cfg/secrets.json and applies it via pkg/agentd/secrets, then
+	// exits. This replaces the legacy bash secret-loop in
+	// runtimes/base/tools/entrypoints/entrypoint-common.sh and consolidates
+	// secret materialization in a single, tested code path. See worklog
+	// 0078 (Epic 17 G2/G20 remediation).
+	if len(os.Args) > 1 && os.Args[1] == "materialize" {
+		os.Exit(runMaterializeCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	supervise := len(os.Args) > 1 && os.Args[1] == "--supervise"
 
 	pw, err := os.ReadFile(agentd.PasswordPath)
@@ -389,54 +399,7 @@ func main() {
 		})
 	})
 
-	mux.HandleFunc("/v1/reload-secrets", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var secrets []struct {
-			Type      string          `json:"type"`
-			Name      string          `json:"name"`
-			Metadata  json.RawMessage `json:"metadata"`
-			Plaintext string          `json:"plaintext"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&secrets); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid json: " + err.Error()})
-			return
-		}
-		if err := materializeSecrets(secrets); err != nil {
-			log.Error("reload-secrets: materialize failed", zap.Error(err))
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		log.Info("secrets reloaded", zap.Int("count", len(secrets)))
-
-		// If env vars or LLM config present, restart opencode to pick them up
-		hasEnvOrLLM := false
-		for _, s := range secrets {
-			if s.Type == "env-secret" || s.Type == "llm-provider" {
-				hasEnvOrLLM = true
-				break
-			}
-		}
-		restarted := false
-		if hasEnvOrLLM && proc != nil {
-			log.Info("env/llm secrets changed, restarting opencode")
-			proc.restart()
-			restarted = true
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"reloaded":  len(secrets),
-			"restarted": restarted,
-		})
-	})
+	mux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc))
 
 	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -494,7 +457,7 @@ func (p *managedProcess) start() {
 	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", fmt.Sprintf("%d", agentd.AgentPort))
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr
-	p.cmd.Env = buildEnv()
+	p.cmd.Env = buildEnvFrom(agentd.SecretsEnvPath)
 	if err := p.cmd.Start(); err != nil {
 		log.Error("failed to start opencode", zap.Error(err))
 		return
@@ -574,150 +537,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func buildEnv() []string {
-	env := os.Environ()
-	// Source secrets-env file if it exists
-	data, err := os.ReadFile(agentd.SecretsEnvPath)
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "export ") {
-				kv := strings.TrimPrefix(line, "export ")
-				// Remove surrounding quotes from value
-				kv = strings.Replace(kv, "='", "=", 1)
-				kv = strings.TrimSuffix(kv, "'")
-				env = append(env, kv)
-			}
-		}
-	}
-	return env
-}
-
-var secretsBaseDir = agentd.SecretsBasePath
-
-func materializeSecrets(secrets []struct {
-	Type      string          `json:"type"`
-	Name      string          `json:"name"`
-	Metadata  json.RawMessage `json:"metadata"`
-	Plaintext string          `json:"plaintext"`
-}) error {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = "/home/sandbox"
-	}
-	sshDir := home + "/.ssh"
-
-	// Full replace: clean everything first
-	os.RemoveAll(secretsBaseDir)
-	os.MkdirAll(secretsBaseDir, 0700)
-	os.RemoveAll(sshDir)
-	os.MkdirAll(sshDir, 0700)
-	os.Remove(home + "/.git-credentials")
-	os.Remove(agentd.AgentConfigPath)
-	os.Remove(agentd.SecretsEnvPath)
-
-	var errors []string
-
-	for _, s := range secrets {
-		var meta map[string]string
-		json.Unmarshal(s.Metadata, &meta)
-
-		if s.Name == "" {
-			errors = append(errors, fmt.Sprintf("%s: empty name", s.Type))
-			continue
-		}
-
-		var err error
-		switch s.Type {
-		case "llm-provider":
-			err = os.WriteFile(agentd.AgentConfigPath, []byte(s.Plaintext), 0600)
-
-		case "ssh-key":
-			keyType := meta["key_type"]
-			if keyType == "" {
-				keyType = "ed25519"
-			}
-			keyPath := sshDir + "/id_" + keyType + "_" + s.Name
-			if err = os.WriteFile(keyPath, []byte(s.Plaintext), 0600); err != nil {
-				break
-			}
-			host := meta["host"]
-			if host == "" {
-				host = "github.com"
-			}
-			configEntry := "Host " + host + "\n    IdentityFile " + keyPath + "\n    StrictHostKeyChecking accept-new\n"
-			var f *os.File
-			f, err = os.OpenFile(sshDir+"/config", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-			if err == nil {
-				f.WriteString(configEntry)
-				f.Close()
-			}
-
-		case "git-credential":
-			host := meta["host"]
-			if host == "" {
-				host = "github.com"
-			}
-			protocol := meta["protocol"]
-			if protocol == "" {
-				protocol = "https"
-			}
-			line := protocol + "://oauth2:" + s.Plaintext + "@" + host + "\n"
-			var f *os.File
-			f, err = os.OpenFile(home+"/.git-credentials", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-			if err == nil {
-				f.WriteString(line)
-				f.Close()
-			}
-
-		case "secret-file":
-			mountPath := meta["mount_path"]
-			if mountPath == "" {
-				errors = append(errors, fmt.Sprintf("secret-file '%s': missing mount_path", s.Name))
-				continue
-			}
-			// Force all secret files under the safe base dir
-			if !strings.HasPrefix(mountPath, secretsBaseDir) {
-				mountPath = secretsBaseDir + "/" + strings.TrimPrefix(mountPath, "/")
-			}
-			// Prevent path traversal
-			if strings.Contains(mountPath, "..") {
-				errors = append(errors, fmt.Sprintf("secret-file '%s': path traversal not allowed", s.Name))
-				continue
-			}
-			dir := mountPath[:strings.LastIndex(mountPath, "/")]
-			if err = os.MkdirAll(dir, 0700); err == nil {
-				err = os.WriteFile(mountPath, []byte(s.Plaintext), 0600)
-			}
-
-		case "env-secret":
-			varName := meta["var_name"]
-			if varName == "" {
-				errors = append(errors, fmt.Sprintf("env-secret '%s': missing var_name", s.Name))
-				continue
-			}
-			var f *os.File
-			f, err = os.OpenFile(agentd.SecretsEnvPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-			if err == nil {
-				fmt.Fprintf(f, "export %s='%s'\n", varName, s.Plaintext)
-				f.Close()
-			}
-			os.Setenv(varName, s.Plaintext)
-
-		default:
-			errors = append(errors, fmt.Sprintf("unknown type '%s' for secret '%s'", s.Type, s.Name))
-			continue
-		}
-
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s '%s': %v", s.Type, s.Name, err))
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("partial failure: %s", strings.Join(errors, "; "))
-	}
-	return nil
 }
