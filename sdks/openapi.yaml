@@ -1,0 +1,568 @@
+openapi: "3.0.3"
+info:
+  title: LLMSafeSpace API
+  description: |
+    LLMSafeSpace is a Kubernetes-first platform for running AI agents securely in isolated sandboxes.
+    Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace.
+  version: "1.0.0"
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: /api/v1
+    description: API v1 base path
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+tags:
+  - name: auth
+    description: Authentication and API key management
+  - name: workspaces
+    description: Workspace lifecycle management
+  - name: sessions
+    description: Session management and proxy
+  - name: secrets
+    description: Secret management (Epic 10)
+  - name: settings
+    description: Admin and user settings
+  - name: credentials
+    description: Admin credential set management
+  - name: account
+    description: Account management (key rotation, password)
+  - name: health
+    description: Health and readiness probes
+paths:
+  # --- Auth ---
+  /auth/config:
+    get:
+      tags: [auth]
+      summary: Get auth configuration
+      description: Public endpoint returning feature flags (registration enabled, OIDC, instance name).
+      security: []
+      operationId: getAuthConfig
+      responses:
+        "200":
+          description: Auth configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthConfig"
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user
+      security: []
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Login with email and password
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout (clears session cookie)
+      security: []
+      operationId: logout
+      responses:
+        "204":
+          description: Logged out
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Get current user info
+      operationId: getCurrentUser
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/api-keys:
+    post:
+      tags: [auth]
+      summary: Create an API key
+      operationId: createApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIKeyRequest"
+      responses:
+        "201":
+          description: API key created (secret returned only on creation)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      tags: [auth]
+      summary: List API keys
+      operationId: listApiKeys
+      responses:
+        "200":
+          description: List of API keys (secrets stripped)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/api-keys/{id}:
+    delete:
+      tags: [auth]
+      summary: Delete an API key
+      operationId: deleteApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: API key deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  # --- Workspaces ---
+  /workspaces:
+    get:
+      tags: [workspaces]
+      summary: List workspaces
+      operationId: listWorkspaces
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceListResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [workspaces]
+      summary: Create a workspace
+      operationId: createWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkspaceRequest"
+      responses:
+        "201":
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /workspaces/{id}:
+    get:
+      tags: [workspaces]
+      summary: Get a workspace
+      operationId: getWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [workspaces]
+      summary: Rename a workspace
+      operationId: renameWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "204":
+          description: Workspace renamed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [workspaces]
+      summary: Delete a workspace
+      operationId: deleteWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "204":
+          description: Workspace deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/status:
+    get:
+      tags: [workspaces]
+      summary: Get workspace status
+      operationId: getWorkspaceStatus
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceStatusResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/activate:
+    post:
+      tags: [workspaces]
+      summary: Activate a workspace (resume if suspended, suspend others if at limit)
+      operationId: activateWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivateWorkspaceResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/suspend:
+    post:
+      tags: [workspaces]
+      summary: Suspend a workspace (pod deleted, PVC retained)
+      operationId: suspendWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "202":
+          description: Suspend initiated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/resume:
+    post:
+      tags: [workspaces]
+      summary: Resume a suspended workspace
+      operationId: resumeWorkspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "202":
+          description: Resume initiated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  # --- Sessions ---
+  /workspaces/{id}/sessions:
+    get:
+      tags: [sessions]
+      summary: List workspace sessions
+      operationId: listSessions
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionListItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/sessions/new:
+    post:
+      tags: [sessions]
+      summary: Create a new session (ensures workspace is active)
+      operationId: createSession
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Session created or resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnsureSessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/sessions/active:
+    get:
+      tags: [sessions]
+      summary: Get active sessions for a workspace
+      operationId: getActiveSessions
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveSessionsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /workspaces/{id}/sessions/{sessionId}/title:
+    put:
+      tags: [sessions]
+      summary: Rename a session
+      operationId: renameSession
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+      responses:
+        "204":
+          description: Session renamed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  # --- Proxy (to opencode serve) ---
+  /workspaces/{id}/sessions/{sessionId}/message:
+    post:
+      tags: [sessions]
+      summary: Send a message to the agent (synchronous — blocks until LLM responds)
+      description: |
+        Proxies to opencode's `POST /session/:id/message`. Blocks until the LLM
+        produces a complete response. For long prompts, consider using the async
+        prompt endpoint instead.
+      operationId: sendMessage
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+        - name: verbose
+          in: query
+          description: If true, include patch parts in response
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: The message text to send to the agent
+      responses:
+        "200":
+          description: Agent response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [sessions]
+      summary: Get message history for a session
+      operationId: getHistory
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+        - name: verbose
+          in: query
+          description: If true, include patch parts in response
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Message history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/sessions/{sessionId}/prompt:
+    post:
+      tags: [sessions]
+      summary: Send an async prompt (returns immediately, results via SSE)
+      operationId: sendPromptAsync
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+      responses:
+        "202":
+          description: Prompt accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/sessions/{sessionId}:
+    get:
+      tags: [sessions]
+      summary: Get session details
+      operationId: getSession
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session details from opencode
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Opencode session object (schema tracks upstream)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/sessions/{sessionId}/abort:
+    post:
+      tags: [sessions]
+      summary: Abort the current agent operation
+      operationId: abortSession
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Abort acknowledged
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/events:
+    get:
+      tags: [sessions]
+      summary: SSE event stream from the workspace agent
+      description: |
+        Server-Sent Events stream. Not usable by generated SDK clients — use
+        language-specific SSE libraries (EventSource in browsers, httpx-sse in Python, etc.).
+        Content-Type: text/event-stream.
+      operationId: streamEvents
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "Newline-delimited SSE events"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
