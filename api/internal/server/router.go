@@ -53,6 +53,9 @@ type RouterConfig struct {
 
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
+
+	// TerminalHandler is the handler for WebSocket terminal proxy (optional)
+	TerminalHandler *handlers.TerminalHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -143,6 +146,14 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 	// Proxy routes — registered within workspace group when a ProxyHandler is provided
 	if proxyHandler != nil {
 		registerProxyRoutes(workspaceGroup, proxyHandler)
+	}
+
+	// Terminal proxy routes (WebSocket terminal to sandbox pod)
+	if cfg.TerminalHandler != nil {
+		// Ticket endpoint — on the authenticated workspace group (requires JWT/API key)
+		workspaceGroup.POST("/:id/terminal/ticket", cfg.TerminalHandler.HandleTicket)
+		// WebSocket endpoint — on the ROOT router (auth via one-time ticket, not JWT)
+		router.GET("/api/v1/workspaces/:id/terminal", cfg.TerminalHandler.HandleTerminal)
 	}
 
 	// Settings routes (admin + user)

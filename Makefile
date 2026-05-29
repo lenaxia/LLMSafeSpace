@@ -10,7 +10,8 @@ BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Build targets
 .PHONY: all build clean test cover lint fmt vet generate deepcopy \
-        helm-lint helm-template helm-template-debug helm-install-dry-run helm-package
+        helm-lint helm-template helm-template-debug helm-install-dry-run helm-package \
+        openapi-validate
 
 all: test build
 
@@ -78,3 +79,9 @@ helm-install-dry-run:
 
 helm-package:
 	$(HELM) package $(CHART_DIR) -d dist/
+
+# ---------------------------------------------------------------------------
+# OpenAPI validation
+# ---------------------------------------------------------------------------
+openapi-validate:
+	$(MAKE) -C sdks validate
