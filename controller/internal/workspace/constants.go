@@ -14,7 +14,7 @@ const podNameSuffix = 8
 // Requeue intervals.
 const (
 	requeueCreating = 5 * time.Second
-	requeueActive   = 30 * time.Second
+	requeueActive   = 15 * time.Second
 )
 
 // pendingPhaseTimeout is how long a workspace can stay in Pending before

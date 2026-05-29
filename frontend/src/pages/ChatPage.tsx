@@ -12,6 +12,7 @@ import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
+import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
 import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
@@ -385,6 +386,10 @@ export function ChatPage() {
           credentialState={status?.credentialState}
           agentHealth={status?.agentHealth}
         />
+      )}
+
+      {isReady && status?.diskTotalBytes && (
+        <DiskUsageBar usedBytes={status.diskUsedBytes} totalBytes={status.diskTotalBytes} />
       )}
 
       {atCapRetryAfter !== null && (

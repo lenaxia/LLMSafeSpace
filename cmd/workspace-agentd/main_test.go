@@ -18,23 +18,27 @@ import (
 
 func TestListSessions_HappyPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/session", r.URL.Path)
 		user, pass, ok := r.BasicAuth()
 		assert.True(t, ok)
 		assert.Equal(t, "opencode", user)
 		assert.Equal(t, "testpw", pass)
-		json.NewEncoder(w).Encode([]struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		}{
-			{ID: "ses_1", Title: "My Chat"},
-			{ID: "ses_2", Title: ""},
-		})
+		switch r.URL.Path {
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{
+				{ID: "ses_1"},
+				{ID: "ses_2"},
+			})
+		case "/session/ses_1":
+			json.NewEncoder(w).Encode(map[string]string{"id": "ses_1", "title": "My Chat"})
+		case "/session/ses_2":
+			json.NewEncoder(w).Encode(map[string]string{"id": "ses_2", "title": ""})
+		}
 	}))
 	defer server.Close()
 
 	client := &OpenCodeClient{password: "testpw", client: &http.Client{Timeout: 5 * time.Second}}
-	// Override agentAddr for test
 	origAddr := agentAddr
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
@@ -104,9 +108,10 @@ func TestCachedState_CachesWithinTTL(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
 		case "/session":
 			json.NewEncoder(w).Encode([]struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
-			}{{ID: "ses_1", Title: "cached"}})
+				ID string `json:"id"`
+			}{{ID: "ses_1"}})
+		case "/session/ses_1":
+			json.NewEncoder(w).Encode(map[string]string{"id": "ses_1", "title": "cached"})
 		}
 	}))
 	defer server.Close()
@@ -147,11 +152,12 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
 		case "/session":
 			json.NewEncoder(w).Encode([]struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
+				ID string `json:"id"`
 			}{
-				{ID: "ses_1", Title: "Test Session"},
+				{ID: "ses_1"},
 			})
+		case "/session/ses_1":
+			json.NewEncoder(w).Encode(map[string]string{"id": "ses_1", "title": "Test Session"})
 		}
 	}))
 	defer opencodeSrv.Close()
