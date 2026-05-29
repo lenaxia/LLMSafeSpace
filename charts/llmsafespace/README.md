@@ -11,8 +11,8 @@ controller, CRDs, ValidatingWebhookConfiguration, and database migrations.
 - Helm: >= 3.13 (also tested with Helm 4)
 - Tested locally with `helm lint` and `helm template`
 
-This chart deploys two Deployments (API, controller), four CRDs, three
-admission webhooks, RBAC, a ConfigMap-driven config, and a pre-install
+This chart deploys two Deployments (API, controller), two CRDs, a
+validating webhook, RBAC, a ConfigMap-driven config, and a pre-install
 migration Job.
 
 It does **not** deploy Postgres, Redis, or cert-manager. See "Prerequisites"
@@ -150,10 +150,10 @@ For production safety, set `crds.install=false` and manage CRDs out-of-band.
 ### Webhook failure mode
 
 `webhooks.failurePolicy` defaults to `Fail`: if the controller webhook is
-unavailable, kube-apiserver rejects all CREATE/UPDATE on Sandbox,
-SandboxProfile, and RuntimeEnvironment. This is the secure default but means
-controller downtime blocks user submissions. Set to `Ignore` for availability
-over security, or `Fail` for security over availability.
+unavailable, kube-apiserver rejects all CREATE/UPDATE on RuntimeEnvironment.
+This is the secure default but means controller downtime blocks runtime
+submissions. Set to `Ignore` for availability over security, or `Fail` for
+security over availability.
 
 ### RBAC scope
 
@@ -165,10 +165,10 @@ mode).
 the release namespace. Combine with `controller.watchNamespaces=<release-ns>`
 for tightest isolation. Resources in other namespaces will not be reconciled.
 
-### Sandbox namespace
+### Workspace namespace
 
-By default, sandbox CRDs are created in `.Release.Namespace`. Override with
-`api.config.kubernetes.namespace` to deploy sandboxes elsewhere. RBAC for
+By default, workspace CRDs are created in `.Release.Namespace`. Override with
+`api.config.kubernetes.namespace` to deploy workspaces elsewhere. RBAC for
 the API ServiceAccount is created in that namespace.
 
 ## Validating the chart
@@ -186,8 +186,7 @@ make helm-package                # produce dist/llmsafespace-0.1.0.tgz
 ```sh
 helm uninstall llmsafespace -n llmsafespace
 kubectl -n llmsafespace delete pvc --all   # PVCs are not deleted by Helm
-kubectl delete crd workspaces.llmsafespace.dev sandboxes.llmsafespace.dev \
-                   sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev
+kubectl delete crd workspaces.llmsafespace.dev runtimeenvironments.llmsafespace.dev
 ```
 
 CRDs are intentionally not deleted by `helm uninstall` (Helm 3 default

@@ -828,7 +828,7 @@ List every file created or modified in this session.
 3. **Document decisions with rationale** — not just what was decided, but why. Future sessions will need to understand the reasoning, not just the outcome.
 4. **Record blockers immediately** — if you are blocked, write it down. Do not silently skip the entry.
 5. **List every file touched** — this makes it trivial to audit what changed in a session.
-6. **Next steps must be actionable** — "continue implementation" is not actionable. "Implement `CreateSandbox()` in `api/internal/services/sandbox/sandbox_service.go` and write tests first per TDD" is actionable.
+6. **Next steps must be actionable** — "continue implementation" is not actionable. "Implement `CreateSandbox()` in `pkg/secrets/secret_service.go` and write tests first per TDD" is actionable.
 7. **Never retroactively rewrite a worklog** — worklogs are append-only history. If something was wrong, note the correction in the next entry.
 
 ---

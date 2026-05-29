@@ -1,8 +1,8 @@
 # LLMSafeSpace
 
-A Kubernetes-first platform for running AI agents in isolated, persistent sandboxes.
+A Kubernetes-first platform for running AI agents in isolated, persistent workspaces.
 
-Each sandbox runs [`opencode serve`](https://opencode.ai/docs/server/) — a headless HTTP server that drives an LLM agent — backed by a PVC-mounted workspace at `/workspace`. The LLMSafeSpace API service is a stateless reverse proxy in front of the sandbox pods, with auth, ownership checks, and quality-of-life filtering.
+Each workspace runs [`opencode serve`](https://opencode.ai/docs/server/) — a headless HTTP server that drives an LLM agent — backed by a PVC-mounted filesystem at `/workspace`. The LLMSafeSpace API service is a stateless reverse proxy in front of the workspace pods, with auth, ownership checks, encrypted secret management, and quality-of-life filtering.
 
 Repository: `github.com/lenaxia/llmsafespace`
 
@@ -12,62 +12,63 @@ Repository: `github.com/lenaxia/llmsafespace`
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Clients (REST / SSE)                                               │
+│  Clients (REST / SSE / MCP)                                         │
 │         │                                                            │
 │         ▼                                                            │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  LLMSafeSpace API (Gin, stateless, horizontally scalable)    │   │
 │  │  - Auth (JWT + API keys)                                     │   │
-│  │  - Workspace + Sandbox CRUD                                  │   │
-│  │  - Reverse proxy to sandbox pods (basic auth, IP refresh)    │   │
+│  │  - Workspace CRUD + lifecycle (activate/suspend/resume)       │   │
+│  │  - Reverse proxy to workspace pods (basic auth, IP refresh)  │   │
+│  │  - Secrets management (zero-knowledge encrypted store)        │   │
+│  │  - Settings (admin instance + user preferences)               │   │
 │  │  - Patch-part filtering (?verbose=true to keep)              │   │
 │  └─────────────────────┬────────────────────────────────────────┘   │
 │                        │ K8s API                                     │
 │                        ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  Controller (controller-runtime)                              │   │
-│  │  - Reconciles Workspace, Sandbox, RuntimeEnvironment,         │   │
-│  │    SandboxProfile CRDs                                        │   │
-│  │  - Mounts workspace credentials into sandbox pods             │   │
+│  │  - Reconciles Workspace, RuntimeEnvironment CRDs              │   │
+│  │  - Manages pod lifecycle, PVC, credential secrets             │   │
+│  │  - Health monitoring via workspace-agentd sidecar             │   │
 │  └─────────────────────┬────────────────────────────────────────┘   │
 │                        │                                             │
 │                        ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  Sandbox Pods (one per Sandbox CRD)                           │   │
+│  │  Workspace Pods (one per active Workspace CRD)                │   │
 │  │  - init: workspace-setup + credential-setup                   │   │
 │  │  - main: opencode serve --hostname 0.0.0.0 --port 4096        │   │
+│  │  - sidecar: workspace-agentd (health probes, session metadata)│   │
 │  │  - mounts: PVC at /workspace, secret as /sandbox-cfg          │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 │  ┌─────────────────┐  ┌─────────────────┐                           │
 │  │ PostgreSQL      │  │ Redis / Valkey  │                           │
 │  │ (users, keys,   │  │ (rate limit,    │                           │
-│  │  metadata)      │  │  cache, lockout)│                           │
+│  │  secrets,       │  │  cache, lockout,│                           │
+│  │  settings)      │  │  DEK cache)     │                           │
 │  └─────────────────┘  └─────────────────┘                           │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Custom Resource Definitions
 
-Four CRDs in the `llmsafespace.dev/v1` API group:
+Two CRDs in the `llmsafespace.dev/v1` API group:
 
 | Kind | Scope | Purpose |
 |------|-------|---------|
-| `Workspace` | Namespaced | PVC-backed persistent environment + credentials |
-| `Sandbox` | Namespaced | Pod running `opencode serve` against a workspace |
-| `SandboxProfile` | Namespaced | Reusable security and resource profile |
+| `Workspace` | Namespaced | PVC-backed persistent environment + pod running `opencode serve` |
 | `RuntimeEnvironment` | Cluster | Mapping from runtime name → container image |
 
 ### Lifecycle
 
 ```
 Workspace: Pending → Active → Suspending → Suspended → Resuming → Active
-Sandbox:   Pending → Creating → Running → Suspending → Suspended → Resuming → Running
-                               ↘                       ↘
-                                 Terminating → Terminated
+                              ↘
+                                Terminating → Terminated
 ```
 
-Suspending a workspace deletes the sandbox pods but retains the PVC. Resuming creates fresh pods that reattach to the existing PVC, so opencode session history (stored in `/workspace/.local/opencode`) survives suspend/resume.
+Suspending a workspace deletes the pod but retains the PVC. Resuming creates a fresh pod that reattaches to the existing PVC, so opencode session history (stored in `/workspace/.local/opencode`) survives suspend/resume.
 
 ---
 
@@ -92,36 +93,46 @@ All endpoints are JSON. Authentication is via `Authorization: Bearer <jwt-or-api
 | `GET` | `/api/v1/workspaces` | List the caller's workspaces (paginated) |
 | `POST` | `/api/v1/workspaces` | Create a workspace |
 | `GET` | `/api/v1/workspaces/:id` | Get one workspace |
+| `PUT` | `/api/v1/workspaces/:id` | Rename a workspace |
 | `DELETE` | `/api/v1/workspaces/:id` | Delete (and its PVC) |
-| `POST` | `/api/v1/workspaces/:id/suspend` | Suspend (retain PVC, delete pods) |
-| `POST` | `/api/v1/workspaces/:id/resume` | Resume (re-create pods) |
-| `GET` | `/api/v1/workspaces/:id/status` | Get phase + conditions |
-| `PUT` | `/api/v1/workspaces/:id/credentials` | Set the LLM provider config (see below) |
-| `DELETE` | `/api/v1/workspaces/:id/credentials` | Remove provider config |
-
-### Sandboxes
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/sandboxes` | List the caller's sandboxes (paginated) |
-| `POST` | `/api/v1/sandboxes` | Create a sandbox (referencing an existing workspace) |
-| `GET` | `/api/v1/sandboxes/:id` | Get one sandbox |
-| `DELETE` | `/api/v1/sandboxes/:id` | Terminate (deletes pod + CRD) |
-| `GET` | `/api/v1/sandboxes/:id/status` | Get phase + pod IP |
+| `POST` | `/api/v1/workspaces/:id/suspend` | Suspend (retain PVC, delete pod) |
+| `POST` | `/api/v1/workspaces/:id/resume` | Resume (re-create pod) |
+| `POST` | `/api/v1/workspaces/:id/activate` | Activate (resume if suspended, auto-suspend oldest if at cap) |
+| `GET` | `/api/v1/workspaces/:id/status` | Get phase + conditions + credential state + agent health |
+| `PUT` | `/api/v1/workspaces/:id/credentials` | Set the LLM provider config *(deprecated — use secrets API)* |
+| `DELETE` | `/api/v1/workspaces/:id/credentials` | Remove provider config *(deprecated)* |
 
 ### Sessions (proxied to opencode)
 
-These endpoints are reverse-proxied to the sandbox pod's `opencode serve` instance on port 4096. The proxy injects HTTP basic auth for opencode automatically.
+These endpoints are reverse-proxied to the workspace pod's `opencode serve` instance on port 4096. The proxy injects HTTP basic auth for opencode automatically.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/sandboxes/:id/sessions` | Create a session |
-| `GET` | `/api/v1/sandboxes/:id/sessions` | List sessions |
-| `POST` | `/api/v1/sandboxes/:id/sessions/:sessionId/message` | Send a message; wait for the assistant reply |
-| `POST` | `/api/v1/sandboxes/:id/sessions/:sessionId/prompt` | Send a message asynchronously (`204 No Content`) |
-| `GET` | `/api/v1/sandboxes/:id/sessions/:sessionId/message` | Fetch session history |
-| `POST` | `/api/v1/sandboxes/:id/sessions/:sessionId/abort` | Abort a running session |
-| `GET` | `/api/v1/sandboxes/:id/events` | SSE event stream |
+| `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/message` | Send a message; wait for the assistant reply |
+| `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/prompt` | Send a message asynchronously (`204 No Content`) |
+| `GET` | `/api/v1/workspaces/:id/sessions/:sessionId/message` | Fetch session history |
+| `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/abort` | Abort a running session |
+| `GET` | `/api/v1/workspaces/:id/events` | SSE event stream |
+
+### Secrets
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/secrets` | Create an encrypted secret |
+| `GET` | `/api/v1/secrets` | List secrets (metadata only, never values) |
+| `PUT` | `/api/v1/secrets/:id` | Update secret value |
+| `DELETE` | `/api/v1/secrets/:id` | Delete a secret |
+| `PUT` | `/api/v1/workspaces/:id/bindings` | Set which secrets are bound to a workspace |
+| `GET` | `/api/v1/workspaces/:id/bindings` | List bound secrets |
+
+### Settings
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/admin/settings` | Get all instance settings (admin only) |
+| `PUT` | `/api/v1/admin/settings/:key` | Update an instance setting |
+| `GET` | `/api/v1/users/me/settings` | Get current user's settings |
+| `PUT` | `/api/v1/users/me/settings/:key` | Update a user setting |
 
 #### `?verbose=true` flag
 
@@ -130,7 +141,7 @@ By default, the proxy strips parts of `type=="patch"` from message and history r
 Pass `?verbose=true` on any message or history request to receive the unfiltered response:
 
 ```
-POST /api/v1/sandboxes/sb-1/sessions/ses_xyz/message?verbose=true
+POST /api/v1/workspaces/ws-1/sessions/ses_xyz/message?verbose=true
 ```
 
 The `verbose` query parameter is consumed by the API proxy and is not forwarded to opencode.
@@ -169,7 +180,7 @@ echo "workspace: $WS"
 
 ### 3. Set the LLM provider on the workspace
 
-The `config` field is an opencode config document. The model and provider you declare here is what every sandbox under this workspace will use.
+The `config` field is an opencode config document. The model and provider you declare here is what the workspace will use.
 
 ```bash
 curl -X PUT "$API/api/v1/workspaces/$WS/credentials" \
@@ -197,24 +208,15 @@ curl -X PUT "$API/api/v1/workspaces/$WS/credentials" \
 
 Any OpenAI-compatible base URL works. Model id format is `<provider-id>/<model-id>`.
 
-### 4. Create a sandbox
+### 4. Activate the workspace
 
 ```bash
-SB=$(curl -sX POST "$API/api/v1/sandboxes" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"runtime\":\"base\",
-    \"workspaceRef\":\"$WS\",
-    \"securityLevel\":\"standard\",
-    \"resources\":{\"cpu\":\"500m\",\"memory\":\"512Mi\"}
-  }" \
-  | jq -r '.metadata.name')
-echo "sandbox: $SB"
+curl -X POST "$API/api/v1/workspaces/$WS/activate" \
+  -H "Authorization: Bearer $TOKEN"
 
 # Wait for it to come up
 while [ "$(curl -s -H "Authorization: Bearer $TOKEN" \
-    "$API/api/v1/sandboxes/$SB/status" | jq -r .phase)" != "Running" ]; do
+    "$API/api/v1/workspaces/$WS/status" | jq -r .phase)" != "Active" ]; do
   sleep 2
 done
 ```
@@ -223,13 +225,13 @@ done
 
 ```bash
 # Create a session
-SID=$(curl -sX POST "$API/api/v1/sandboxes/$SB/sessions" \
+SID=$(curl -sX POST "$API/api/v1/workspaces/$WS/sessions/new" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{}' | jq -r '.id')
+  | jq -r '.sessionId')
 
 # Send a prompt
-curl -X POST "$API/api/v1/sandboxes/$SB/sessions/$SID/message" \
+curl -X POST "$API/api/v1/workspaces/$WS/sessions/$SID/message" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -243,7 +245,7 @@ curl -X POST "$API/api/v1/sandboxes/$SB/sessions/$SID/message" \
 
 ### 6. Suspend / resume
 
-Suspending the workspace deletes the sandbox pod but keeps the PVC. Resuming re-creates pods. Session history (stored in the PVC) survives.
+Suspending the workspace deletes the pod but keeps the PVC. Resuming re-creates the pod. Session history (stored in the PVC) survives.
 
 ```bash
 curl -X POST "$API/api/v1/workspaces/$WS/suspend" \
@@ -261,30 +263,42 @@ curl -X POST "$API/api/v1/workspaces/$WS/resume" \
 api/                     # Go API service (Gin) + MCP server
   cmd/api/               # API server entrypoint
   internal/
-    handlers/            # Reverse proxy + watchers
-    middleware/          # Auth, rate limit, CORS, etc.
-    services/            # Sandbox, Workspace, Auth, Cache, ratelimit
+    handlers/            # Reverse proxy, secrets, settings, credentials, activity, events
+    middleware/          # Auth, rate limit, CORS, security, validation, admin guard, etc.
+    services/            # Auth, Workspace, Database, Cache, RateLimit, Metrics, SessionIndex
     server/router.go     # Gin route table
     mocks/               # Service mocks for tests
 
+cmd/
+  workspace-agentd/      # Sidecar binary for workspace pods (health probes, session metadata)
+  mcp/                   # MCP server entrypoint
+  redact/                # Redact binary entrypoint
+
 controller/              # Kubernetes operator (controller-runtime)
   internal/
-    resources/           # CRD type definitions (kubebuilder annotated)
-    sandbox/             # Sandbox reconciler
-    workspace/           # Workspace reconciler
+    workspace/           # Workspace reconciler (pod lifecycle, PVC, credentials, health)
+    webhooks/            # Validating webhooks (RuntimeEnvironment)
+    common/              # Leader election, metrics, utilities
+
+frontend/                # React 19 + TypeScript + Vite SPA
 
 runtimes/                # Container images
-  base/                  # opencode + redact + entrypoints
+  base/                  # opencode + redact + workspace-agentd + entrypoints
   python/, nodejs/, go/  # Language-specific extensions
 
 pkg/                     # Shared Go packages
-  apis/llmsafespace/v1/  # CRD Go types
-  crds/                  # CRD YAML definitions
-  redact/                # Secret redaction
+  apis/llmsafespace/v1/  # CRD Go types (Workspace, RuntimeEnvironment)
+  agentd/                # Workspace-agentd sidecar types
+  credentials/           # Credential set encryption service
+  secrets/               # Zero-knowledge secret store (key wrapping, encryption, audit)
+  settings/              # Declarative settings schema + services
+  kubernetes/            # K8s client with leader election + typed CRD access
+  mcp/                   # MCP server + client
+  redact/                # Secret redaction pipeline
   types/                 # API DTOs
 
+charts/llmsafespace/     # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks)
 local/                   # bootstrap.sh, test.sh, teardown.sh for kind
-worklogs/                # Append-only session history
 design/                  # Architecture and design docs (EVOLUTION-V2.md is authoritative)
 ```
 
@@ -294,10 +308,11 @@ design/                  # Architecture and design docs (EVOLUTION-V2.md is auth
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.25+
 - Docker
 - A Kubernetes cluster (or `kind`) and `kubectl`
 - Helm 3 (for the deployment chart)
+- Node.js 22+ (for the frontend)
 
 ### Run all tests
 
@@ -333,23 +348,28 @@ docker build -f api/Dockerfile -t llmsafespace/api:dev .
 # Controller
 docker build -f controller/Dockerfile -t llmsafespace/controller:dev .
 
-# Base runtime (opencode + redact + entrypoints)
+# Base runtime (opencode + redact + workspace-agentd + entrypoints)
 docker build -f runtimes/base/Dockerfile -t llmsafespace/runtime-base:dev runtimes/base
+
+# Frontend
+docker build -f frontend/Dockerfile -t llmsafespace/frontend:dev frontend
 ```
 
-CI builds and pushes these to `ghcr.io/lenaxia/llmsafespace/{api,controller,base}:dev` on every push to `main` (see `.github/workflows/ci.yml`).
+CI builds and pushes these to `ghcr.io/lenaxia/llmsafespace/{api,controller,base,frontend}:dev` on every push to `main` (see `.github/workflows/ci.yml`).
 
 ---
 
 ## Security
 
 - **Pod hardening**: read-only root, `runAsNonRoot`, drop all capabilities, no privilege escalation, AppArmor + seccomp profiles
-- **Workspace credentials** are stored exclusively as Kubernetes Secrets — never in PostgreSQL, Redis, or logs
-- **Egress filtering** via NetworkPolicies (configurable per Sandbox)
-- **API hardening**: rate limiting (Redis-backed), account lockout, restrictive CORS defaults, JWT cache hashing, no token-in-query-string
+- **Zero-knowledge secret store**: user secrets encrypted with per-user DEK (AES-256-GCM), derived from password via HKDF-SHA256. Platform never stores plaintext.
+- **Workspace credentials** stored exclusively as Kubernetes Secrets — never in PostgreSQL, Redis, or logs
+- **Egress filtering** via NetworkPolicies (configurable per Workspace)
+- **API hardening**: rate limiting (Redis-backed, configurable via admin settings), account lockout, restrictive CORS defaults, JWT cache hashing, no token-in-query-string
 - **Secret redaction**: 16-rule regex pipeline (`pkg/redact`) used by the runtime to scrub credentials from agent stdout
+- **Audit logging**: every secret operation recorded in append-only audit log
 
-See `design/SECURITY.md` and `design/EVOLUTION-V2.md §9` for the full threat model.
+See `design/0027_2026-05-24_security-policy-v21.md` and `design/0021_2026-05-21_evolution-v2.md` for the full threat model.
 
 ---
 

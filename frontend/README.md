@@ -1,73 +1,75 @@
-# React + TypeScript + Vite
+# LLMSafeSpace Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React SPA for the LLMSafeSpace platform — a chat interface for driving AI agents running in Kubernetes-backed workspaces.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **React 19** + TypeScript 6
+- **Vite 5** (dev server + build)
+- **Tailwind CSS 4** (via `@tailwindcss/vite` plugin)
+- **Radix UI** — Dialog, Select, Switch, Tabs, Toast, Tooltip
+- **TanStack Query** — server state + caching
+- **TanStack Virtual** — virtualized message lists
+- **React Router 6** — client-side routing
+- **react-markdown** + remark-gfm + rehype-sanitize — message rendering
+- **react-diff-viewer-continued** — diff display in tool output
+- **lucide-react** — icons
+- **vite-plugin-pwa** — offline support + install prompt
 
-## React Compiler
+## Project Structure
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+src/
+  api/            # Typed API client (auth, workspaces, sessions, messages, events, settings, secrets, credentials)
+  components/
+    auth/         # LoginForm, RegisterForm, AuthCard
+    chat/         # ChatView, MessageList, MessageBubble, MessagePart, Composer, StreamingIndicator, HealthBanner
+    layout/       # AppShell, Sidebar, ErrorBoundary, UpdateAvailableToast
+    session/      # SessionItem, SessionList, RenameSessionDialog
+    settings/     # SettingsForm, AdminCredentialsTab, SecretsTab, UserSettingsTab, AppearanceTab, ApiKeysTab
+    ui/           # Button, Input, Card, Badge, Spinner, KebabMenu, Toggle, Select, NumberInput, TagInput
+    workspace/    # WorkspaceItem, WorkspaceList, WorkspaceSessionList, WorkspaceSettingsDrawer, RenameWorkspaceDialog, NewWorkspaceDialog
+  hooks/          # useChatStream, useEventStream, useSessions, useWorkspaces, useActivateWorkspace, useSessionTitle, useUserSettings, useMediaQuery, usePWA
+  lib/            # stream parser, time utils, name generator, general utils
+  pages/          # ChatPage, LoginPage, RegisterPage, SettingsPage, AdminSettingsPage, NotFoundPage
+  providers/      # AuthProvider, QueryClientProvider, ThemeProvider, ToastProvider
+  test/           # test setup + render utils
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Key Features
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **SSE streaming** — real-time assistant responses via Server-Sent Events
+- **Workspace lifecycle** — create, activate (auto-resume), suspend from the sidebar
+- **Session management** — create, rename, switch sessions; auto-title from first message
+- **Message parts** — renders text, tool calls, tool results, thinking blocks, diffs, code fences
+- **Settings** — user preferences (theme, font size, streaming toggle) + admin instance settings (schema-driven forms)
+- **Secrets management** — CRUD for encrypted user secrets (LLM keys, SSH, Git, env vars, files) with workspace bindings
+- **Credential sets** — admin-managed provider credential sets with model allowlists
+- **Dark/light/system theme** — persisted in user settings, synced to API
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Development
+
+```bash
+npm install
+npm run dev          # Vite dev server (port 5173)
+npm run build        # TypeScript check + production build
+npm run test         # Vitest unit tests
+npm run test:e2e     # Playwright e2e tests
+npm run typecheck    # tsc --noEmit
+npm run lint         # ESLint
 ```
+
+## Testing
+
+- **Unit tests**: Vitest + Testing Library (`*.test.ts{x}` co-located with source)
+- **E2E tests**: Playwright (`tests/` directory)
+- **Coverage**: `@vitest/coverage-v8`
+
+## Docker
+
+Multi-stage build producing an nginx container that serves the SPA and proxies `/api` to the API service. See `nginx.conf` for routing.
+
+## Environment
+
+Configuration via `src/env.ts`:
+- `VITE_API_URL` — API base URL (default: `/api/v1` in production, `http://localhost:8080/api/v1` in dev)
