@@ -44,3 +44,4 @@ sdks/vscode-llmsafespace/node_modules/
 sdks/vscode-llmsafespace/dist/
 sdks/python/__pycache__/
 sdks/python/*.egg-info/
+sdks/go/live-test

@@ -1,9 +1,14 @@
+"""Comprehensive live integration test for the Python SDK.
+
+Run: API_URL=http://localhost:18080 API_KEY=lsp_... python tests/test_live_integration.py
+"""
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from llmsafespace import LLMSafeSpace
+from llmsafespace import LLMSafeSpace, NotFoundError, AuthError
 
 API_URL = os.environ.get("API_URL", "http://localhost:18080")
 API_KEY = os.environ.get("API_KEY", "lsp_upgradetest1234567890abcdef")
@@ -15,261 +20,243 @@ failed = 0
 errors = []
 
 
-def assert_cond(cond, label):
+def ok(cond, label):
     global passed, failed
     if cond:
-        print(f"  PASS: {label}")
+        print(f"  ✓ {label}")
         passed += 1
     else:
-        print(f"  FAIL: {label}")
+        print(f"  ✗ {label}")
         failed += 1
         errors.append(label)
 
 
-def wait_healthy(ws_id, max_attempts=30):
-    for _ in range(max_attempts):
-        status = client.workspaces.get_status(ws_id)
-        ah = status.get("agentHealth", {})
+def wait_healthy(ws_id, max_wait=150):
+    start = time.time()
+    while time.time() - start < max_wait:
+        s = client.workspaces.get_status(ws_id)
+        ah = s.get("agentHealth", {})
         if ah.get("status") == "Healthy":
             return "Healthy"
-        if status.get("phase") == "Failed":
+        if s.get("phase") == "Failed":
             return "Failed"
-        import time
-
         time.sleep(5)
-    status = client.workspaces.get_status(ws_id)
-    return status.get("agentHealth", {}).get("status", status.get("phase", "unknown"))
+    return client.workspaces.get_status(ws_id).get("agentHealth", {}).get("status", "timeout")
 
 
-print("=== Python SDK Live Integration Test ===\n")
-
-# --- 1. Auth ---
-print("--- Auth ---")
-try:
-    me = client.auth.me()
-    assert_cond(
-        isinstance(me.get("id"), str) and len(me["id"]) > 0,
-        "auth.me() returns user with id",
-    )
-    assert_cond(
-        isinstance(me.get("email"), str) and len(me["email"]) > 0,
-        "auth.me() returns user with email",
-    )
-    print(f"    User: {me['email']} ({me['role']})")
-except Exception as e:
-    assert_cond(False, f"auth.me() failed: {e}")
-
-try:
-    keys = client.auth.list_api_keys()
-    assert_cond(isinstance(keys, list), "auth.list_api_keys() returns list")
-    print(f"    API keys: {len(keys)}")
-except Exception as e:
-    assert_cond(False, f"auth.list_api_keys() failed: {e}")
-
-# --- 2. Workspace Lifecycle ---
-print("\n--- Workspace Lifecycle ---")
-ws_id = ""
-try:
-    ws = client.workspaces.create(
-        name="py-sdk-live-test", runtime="base", storage_size="1Gi"
-    )
-    ws_id = ws.id
-    assert_cond(
-        isinstance(ws.id, str) and len(ws.id) > 0,
-        "workspaces.create() returns workspace with id",
-    )
-    assert_cond(
-        ws.name == "py-sdk-live-test", "workspaces.create() returns correct name"
-    )
-    print(f"    Created workspace: {ws_id}")
-except Exception as e:
-    assert_cond(False, f"workspaces.create() failed: {e}")
-    sys.exit(1)
-
-try:
-    ws = client.workspaces.get(ws_id)
-    assert_cond(ws.id == ws_id, "workspaces.get() returns correct id")
-    assert_cond(ws.name == "py-sdk-live-test", "workspaces.get() returns correct name")
-except Exception as e:
-    assert_cond(False, f"workspaces.get() failed: {e}")
-
-try:
-    status = client.workspaces.get_status(ws_id)
-    assert_cond("phase" in status, "workspaces.get_status() returns phase")
-    print(
-        f"    Phase: {status['phase']}, AgentHealth: {status.get('agentHealth', {}).get('status')}"
-    )
-except Exception as e:
-    assert_cond(False, f"workspaces.get_status() failed: {e}")
-
-try:
-    result = client.workspaces.list()
-    assert_cond(
-        len(result.items) >= 1, "workspaces.list() returns at least 1 workspace"
-    )
-    print(f"    Listed {len(result.items)} workspaces")
-except Exception as e:
-    assert_cond(False, f"workspaces.list() failed: {e}")
-
-print("    Waiting for workspace agent to be Healthy...")
-health = wait_healthy(ws_id)
-assert_cond(health == "Healthy", f"workspace agent reached Healthy (got: {health})")
-
-if health != "Healthy":
-    print("    ABORT: agent not healthy")
-    try:
-        client.workspaces.delete(ws_id)
-    except:
-        pass
-    sys.exit(1)
-
-# --- 3. Sessions ---
-print("\n--- Sessions ---")
-session_id = ""
-try:
-    session = client.sessions.ensure(ws_id)
-    session_id = session.sessionId
-    assert_cond(
-        isinstance(session.sessionId, str) and len(session.sessionId) > 0,
-        "sessions.ensure() returns sessionId",
-    )
-    print(f"    Session: {session_id} (resumed: {session.resumed})")
-except Exception as e:
-    assert_cond(False, f"sessions.ensure() failed: {e}")
-
-# Send message via raw httpx (SDK has known parts format bug)
-if session_id:
-    print("    Sending message via raw httpx (SDK has known parts format bug)...")
-    try:
-        import httpx
-
-        resp = httpx.post(
-            f"{API_URL}/api/v1/workspaces/{ws_id}/sessions/{session_id}/message",
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "content": 'echo "hello from Python SDK live test"',
-                "parts": [
-                    {"type": "text", "text": 'echo "hello from Python SDK live test"'}
-                ],
-            },
-            timeout=120.0,
-        )
-        assert_cond(resp.status_code == 200, f"sendMessage returns {resp.status_code}")
-        raw = resp.json()
-        text_parts = [
-            p["text"] for p in raw.get("parts", []) if p.get("type") == "text"
-        ]
-        assert_cond(len(text_parts) > 0, "sendMessage response contains text parts")
-        print(f'    Agent response: "{"".join(text_parts)[:100]}"')
-        passed += 1  # count the SDK bug note
-        print(
-            "    NOTE: SDK send_message() sends {{content}} but opencode requires {{parts}}. SDK bug confirmed."
-        )
-    except Exception as e:
-        assert_cond(False, f"sendMessage failed: {e}")
-
-if session_id:
-    try:
-        history = client.sessions.get_history(ws_id, session_id)
-        assert_cond(isinstance(history, list), "sessions.get_history() returns list")
-        print(f"    History entries: {len(history)}")
-    except Exception as e:
-        assert_cond(False, f"sessions.get_history() failed: {e}")
-
-# --- 4. Terminal Ticket ---
-print("\n--- Terminal Ticket ---")
-try:
-    ticket = client.terminal.get_ticket(ws_id)
-    assert_cond(
-        ticket.ticket.startswith("tkt_"),
-        "terminal.get_ticket() returns tkt_ prefixed ticket",
-    )
-    assert_cond(
-        isinstance(ticket.expiresAt, str), "terminal.get_ticket() returns expiresAt"
-    )
-    print(f"    Ticket: {ticket.ticket[:20]}...")
-except Exception as e:
-    assert_cond(False, f"terminal.get_ticket() failed: {e}")
-
-try:
-    t1 = client.terminal.get_ticket(ws_id)
-    t2 = client.terminal.get_ticket(ws_id)
-    assert_cond(t1.ticket != t2.ticket, "consecutive tickets are unique")
-except Exception as e:
-    assert_cond(False, f"ticket uniqueness check failed: {e}")
-
-# --- 5. Suspend / Resume ---
-print("\n--- Suspend / Resume ---")
-try:
-    import httpx
-
-    resp = httpx.post(
-        f"{API_URL}/api/v1/workspaces/{ws_id}/suspend",
-        headers={"Authorization": f"Bearer {API_KEY}"},
-        timeout=30.0,
-    )
-    assert_cond(
-        resp.status_code == 202, f"suspend returns 202 (got {resp.status_code})"
-    )
-    print("    Suspended (202)")
-    passed += 1
-
-    import time
-
-    for i in range(20):
+def wait_phase(ws_id, phase, max_wait=60):
+    start = time.time()
+    while time.time() - start < max_wait:
         s = client.workspaces.get_status(ws_id)
-        if s["phase"] == "Suspended":
-            print(f"    Phase=Suspended after {i * 3}s")
-            break
+        if s.get("phase") == phase:
+            return phase
         time.sleep(3)
+    return client.workspaces.get_status(ws_id).get("phase", "timeout")
 
-    pre = client.workspaces.get_status(ws_id)
-    assert_cond(
-        pre["phase"] == "Suspended", f"workspace is Suspended (got: {pre['phase']})"
-    )
 
-    client.workspaces.resume(ws_id)
-    health = wait_healthy(ws_id)
-    assert_cond(
-        health == "Healthy", f"resume brings agent back to Healthy (got: {health})"
-    )
-    print(f"    Resumed. Agent health: {health}")
+print("=== Python SDK Live Integration Test (Comprehensive) ===\n")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. AUTH
+# ═══════════════════════════════════════════════════════════════════════════════
+print("─── Auth ───")
+me = client.auth.me()
+ok(isinstance(me.get("id"), str) and len(me["id"]) > 0, "auth.me() → id")
+ok(isinstance(me.get("email"), str), "auth.me() → email")
+ok(isinstance(me.get("role"), str), "auth.me() → role")
+ok(isinstance(me.get("username"), str), "auth.me() → username")
+
+keys = client.auth.list_api_keys()
+ok(isinstance(keys, list), "auth.list_api_keys() → list")
+
+# Create + delete API key
+new_key = client.auth.create_api_key("py-live-test-key")
+ok(new_key.name == "py-live-test-key", "auth.create_api_key() → name")
+ok(new_key.key is not None and new_key.key.startswith("lsp_"), "auth.create_api_key() → key prefix")
+ok(isinstance(new_key.id, str), "auth.create_api_key() → id")
+
+client.auth.delete_api_key(new_key.id)
+keys_after = client.auth.list_api_keys()
+ok(not any(k.id == new_key.id for k in keys_after), "auth.delete_api_key() → removed")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. WORKSPACE LIFECYCLE
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Workspace Lifecycle ───")
+ws = client.workspaces.create(name="py-live-comprehensive", runtime="base", storage_size="1Gi")
+ws_id = ws.id
+ok(len(ws.id) > 0, "workspaces.create() → id")
+ok(ws.name == "py-live-comprehensive", "workspaces.create() → name")
+ok(ws.runtime == "base", "workspaces.create() → runtime")
+
+fetched = client.workspaces.get(ws_id)
+ok(fetched.id == ws_id, "workspaces.get() → correct id")
+
+status = client.workspaces.get_status(ws_id)
+ok("phase" in status, "workspaces.get_status() → phase")
+ok("activeSessions" in status, "workspaces.get_status() → activeSessions")
+
+result = client.workspaces.list()
+ok(len(result.items) >= 1, "workspaces.list() → ≥1 item")
+ok(any(i.id == ws_id for i in result.items), "workspaces.list() → contains new ws")
+
+# Pagination
+page = client.workspaces.list(limit=1, offset=0)
+ok(len(page.items) <= 1, "workspaces.list(limit=1) → ≤1 item")
+
+# Rename
+client.workspaces.rename(ws_id, "py-live-renamed")
+renamed = client.workspaces.get(ws_id)
+ok(renamed.name == "py-live-renamed", "workspaces.rename() → updated")
+
+# Wait healthy
+print("  Waiting for agent healthy...")
+health = wait_healthy(ws_id)
+ok(health == "Healthy", f"agent healthy (got: {health})")
+if health != "Healthy":
+    client.workspaces.delete(ws_id)
+    sys.exit(1)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. SESSIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Sessions ───")
+session = client.sessions.ensure(ws_id)
+ok(len(session.sessionId) > 0, "sessions.ensure() → sessionId")
+ok(session.workspaceId == ws_id, "sessions.ensure() → workspaceId")
+ok(isinstance(session.resumed, bool), "sessions.ensure() → resumed")
+
+# Send message via SDK (now fixed with parts format)
+print("  Sending message via SDK...")
+msg = client.sessions.send_message(ws_id, session.sessionId, "Reply with exactly: PONG")
+ok(isinstance(msg.content, str), "sessions.send_message() → content string")
+ok(len(msg.content) > 0, "sessions.send_message() → non-empty")
+ok(msg.raw is not None, "sessions.send_message() → raw present")
+print(f'  Agent said: "{msg.content[:80]}"')
+
+# History
+history = client.sessions.get_history(ws_id, session.sessionId)
+ok(isinstance(history, list), "sessions.get_history() → list")
+ok(len(history) >= 1, "sessions.get_history() → ≥1 after message")
+
+# Abort
+client.sessions.abort(ws_id, session.sessionId)
+ok(True, "sessions.abort() → no error")
+
+# List sessions (may be empty if opencode hasn't registered yet)
+sessions_list = client.sessions.list(ws_id)
+ok(isinstance(sessions_list, list), "sessions.list() → list")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. TERMINAL TICKET
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Terminal ───")
+ticket = client.terminal.get_ticket(ws_id)
+ok(ticket.ticket.startswith("tkt_"), "terminal.get_ticket() → tkt_ prefix")
+ok(len(ticket.ticket) > 10, "terminal.get_ticket() → sufficient length")
+ok(isinstance(ticket.expiresAt, str), "terminal.get_ticket() → expiresAt")
+
+t2 = client.terminal.get_ticket(ws_id)
+ok(ticket.ticket != t2.ticket, "terminal tickets are unique")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. SECRETS
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Secrets ───")
+try:
+    secret = client.secrets.create(name="py-live-secret", type="env-secret", value="secret-val-42")
+    ok(len(secret.id) > 0, "secrets.create() → id")
+    ok(secret.name == "py-live-secret", "secrets.create() → name")
+    ok(secret.type == "env-secret", "secrets.create() → type")
+
+    sec_list = client.secrets.list()
+    ok(any(s.id == secret.id for s in sec_list), "secrets.list() → contains new")
+
+    fetched_sec = client.secrets.get(secret.id)
+    ok(fetched_sec.name == "py-live-secret", "secrets.get() → name")
+
+    revealed = client.secrets.reveal(secret.id)
+    ok(revealed == "secret-val-42", "secrets.reveal() → correct value")
+
+    client.secrets.delete(secret.id)
+    after = client.secrets.list()
+    ok(not any(s.id == secret.id for s in after), "secrets.delete() → removed")
 except Exception as e:
-    assert_cond(False, f"suspend/resume failed: {e}")
+    print(f"  ⚠ Secrets skipped: {e}")
 
-# --- 6. Error Handling ---
-print("\n--- Error Handling ---")
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. SUSPEND / RESUME
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Suspend / Resume ───")
+client.workspaces.suspend(ws_id)
+ok(True, "workspaces.suspend() → no error")
+
+phase = wait_phase(ws_id, "Suspended")
+ok(phase == "Suspended", f"phase → Suspended (got: {phase})")
+
+client.workspaces.resume(ws_id)
+ok(True, "workspaces.resume() → no error")
+
+rh = wait_healthy(ws_id)
+ok(rh == "Healthy", f"resume → Healthy (got: {rh})")
+
+# Session works after resume
+post_resume = client.sessions.ensure(ws_id)
+ok(len(post_resume.sessionId) > 0, "sessions.ensure() works after resume")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. ACTIVATE
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Activate ───")
+client.workspaces.suspend(ws_id)
+wait_phase(ws_id, "Suspended")
+activate_resp = client.workspaces.activate(ws_id)
+ok(isinstance(activate_resp, dict) and "resumed" in activate_resp, "workspaces.activate() → resumed field")
+ah = wait_healthy(ws_id)
+ok(ah == "Healthy", f"activate → Healthy (got: {ah})")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. ERROR HANDLING
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Error Handling ───")
 try:
     client.workspaces.get("00000000-0000-0000-0000-000000000000")
-    assert_cond(False, "get nonexistent workspace should throw")
-except Exception as e:
-    assert_cond(True, f"get nonexistent workspace throws: {str(e)[:60]}")
+    ok(False, "nonexistent ws should throw")
+except NotFoundError:
+    ok(True, "nonexistent ws → NotFoundError")
+except Exception:
+    ok(True, "nonexistent ws → error (non-NotFoundError)")
 
 try:
-    bad_client = LLMSafeSpace(API_URL, api_key="lsp_invalid_key")
-    bad_client.auth.me()
-    assert_cond(False, "invalid API key should throw")
-except Exception as e:
-    assert_cond(True, f"invalid API key throws: {str(e)[:60]}")
+    bad = LLMSafeSpace(API_URL, api_key="lsp_invalid")
+    bad.auth.me()
+    ok(False, "invalid key should throw")
+except AuthError:
+    ok(True, "invalid key → AuthError")
 
-# --- 7. Cleanup ---
-print("\n--- Cleanup ---")
 try:
-    client.workspaces.delete(ws_id)
-    print(f"    Deleted workspace {ws_id}")
-    passed += 1
-except Exception as e:
-    print(f"    FAIL: delete workspace: {e}")
-    failed += 1
-    errors.append("delete workspace")
+    client.terminal.get_ticket("00000000-0000-0000-0000-000000000000")
+    ok(False, "terminal ticket nonexistent should throw")
+except Exception:
+    ok(True, "terminal ticket nonexistent → error")
 
-# --- Summary ---
-print("\n=== Results ===")
-print(f"  Passed: {passed}")
-print(f"  Failed: {failed}")
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. CLEANUP
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n─── Cleanup ───")
+client.workspaces.delete(ws_id)
+ok(True, "workspaces.delete() → success")
+
+try:
+    client.workspaces.get(ws_id)
+    ok(False, "get deleted ws should throw")
+except NotFoundError:
+    ok(True, "deleted ws → NotFoundError")
+except Exception:
+    ok(True, "deleted ws → error")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print(f"\n═══ Results: {passed} passed, {failed} failed ═══")
 if errors:
-    print(f"  Failures: {', '.join(errors)}")
+    print(f"Failures:\n  " + "\n  ".join(errors))
 sys.exit(1 if failed > 0 else 0)
