@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -129,12 +130,129 @@ type providerCache struct {
 	lastFetchedAt time.Time
 }
 
+// sessionStatusTracker subscribes to opencode's SSE stream and tracks busy/idle per session.
+type sessionStatusTracker struct {
+	mu       sync.RWMutex
+	statuses map[string]string // session ID → "busy" | "idle"
+}
+
+func newSessionStatusTracker() *sessionStatusTracker {
+	return &sessionStatusTracker{statuses: make(map[string]string)}
+}
+
+func (t *sessionStatusTracker) set(sessionID, status string) {
+	t.mu.Lock()
+	t.statuses[sessionID] = status
+	t.mu.Unlock()
+}
+
+func (t *sessionStatusTracker) get(sessionID string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if s, ok := t.statuses[sessionID]; ok {
+		return s
+	}
+	return "idle"
+}
+
+func (t *sessionStatusTracker) subscribe(client *OpenCodeClient) {
+	backoff := 2 * time.Second
+	maxBackoff := 30 * time.Second
+
+	for {
+		if err := t.connectAndRead(client); err != nil {
+			log.Debug("SSE stream ended", zap.Error(err))
+		}
+		time.Sleep(backoff)
+		if backoff*2 > maxBackoff {
+			backoff = maxBackoff
+		} else {
+			backoff = backoff * 2
+		}
+	}
+}
+
+func (t *sessionStatusTracker) connectAndRead(client *OpenCodeClient) error {
+	req, err := http.NewRequest("GET", agentAddr+"/event", nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth("opencode", client.password)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	httpClient := &http.Client{Timeout: 0} // no timeout for SSE
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("SSE returned status %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+
+	var eventData strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			eventData.WriteString(strings.TrimPrefix(line, "data: "))
+		} else if line == "" && eventData.Len() > 0 {
+			t.processEvent(eventData.String())
+			eventData.Reset()
+		}
+	}
+	return scanner.Err()
+}
+
+func (t *sessionStatusTracker) processEvent(data string) {
+	// Flat format: {"type":"session.status","properties":{"sessionID":"ses_...","status":{"type":"idle"}}}
+	var evt struct {
+		Type       string          `json:"type"`
+		Properties json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal([]byte(data), &evt) != nil || evt.Type != "session.status" {
+		// Try nested format
+		var nested struct {
+			Payload struct {
+				Type       string          `json:"type"`
+				Properties json.RawMessage `json:"properties"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(data), &nested) != nil || nested.Payload.Type != "session.status" {
+			return
+		}
+		evt.Properties = nested.Payload.Properties
+	}
+
+	var props struct {
+		SessionID string `json:"sessionID"`
+		Status    struct {
+			Type string `json:"type"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(evt.Properties, &props) != nil || props.SessionID == "" {
+		return
+	}
+
+	if props.Status.Type == "busy" || props.Status.Type == "idle" {
+		t.set(props.SessionID, props.Status.Type)
+	}
+}
+
 const connectedCacheTTL = 15 * time.Second
 
-func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCache) ([]string, int, []agentd.SessionInfo) {
+func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCache, tracker *sessionStatusTracker) ([]string, int, []agentd.SessionInfo) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if time.Since(cache.lastFetchedAt) < connectedCacheTTL && cache.connected != nil {
+		// Even on cache hit, refresh session statuses from SSE tracker
+		for i := range cache.sessions {
+			cache.sessions[i].Status = tracker.get(cache.sessions[i].ID)
+		}
 		return cache.connected, cache.configured, cache.sessions
 	}
 	connected, connErr := client.ConnectedProviders(ctx)
@@ -148,6 +266,10 @@ func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCac
 	}
 	if sessErr != nil {
 		log.Debug("failed to fetch sessions", zap.Error(sessErr))
+	}
+	// Merge SSE-tracked statuses into session list
+	for i := range sessions {
+		sessions[i].Status = tracker.get(sessions[i].ID)
 	}
 	cache.connected = connected
 	cache.configured = configured
@@ -200,6 +322,8 @@ func main() {
 
 	startedAt := time.Now()
 	cache := &providerCache{}
+	sseTracker := newSessionStatusTracker()
+	go sseTracker.subscribe(client)
 
 	mux := http.NewServeMux()
 
@@ -223,7 +347,7 @@ func main() {
 
 	mux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		connected, configured, _ := cachedState(r.Context(), client, cache)
+		connected, configured, _ := cachedState(r.Context(), client, cache, sseTracker)
 		healthy, version, _ := client.IsHealthy(r.Context())
 		ready := healthy && len(connected) > 0
 		json.NewEncoder(w).Encode(agentd.ReadyzResponse{
@@ -287,7 +411,7 @@ func main() {
 	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
-		connected, configured, sessions := cachedState(r.Context(), client, cache)
+		connected, configured, sessions := cachedState(r.Context(), client, cache, sseTracker)
 		ready := healthy && len(connected) > 0
 
 		activeCnt := 0

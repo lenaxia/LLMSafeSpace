@@ -124,14 +124,14 @@ func TestCachedState_CachesWithinTTL(t *testing.T) {
 	cache := &providerCache{}
 
 	// First call populates cache
-	connected1, configured1, sessions1 := cachedState(context.Background(), client, cache)
+	connected1, configured1, sessions1 := cachedState(context.Background(), client, cache, newSessionStatusTracker())
 	assert.Equal(t, []string{"opencode"}, connected1)
 	assert.Equal(t, 1, configured1)
 	assert.Len(t, sessions1, 1)
 	firstCallCount := callCount
 
 	// Second call within TTL should use cache
-	connected2, configured2, sessions2 := cachedState(context.Background(), client, cache)
+	connected2, configured2, sessions2 := cachedState(context.Background(), client, cache, newSessionStatusTracker())
 	assert.Equal(t, connected1, connected2)
 	assert.Equal(t, configured1, configured2)
 	assert.Equal(t, sessions1, sessions2)
@@ -168,13 +168,14 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
 	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
 	startedAt := time.Now()
 
 	// Build the handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
-		connected, configured, sessions := cachedState(r.Context(), client, cache)
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
 		ready := healthy && len(connected) > 0
 
 		activeCnt := 0
@@ -220,4 +221,83 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 // setAgentAddr is a test helper to override the package-level agentAddr.
 func setAgentAddr(addr string) {
 	agentAddr = addr
+}
+
+// === sessionStatusTracker ===
+
+func TestSessionStatusTracker_SetAndGet(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	assert.Equal(t, "idle", tracker.get("ses_1"), "unknown session defaults to idle")
+
+	tracker.set("ses_1", "busy")
+	assert.Equal(t, "busy", tracker.get("ses_1"))
+
+	tracker.set("ses_1", "idle")
+	assert.Equal(t, "idle", tracker.get("ses_1"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_Flat(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	// Flat format
+	tracker.processEvent(`{"type":"session.status","properties":{"sessionID":"ses_abc","status":{"type":"busy"}}}`)
+	assert.Equal(t, "busy", tracker.get("ses_abc"))
+
+	tracker.processEvent(`{"type":"session.status","properties":{"sessionID":"ses_abc","status":{"type":"idle"}}}`)
+	assert.Equal(t, "idle", tracker.get("ses_abc"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_Nested(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	// Nested format
+	tracker.processEvent(`{"payload":{"type":"session.status","properties":{"sessionID":"ses_xyz","status":{"type":"busy"}}}}`)
+	assert.Equal(t, "busy", tracker.get("ses_xyz"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_IgnoresOtherTypes(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"type":"message.created","properties":{"sessionID":"ses_1"}}`)
+	assert.Equal(t, "idle", tracker.get("ses_1"), "non session.status events should not set status")
+}
+
+func TestSessionStatusTracker_ProcessEvent_InvalidJSON(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.processEvent(`not json at all`)
+	assert.Equal(t, "idle", tracker.get("anything"))
+}
+
+func TestSessionStatusTracker_MergesIntoCachedState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct{ ID string `json:"id"` }{{ID: "ses_1"}, {ID: "ses_2"}})
+		case "/session/ses_1", "/session/ses_2":
+			json.NewEncoder(w).Encode(map[string]string{"title": ""})
+		}
+	}))
+	defer server.Close()
+
+	origAddr := agentAddr
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+
+	// Simulate SSE event marking ses_1 as busy
+	tracker.set("ses_1", "busy")
+
+	_, _, sessions := cachedState(context.Background(), client, cache, tracker)
+
+	assert.Len(t, sessions, 2)
+	assert.Equal(t, "busy", sessions[0].Status)
+	assert.Equal(t, "idle", sessions[1].Status)
 }
