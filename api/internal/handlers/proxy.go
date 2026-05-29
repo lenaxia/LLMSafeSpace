@@ -18,13 +18,14 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 const (
 	defaultMaxActiveSessions   = 5
 	maxConnectionsPerWorkspace = 10
-	opencodePort               = 4096
+	opencodePort               = agentd.AgentPort
 	retryAfterSec              = 10
 
 	phaseActive      = v1.WorkspacePhaseActive

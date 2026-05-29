@@ -654,18 +654,18 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Image:   runtimeImage,
 		Command: []string{"/usr/local/bin/entrypoint-opencode.sh"},
 		Ports: []corev1.ContainerPort{
-			{ContainerPort: 4096, Name: "opencode", Protocol: corev1.ProtocolTCP},
-			{ContainerPort: 4097, Name: "agentd", Protocol: corev1.ProtocolTCP},
+			{ContainerPort: agentd.AgentPort, Name: "opencode", Protocol: corev1.ProtocolTCP},
+			{ContainerPort: agentd.AgentdPort, Name: "agentd", Protocol: corev1.ProtocolTCP},
 		},
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
-			{Name: "WORKSPACE_DIR", Value: "/workspace"},
+			{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/v1/readyz",
-					Port: intstr.FromInt(4097),
+					Port: intstr.FromInt(agentd.AgentdPort),
 				},
 			},
 			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
@@ -674,7 +674,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/v1/healthz",
-					Port: intstr.FromInt(4097),
+					Port: intstr.FromInt(agentd.AgentdPort),
 				},
 			},
 			InitialDelaySeconds: 15, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 6,
@@ -985,7 +985,7 @@ var (
 	healthCheckBackoffInterval  = 60 * time.Second
 	healthCheckFailureThreshold = int32(3)
 	healthCheckGracePeriod      = 30 * time.Second
-	agentdPort                  = 4097
+	agentdPort                  = agentd.AgentdPort
 )
 
 var healthHTTPClient = &http.Client{Timeout: 5 * time.Second}
