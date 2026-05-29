@@ -267,8 +267,13 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
-		// Pod exists but not running — transient recovery.
 		return r.recoverFromTransientPodLoss(ctx, workspace)
+	}
+
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+			return r.recoverFromTransientPodLoss(ctx, workspace)
+		}
 	}
 
 	// Clean up ephemeral secrets Secret (safety net — should already be deleted in handleCreating).
