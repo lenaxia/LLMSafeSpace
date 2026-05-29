@@ -44,13 +44,13 @@ func TestStatuszResponse_JSON(t *testing.T) {
 			{ID: "ses_1", Title: "Debug auth", Status: "idle"},
 			{ID: "ses_2", Title: "", Status: "busy"},
 		},
-		SessionsActive:  2,
-		SessionsError:   0,
-		LastError:        "",
-		AgentType:        "opencode",
-		AgentVersion:     "1.2.27",
-		UptimeSeconds:    7200,
-		Disk:             &DiskUsage{UsedBytes: 1024 * 1024 * 50, TotalBytes: 1024 * 1024 * 1024},
+		SessionsActive: 2,
+		SessionsError:  0,
+		LastError:      "",
+		AgentType:      "opencode",
+		AgentVersion:   "1.2.27",
+		UptimeSeconds:  7200,
+		Disk:           &DiskUsage{UsedBytes: 1024 * 1024 * 50, TotalBytes: 1024 * 1024 * 1024},
 	}
 	data, err := json.Marshal(resp)
 	assert.NoError(t, err)

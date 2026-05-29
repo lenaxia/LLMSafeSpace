@@ -95,16 +95,16 @@ func (m *mockDB) GetUser(_ context.Context, userID string) (*types.User, error) 
 }
 
 // Satisfy interface — only GetUser needed for this test
-func (m *mockDB) GetUserByEmail(context.Context, string) (*types.User, error)    { return nil, nil }
-func (m *mockDB) CreateUser(context.Context, *types.User) error                  { return nil }
-func (m *mockDB) UpdateUser(context.Context, string, types.UserUpdates) error     { return nil }
-func (m *mockDB) DeleteUser(context.Context, string) error                        { return nil }
-func (m *mockDB) CountUsers(context.Context) (int, error)                         { return 1, nil }
-func (m *mockDB) GetUserByAPIKey(context.Context, string) (*types.User, error)    { return nil, nil }
-func (m *mockDB) CreateAPIKey(context.Context, *types.APIKey) error               { return nil }
-func (m *mockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)    { return nil, nil }
+func (m *mockDB) GetUserByEmail(context.Context, string) (*types.User, error)      { return nil, nil }
+func (m *mockDB) CreateUser(context.Context, *types.User) error                    { return nil }
+func (m *mockDB) UpdateUser(context.Context, string, types.UserUpdates) error      { return nil }
+func (m *mockDB) DeleteUser(context.Context, string) error                         { return nil }
+func (m *mockDB) CountUsers(context.Context) (int, error)                          { return 1, nil }
+func (m *mockDB) GetUserByAPIKey(context.Context, string) (*types.User, error)     { return nil, nil }
+func (m *mockDB) CreateAPIKey(context.Context, *types.APIKey) error                { return nil }
+func (m *mockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)     { return nil, nil }
 func (m *mockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) { return nil, nil }
-func (m *mockDB) DeleteAPIKey(context.Context, string, string) error              { return nil }
+func (m *mockDB) DeleteAPIKey(context.Context, string, string) error               { return nil }
 func (m *mockDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
 	return nil, nil
 }
@@ -116,14 +116,14 @@ func (m *mockDB) DeleteWorkspace(context.Context, string) error { return nil }
 func (m *mockDB) ListWorkspaces(context.Context, string, int, int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	return nil, nil, nil
 }
-func (m *mockDB) SyncWorkspacePhase(context.Context, string, string, string)       {}
-func (m *mockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *mockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }
-func (m *mockDB) CheckResourceOwnership(string, string, string) (bool, error)      { return false, nil }
+func (m *mockDB) SyncWorkspacePhase(context.Context, string, string, string)   {}
+func (m *mockDB) MarkWorkspaceDeleted(context.Context, string)                 {}
+func (m *mockDB) CheckPermission(string, string, string, string) (bool, error) { return false, nil }
+func (m *mockDB) CheckResourceOwnership(string, string, string) (bool, error)  { return false, nil }
 func (m *mockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
-func (m *mockDB) DeleteSessionIndex(context.Context, string) error                 { return nil }
+func (m *mockDB) DeleteSessionIndex(context.Context, string) error { return nil }
 func (m *mockDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -134,13 +134,17 @@ func (m *mockDB) Stop() error                                                   
 
 type mockCache struct{}
 
-func (m *mockCache) Get(context.Context, string) (string, error)                          { return "", nil }
-func (m *mockCache) Set(context.Context, string, string, time.Duration) error             { return nil }
-func (m *mockCache) SetNX(context.Context, string, string, time.Duration) (bool, error)   { return true, nil }
-func (m *mockCache) Delete(context.Context, string) error                                 { return nil }
-func (m *mockCache) GetObject(context.Context, string, interface{}) error                 { return nil }
-func (m *mockCache) SetObject(context.Context, string, interface{}, time.Duration) error  { return nil }
-func (m *mockCache) GetSession(context.Context, string) (*types.CachedSession, error)     { return nil, nil }
+func (m *mockCache) Get(context.Context, string) (string, error)              { return "", nil }
+func (m *mockCache) Set(context.Context, string, string, time.Duration) error { return nil }
+func (m *mockCache) SetNX(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (m *mockCache) Delete(context.Context, string) error                                { return nil }
+func (m *mockCache) GetObject(context.Context, string, interface{}) error                { return nil }
+func (m *mockCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
+func (m *mockCache) GetSession(context.Context, string) (*types.CachedSession, error) {
+	return nil, nil
+}
 func (m *mockCache) SetSession(context.Context, string, types.CachedSession, time.Duration) error {
 	return nil
 }

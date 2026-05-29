@@ -393,9 +393,9 @@ func TestCreateWorkspace_EmptyEgressDomains_NoNetworkAccess(t *testing.T) {
 func TestCreateWorkspace_AutoSuspendTimeout_MinutesToSeconds(t *testing.T) {
 	// Verify the minutes→seconds conversion for various values
 	tests := []struct {
-		name           string
-		minutes        int
-		expectSeconds  int64
+		name          string
+		minutes       int
+		expectSeconds int64
 	}{
 		{"1 minute", 1, 60},
 		{"60 minutes", 60, 3600},
@@ -495,4 +495,3 @@ func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
 }
-

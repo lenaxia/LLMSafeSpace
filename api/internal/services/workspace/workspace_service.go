@@ -30,15 +30,15 @@ func init() {
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
-	logger                pkginterfaces.LoggerInterface
-	k8sClient             pkginterfaces.KubernetesClient
-	dbService             apiinterfaces.DatabaseService
-	cacheService          apiinterfaces.CacheService
-	metricsService        apiinterfaces.MetricsService
-	sessionIndex          apiinterfaces.SessionIndexService
-	secretInjector        SecretInjector
-	instanceSettings      *settings.InstanceService
-	config                *Config
+	logger           pkginterfaces.LoggerInterface
+	k8sClient        pkginterfaces.KubernetesClient
+	dbService        apiinterfaces.DatabaseService
+	cacheService     apiinterfaces.CacheService
+	metricsService   apiinterfaces.MetricsService
+	sessionIndex     apiinterfaces.SessionIndexService
+	secretInjector   SecretInjector
+	instanceSettings *settings.InstanceService
+	config           *Config
 }
 
 func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
@@ -128,8 +128,6 @@ type SecretInjector interface {
 func (s *Service) SetSecretInjector(si SecretInjector) {
 	s.secretInjector = si
 }
-
-
 
 func (s *Service) Start() error {
 	s.logger.Info("Starting workspace service")
@@ -493,7 +491,6 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 
 	return result, nil
 }
-
 
 // verifyOwner returns a forbidden or not-found error if the user does not own
 // the workspace. Returns nil when the user is the owner.

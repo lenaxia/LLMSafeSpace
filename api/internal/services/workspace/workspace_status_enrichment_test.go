@@ -59,7 +59,7 @@ func TestGetWorkspaceStatus_IncludesDiskUsage(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	crd.Status.Phase = v1.WorkspacePhaseActive
-	crd.Status.DiskUsedBytes = 1_073_741_824  // 1 GiB
+	crd.Status.DiskUsedBytes = 1_073_741_824   // 1 GiB
 	crd.Status.DiskTotalBytes = 10_737_418_240 // 10 GiB
 	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
 

@@ -41,7 +41,9 @@ func TestE2E_SSEToStatusz(t *testing.T) {
 		case "/config/providers":
 			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
 		case "/session":
-			json.NewEncoder(w).Encode([]struct{ ID string `json:"id"` }{
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{
 				{ID: "ses_1"}, {ID: "ses_2"}, {ID: "ses_3"},
 			})
 		case "/session/ses_1":

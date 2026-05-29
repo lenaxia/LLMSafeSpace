@@ -14,28 +14,44 @@ var _ agent.Dialect = (*Dialect)(nil)
 
 // --- Session route paths ---
 
-func (d *Dialect) SessionCreatePath() string                    { return "/session" }
-func (d *Dialect) SessionListPath() string                      { return "/session" }
-func (d *Dialect) SessionMessagePath(sessionID string) string   { return "/session/" + sessionID + "/message" }
-func (d *Dialect) SessionPromptAsyncPath(sessionID string) string { return "/session/" + sessionID + "/prompt_async" }
-func (d *Dialect) SessionAbortPath(sessionID string) string     { return "/session/" + sessionID + "/abort" }
-func (d *Dialect) SessionGetPath(sessionID string) string       { return "/session/" + sessionID }
-func (d *Dialect) EventStreamPath() string                      { return "/event" }
+func (d *Dialect) SessionCreatePath() string { return "/session" }
+func (d *Dialect) SessionListPath() string   { return "/session" }
+func (d *Dialect) SessionMessagePath(sessionID string) string {
+	return "/session/" + sessionID + "/message"
+}
+func (d *Dialect) SessionPromptAsyncPath(sessionID string) string {
+	return "/session/" + sessionID + "/prompt_async"
+}
+func (d *Dialect) SessionAbortPath(sessionID string) string {
+	return "/session/" + sessionID + "/abort"
+}
+func (d *Dialect) SessionGetPath(sessionID string) string { return "/session/" + sessionID }
+func (d *Dialect) EventStreamPath() string                { return "/event" }
 
 // --- Input request route paths ---
 
-func (d *Dialect) QuestionListPath() string                     { return "/question" }
-func (d *Dialect) QuestionReplyPath(requestID string) string    { return "/question/" + requestID + "/reply" }
-func (d *Dialect) QuestionRejectPath(requestID string) string   { return "/question/" + requestID + "/reject" }
-func (d *Dialect) PermissionListPath() string                   { return "/permission" }
-func (d *Dialect) PermissionReplyPath(requestID string) string  { return "/permission/" + requestID + "/reply" }
+func (d *Dialect) QuestionListPath() string { return "/question" }
+func (d *Dialect) QuestionReplyPath(requestID string) string {
+	return "/question/" + requestID + "/reply"
+}
+func (d *Dialect) QuestionRejectPath(requestID string) string {
+	return "/question/" + requestID + "/reject"
+}
+func (d *Dialect) PermissionListPath() string { return "/permission" }
+func (d *Dialect) PermissionReplyPath(requestID string) string {
+	return "/permission/" + requestID + "/reply"
+}
 
 // --- SSE event classification ---
 
-func (d *Dialect) IsQuestionAsked(eventType string) bool    { return eventType == "question.asked" }
-func (d *Dialect) IsQuestionResolved(eventType string) bool { return eventType == "question.replied" || eventType == "question.rejected" }
-func (d *Dialect) IsPermissionAsked(eventType string) bool  { return eventType == "permission.asked" }
-func (d *Dialect) IsPermissionResolved(eventType string) bool { return eventType == "permission.replied" }
+func (d *Dialect) IsQuestionAsked(eventType string) bool { return eventType == "question.asked" }
+func (d *Dialect) IsQuestionResolved(eventType string) bool {
+	return eventType == "question.replied" || eventType == "question.rejected"
+}
+func (d *Dialect) IsPermissionAsked(eventType string) bool { return eventType == "permission.asked" }
+func (d *Dialect) IsPermissionResolved(eventType string) bool {
+	return eventType == "permission.replied"
+}
 
 func (d *Dialect) IsSessionIdle(eventType string, properties json.RawMessage) bool {
 	if eventType != "session.status" {

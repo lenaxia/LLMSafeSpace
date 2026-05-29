@@ -4,15 +4,15 @@ import "time"
 
 // CredentialSet represents a credential set entity.
 type CredentialSet struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	IsDefault        bool      `json:"isDefault"`
-	Providers        []string  `json:"providers"`        // provider names only (keys never exposed)
-	ModelAllowlist   []string  `json:"modelAllowlist"`
-	AssignedTo       any       `json:"assignedTo"`       // "all" or []string of user IDs
-	KeyVersion       int       `json:"keyVersion"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	IsDefault      bool      `json:"isDefault"`
+	Providers      []string  `json:"providers"` // provider names only (keys never exposed)
+	ModelAllowlist []string  `json:"modelAllowlist"`
+	AssignedTo     any       `json:"assignedTo"` // "all" or []string of user IDs
+	KeyVersion     int       `json:"keyVersion"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // CreateCredentialSetRequest is the request to create a credential set.

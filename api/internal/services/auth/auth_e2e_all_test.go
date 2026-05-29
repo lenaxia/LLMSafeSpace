@@ -154,7 +154,9 @@ func TestE2E_RealAuth_Recover(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("Recover: expected 200, got %d: %s", resp.StatusCode, readAll(t, resp))
 	}
-	var recoverResp struct{ RecoveryKey string `json:"recoveryKey"` }
+	var recoverResp struct {
+		RecoveryKey string `json:"recoveryKey"`
+	}
 	json.NewDecoder(resp.Body).Decode(&recoverResp)
 	resp.Body.Close()
 	if recoverResp.RecoveryKey == "" {
@@ -226,7 +228,7 @@ func TestE2E_RealAuth_RotateKey_ThenSecrets(t *testing.T) {
 // === Shared setup ===
 
 type testContext struct {
-	testUserID     string
+	testUserID      string
 	testRecoveryKey string
 }
 

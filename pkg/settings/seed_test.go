@@ -10,9 +10,9 @@ import (
 
 // mockSeedStore implements SeedStore for testing.
 type mockSeedStore struct {
-	mu       sync.Mutex
-	data     map[string]json.RawMessage
-	getErr   error
+	mu        sync.Mutex
+	data      map[string]json.RawMessage
+	getErr    error
 	insertErr error
 }
 

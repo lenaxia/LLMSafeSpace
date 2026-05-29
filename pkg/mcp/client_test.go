@@ -399,11 +399,11 @@ func TestValidateID_AcceptsUnderscoreIDs(t *testing.T) {
 		{"que_e74d7e6db001ZI3VDSHthsee0g", false},
 		{"per_1748012345000_xyz", false},
 		{"msg_e74d7da37001Nw4A59Ndzegm3A", false},
-		{"sess-1", false},                // existing hyphen format still works
-		{"ws.test.123", false},            // dots still work
-		{"../etc/passwd", true},           // path traversal rejected
-		{"", true},                        // empty rejected
-		{".leading-dot", true},            // must start with alphanumeric
+		{"sess-1", false},       // existing hyphen format still works
+		{"ws.test.123", false},  // dots still work
+		{"../etc/passwd", true}, // path traversal rejected
+		{"", true},              // empty rejected
+		{".leading-dot", true},  // must start with alphanumeric
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

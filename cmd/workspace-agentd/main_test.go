@@ -295,7 +295,9 @@ func TestSessionStatusTracker_MergesIntoCachedState(t *testing.T) {
 		case "/config/providers":
 			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
 		case "/session":
-			json.NewEncoder(w).Encode([]struct{ ID string `json:"id"` }{{ID: "ses_1"}, {ID: "ses_2"}})
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{{ID: "ses_1"}, {ID: "ses_2"}})
 		case "/session/ses_1", "/session/ses_2":
 			json.NewEncoder(w).Encode(map[string]string{"title": ""})
 		}

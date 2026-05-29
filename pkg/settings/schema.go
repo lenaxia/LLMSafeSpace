@@ -18,17 +18,17 @@ const (
 // SettingDef defines a single mutable setting. Every setting has a default —
 // there is no concept of a "required" setting that can be missing.
 type SettingDef struct {
-	Key         string     `json:"key"`
-	Tier        int        `json:"tier"`                  // 2=instance, 3=user
+	Key         string      `json:"key"`
+	Tier        int         `json:"tier"` // 2=instance, 3=user
 	Type        SettingType `json:"type"`
-	Default     any        `json:"default"`
-	Min         *int       `json:"min,omitempty"`         // int range
-	Max         *int       `json:"max,omitempty"`         // int range
-	Pattern     string     `json:"pattern,omitempty"`     // string regex
-	Enum        []string   `json:"enum,omitempty"`        // enum values
-	Category    string     `json:"category"`              // UI grouping
-	Label       string     `json:"label"`                 // UI display name
-	Description string     `json:"description"`           // UI help text
+	Default     any         `json:"default"`
+	Min         *int        `json:"min,omitempty"`     // int range
+	Max         *int        `json:"max,omitempty"`     // int range
+	Pattern     string      `json:"pattern,omitempty"` // string regex
+	Enum        []string    `json:"enum,omitempty"`    // enum values
+	Category    string      `json:"category"`          // UI grouping
+	Label       string      `json:"label"`             // UI display name
+	Description string      `json:"description"`       // UI help text
 }
 
 // intPtr returns a pointer to an int value.

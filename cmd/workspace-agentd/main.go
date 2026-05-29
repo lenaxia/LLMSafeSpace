@@ -475,11 +475,11 @@ func main() {
 
 // managedProcess supervises the opencode serve process.
 type managedProcess struct {
-	mu             sync.Mutex
-	cmd            *exec.Cmd
-	restartCount   int
-	lastRestartAt  time.Time
-	stopping       bool
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	restartCount  int
+	lastRestartAt time.Time
+	stopping      bool
 }
 
 const (
@@ -570,7 +570,9 @@ func (p *managedProcess) restart() {
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
 

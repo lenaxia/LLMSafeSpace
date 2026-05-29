@@ -31,7 +31,7 @@ func (s *stubStore) SetInstanceSetting(_ context.Context, key string, value json
 
 type noopRateLimiter struct{}
 
-func (n *noopRateLimiter) Allow(_ string, _ float64, _ int) bool              { return true }
+func (n *noopRateLimiter) Allow(_ string, _ float64, _ int) bool { return true }
 func (n *noopRateLimiter) Increment(_ context.Context, _ string, count int64, _ time.Duration) (int64, error) {
 	return count, nil
 }

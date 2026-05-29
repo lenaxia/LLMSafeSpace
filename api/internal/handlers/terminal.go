@@ -24,13 +24,13 @@ import (
 )
 
 const (
-	ticketTTL            = 30 * time.Second
-	ticketPrefix         = "tkt_"
-	ticketKeyPrefix      = "terminal:ticket:"
-	defaultIdleTimeout   = 30 * time.Minute
-	defaultMaxPerWS      = 5
-	defaultMaxGlobal     = 500
-	terminalShell        = "/bin/sh"
+	ticketTTL          = 30 * time.Second
+	ticketPrefix       = "tkt_"
+	ticketKeyPrefix    = "terminal:ticket:"
+	defaultIdleTimeout = 30 * time.Minute
+	defaultMaxPerWS    = 5
+	defaultMaxGlobal   = 500
+	terminalShell      = "/bin/sh"
 )
 
 // parameterScheme is used to encode PodExecOptions for the exec request.
@@ -54,7 +54,7 @@ type ticketData struct {
 
 // TerminalMessage is the JSON frame for WebSocket communication.
 type TerminalMessage struct {
-	Type    string `json:"type"`              // input, resize, output, exit, error
+	Type    string `json:"type"` // input, resize, output, exit, error
 	Data    string `json:"data,omitempty"`
 	Cols    uint16 `json:"cols,omitempty"`
 	Rows    uint16 `json:"rows,omitempty"`

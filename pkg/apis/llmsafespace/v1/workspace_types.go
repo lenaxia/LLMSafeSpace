@@ -218,9 +218,9 @@ type WorkspaceStatus struct {
 	ConsecutiveHealthFailures int32        `json:"consecutiveHealthFailures,omitempty"`
 
 	// Agent-reported fields (populated from agentd /v1/statusz scrape):
-	Sessions      []AgentSessionStatus `json:"sessions,omitempty"`
-	DiskUsedBytes int64                `json:"diskUsedBytes,omitempty"`
-	DiskTotalBytes int64               `json:"diskTotalBytes,omitempty"`
+	Sessions       []AgentSessionStatus `json:"sessions,omitempty"`
+	DiskUsedBytes  int64                `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes int64                `json:"diskTotalBytes,omitempty"`
 }
 
 // +kubebuilder:object:root=true

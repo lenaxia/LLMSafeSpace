@@ -2,9 +2,9 @@ package auth
 
 import (
 	"bytes"
-	"fmt"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"testing"
@@ -201,14 +201,16 @@ func (m *fullMockDB) CreateUser(_ context.Context, u *types.User) error {
 	m.users[u.ID] = &cp
 	return nil
 }
-func (m *fullMockDB) CountUsers(_ context.Context) (int, error)                       { return len(m.users), nil }
-func (m *fullMockDB) UpdateUser(context.Context, string, types.UserUpdates) error      { return nil }
-func (m *fullMockDB) DeleteUser(context.Context, string) error                         { return nil }
-func (m *fullMockDB) GetUserByAPIKey(context.Context, string) (*types.User, error)     { return nil, nil }
-func (m *fullMockDB) CreateAPIKey(context.Context, *types.APIKey) error                { return nil }
-func (m *fullMockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)     { return nil, nil }
-func (m *fullMockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) { return nil, nil }
-func (m *fullMockDB) DeleteAPIKey(context.Context, string, string) error               { return nil }
+func (m *fullMockDB) CountUsers(_ context.Context) (int, error)                    { return len(m.users), nil }
+func (m *fullMockDB) UpdateUser(context.Context, string, types.UserUpdates) error  { return nil }
+func (m *fullMockDB) DeleteUser(context.Context, string) error                     { return nil }
+func (m *fullMockDB) GetUserByAPIKey(context.Context, string) (*types.User, error) { return nil, nil }
+func (m *fullMockDB) CreateAPIKey(context.Context, *types.APIKey) error            { return nil }
+func (m *fullMockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error) { return nil, nil }
+func (m *fullMockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) {
+	return nil, nil
+}
+func (m *fullMockDB) DeleteAPIKey(context.Context, string, string) error { return nil }
 func (m *fullMockDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
 	return nil, nil
 }
@@ -220,14 +222,14 @@ func (m *fullMockDB) DeleteWorkspace(context.Context, string) error { return nil
 func (m *fullMockDB) ListWorkspaces(context.Context, string, int, int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	return nil, nil, nil
 }
-func (m *fullMockDB) SyncWorkspacePhase(context.Context, string, string, string)       {}
-func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }
-func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)      { return false, nil }
+func (m *fullMockDB) SyncWorkspacePhase(context.Context, string, string, string)   {}
+func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                 {}
+func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error) { return false, nil }
+func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)  { return false, nil }
 func (m *fullMockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
-func (m *fullMockDB) DeleteSessionIndex(context.Context, string) error                 { return nil }
+func (m *fullMockDB) DeleteSessionIndex(context.Context, string) error { return nil }
 func (m *fullMockDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
 	return nil
 }

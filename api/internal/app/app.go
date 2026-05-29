@@ -295,7 +295,6 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-
 // loadCredentialKeySet loads the credential encryption key set from the
 // LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY environment variable (hex-encoded 32 bytes).
 // If not set, generates a random key (suitable for development only).
