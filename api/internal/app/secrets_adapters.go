@@ -10,8 +10,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // dbKeyStoreAdapter adapts the DatabaseService interface to secrets.KeyStore.
@@ -266,4 +269,14 @@ func deriveServerKey(purpose string) []byte {
 		return nil
 	}
 	return key
+}
+
+// k8sWorkspaceGetterAdapter adapts the K8s client to the handlers.WorkspaceGetter interface.
+type k8sWorkspaceGetterAdapter struct {
+	client    *kubernetes.Client
+	namespace string
+}
+
+func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
+	return a.client.LlmsafespaceV1().Workspaces(a.namespace).Get(id, metav1.GetOptions{})
 }

@@ -179,6 +179,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		wsOrigins = cfg.Security.AllowedOrigins
 	}
 
+	// Create terminal handler (Epic 14 — WebSocket terminal proxy).
+	terminalHandler := handlers.NewTerminalHandler(svc.Cache, &k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace}, cfg.Kubernetes.Namespace, log)
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
@@ -191,6 +194,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		CredentialsHandler:      credentialsHandler,
 		SecretsHandler:          secretsHandler,
 		RotateKeyHandler:        rotateKeyHandler,
+		TerminalHandler:         terminalHandler,
 	})
 
 	httpServer := &http.Server{
