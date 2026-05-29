@@ -12,9 +12,10 @@ import {
 } from "./commands/workspace-commands";
 
 let refreshInterval: ReturnType<typeof setInterval> | undefined;
+let apiService: ApiService | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  const apiService = new ApiService(context);
+  apiService = new ApiService(context);
   const treeProvider = new WorkspaceTreeProvider(apiService);
 
   const treeView = vscode.window.createTreeView("llmsafespace.workspaces", {
@@ -22,11 +23,34 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true,
   });
 
-  // Register commands
+  // Status bar
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  statusBar.command = "llmsafespace.refresh";
+  statusBar.text = "$(vm) LLMSafeSpace";
+  statusBar.tooltip = "Click to refresh workspaces";
+  statusBar.show();
+
+  const updateStatusBar = async () => {
+    try {
+      const workspaces = await apiService!.listWorkspaces();
+      const activeCount = workspaces.filter(w => w.phase === "Active").length;
+      statusBar.text = `$(vm) LLMSafeSpace: ${activeCount} active`;
+      statusBar.tooltip = `${workspaces.length} total, ${activeCount} active`;
+    } catch {
+      statusBar.text = "$(warning) LLMSafeSpace";
+      statusBar.tooltip = "Disconnected — click to retry";
+    }
+  };
+
+  // Register all commands
   context.subscriptions.push(
     treeView,
-    vscode.commands.registerCommand("llmsafespace.refresh", () => treeProvider.refresh()),
-    vscode.commands.registerCommand("llmsafespace.configure", () => apiService.configure()),
+    statusBar,
+    vscode.commands.registerCommand("llmsafespace.refresh", () => {
+      treeProvider.refresh();
+      updateStatusBar();
+    }),
+    vscode.commands.registerCommand("llmsafespace.configure", () => apiService!.configure()),
     vscode.commands.registerCommand("llmsafespace.copyId", (item: any) => {
       if (item?.workspace?.id) {
         vscode.env.clipboard.writeText(item.workspace.id);
@@ -44,44 +68,49 @@ export function activate(context: vscode.ExtensionContext) {
   // Register chat participant
   registerChatParticipant(context, apiService);
 
-  // Status bar — shows workspace count
-  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBar.command = "llmsafespace.refresh";
-  statusBar.text = "$(vm) LLMSafeSpace";
-  statusBar.tooltip = "Click to refresh workspaces";
-  statusBar.show();
-  context.subscriptions.push(statusBar);
-
-  // Update status bar on tree refresh
-  const updateStatusBar = async () => {
-    try {
-      const workspaces = await apiService.listWorkspaces();
-      const activeCount = workspaces.filter(w => w.phase === "Active").length;
-      statusBar.text = `$(vm) LLMSafeSpace: ${activeCount} active`;
-      statusBar.tooltip = `${workspaces.length} total workspaces, ${activeCount} active`;
-    } catch {
-      statusBar.text = "$(vm) LLMSafeSpace: ⚠️";
-      statusBar.tooltip = "Disconnected — click to retry";
-    }
+  // Auto-refresh with configurable interval
+  const startRefreshTimer = () => {
+    if (refreshInterval) clearInterval(refreshInterval);
+    const seconds = vscode.workspace.getConfiguration("llmsafespace").get<number>("refreshInterval") ?? 30;
+    refreshInterval = setInterval(() => {
+      treeProvider.refresh();
+      updateStatusBar();
+    }, seconds * 1000);
   };
+  startRefreshTimer();
+
+  // Re-start timer if config changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration("llmsafespace.refreshInterval")) {
+        startRefreshTimer();
+      }
+      if (e.affectsConfiguration("llmsafespace.apiUrl")) {
+        apiService!.reinitialize();
+        treeProvider.refresh();
+        updateStatusBar();
+      }
+    }),
+  );
+
+  // Initial status bar update
   updateStatusBar();
 
-  // Auto-refresh every 30s
-  refreshInterval = setInterval(() => {
-    treeProvider.refresh();
-    updateStatusBar();
-  }, 30_000);
-
-  // First-run check
+  // First-run experience
   if (!apiService.isConfigured()) {
     vscode.window
-      .showInformationMessage("LLMSafeSpace: Configure API connection?", "Configure")
-      .then((choice) => {
-        if (choice === "Configure") apiService.configure();
+      .showInformationMessage("LLMSafeSpace: Configure API connection to get started.", "Configure", "Later")
+      .then(choice => {
+        if (choice === "Configure") apiService!.configure();
       });
   }
 }
 
 export function deactivate() {
-  if (refreshInterval) clearInterval(refreshInterval);
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+    refreshInterval = undefined;
+  }
+  apiService?.dispose();
+  apiService = undefined;
 }

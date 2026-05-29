@@ -1,14 +1,30 @@
 {
   "name": "vscode-llmsafespace",
   "displayName": "LLMSafeSpace",
-  "description": "Manage LLMSafeSpace workspaces from VS Code",
+  "description": "Manage LLMSafeSpace AI agent sandboxes from VS Code — workspace lifecycle, terminal access, and chat integration",
   "version": "1.0.0",
   "publisher": "llmsafespace",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lenaxia/LLMSafeSpace"
+  },
+  "homepage": "https://github.com/lenaxia/LLMSafeSpace#readme",
+  "bugs": {
+    "url": "https://github.com/lenaxia/LLMSafeSpace/issues"
+  },
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
+  "keywords": ["ai", "sandbox", "agent", "llm", "workspace", "terminal", "opencode"],
+  "categories": ["AI", "Other"],
   "engines": {
     "vscode": "^1.95.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onView:llmsafespace.workspaces"],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -31,28 +47,94 @@
     "viewsWelcome": [
       {
         "view": "llmsafespace.workspaces",
-        "contents": "No LLMSafeSpace connection configured.\n[Configure](command:llmsafespace.configure)"
+        "contents": "No LLMSafeSpace connection configured.\n[Configure](command:llmsafespace.configure)",
+        "when": "!config.llmsafespace.apiUrl"
       }
     ],
     "commands": [
-      { "command": "llmsafespace.createWorkspace", "title": "LLMSafeSpace: Create Workspace" },
-      { "command": "llmsafespace.suspendWorkspace", "title": "LLMSafeSpace: Suspend Workspace" },
-      { "command": "llmsafespace.resumeWorkspace", "title": "LLMSafeSpace: Resume Workspace" },
-      { "command": "llmsafespace.activateWorkspace", "title": "LLMSafeSpace: Activate Workspace" },
-      { "command": "llmsafespace.terminateWorkspace", "title": "LLMSafeSpace: Terminate Workspace" },
-      { "command": "llmsafespace.refresh", "title": "LLMSafeSpace: Refresh" },
-      { "command": "llmsafespace.configure", "title": "LLMSafeSpace: Configure" },
-      { "command": "llmsafespace.openTerminal", "title": "LLMSafeSpace: Open Terminal" },
-      { "command": "llmsafespace.copyId", "title": "LLMSafeSpace: Copy Workspace ID" }
+      {
+        "command": "llmsafespace.createWorkspace",
+        "title": "Create Workspace",
+        "category": "LLMSafeSpace",
+        "icon": "$(add)"
+      },
+      {
+        "command": "llmsafespace.suspendWorkspace",
+        "title": "Suspend Workspace",
+        "category": "LLMSafeSpace",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "llmsafespace.resumeWorkspace",
+        "title": "Resume Workspace",
+        "category": "LLMSafeSpace",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "llmsafespace.activateWorkspace",
+        "title": "Activate Workspace",
+        "category": "LLMSafeSpace",
+        "icon": "$(play)"
+      },
+      {
+        "command": "llmsafespace.terminateWorkspace",
+        "title": "Terminate Workspace",
+        "category": "LLMSafeSpace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "llmsafespace.refresh",
+        "title": "Refresh",
+        "category": "LLMSafeSpace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "llmsafespace.configure",
+        "title": "Configure",
+        "category": "LLMSafeSpace",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "llmsafespace.openTerminal",
+        "title": "Open Terminal",
+        "category": "LLMSafeSpace",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "llmsafespace.copyId",
+        "title": "Copy Workspace ID",
+        "category": "LLMSafeSpace",
+        "icon": "$(clippy)"
+      }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "llmsafespace.refresh",
+          "when": "view == llmsafespace.workspaces",
+          "group": "navigation"
+        },
+        {
+          "command": "llmsafespace.createWorkspace",
+          "when": "view == llmsafespace.workspaces",
+          "group": "navigation"
+        }
+      ],
       "view/item/context": [
-        { "command": "llmsafespace.suspendWorkspace", "when": "viewItem == workspace-active" },
-        { "command": "llmsafespace.resumeWorkspace", "when": "viewItem == workspace-suspended" },
-        { "command": "llmsafespace.activateWorkspace", "when": "viewItem == workspace-suspended" },
-        { "command": "llmsafespace.terminateWorkspace", "when": "viewItem =~ /workspace-/" },
-        { "command": "llmsafespace.openTerminal", "when": "viewItem == workspace-active" },
-        { "command": "llmsafespace.copyId", "when": "viewItem =~ /workspace-/" }
+        { "command": "llmsafespace.openTerminal", "when": "viewItem == workspace-active", "group": "inline" },
+        { "command": "llmsafespace.suspendWorkspace", "when": "viewItem == workspace-active", "group": "1_lifecycle" },
+        { "command": "llmsafespace.resumeWorkspace", "when": "viewItem == workspace-suspended", "group": "1_lifecycle" },
+        { "command": "llmsafespace.activateWorkspace", "when": "viewItem == workspace-suspended", "group": "1_lifecycle" },
+        { "command": "llmsafespace.terminateWorkspace", "when": "viewItem =~ /workspace-/", "group": "2_destructive" },
+        { "command": "llmsafespace.copyId", "when": "viewItem =~ /workspace-/", "group": "3_util" }
+      ],
+      "commandPalette": [
+        { "command": "llmsafespace.suspendWorkspace", "when": "false" },
+        { "command": "llmsafespace.resumeWorkspace", "when": "false" },
+        { "command": "llmsafespace.activateWorkspace", "when": "false" },
+        { "command": "llmsafespace.terminateWorkspace", "when": "false" },
+        { "command": "llmsafespace.openTerminal", "when": "false" },
+        { "command": "llmsafespace.copyId", "when": "false" }
       ]
     },
     "configuration": {
@@ -61,7 +143,16 @@
         "llmsafespace.apiUrl": {
           "type": "string",
           "default": "",
-          "description": "LLMSafeSpace API URL"
+          "description": "LLMSafeSpace API base URL (e.g. https://llmsafespace.example.com)",
+          "order": 1
+        },
+        "llmsafespace.refreshInterval": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "Auto-refresh interval in seconds",
+          "order": 2
         }
       }
     },
@@ -76,12 +167,16 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
-    "watch": "npm run build -- --watch"
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "lint": "tsc --noEmit",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0",
     "@types/ws": "^8.5.13",
+    "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.2",
     "typescript": "^5.7.2"
   },

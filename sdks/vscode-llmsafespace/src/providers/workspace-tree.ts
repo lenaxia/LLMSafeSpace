@@ -17,14 +17,17 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<vscode.Tre
   }
 
   async getChildren(): Promise<vscode.TreeItem[]> {
+    if (!this.apiService.isConfigured()) {
+      return [];  // viewsWelcome handles this case
+    }
     try {
       const workspaces = await this.apiService.listWorkspaces();
       if (workspaces.length === 0) {
-        return [new MessageTreeItem("No workspaces. Use command palette to create one.")];
+        return [new MessageTreeItem("No workspaces yet. Click + to create one.")];
       }
-      return workspaces.map((ws) => new WorkspaceTreeItem(ws));
+      return workspaces.map(ws => new WorkspaceTreeItem(ws));
     } catch {
-      return [new MessageTreeItem("⚠️ Disconnected — click Refresh or Configure")];
+      return [new MessageTreeItem("⚠️ Could not connect to LLMSafeSpace")];
     }
   }
 }
@@ -33,10 +36,21 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
   constructor(public readonly workspace: WorkspaceListItem) {
     super(workspace.name || workspace.id, vscode.TreeItemCollapsibleState.None);
 
-    const phase = workspace.phase?.toLowerCase() ?? "unknown";
+    const phase = (workspace.phase ?? "unknown").toLowerCase();
     this.description = `${workspace.runtime} · ${phase}`;
-    this.tooltip = `ID: ${workspace.id}\nPhase: ${workspace.phase}\nRuntime: ${workspace.runtime}`;
+    this.tooltip = new vscode.MarkdownString(
+      `**${workspace.name}**\n\n` +
+      `- **ID:** \`${workspace.id}\`\n` +
+      `- **Phase:** ${workspace.phase}\n` +
+      `- **Runtime:** ${workspace.runtime}\n` +
+      `- **Storage:** ${workspace.storageSize}`,
+    );
+    this.tooltip.isTrusted = true;
     this.contextValue = `workspace-${phase}`;
+    this.accessibilityInformation = {
+      label: `${workspace.name}, ${workspace.runtime}, ${phase}`,
+      role: "treeitem",
+    };
 
     switch (phase) {
       case "active":
@@ -44,6 +58,14 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
         break;
       case "suspended":
         this.iconPath = new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("testing.iconQueued"));
+        break;
+      case "pending":
+      case "resuming":
+      case "creating":
+        this.iconPath = new vscode.ThemeIcon("loading~spin");
+        break;
+      case "failed":
+        this.iconPath = new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("testing.iconFailed"));
         break;
       default:
         this.iconPath = new vscode.ThemeIcon("circle-outline");
