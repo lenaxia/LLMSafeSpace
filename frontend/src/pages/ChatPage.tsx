@@ -470,7 +470,7 @@ export function ChatPage() {
         </h2>
         <KebabMenu items={kebabItems} footer={[
           ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
-          ...(workspace?.runtime ? [`runtime: ${workspace.runtime}`] : []),
+          ...(status?.imageTag ? [`image: ${status.imageTag}`] : []),
         ]} />
       </div>
 
