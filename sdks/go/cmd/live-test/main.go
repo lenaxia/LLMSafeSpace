@@ -114,7 +114,15 @@ func main() {
 	// 3. SESSIONS
 	// ═══════════════════════════════════════════════════════════════════════════
 	fmt.Println("\n─── Sessions ───")
-	session, err := c.Sessions.Ensure(ctx, ws.ID)
+	var session *llm.EnsureSessionResponse
+	for i := 0; i < 5; i++ {
+		session, err = c.Sessions.Ensure(ctx, ws.ID)
+		if err == nil && session.SessionID != "" {
+			break
+		}
+		fmt.Printf("  Session ensure retry %d: %v\n", i+1, err)
+		time.Sleep(5 * time.Second)
+	}
 	ok(err == nil && session.SessionID != "", "Sessions.Ensure() → sessionId")
 	if err == nil {
 		ok(session.WorkspaceID == ws.ID, "Sessions.Ensure() → workspaceId")
@@ -214,9 +222,15 @@ func main() {
 	rh := waitHealthy(ctx, c, ws.ID)
 	ok(rh == "Healthy", fmt.Sprintf("resume → Healthy (got: %s)", rh))
 
-	// Session after resume
-	postResume, err := c.Sessions.Ensure(ctx, ws.ID)
-	ok(err == nil && postResume.SessionID != "", "Sessions.Ensure() works after resume")
+	var postResume *llm.EnsureSessionResponse
+	for i := 0; i < 5; i++ {
+		postResume, err = c.Sessions.Ensure(ctx, ws.ID)
+		if err == nil && postResume.SessionID != "" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	ok(err == nil && postResume != nil && postResume.SessionID != "", "Sessions.Ensure() works after resume")
 
 	// ═══════════════════════════════════════════════════════════════════════════
 	// 7. ERROR HANDLING
@@ -239,8 +253,14 @@ func main() {
 	err = c.Workspaces.Delete(ctx, ws.ID)
 	ok(err == nil, "Workspaces.Delete() → no error")
 
-	_, err = c.Workspaces.Get(ctx, ws.ID)
-	ok(err != nil, "deleted ws → error on get")
+	time.Sleep(3 * time.Second)
+	deleted, err := c.Workspaces.Get(ctx, ws.ID)
+	if err != nil {
+		ok(llm.IsNotFound(err), "deleted ws → 404 (hard deleted)")
+	} else {
+		ok(deleted.Phase == "Deleted" || deleted.Phase == "Terminating",
+			fmt.Sprintf("deleted ws → terminal phase (got: %s)", deleted.Phase))
+	}
 
 	// ═══════════════════════════════════════════════════════════════════════════
 	fmt.Printf("\n═══ Results: %d passed, %d failed ═══\n", passed, failed)

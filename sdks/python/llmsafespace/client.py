@@ -62,12 +62,20 @@ class LLMSafeSpace:
     def __exit__(self, *_):
         self.close()
 
-    def _request(self, method: str, path: str, *, json: Any = None, timeout: float | None = None) -> Any:
+    def _request(
+        self, method: str, path: str, *, json: Any = None, timeout: float | None = None
+    ) -> Any:
         url = f"{self._base_url}/api/v1{path}"
         headers = self._auth_headers()
 
         try:
-            resp = self._client.request(method, url, headers=headers, json=json, timeout=timeout or self._timeout)
+            resp = self._client.request(
+                method,
+                url,
+                headers=headers,
+                json=json,
+                timeout=timeout or self._timeout,
+            )
         except httpx.TimeoutException as e:
             raise TimeoutError(str(e)) from e
 
@@ -133,12 +141,18 @@ class _WorkspacesAPI:
         items = [WorkspaceListItem(**i) for i in data.get("items", [])]
         return WorkspaceListResult(items=items, pagination=data.get("pagination"))
 
-    def create(self, *, name: str = "", runtime: str = "", storage_size: str = "") -> Workspace:
+    def create(
+        self, *, name: str = "", runtime: str = "", storage_size: str = ""
+    ) -> Workspace:
         body = {"name": name, "runtime": runtime, "storageSize": storage_size}
         return Workspace(**self._c._request("POST", "/workspaces", json=body))
 
     def get(self, workspace_id: str) -> Workspace:
         return Workspace(**self._c._request("GET", f"/workspaces/{workspace_id}"))
+
+    def rename(self, workspace_id: str, name: str) -> Workspace:
+        self._c._request("PUT", f"/workspaces/{workspace_id}", json={"name": name})
+        return self.get(workspace_id)
 
     def delete(self, workspace_id: str) -> None:
         self._c._request("DELETE", f"/workspaces/{workspace_id}")
@@ -161,21 +175,33 @@ class _SessionsAPI:
         self._c = client
 
     def ensure(self, workspace_id: str) -> EnsureSessionResponse:
-        return EnsureSessionResponse(**self._c._request("POST", f"/workspaces/{workspace_id}/sessions/new"))
+        return EnsureSessionResponse(
+            **self._c._request("POST", f"/workspaces/{workspace_id}/sessions/new")
+        )
 
     def list(self, workspace_id: str) -> list[dict[str, Any]]:
         return self._c._request("GET", f"/workspaces/{workspace_id}/sessions")
 
-    def send_message(self, workspace_id: str, session_id: str, content: str) -> MessageResponse:
-        raw = self._c._request("POST", f"/workspaces/{workspace_id}/sessions/{session_id}/message", json={"content": content, "parts": [{"type": "text", "text": content}]})
+    def send_message(
+        self, workspace_id: str, session_id: str, content: str
+    ) -> MessageResponse:
+        raw = self._c._request(
+            "POST",
+            f"/workspaces/{workspace_id}/sessions/{session_id}/message",
+            json={"content": content, "parts": [{"type": "text", "text": content}]},
+        )
         text = _extract_text(raw)
         return MessageResponse(raw=raw, content=text)
 
     def get_history(self, workspace_id: str, session_id: str) -> list[Any]:
-        return self._c._request("GET", f"/workspaces/{workspace_id}/sessions/{session_id}/message")
+        return self._c._request(
+            "GET", f"/workspaces/{workspace_id}/sessions/{session_id}/message"
+        )
 
     def abort(self, workspace_id: str, session_id: str) -> None:
-        self._c._request("POST", f"/workspaces/{workspace_id}/sessions/{session_id}/abort")
+        self._c._request(
+            "POST", f"/workspaces/{workspace_id}/sessions/{session_id}/abort"
+        )
 
 
 class _AuthAPI:
@@ -200,7 +226,9 @@ class _SecretsAPI:
     def __init__(self, client: LLMSafeSpace):
         self._c = client
 
-    def create(self, *, name: str, type: str, value: str, metadata: Any = None) -> SecretResponse:
+    def create(
+        self, *, name: str, type: str, value: str, metadata: Any = None
+    ) -> SecretResponse:
         body: dict[str, Any] = {"name": name, "type": type, "value": value}
         if metadata is not None:
             body["metadata"] = metadata
@@ -225,7 +253,9 @@ class _TerminalAPI:
         self._c = client
 
     def get_ticket(self, workspace_id: str) -> TerminalTicket:
-        return TerminalTicket(**self._c._request("POST", f"/workspaces/{workspace_id}/terminal/ticket"))
+        return TerminalTicket(
+            **self._c._request("POST", f"/workspaces/{workspace_id}/terminal/ticket")
+        )
 
 
 def _extract_text(raw: Any) -> str:
@@ -235,4 +265,8 @@ def _extract_text(raw: Any) -> str:
     parts = raw.get("parts", [])
     if not isinstance(parts, list):
         return ""
-    return "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text")
+    return "".join(
+        p.get("text", "")
+        for p in parts
+        if isinstance(p, dict) and p.get("type") == "text"
+    )

@@ -1,9 +1,12 @@
 /** SDK configuration options. */
+export type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface ClientOptions {
   baseUrl: string;
   apiKey?: string;
   credentials?: { email: string; password: string };
-  timeout?: number; // ms, default 120000 for sendMessage
+  timeout?: number;
+  fetch?: FetchFn;
 }
 
 /** Workspace resource. */

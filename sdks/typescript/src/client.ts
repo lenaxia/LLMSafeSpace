@@ -15,6 +15,7 @@ import type {
   CreateSecretRequest,
   CreateWorkspaceRequest,
   EnsureSessionResponse,
+  FetchFn,
   MessageResponse,
   SecretResponse,
   SessionListItem,
@@ -30,6 +31,7 @@ const DEFAULT_TIMEOUT = 120_000;
 export class LLMSafeSpace {
   private readonly baseUrl: string;
   private readonly timeout: number;
+  private readonly fetchFn: FetchFn;
   private token: string | undefined;
   private apiKey: string | undefined;
   private credentials: { email: string; password: string } | undefined;
@@ -46,6 +48,7 @@ export class LLMSafeSpace {
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.apiKey = options.apiKey;
     this.credentials = options.credentials;
+    this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
 
     this.workspaces = new WorkspacesAPI(this);
     this.sessions = new SessionsAPI(this);
@@ -73,7 +76,7 @@ export class LLMSafeSpace {
 
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await this.fetchFn(url, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -121,7 +124,7 @@ export class LLMSafeSpace {
     this.loggingIn = true;
     try {
       const url = `${this.baseUrl}/api/v1/auth/login`;
-      const res = await fetch(url, {
+      const res = await this.fetchFn(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(this.credentials),
