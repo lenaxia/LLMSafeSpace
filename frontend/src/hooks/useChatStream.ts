@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { messagesApi } from "../api/messages";
-import { registerTabCloseAbort } from "../api/events";
 import { ApiClientError } from "../api/client";
 import type { Message } from "../api/types";
 
@@ -13,12 +12,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const [error, setError] = useState<string | null>(null);
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const cleanupBeaconRef = useRef<(() => void) | null>(null);
   const idleResolverRef = useRef<((sid: string) => void) | null>(null);
-
-  useEffect(() => {
-    return () => { cleanupBeaconRef.current?.(); };
-  }, []);
 
   const notifySessionIdle = useCallback((idleSessionId: string) => {
     idleResolverRef.current?.(idleSessionId);
@@ -31,9 +25,21 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
       setError(null);
       setAtCapRetryAfter(null);
       abortRef.current = new AbortController();
-      cleanupBeaconRef.current = registerTabCloseAbort(workspaceId, sessionId);
 
       try {
+        // Arm the idle observer BEFORE issuing prompt_async so that an
+        // idle SSE arriving during the HTTP roundtrip is not lost. opencode
+        // can finish very fast for cached/trivial prompts; without this the
+        // resolver wouldn't be installed in time and the wait would fall
+        // through to the 60s timeout.
+        const capturedSessionId = sessionId;
+        let idleAlreadyFired = false;
+        idleResolverRef.current = (idleSessionId: string) => {
+          if (idleSessionId === capturedSessionId) {
+            idleAlreadyFired = true;
+          }
+        };
+
         await messagesApi.sendAsync(workspaceId, sessionId, {
           parts: [{ type: "text", text }],
         });
@@ -41,9 +47,16 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
         // Wait for session.status=idle SSE OR a timeout fallback.
         // The SSE path is preferred (real-time), but if the connection drops
         // before idle fires we still need to fetch the response.
-        const capturedSessionId = sessionId;
         await new Promise<void>((resolve) => {
-          let timeoutId: ReturnType<typeof setTimeout>;
+          if (idleAlreadyFired) {
+            idleResolverRef.current = null;
+            resolve();
+            return;
+          }
+          const timeoutId = setTimeout(() => {
+            idleResolverRef.current = null;
+            resolve();
+          }, IDLE_WAIT_TIMEOUT_MS);
 
           idleResolverRef.current = (idleSessionId: string) => {
             if (idleSessionId === capturedSessionId) {
@@ -52,11 +65,6 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
               resolve();
             }
           };
-
-          timeoutId = setTimeout(() => {
-            idleResolverRef.current = null;
-            resolve();
-          }, IDLE_WAIT_TIMEOUT_MS);
         });
 
         const history = await messagesApi.getHistory(workspaceId, capturedSessionId);
@@ -80,8 +88,6 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
         setLocalStreaming(false);
         idleResolverRef.current = null;
         abortRef.current = null;
-        cleanupBeaconRef.current?.();
-        cleanupBeaconRef.current = null;
       }
     },
     [workspaceId, sessionId],
