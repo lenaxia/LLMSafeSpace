@@ -2,11 +2,17 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
@@ -267,4 +273,181 @@ func TestHandler_ConcurrentRequests(t *testing.T) {
 	if len(resp.Secrets) != 10 {
 		t.Errorf("Expected 10 secrets after concurrent creates, got %d", len(resp.Secrets))
 	}
+}
+
+// TestHandler_E2E_BindTriggersReloadSecrets verifies that SetBindings
+// auto-pushes secrets to the running pod's agentd via reload-secrets.
+func TestHandler_E2E_BindTriggersReloadSecrets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var (
+		mu           sync.Mutex
+		reloadCalled bool
+		reloadBody   []byte
+	)
+
+	agentdListener, err := net.Listen("tcp", "127.0.0.1:4097")
+	if err != nil {
+		t.Skip("port 4097 not available for test agentd mock")
+	}
+	agentd := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/reload-secrets" {
+			t.Errorf("agentd received unexpected request: %s", r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reloadCalled = true
+		reloadBody = body
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"reloaded": 1, "restarted": false})
+	}))
+	agentd.Listener = agentdListener
+	agentd.Start()
+	defer agentd.Close()
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	_, err = keySvc.InitializeUserKeys(ctx, userID, password)
+	if err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	err = keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour)
+	if err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	handler := NewSecretsHandler(svc)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+
+	router.POST("/api/v1/secrets", handler.CreateSecret)
+	wsGroup := router.Group("/api/v1/workspaces")
+	wsGroup.PUT("/:id/bindings", handler.SetBindings)
+	wsGroup.POST("/:id/reload-secrets", handler.ReloadSecrets)
+
+	createBody := `{"name":"ssh-e2e","type":"ssh-key","value":"-----BEGIN KEY-----","metadata":{"key_type":"ed25519","host":"github.com"}}`
+	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
+	cReq.Header.Set("Content-Type", "application/json")
+	cw := httptest.NewRecorder()
+	router.ServeHTTP(cw, cReq)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("Create: expected 201, got %d: %s", cw.Code, cw.Body.String())
+	}
+	var created secrets.SecretResponse
+	json.Unmarshal(cw.Body.Bytes(), &created)
+
+	bindBody, _ := json.Marshal(map[string][]string{"secretIds": {created.ID}})
+	bReq := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-e2e-test/bindings", bytes.NewBuffer(bindBody))
+	bReq.Header.Set("Content-Type", "application/json")
+	bw := httptest.NewRecorder()
+	router.ServeHTTP(bw, bReq)
+	if bw.Code != http.StatusNoContent {
+		t.Fatalf("Bind: expected 204, got %d: %s", bw.Code, bw.Body.String())
+	}
+
+	mu.Lock()
+	called := reloadCalled
+	body := reloadBody
+	mu.Unlock()
+
+	if !called {
+		t.Fatal("SetBindings did not trigger reload-secrets call to agentd")
+	}
+
+	var secrets []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	json.Unmarshal(body, &secrets)
+	if len(secrets) != 1 || secrets[0].Type != "ssh-key" || secrets[0].Name != "ssh-e2e" {
+		t.Errorf("Unexpected secrets payload: %s", string(body))
+	}
+}
+
+// TestHandler_E2E_BindNoReloadWhenNoPod verifies SetBindings succeeds
+// even when the workspace has no running pod (agentd unreachable).
+func TestHandler_E2E_BindNoReloadWhenNoPod(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	_, err := keySvc.InitializeUserKeys(ctx, userID, password)
+	if err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	err = keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour)
+	if err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	handler := NewSecretsHandler(svc)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+
+	router.POST("/api/v1/secrets", handler.CreateSecret)
+	wsGroup := router.Group("/api/v1/workspaces")
+	wsGroup.PUT("/:id/bindings", handler.SetBindings)
+
+	createBody := `{"name":"env-e2e","type":"env-secret","value":"secretval","metadata":{"var_name":"MY_VAR"}}`
+	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
+	cReq.Header.Set("Content-Type", "application/json")
+	cw := httptest.NewRecorder()
+	router.ServeHTTP(cw, cReq)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("Create: expected 201, got %d: %s", cw.Code, cw.Body.String())
+	}
+	var created secrets.SecretResponse
+	json.Unmarshal(cw.Body.Bytes(), &created)
+
+	bindBody, _ := json.Marshal(map[string][]string{"secretIds": {created.ID}})
+	bReq := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-no-pod/bindings", bytes.NewBuffer(bindBody))
+	bReq.Header.Set("Content-Type", "application/json")
+	bw := httptest.NewRecorder()
+	router.ServeHTTP(bw, bReq)
+
+	if bw.Code != http.StatusNoContent {
+		t.Fatalf("Bind should succeed even without a running pod, got %d: %s", bw.Code, bw.Body.String())
+	}
+}
+
+type staticPodIPResolver struct {
+	addr string
+}
+
+func (r *staticPodIPResolver) GetWorkspacePodIP(_ context.Context, _, _ string) (string, error) {
+	return r.addr, nil
 }

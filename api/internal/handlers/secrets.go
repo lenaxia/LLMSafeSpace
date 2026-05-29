@@ -270,7 +270,7 @@ type reloadResult struct {
 }
 
 func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID string) {
-	sessionID, _ := extractAuth(c)
+	_, sessionID := extractAuth(c)
 	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
 	if err != nil || len(secretsJSON) <= 2 {
 		return
