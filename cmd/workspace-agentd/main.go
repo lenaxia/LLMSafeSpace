@@ -155,15 +155,24 @@ func (t *sessionStatusTracker) get(sessionID string) string {
 	return "idle"
 }
 
-func (t *sessionStatusTracker) subscribe(client *OpenCodeClient) {
+func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeClient) {
 	backoff := 2 * time.Second
 	maxBackoff := 30 * time.Second
 
 	for {
-		if err := t.connectAndRead(client); err != nil {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if err := t.connectAndRead(ctx, client); err != nil {
 			log.Debug("SSE stream ended", zap.Error(err))
 		}
-		time.Sleep(backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
 		if backoff*2 > maxBackoff {
 			backoff = maxBackoff
 		} else {
@@ -172,8 +181,8 @@ func (t *sessionStatusTracker) subscribe(client *OpenCodeClient) {
 	}
 }
 
-func (t *sessionStatusTracker) connectAndRead(client *OpenCodeClient) error {
-	req, err := http.NewRequest("GET", agentAddr+"/event", nil)
+func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenCodeClient) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", agentAddr+"/event", nil)
 	if err != nil {
 		return err
 	}
@@ -323,7 +332,7 @@ func main() {
 	startedAt := time.Now()
 	cache := &providerCache{}
 	sseTracker := newSessionStatusTracker()
-	go sseTracker.subscribe(client)
+	go sseTracker.subscribe(context.Background(), client)
 
 	mux := http.NewServeMux()
 
