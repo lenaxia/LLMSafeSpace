@@ -12,6 +12,18 @@ const SECRET_TYPES = [
   { value: "env-secret", label: "Environment Variables", icon: "⚙️", metaFields: ["var_name"] },
 ] as const;
 
+const FIELD_INFO: Record<string, string> = {
+  provider: "LLM provider name (e.g. anthropic, openai, deepseek). Used to configure the agent's API endpoint.",
+  key_type: "SSH key algorithm. Determines the filename (~/.ssh/id_{type}) and ssh-agent configuration.",
+  host: "Remote hostname this credential is for (e.g. github.com). Used to configure SSH config entries or git credential helpers.",
+  mount_path: "File path inside the workspace where this secret will be written (with 0600 permissions).",
+  var_name: "Environment variable name (e.g. DATABASE_URL). Will be available to the agent process at runtime.",
+  notes: "Optional notes for your reference. Not injected into the workspace.",
+};
+
+const KEY_TYPE_OPTIONS = ["ed25519", "rsa", "ecdsa"] as const;
+const PROVIDER_OPTIONS = ["anthropic", "openai", "deepseek", "google", "ollama", "other"] as const;
+
 type SecretType = (typeof SECRET_TYPES)[number]["value"];
 
 export function SecretsTab() {
@@ -147,13 +159,23 @@ export function SecretsTab() {
                         <div className="flex items-center gap-3">
                           <span className="text-sm font-medium">{s.name}</span>
                           {s.metadata && Object.entries(s.metadata)
-                            .filter(([k]) => k !== "public_key")
+                            .filter(([k]) => k !== "public_key" && k !== "notes")
                             .map(([k, v]) => (
                               <span key={k} className="text-xs text-muted-foreground">{k}: {v}</span>
                             ))}
+                          {s.metadata?.public_key && (
+                            <span className="text-xs text-muted-foreground font-mono truncate max-w-[180px] inline-block align-bottom" title={s.metadata.public_key}>
+                              {s.metadata.public_key.slice(0, 30)}…
+                            </span>
+                          )}
                           <span className="text-xs text-muted-foreground">
                             {new Date(s.createdAt).toLocaleDateString()}
                           </span>
+                          {s.metadata?.notes && (
+                            <span className="text-xs italic text-muted-foreground truncate max-w-[200px] inline-block align-bottom" title={s.metadata.notes}>
+                              — {s.metadata.notes}
+                            </span>
+                          )}
                           {(secretBindings[s.id] ?? []).length > 0 && (
                             <span className="text-xs text-muted-foreground">
                               · {(secretBindings[s.id] ?? []).length} workspace{(secretBindings[s.id] ?? []).length > 1 ? "s" : ""}
@@ -479,7 +501,17 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
         <div className="grid grid-cols-2 gap-4">
           {selectedType.metaFields.map((field) => (
             <div key={field}>
-              <label className="text-sm font-medium">{field === "mount_path" ? "File path" : field.replace(/_/g, " ")}</label>
+              <label className="text-sm font-medium inline-flex items-center gap-1">
+                {field === "mount_path" ? "File path" : field.replace(/_/g, " ")}
+                {FIELD_INFO[field] && (
+                  <span className="relative group cursor-help">
+                    <span className="text-muted-foreground text-xs">ⓘ</span>
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-50">
+                      {FIELD_INFO[field]}
+                    </span>
+                  </span>
+                )}
+              </label>
               {field === "mount_path" ? (
                 <div className="flex items-center gap-0">
                   <span className="rounded-l-md border border-r-0 border-border bg-accent px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">/home/sandbox/.secrets/</span>
@@ -491,18 +523,58 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
                     className="rounded-l-none"
                   />
                 </div>
+              ) : field === "key_type" ? (
+                <select
+                  value={metadata[field] || "ed25519"}
+                  onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                >
+                  {KEY_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : field === "provider" ? (
+                <select
+                  value={metadata[field] || ""}
+                  onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="" disabled>Select provider...</option>
+                  {PROVIDER_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
               ) : (
                 <Input
                   value={metadata[field] || ""}
                   onChange={(e) => setMetadata({ ...metadata, [field]: e.target.value })}
-                  placeholder={field === "key_type" ? "ed25519" : field === "var_name" ? "DATABASE_URL" : field === "provider" ? "anthropic" : "github.com"}
-                  required={field === "key_type" || field === "var_name"}
+                  placeholder={field === "var_name" ? "DATABASE_URL" : "github.com"}
+                  required={field === "var_name"}
                 />
               )}
             </div>
           ))}
         </div>
       )}
+
+      {/* Notes field — always available */}
+      <div>
+        <label className="text-sm font-medium inline-flex items-center gap-1">
+          Notes
+          <span className="relative group cursor-help">
+            <span className="text-muted-foreground text-xs">ⓘ</span>
+            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-50">
+              {FIELD_INFO.notes}
+            </span>
+          </span>
+        </label>
+        <Input
+          value={metadata.notes || ""}
+          onChange={(e) => setMetadata({ ...metadata, notes: e.target.value })}
+          placeholder="Optional — e.g. 'production key, expires 2026-12'"
+        />
+      </div>
 
       {/* Show public key if generated */}
       {metadata.public_key && (
