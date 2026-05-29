@@ -37,6 +37,7 @@ vi.mock("../components/chat/ChatView", () => ({
         data-testid="chat-view"
         data-stream-parts={JSON.stringify(props.streamParts ?? [])}
         data-streaming={String(props.streaming ?? false)}
+        data-messages={JSON.stringify(props.messages ?? [])}
       >
         <textarea
           disabled={props.disabled as boolean}
@@ -188,6 +189,62 @@ describe("ChatPage SSE event handler", () => {
         return Array.isArray(key) && key[0] === "workspace-status";
       });
       expect(wsCalls).toHaveLength(0);
+    });
+
+    it("REGRESSION: idle event triggers reconcile that does NOT cause duplicate localMessage rendering", async () => {
+      // Prior bug: localMessages accumulated user+assistant messages on send,
+      // and reconcileOnIdle refetched history (which now contained the same
+      // messages), but localMessages was never cleared. The merge in
+      // `allMessages = [...history, ...localMessages]` rendered every
+      // message twice.
+      //
+      // Fix: clearing localMessages after the post-idle history refetch
+      // succeeds. History is the single source of truth once idle.
+      const user = userEvent.setup();
+      const qc = makeQueryClient();
+
+      // sendAsync resolves immediately; history starts empty then returns
+      // the persisted message after idle reconcile triggers a refetch.
+      let historyCallCount = 0;
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        historyCallCount++;
+        if (historyCallCount === 1) return Promise.resolve([]);
+        return Promise.resolve([
+          { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+          { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+        ]);
+      });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { container } = renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("textarea")).not.toBeDisabled());
+
+      // User sends a message
+      await user.click(container.querySelector("textarea")!);
+      await user.type(container.querySelector("textarea")!, "ping");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+      // Drive the idle SSE event — this triggers reconcileOnIdle which
+      // refetches history and SHOULD clear localMessages so the merged
+      // view (history + localMessages) does not duplicate.
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      // Wait for the reconcile refetch to land
+      await waitFor(() => expect(historyCallCount).toBeGreaterThanOrEqual(2));
+
+      // Wait for the merged messages render to update with deduped content.
+      // Read the actual rendered messages from the ChatView mock's data attr.
+      await waitFor(() => {
+        const view = container.querySelector('[data-testid="chat-view"]');
+        const messagesAttr = view?.getAttribute("data-messages") ?? "[]";
+        const messages = JSON.parse(messagesAttr) as Array<{ id: string; role: string; parts: Array<{ text?: string }> }>;
+        // EXACTLY 2 messages — no duplicates from localMessages+history merge
+        expect(messages).toHaveLength(2);
+        expect(messages.filter((m) => m.role === "user")).toHaveLength(1);
+        expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+      }, { timeout: 5_000 });
     });
   });
 

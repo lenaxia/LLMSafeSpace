@@ -122,6 +122,12 @@ export function ChatPage() {
     try {
       await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
+      // History is now authoritative for this session — clear localMessages
+      // so the merged view (history + localMessages) does not double-render
+      // every completed turn. localMessages is only useful as optimistic UI
+      // during an in-flight send; once idle reconcile lands, history has
+      // the canonical record.
+      setLocalMessages([]);
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
@@ -129,7 +135,8 @@ export function ChatPage() {
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
     } catch {
-      // History fetch failed — keep streaming parts visible
+      // History fetch failed — keep streaming parts AND localMessages visible
+      // so the user doesn't lose context.
     }
   }, [workspaceId, sessionId, queryClient]);
 
