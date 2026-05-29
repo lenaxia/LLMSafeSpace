@@ -27,6 +27,8 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 13 | Settings Enforcement — wire all 29 inert settings to their side effects (workspace defaults, user prefs, security hot-reload, lifecycle automation) | Epic 9 |
 | 14 | Multi-Language SDKs & VS Code Extension — OpenAPI spec, TS/Python/Go/Java SDKs, VS Code extension with MCP + terminal | Epics 3, 4 |
 | 15 | Streaming State Resilience & Mid-Stream Reconnect — server-driven streaming indicator, fetch-on-boundary reconnect, idle reconciliation | Epics 3, 6 |
+| 16 | Agent Input Requests — user confirmation flow for agent-initiated actions | Epics 3, 6 |
+| 17 | Security Review & Penetration Testing — red-team assessment, threat model, pentest plan | Epics 6, 8, 10 |
 
 ## V2.1 (Deferred)
 

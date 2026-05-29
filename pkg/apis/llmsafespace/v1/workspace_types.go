@@ -116,6 +116,12 @@ type WorkspaceSpec struct {
 	MaxRetries int32 `json:"maxRetries,omitempty"`
 
 	PodSecurityContext *PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// AutoApprovePermissions controls whether permission requests from the agent
+	// are automatically approved without user interaction. When true, the backend
+	// replies "always" to all permission.asked events. Default: false.
+	// +kubebuilder:default=false
+	AutoApprovePermissions bool `json:"autoApprovePermissions,omitempty"`
 }
 
 // WorkspacePhase represents the lifecycle phase of a Workspace.

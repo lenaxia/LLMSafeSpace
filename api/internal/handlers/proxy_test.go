@@ -120,7 +120,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	k8sMock.On("Clientset").Return(fakeClientset)
 
 	log := &testLogger{}
-	handler, err := NewProxyHandler(k8sMock, log, "default", httpClient)
+	handler, err := NewProxyHandler(k8sMock, log, "default", httpClient, nil)
 	require.NoError(t, err)
 
 	router := gin.New()
@@ -310,7 +310,7 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 5)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -353,7 +353,7 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
 		Timeout:   2 * time.Second,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -751,7 +751,7 @@ func TestProxy_Backend404Passthrough(t *testing.T) {
 }
 
 func TestProxy_CacheInvalidation(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.pwCacheMu.Lock()
 	handler.pwCache["ws-1"] = "old-password"
@@ -784,7 +784,7 @@ func TestProxy_CacheInvalidation(t *testing.T) {
 }
 
 func TestProxy_PhaseChangeCallback(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.pwCacheMu.Lock()
 	handler.pwCache["ws-1"] = "password"
@@ -807,7 +807,7 @@ func TestProxy_PhaseChangeCallback(t *testing.T) {
 }
 
 func TestProxy_PhaseChange_RunningNoInvalidation(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.pwCacheMu.Lock()
 	handler.pwCache["ws-1"] = "password"
@@ -869,7 +869,7 @@ func TestProxy_E2E_MaxActiveSessionsCustom(t *testing.T) {
 }
 
 func TestProxy_RemoveActiveSession(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.activeMu.Lock()
 	handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
@@ -888,7 +888,7 @@ func TestProxy_RemoveActiveSession(t *testing.T) {
 }
 
 func TestProxy_RemoveNonexistentSession(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.removeActiveSession("sb-missing", "s1")
 	assert.Equal(t, 0, handler.activeSessionCount("sb-missing"))
@@ -931,7 +931,7 @@ func TestProxy_NewProxyHandler_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewProxyHandler(tt.k8sClient, tt.logger, "default", nil)
+			_, err := NewProxyHandler(tt.k8sClient, tt.logger, "default", nil, nil)
 			if tt.expectErr != "" {
 				assert.EqualError(t, err, tt.expectErr)
 			} else {
@@ -942,20 +942,20 @@ func TestProxy_NewProxyHandler_Validation(t *testing.T) {
 }
 
 func TestProxy_DefaultNamespace(t *testing.T) {
-	h, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "", nil)
+	h, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "default", h.namespace)
 }
 
 func TestProxy_CustomHTTPClient(t *testing.T) {
 	custom := &http.Client{Timeout: 10 * time.Second}
-	h, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "ns", custom)
+	h, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "ns", custom, nil)
 	require.NoError(t, err)
 	assert.Equal(t, custom, h.httpClient)
 }
 
 func TestProxy_ConnectionCountTracking(t *testing.T) {
-	h, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	h, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	assert.Equal(t, 0, h.connectionCount("ws-1"))
 	h.acquireConnection("ws-1")
@@ -1025,7 +1025,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 1)
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
@@ -1080,7 +1080,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 }
 
 func TestProxy_E2E_SSEBusyEventAddsActiveSession(t *testing.T) {
-	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	handler.wsConfigMu.Lock()
@@ -1139,7 +1139,7 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
 		Timeout:   2 * time.Second,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -1166,7 +1166,7 @@ func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	ip := handler.getPodIPForSSE("ws-1")
@@ -1184,7 +1184,7 @@ func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 	crd := makeWorkspaceCRDWithStatus("ws-1", "", "Suspended", "ws-1")
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	ip := handler.getPodIPForSSE("ws-1")
@@ -1201,7 +1201,7 @@ func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 
 	wsMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	ip := handler.getPodIPForSSE("sb-missing")
@@ -1209,7 +1209,7 @@ func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 }
 
 func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.sseTracker = NewSSETracker(
 		&http.Client{},
@@ -1235,7 +1235,7 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 }
 
 func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	handler.sseTracker = NewSSETracker(
 		&http.Client{},
@@ -1281,7 +1281,7 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
 		Timeout:   2 * time.Second,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
@@ -1330,7 +1330,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
 	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
@@ -1350,7 +1350,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 }
 
 func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
-	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil)
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	tracker := NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
 	handler.activityTracker = tracker

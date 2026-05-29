@@ -227,13 +227,14 @@ interface PermissionRequest {
 |-------|-------|-------|----------|------------|
 | US-16.0 | Fix MCP client: SSE parsing + validID regex | Backend | Critical | — |
 | US-16.1 | Agent Dialect interface + OpenCode implementation | Backend | Critical | — |
-| US-16.2 | Question/Permission proxy routes | Backend | Critical | US-16.1 |
+| US-16.2a | Question/Permission proxy routes (new `proxy_input.go`) | Backend | Critical | US-16.1 |
+| US-16.2b | Migrate session routes to dialect + split proxy.go | Backend | Medium | US-16.2a |
 | US-16.3 | Normalized event emission (agent.question, agent.permission) | Backend | Critical | US-16.1 |
-| US-16.4 | Pending state recovery on SSE connect | Backend | High | US-16.2, US-16.3 |
-| US-16.5 | Headless permission auto-approve | Backend | High | US-16.2, US-16.3 |
-| US-16.6 | MCP tools for question/permission reply | Backend | High | US-16.0, US-16.2 |
+| US-16.4 | Pending state recovery on SSE connect | Backend | High | US-16.2a, US-16.3 |
+| US-16.5 | Headless permission auto-approve | Backend | High | US-16.2a, US-16.3 |
+| US-16.6 | MCP tools for question/permission reply | Backend | High | US-16.0, US-16.2a |
 | US-16.7 | MCP SendMessage question detection | Backend | High | US-16.0, US-16.6 |
-| US-16.8 | Frontend types + API client | Frontend | Critical | US-16.2 (API exists) |
+| US-16.8 | Frontend types + API client | Frontend | Critical | US-16.2a (API exists) |
 | US-16.9 | QuestionPrompt component | Frontend | Critical | US-16.8, Epic 15 |
 | US-16.10 | PermissionPrompt component | Frontend | High | US-16.8, Epic 15 |
 | US-16.11 | ChatPage integration (event handling, prompt lifecycle) | Frontend | Critical | US-16.9, US-16.10, Epic 15 |

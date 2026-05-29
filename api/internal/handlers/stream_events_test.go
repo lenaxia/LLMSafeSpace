@@ -109,7 +109,7 @@ func TestStreamEvents_WorkspaceNotFound(t *testing.T) {
 	wsMock.On("Get", "ws-missing", metav1.GetOptions{}).
 		Return(nil, fmt.Errorf("not found")).Once()
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 	handler.broker = NewWorkspaceEventBroker()
 
@@ -184,7 +184,7 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	).Maybe()
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
 	// Wire the SSE tracker directly (same pattern as E2E test)
@@ -307,7 +307,7 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -345,7 +345,7 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -375,7 +375,7 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -407,7 +407,7 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -446,7 +446,7 @@ func TestStreamEvents_OnRawEvent_NilBrokerDoesNotPanic(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 	// broker is nil — onRawEvent should not panic
 
@@ -460,7 +460,7 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -490,7 +490,7 @@ func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -574,7 +574,7 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()
@@ -614,7 +614,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
 	broker := NewWorkspaceEventBroker()

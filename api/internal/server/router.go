@@ -614,6 +614,13 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
 	rg.GET("/:id/events", proxyHandler.StreamEvents)
+
+	// Question/Permission input request routes (Epic 16)
+	rg.GET("/:id/question", proxyHandler.ListQuestions)
+	rg.POST("/:id/question/:requestID/reply", proxyHandler.QuestionReply)
+	rg.POST("/:id/question/:requestID/reject", proxyHandler.QuestionReject)
+	rg.GET("/:id/permission", proxyHandler.ListPermissions)
+	rg.POST("/:id/permission/:requestID/reply", proxyHandler.PermissionReply)
 }
 
 // respondWithError maps API errors to HTTP responses.

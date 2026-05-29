@@ -141,7 +141,7 @@ func TestHTTPClient_SendMessage_SSEResponse(t *testing.T) {
 		flusher.Flush()
 		fmt.Fprintf(w, "data: {\"type\":\"content\",\"content\":\"world!\"}\n\n")
 		flusher.Flush()
-		fmt.Fprintf(w, "data: {\"type\":\"session.idle\"}\n\n")
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
 		flusher.Flush()
 	})
 
@@ -262,7 +262,7 @@ func TestHTTPClient_SendMessage_SSEWithKeepalives(t *testing.T) {
 		flusher.Flush()
 		fmt.Fprintf(w, "data: not-json-at-all\n\n")
 		flusher.Flush()
-		fmt.Fprintf(w, "data: {\"type\":\"session.idle\"}\n\n")
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
 		flusher.Flush()
 	})
 
@@ -331,4 +331,101 @@ func TestHTTPClient_LongErrorTruncated(t *testing.T) {
 	// Error should be truncated, not contain the full 5000+ char body
 	assert.Less(t, len(err.Error()), 600)
 	assert.Contains(t, err.Error(), "truncated")
+}
+
+// ===== US-16.0: SendMessage ignores idle for other sessions =====
+
+func TestHTTPClient_SendMessage_IgnoresIdleForOtherSession(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Idle for a DIFFERENT session — should be ignored
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-OTHER\",\"status\":\"idle\"}\n\n")
+		flusher.Flush()
+		// Content for our session
+		fmt.Fprintf(w, "data: {\"type\":\"content\",\"content\":\"result\"}\n\n")
+		flusher.Flush()
+		// Idle for OUR session — should break
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
+		flusher.Flush()
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "hi", 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "result", resp)
+}
+
+func TestHTTPClient_SendMessage_IgnoresBusyEvents(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/sess-1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Busy event — should be ignored
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"busy\"}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"type\":\"content\",\"content\":\"done\"}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"type\":\"session.status\",\"session_id\":\"sess-1\",\"status\":\"idle\"}\n\n")
+		flusher.Flush()
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.SendMessage(context.Background(), "ws-1", "sess-1", "hi", 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "done", resp)
+}
+
+// ===== US-16.0: validID accepts underscores (opencode IDs) =====
+
+func TestValidateID_AcceptsUnderscoreIDs(t *testing.T) {
+	tests := []struct {
+		id      string
+		wantErr bool
+	}{
+		{"ses_18b28260affeoxXrX1iwPH8wFg", false},
+		{"que_e74d7e6db001ZI3VDSHthsee0g", false},
+		{"per_1748012345000_xyz", false},
+		{"msg_e74d7da37001Nw4A59Ndzegm3A", false},
+		{"sess-1", false},                // existing hyphen format still works
+		{"ws.test.123", false},            // dots still work
+		{"../etc/passwd", true},           // path traversal rejected
+		{"", true},                        // empty rejected
+		{".leading-dot", true},            // must start with alphanumeric
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			err := validateID(tt.id, "test_field")
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestHTTPClient_GetHistory_AcceptsOpenCodeSessionID(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/sessions/ses_18b28260affeoxXrX1iwPH8wFg/message", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]Message{{Role: "assistant", Content: "ok"}})
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	msgs, err := client.GetHistory(context.Background(), "ws-1", "ses_18b28260affeoxXrX1iwPH8wFg")
+	require.NoError(t, err)
+	assert.Len(t, msgs, 1)
 }
