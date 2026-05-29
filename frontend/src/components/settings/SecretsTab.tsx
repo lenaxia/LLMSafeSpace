@@ -250,9 +250,6 @@ function generateRandomSecret(length = 32): string {
 }
 
 async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: string }> {
-  // Use Web Crypto to generate Ed25519 keypair
-  // Note: Ed25519 support in WebCrypto is limited; fall back to a random placeholder
-  // In production, this would use a library like tweetnacl or ssh-keygen WASM
   const keyPair = await crypto.subtle.generateKey(
     { name: "Ed25519" } as any,
     true,
@@ -260,12 +257,53 @@ async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: st
   ).catch(() => null);
 
   if (keyPair) {
-    const privRaw = await crypto.subtle.exportKey("pkcs8", (keyPair as any).privateKey);
-    const pubRaw = await crypto.subtle.exportKey("raw", (keyPair as any).publicKey);
-    const privB64 = btoa(String.fromCharCode(...new Uint8Array(privRaw)));
-    const pubB64 = btoa(String.fromCharCode(...new Uint8Array(pubRaw)));
+    const privPkcs8 = await crypto.subtle.exportKey("pkcs8", (keyPair as any).privateKey);
+    const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", (keyPair as any).publicKey));
+
+    // Build OpenSSH public key wire format: [len][algorithm][len][key]
+    const algo = new TextEncoder().encode("ssh-ed25519");
+    const pubWire = new Uint8Array(4 + algo.length + 4 + pubRaw.length);
+    new DataView(pubWire.buffer).setUint32(0, algo.length);
+    pubWire.set(algo, 4);
+    new DataView(pubWire.buffer).setUint32(4 + algo.length, pubRaw.length);
+    pubWire.set(pubRaw, 4 + algo.length + 4);
+    const pubB64 = btoa(String.fromCharCode(...pubWire));
+
+    // Build OpenSSH private key format
+    const checkInt = crypto.getRandomValues(new Uint32Array(1))[0]!;
+    const comment = new TextEncoder().encode("generated@llmsafespace");
+    // Extract raw 32-byte private key from PKCS#8 (last 32 bytes of the DER)
+    const privBytes = new Uint8Array(privPkcs8).slice(-32);
+    // OpenSSH ed25519 private key "keypair" is privkey(32) || pubkey(32)
+    const privKeyPair = new Uint8Array(64);
+    privKeyPair.set(privBytes, 0);
+    privKeyPair.set(pubRaw, 32);
+
+    // Assemble private section (unencrypted)
+    const privSection = encodeOpenSSHPrivateSection(checkInt, pubRaw, privKeyPair, comment);
+    // Pad to block size (8 for none cipher)
+    const padded = padToBlockSize(privSection, 8);
+
+    // Assemble full OpenSSH private key
+    const cipherName = new TextEncoder().encode("none");
+    const kdfName = new TextEncoder().encode("none");
+    const authMagic = new TextEncoder().encode("openssh-key-v1\0");
+
+    const parts: Uint8Array[] = [
+      authMagic,
+      uint32BE(cipherName.length), cipherName,
+      uint32BE(kdfName.length), kdfName,
+      uint32BE(0), // kdf options (empty string)
+      uint32BE(1), // number of keys
+      uint32BE(pubWire.length), pubWire,
+      uint32BE(padded.length), padded,
+    ];
+    const blob = concatBytes(parts);
+    const privB64 = btoa(String.fromCharCode(...blob));
+    const privLines = privB64.match(/.{1,70}/g)!.join("\n");
+
     return {
-      privateKey: `-----BEGIN PRIVATE KEY-----\n${privB64}\n-----END PRIVATE KEY-----`,
+      privateKey: `-----BEGIN OPENSSH PRIVATE KEY-----\n${privLines}\n-----END OPENSSH PRIVATE KEY-----\n`,
       publicKey: `ssh-ed25519 ${pubB64} generated@llmsafespace`,
     };
   }
@@ -274,6 +312,41 @@ async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: st
   const priv = generateRandomSecret(64);
   const pub = `ssh-ed25519 ${btoa(generateRandomSecret(32))} generated@llmsafespace`;
   return { privateKey: priv, publicKey: pub };
+}
+
+function uint32BE(n: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  new DataView(buf.buffer).setUint32(0, n);
+  return buf;
+}
+
+function concatBytes(arrays: Uint8Array[]): Uint8Array {
+  const total = arrays.reduce((s, a) => s + a.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const a of arrays) { result.set(a, offset); offset += a.length; }
+  return result;
+}
+
+function encodeOpenSSHPrivateSection(checkInt: number, pubRaw: Uint8Array, privKeyPair: Uint8Array, comment: Uint8Array): Uint8Array {
+  const algo = new TextEncoder().encode("ssh-ed25519");
+  const parts: Uint8Array[] = [
+    uint32BE(checkInt), uint32BE(checkInt), // two identical check ints
+    uint32BE(algo.length), algo,
+    uint32BE(pubRaw.length), pubRaw,
+    uint32BE(privKeyPair.length), privKeyPair,
+    uint32BE(comment.length), comment,
+  ];
+  return concatBytes(parts);
+}
+
+function padToBlockSize(data: Uint8Array, blockSize: number): Uint8Array {
+  const padLen = blockSize - (data.length % blockSize);
+  if (padLen === blockSize) return data;
+  const padded = new Uint8Array(data.length + padLen);
+  padded.set(data);
+  for (let i = 0; i < padLen; i++) padded[data.length + i] = i + 1;
+  return padded;
 }
 
 function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onError: (e: string) => void }) {
@@ -329,7 +402,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       <div className="rounded-md border border-border bg-accent/20 p-4 space-y-3">
         <p className="text-sm font-medium text-foreground">✓ Secret "{name}" created and encrypted</p>
         <div className="flex items-center gap-2">
-          <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground break-all max-h-24 overflow-auto">
+          <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground break-all max-h-24 overflow-auto whitespace-pre-wrap">
             {createdValue}
           </code>
           <button
