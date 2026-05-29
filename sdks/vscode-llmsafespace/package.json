@@ -1,0 +1,73 @@
+{
+  "name": "vscode-llmsafespace",
+  "displayName": "LLMSafeSpace",
+  "description": "Manage LLMSafeSpace workspaces from VS Code",
+  "version": "1.0.0",
+  "publisher": "llmsafespace",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "llmsafespace",
+          "title": "LLMSafeSpace",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "llmsafespace": [
+        {
+          "id": "llmsafespace.workspaces",
+          "name": "Workspaces"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "llmsafespace.createWorkspace", "title": "LLMSafeSpace: Create Workspace" },
+      { "command": "llmsafespace.suspendWorkspace", "title": "LLMSafeSpace: Suspend Workspace" },
+      { "command": "llmsafespace.resumeWorkspace", "title": "LLMSafeSpace: Resume Workspace" },
+      { "command": "llmsafespace.activateWorkspace", "title": "LLMSafeSpace: Activate Workspace" },
+      { "command": "llmsafespace.terminateWorkspace", "title": "LLMSafeSpace: Terminate Workspace" },
+      { "command": "llmsafespace.refresh", "title": "LLMSafeSpace: Refresh" },
+      { "command": "llmsafespace.configure", "title": "LLMSafeSpace: Configure" },
+      { "command": "llmsafespace.openTerminal", "title": "LLMSafeSpace: Open Terminal" }
+    ],
+    "menus": {
+      "view/item/context": [
+        { "command": "llmsafespace.suspendWorkspace", "when": "viewItem == workspace-active" },
+        { "command": "llmsafespace.resumeWorkspace", "when": "viewItem == workspace-suspended" },
+        { "command": "llmsafespace.activateWorkspace", "when": "viewItem == workspace-suspended" },
+        { "command": "llmsafespace.terminateWorkspace", "when": "viewItem =~ /workspace-/" },
+        { "command": "llmsafespace.openTerminal", "when": "viewItem == workspace-active" }
+      ]
+    },
+    "configuration": {
+      "title": "LLMSafeSpace",
+      "properties": {
+        "llmsafespace.apiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "LLMSafeSpace API URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run build -- --watch"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@llmsafespace/sdk": "file:../typescript"
+  }
+}

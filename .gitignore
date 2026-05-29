@@ -36,3 +36,11 @@ DONOTUSE
 dist/
 frontend/coverage
 /workspace-agentd
+
+# SDK build artifacts
+sdks/typescript/node_modules/
+sdks/typescript/dist/
+sdks/vscode-llmsafespace/node_modules/
+sdks/vscode-llmsafespace/dist/
+sdks/python/__pycache__/
+sdks/python/*.egg-info/

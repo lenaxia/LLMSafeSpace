@@ -1,0 +1,152 @@
+/** SDK configuration options. */
+export interface ClientOptions {
+  baseUrl: string;
+  apiKey?: string;
+  credentials?: { email: string; password: string };
+  timeout?: number; // ms, default 120000 for sendMessage
+}
+
+/** Workspace resource. */
+export interface Workspace {
+  id: string;
+  name: string;
+  userId: string;
+  runtime: string;
+  storageSize: string;
+  phase: string;
+  pvcName?: string;
+  labels?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWorkspaceRequest {
+  name?: string;
+  runtime?: string;
+  storageSize?: string;
+  storageClass?: string;
+  labels?: Record<string, string>;
+}
+
+export interface WorkspaceListResult {
+  items: WorkspaceListItem[];
+  pagination?: PaginationMetadata;
+}
+
+export interface WorkspaceListItem {
+  id: string;
+  name: string;
+  userId: string;
+  runtime: string;
+  storageSize: string;
+  phase?: string;
+  maxActiveSessions?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaginationMetadata {
+  total: number;
+  start: number;
+  end: number;
+  limit: number;
+  offset: number;
+}
+
+export interface WorkspaceStatusResult {
+  phase: string;
+  pvcName?: string;
+  activeSessions: number;
+  lastActivityAt?: string;
+  message?: string;
+  conditions?: WorkspaceCondition[];
+  credentialState: { available: boolean; reason?: string; message?: string };
+  agentHealth: { status: string; providersConfigured: number; agentVersion?: string };
+  sessions?: { id: string; title?: string; status: string }[];
+  diskUsedBytes?: number;
+  diskTotalBytes?: number;
+}
+
+export interface WorkspaceCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+}
+
+export interface ActivateWorkspaceResponse {
+  resumed: string;
+  suspended?: string;
+}
+
+export interface EnsureSessionResponse {
+  workspaceId: string;
+  workspacePhase: string;
+  sessionId: string;
+  resumed: boolean;
+}
+
+export interface SessionListItem {
+  id: string;
+  title?: string;
+  lastMessageAt?: string;
+  messageCount: number;
+  status: string;
+}
+
+export interface ActiveSessionsResponse {
+  active: string[];
+  maxActive: number;
+}
+
+/** Opencode message response (proxy passthrough). */
+export interface MessageResponse {
+  raw: unknown;
+  content: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  createdAt: string;
+  updatedAt: string;
+  active: boolean;
+  role: string;
+}
+
+export interface APIKey {
+  id: string;
+  name: string;
+  key?: string;
+  prefix: string;
+  active: boolean;
+  createdAt: string;
+  expiresAt?: string;
+}
+
+export interface TerminalTicket {
+  ticket: string;
+  expiresAt: string;
+}
+
+export interface SecretResponse {
+  id: string;
+  name: string;
+  type: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSecretRequest {
+  name: string;
+  type: "llm-provider" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
+  value: string;
+  metadata?: unknown;
+}

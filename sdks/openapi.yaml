@@ -566,3 +566,1374 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  # --- Terminal ---
+  /workspaces/{id}/terminal/ticket:
+    post:
+      tags: [workspaces]
+      summary: Request a one-time terminal ticket
+      description: |
+        Returns a short-lived (30s) single-use ticket for WebSocket terminal upgrade.
+        The ticket is tied to the workspace ID and authenticated user.
+      operationId: requestTerminalTicket
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Terminal ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TerminalTicketResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workspace not active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /workspaces/{id}/terminal:
+    get:
+      tags: [workspaces]
+      summary: WebSocket terminal connection
+      description: |
+        Upgrades to WebSocket using a one-time ticket (from POST /terminal/ticket).
+        No Authorization header needed — auth is via the ticket query parameter.
+        Messages are JSON-framed: input, resize, output, exit, error.
+      security: []
+      operationId: connectTerminal
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: ticket
+          in: query
+          required: true
+          description: One-time ticket from POST /terminal/ticket
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket upgrade successful
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Terminal connection limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  # --- Secrets ---
+  /secrets:
+    post:
+      tags: [secrets]
+      summary: Create a secret
+      operationId: createSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSecretRequest"
+      responses:
+        "201":
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      tags: [secrets]
+      summary: List secrets
+      operationId: listSecrets
+      responses:
+        "200":
+          description: Secret list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SecretResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /secrets/audit:
+    get:
+      tags: [secrets]
+      summary: Get secret audit log
+      operationId: getSecretAuditLog
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /secrets/{id}:
+    get:
+      tags: [secrets]
+      summary: Get a secret (value not included)
+      operationId: getSecret
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "200":
+          description: Secret metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [secrets]
+      summary: Update a secret value
+      operationId: updateSecret
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSecretRequest"
+      responses:
+        "200":
+          description: Secret updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [secrets]
+      summary: Delete a secret
+      operationId: deleteSecret
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "204":
+          description: Secret deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /secrets/{id}/reveal:
+    post:
+      tags: [secrets]
+      summary: Reveal a secret value (audited)
+      operationId: revealSecret
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "200":
+          description: Decrypted secret value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /secrets/{id}/bindings:
+    get:
+      tags: [secrets]
+      summary: Get workspaces bound to a secret
+      operationId: getSecretBindings
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "200":
+          description: Binding list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SecretBinding"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/bindings:
+    put:
+      tags: [secrets]
+      summary: Set secret bindings for a workspace
+      operationId: setWorkspaceBindings
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetBindingsRequest"
+      responses:
+        "200":
+          description: Bindings set
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [secrets]
+      summary: Get secret bindings for a workspace
+      operationId: getWorkspaceBindings
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace bindings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BindingsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/reload-secrets:
+    post:
+      tags: [secrets]
+      summary: Reload secrets into the workspace pod
+      operationId: reloadWorkspaceSecrets
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Secrets reloaded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/env:
+    put:
+      tags: [secrets]
+      summary: Set workspace environment variables
+      operationId: setWorkspaceEnv
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        "200":
+          description: Environment set
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [secrets]
+      summary: Get workspace environment variables
+      operationId: getWorkspaceEnv
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Environment variables
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/env/{name}:
+    delete:
+      tags: [secrets]
+      summary: Delete a workspace environment variable
+      operationId: deleteWorkspaceEnv
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Environment variable deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  # --- Settings ---
+  /admin/settings:
+    get:
+      tags: [settings]
+      summary: Get all admin (instance) settings
+      operationId: getAdminSettings
+      responses:
+        "200":
+          description: Admin settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/settings/schema:
+    get:
+      tags: [settings]
+      summary: Get admin settings schema
+      operationId: getAdminSettingsSchema
+      responses:
+        "200":
+          description: Settings schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSchemaResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/settings/{key}:
+    put:
+      tags: [settings]
+      summary: Set an admin setting
+      operationId: setAdminSetting
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {}
+      responses:
+        "200":
+          description: Setting updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                  value: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /users/me/settings:
+    get:
+      tags: [settings]
+      summary: Get current user settings
+      operationId: getUserSettings
+      responses:
+        "200":
+          description: User settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /users/me/settings/schema:
+    get:
+      tags: [settings]
+      summary: Get user settings schema
+      operationId: getUserSettingsSchema
+      responses:
+        "200":
+          description: User settings schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSchemaResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /users/me/settings/{key}:
+    put:
+      tags: [settings]
+      summary: Set a user setting
+      operationId: setUserSetting
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {}
+      responses:
+        "200":
+          description: Setting updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                  value: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  # --- Credentials (Admin) ---
+  /admin/credentials:
+    post:
+      tags: [credentials]
+      summary: Create a credential set
+      operationId: createCredentialSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCredentialSetRequest"
+      responses:
+        "201":
+          description: Credential set created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialSet"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      tags: [credentials]
+      summary: List credential sets
+      operationId: listCredentialSets
+      responses:
+        "200":
+          description: Credential set list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CredentialSet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/credentials/{id}:
+    get:
+      tags: [credentials]
+      summary: Get a credential set
+      operationId: getCredentialSet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Credential set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialSet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [credentials]
+      summary: Update a credential set
+      operationId: updateCredentialSet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCredentialSetRequest"
+      responses:
+        "200":
+          description: Credential set updated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [credentials]
+      summary: Delete a credential set
+      operationId: deleteCredentialSet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Credential set deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Credential set is referenced by workspaces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/credentials/{id}/default:
+    put:
+      tags: [credentials]
+      summary: Set a credential set as default
+      operationId: setDefaultCredentialSet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Default set
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/credentials/rotate-key:
+    post:
+      tags: [credentials]
+      summary: Rotate the credential encryption key
+      operationId: rotateCredentialKey
+      responses:
+        "200":
+          description: Rotation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateKeyResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  # --- Account ---
+  /account/rotate-key:
+    post:
+      tags: [account]
+      summary: Rotate user encryption key
+      operationId: rotateUserKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Key rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keyVersion:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Invalid password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /account/change-password:
+    post:
+      tags: [account]
+      summary: Change user password
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [oldPassword, newPassword]
+              properties:
+                oldPassword:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password changed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Invalid current password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /account/recover:
+    post:
+      tags: [account]
+      summary: Recover account with recovery key
+      security: []
+      operationId: recoverAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, recoveryKey, newPassword]
+              properties:
+                userId:
+                  type: string
+                recoveryKey:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Account recovered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recoveryKey:
+                    type: string
+                    description: New recovery key (store securely)
+        "403":
+          description: Invalid recovery key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  # --- Health ---
+  /livez:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe (checks DB and Redis)
+      security: []
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        "503":
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unhealthy
+                  failures:
+                    type: array
+                    items:
+                      type: string
+                  detail:
+                    type: string
+  /health:
+    get:
+      tags: [health]
+      summary: Legacy health endpoint (alias for /livez)
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+components:
+  parameters:
+    WorkspaceId:
+      name: id
+      in: path
+      required: true
+      description: Workspace ID
+      schema:
+        type: string
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Session ID
+      schema:
+        type: string
+    SecretId:
+      name: id
+      in: path
+      required: true
+      description: Secret ID
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from /auth/login or /auth/register
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "lsp_ prefixed API key in Bearer format (e.g. Bearer lsp_abc123...)"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    AuthConfig:
+      type: object
+      properties:
+        registrationEnabled:
+          type: boolean
+        oidcEnabled:
+          type: boolean
+        ssoProviders:
+          type: array
+          items:
+            type: string
+        instanceName:
+          type: string
+        motd:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        active:
+          type: boolean
+        role:
+          type: string
+    CreateAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        key:
+          type: string
+          description: Full key value (only returned on creation)
+        prefix:
+          type: string
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    Workspace:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        userId:
+          type: string
+        runtime:
+          type: string
+        storageSize:
+          type: string
+        phase:
+          type: string
+          enum: [Pending, Active, Suspending, Suspended, Resuming, Terminating, Terminated, Failed]
+        pvcName:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        runtime:
+          type: string
+        storageSize:
+          type: string
+        storageClass:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    WorkspaceListResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceListItem"
+        pagination:
+          $ref: "#/components/schemas/PaginationMetadata"
+    WorkspaceListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        userId:
+          type: string
+        runtime:
+          type: string
+        storageSize:
+          type: string
+        phase:
+          type: string
+        maxActiveSessions:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PaginationMetadata:
+      type: object
+      properties:
+        total:
+          type: integer
+        start:
+          type: integer
+        end:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    WorkspaceStatusResult:
+      type: object
+      properties:
+        phase:
+          type: string
+        pvcName:
+          type: string
+        activeSessions:
+          type: integer
+        lastActivityAt:
+          type: string
+          format: date-time
+          nullable: true
+        message:
+          type: string
+        conditions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceConditionResult"
+        credentialState:
+          $ref: "#/components/schemas/CredentialStateResult"
+        agentHealth:
+          $ref: "#/components/schemas/AgentHealthResult"
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionStatusItem"
+        diskUsedBytes:
+          type: integer
+          format: int64
+        diskTotalBytes:
+          type: integer
+          format: int64
+    WorkspaceConditionResult:
+      type: object
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+        message:
+          type: string
+    CredentialStateResult:
+      type: object
+      properties:
+        available:
+          type: boolean
+        reason:
+          type: string
+        message:
+          type: string
+    AgentHealthResult:
+      type: object
+      properties:
+        status:
+          type: string
+        providersConfigured:
+          type: integer
+        agentVersion:
+          type: string
+        connected:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+        lastCheckedAt:
+          type: string
+    SessionStatusItem:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+    ActivateWorkspaceResponse:
+      type: object
+      properties:
+        resumed:
+          type: string
+          description: ID of the workspace that was resumed
+        suspended:
+          type: string
+          description: ID of the workspace that was suspended to make room (if any)
+    TerminalTicketResponse:
+      type: object
+      properties:
+        ticket:
+          type: string
+          description: One-time ticket (prefixed with tkt_)
+        expiresAt:
+          type: string
+          format: date-time
+          description: Ticket expiry time (30s from creation)
+    EnsureSessionResponse:
+      type: object
+      properties:
+        workspaceId:
+          type: string
+        workspacePhase:
+          type: string
+        sessionId:
+          type: string
+        resumed:
+          type: boolean
+    SessionListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        lastMessageAt:
+          type: string
+          format: date-time
+          nullable: true
+        messageCount:
+          type: integer
+        status:
+          type: string
+          enum: [active, idle]
+    ActiveSessionsResponse:
+      type: object
+      properties:
+        active:
+          type: array
+          items:
+            type: string
+        maxActive:
+          type: integer
+    MessageResponse:
+      type: object
+      description: Response from opencode agent (schema tracks upstream opencode version)
+      x-opencode-proxy: true
+      properties:
+        info:
+          type: object
+          description: Message metadata
+        parts:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              content:
+                type: string
+    CreateSecretRequest:
+      type: object
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        type:
+          type: string
+          enum: [llm-provider, ssh-key, git-credential, secret-file, env-secret]
+        value:
+          type: string
+          description: Plaintext value (encrypted before storage)
+        metadata:
+          type: object
+          description: Arbitrary metadata JSON
+    UpdateSecretRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+        metadata:
+          type: object
+    SecretResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [llm-provider, ssh-key, git-credential, secret-file, env-secret]
+        metadata:
+          type: object
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SecretBinding:
+      type: object
+      properties:
+        secretId:
+          type: string
+        workspaceId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    SetBindingsRequest:
+      type: object
+      required: [secretIds]
+      properties:
+        secretIds:
+          type: array
+          items:
+            type: string
+    BindingsResponse:
+      type: object
+      properties:
+        bindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoundSecret"
+    BoundSecret:
+      type: object
+      properties:
+        secretId:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: string
+        action:
+          type: string
+        secretId:
+          type: string
+          nullable: true
+        workspaceId:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+    SettingsResponse:
+      type: object
+      properties:
+        settings:
+          type: object
+          additionalProperties: true
+        schemaVersion:
+          type: string
+    SettingsSchemaResponse:
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+        settings:
+          type: array
+          items:
+            type: object
+            description: Setting definition with key, type, default, description
+    CreateCredentialSetRequest:
+      type: object
+      required: [name, providers]
+      properties:
+        name:
+          type: string
+        providers:
+          type: object
+          description: "Map of provider name to config (e.g. {\"openai\": {\"apiKey\": \"sk-...\", \"baseUrl\": \"...\"}})"
+          additionalProperties:
+            $ref: "#/components/schemas/ProviderEntry"
+        modelAllowlist:
+          type: array
+          items:
+            type: string
+        assignedTo:
+          description: "\"all\" or array of user IDs"
+        isDefault:
+          type: boolean
+    UpdateCredentialSetRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        providers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProviderEntry"
+        modelAllowlist:
+          type: array
+          items:
+            type: string
+        assignedTo:
+          description: "\"all\" or array of user IDs"
+        isDefault:
+          type: boolean
+    CredentialSet:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        providers:
+          type: array
+          items:
+            type: string
+          description: Provider names only (keys never exposed in list responses)
+        modelAllowlist:
+          type: array
+          items:
+            type: string
+        assignedTo:
+          description: "\"all\" or array of user IDs"
+        keyVersion:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProviderEntry:
+      type: object
+      properties:
+        apiKey:
+          type: string
+        baseUrl:
+          type: string
+    RotateKeyResult:
+      type: object
+      properties:
+        rotated:
+          type: integer
+        alreadyCurrent:
+          type: integer
+        errors:
+          type: integer
