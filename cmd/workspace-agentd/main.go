@@ -18,11 +18,10 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 )
 
-const (
-	listenAddr = "0.0.0.0:4097"
+var (
+	agentAddr  = fmt.Sprintf("http://localhost:%d", agentd.AgentPort)
+	listenAddr = agentd.AgentdAddr
 )
-
-var agentAddr = "http://localhost:4096"
 
 var log *zap.Logger
 
@@ -36,7 +35,7 @@ func (c *OpenCodeClient) doRequest(ctx context.Context, path string) (*http.Resp
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth("opencode", c.password)
+	req.SetBasicAuth(agentd.AuthUsername, c.password)
 	return c.client.Do(req)
 }
 
@@ -201,7 +200,7 @@ func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenC
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth("opencode", client.password)
+	req.SetBasicAuth(agentd.AuthUsername, client.password)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
@@ -309,7 +308,7 @@ func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCac
 	return connected, configured, sessions
 }
 
-const workspacePath = "/workspace"
+var workspacePath = agentd.WorkspacePath
 
 func getDiskUsage() *agentd.DiskUsage {
 	var stat syscall.Statfs_t
@@ -492,7 +491,7 @@ func (p *managedProcess) start() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopping = false
-	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096")
+	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", fmt.Sprintf("%d", agentd.AgentPort))
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr
 	p.cmd.Env = buildEnv()

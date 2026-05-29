@@ -3,10 +3,19 @@ package agentd
 // Well-known paths shared between entrypoint scripts and agentd.
 // Shell scripts reference these by convention — keep in sync.
 const (
-	SecretsEnvPath   = "/tmp/secrets-env"
-	AgentConfigPath  = "/tmp/agent-config.json"
-	PasswordPath     = "/sandbox-cfg/password"
-	SecretsBasePath  = "/home/sandbox/.secrets"
+	SecretsEnvPath  = "/tmp/secrets-env"
+	AgentConfigPath = "/tmp/agent-config.json"
+	PasswordPath    = "/sandbox-cfg/password"
+	SecretsBasePath = "/home/sandbox/.secrets"
+	WorkspacePath   = "/workspace"
+)
+
+// Ports and network constants shared between agentd and the controller.
+const (
+	AgentPort    = 4096 // opencode serve listens here
+	AgentdPort   = 4097 // agentd HTTP API listens here
+	AgentdAddr   = "0.0.0.0:4097"
+	AuthUsername = "opencode" // Basic Auth username for opencode
 )
 
 // HealthzResponse is the response for GET /v1/healthz.
