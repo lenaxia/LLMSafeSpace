@@ -269,6 +269,24 @@ func TestSessionStatusTracker_ProcessEvent_InvalidJSON(t *testing.T) {
 	assert.Equal(t, "idle", tracker.get("anything"))
 }
 
+func TestSessionStatusTracker_Prune(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+	tracker.set("ses_2", "idle")
+	tracker.set("ses_old", "busy")
+
+	tracker.prune([]string{"ses_1", "ses_2"})
+
+	assert.Equal(t, "busy", tracker.get("ses_1"))
+	assert.Equal(t, "idle", tracker.get("ses_2"))
+	assert.Equal(t, "idle", tracker.get("ses_old"), "pruned session should return default idle")
+
+	// Verify map size
+	tracker.mu.RLock()
+	assert.Len(t, tracker.statuses, 2)
+	tracker.mu.RUnlock()
+}
+
 func TestSessionStatusTracker_MergesIntoCachedState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

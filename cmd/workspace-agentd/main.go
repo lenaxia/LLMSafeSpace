@@ -155,6 +155,21 @@ func (t *sessionStatusTracker) get(sessionID string) string {
 	return "idle"
 }
 
+// prune removes entries for sessions that no longer exist.
+func (t *sessionStatusTracker) prune(activeIDs []string) {
+	active := make(map[string]struct{}, len(activeIDs))
+	for _, id := range activeIDs {
+		active[id] = struct{}{}
+	}
+	t.mu.Lock()
+	for id := range t.statuses {
+		if _, exists := active[id]; !exists {
+			delete(t.statuses, id)
+		}
+	}
+	t.mu.Unlock()
+}
+
 func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeClient) {
 	backoff := 2 * time.Second
 	maxBackoff := 30 * time.Second
@@ -281,6 +296,12 @@ func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCac
 	for i := range sessions {
 		sessions[i].Status = tracker.get(sessions[i].ID)
 	}
+	// Prune tracker entries for sessions that no longer exist
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.ID
+	}
+	tracker.prune(ids)
 	cache.connected = connected
 	cache.configured = configured
 	cache.sessions = sessions
