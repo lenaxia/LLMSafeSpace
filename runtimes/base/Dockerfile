@@ -67,6 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # When upstream adds .sha256 or Sigstore signatures, restore verification here.
 RUN set -eux; \
+    TARGETARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
     case "${TARGETARCH}" in \
         amd64) OC_ARCH=x64 ;; \
         arm64) OC_ARCH=arm64 ;; \
@@ -86,6 +87,7 @@ RUN set -eux; \
 # Asset naming: mise-v{version}-linux-{x64,arm64}.tar.gz
 #   (x64, NOT amd64 — same convention as the opencode assets above.)
 RUN set -eux; \
+    TARGETARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
     case "${TARGETARCH}" in \
         amd64) MISE_ARCH=x64 ;; \
         arm64) MISE_ARCH=arm64 ;; \
