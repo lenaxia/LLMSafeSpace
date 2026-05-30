@@ -81,15 +81,15 @@ is the list of distinct items.
 | F1.1.5 | `/api/v1/account/recover` outside `/account` auth group | Medium | MINE | router |
 | F1.1.6 | `/events` SSE rate-limit-exempt | Low/medium | MINE | router |
 | F1.1.7 | Login error messages enable user enumeration | Medium | duplicate of G27 | merged |
-| F1.2.1 | Spec.Runtime arbitrary image pull | Critical | MINE | webhook validator (= RT-2.18, RT-6.10) |
-| F1.2.2 | Status.PodIP/PodName forge → SSRF + pod-exec hijack | Critical | MINE | webhook subresource validation |
+| F1.2.1 | Spec.Runtime arbitrary image pull | Critical | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook validator (= RT-2.18, RT-6.10) |
+| F1.2.2 | Status.PodIP/PodName forge → SSRF + pod-exec hijack | Critical | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook subresource validation |
 | F1.2.3 | Spec.Resources.* not applied to pod | High | MINE | controller pod-spec generation |
 | F1.2.4 | Spec.NetworkAccess not enforced | High | MINE | NetPol generation per workspace |
 | F1.2.5 | Spec.Packages[].Requirements[] shell injection | High | MINE | controller package init container |
 | F1.2.6 | autoApprovePermissions schema drift | Medium | MINE | CRD schema |
 | F1.2.7 | Helm CRD drift | Medium | MINE | chart vs upstream CRD |
 | F1.2.8 | Spec.PodSecurityContext.SeccompProfile ignored | Medium | MINE | controller (relates G24) |
-| F1.2.9 | Spec.Storage.StorageClassName no allowlist | Medium | MINE | webhook validator |
+| F1.2.9 | Spec.Storage.StorageClassName no allowlist | Medium | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook validator |
 | F1.2.10 | RuntimeEnvironment.Spec.Image validated only for non-empty | Low/Medium | MINE | webhook validator |
 | F1.3.1 | Controller cluster-scope grants 5 unused permissions | High | MINE | `charts/llmsafespace/templates/rbac.yaml` (relates G5) |
 | F1.3.2 | `coordination.k8s.io/leases` cluster-wide | High | MINE | rbac.yaml |

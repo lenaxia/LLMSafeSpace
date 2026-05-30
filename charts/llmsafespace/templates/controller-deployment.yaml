@@ -45,6 +45,21 @@ spec:
             {{- with .Values.controller.watchNamespaces }}
             - --watch-namespaces={{ . }}
             {{- end }}
+            {{- /* G2 — workspace admission allow-lists. The controller's
+                   ValidatingWebhook reads these to gate Spec.Runtime
+                   image references and Spec.Storage parameters. Empty
+                   allowed-image-registries means "no explicit images
+                   allowed" (only RuntimeEnvironment-name references).
+                */ -}}
+            {{- with .Values.webhooks.allowedImageRegistries }}
+            - --allowed-image-registries={{ join "," . }}
+            {{- end }}
+            {{- with .Values.webhooks.allowedStorageClassNames }}
+            - --allowed-storage-class-names={{ join "," . }}
+            {{- end }}
+            {{- if hasKey .Values.webhooks "maxWorkspaceStorageGi" }}
+            - --max-workspace-storage-gi={{ .Values.webhooks.maxWorkspaceStorageGi }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metricsAddr | trimPrefix ":" | atoi }}

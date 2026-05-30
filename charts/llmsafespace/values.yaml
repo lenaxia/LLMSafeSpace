@@ -449,6 +449,30 @@ webhooks:
   failurePolicy: "Fail"
   # timeoutSeconds for webhook calls. Max 30s.
   timeoutSeconds: 10
+  #
+  # G2 (Epic 17) — Workspace admission allow-lists. The Workspace
+  # validating webhook gates Spec.Runtime image references and
+  # Spec.Storage parameters using these lists.
+  #
+  # allowedImageRegistries: list of registry-prefix strings. Any
+  # Workspace whose runtime contains '/' (i.e. is shaped like an
+  # explicit container image reference) must match at least one
+  # prefix here. Empty list means ONLY RuntimeEnvironment-name
+  # references are allowed (e.g. `runtime: python-3.11`).
+  allowedImageRegistries:
+    - "ghcr.io/lenaxia/"
+  #
+  # allowedStorageClassNames: optional. If non-empty, the
+  # Spec.Storage.StorageClassName must be one of these. Empty means
+  # any StorageClassName is allowed (operator-defined cluster default
+  # always passes; this list constrains user-supplied values).
+  allowedStorageClassNames: []
+  #
+  # maxWorkspaceStorageGi: maximum requested workspace storage in GiB.
+  # Storage requests above this are rejected at admission. 0 disables
+  # the upper bound. The CRD pattern `^[0-9]+(Gi|Mi)$` already
+  # enforces shape; this enforces magnitude.
+  maxWorkspaceStorageGi: 1024
 
 
 

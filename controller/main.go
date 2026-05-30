@@ -37,6 +37,9 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var watchNamespaces string
+	var allowedImageRegistries string
+	var allowedStorageClassNames string
+	var maxStorageGi int64
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
@@ -45,6 +48,15 @@ func main() {
 	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
 		"Comma-separated list of namespaces the controller should watch. "+
 			"Empty or '*' means watch all namespaces (default).")
+	flag.StringVar(&allowedImageRegistries, "allowed-image-registries", "",
+		"Comma-separated list of registry prefixes accepted as Workspace.spec.runtime "+
+			"image references (e.g. 'ghcr.io/lenaxia/,registry.k8s.io/'). Empty list "+
+			"means only RuntimeEnvironment-name references are allowed (G2 / F1.2.1).")
+	flag.StringVar(&allowedStorageClassNames, "allowed-storage-class-names", "",
+		"Comma-separated list of StorageClass names accepted as "+
+			"Workspace.spec.storage.storageClassName. Empty means accept any (G2 / F1.2.9).")
+	flag.Int64Var(&maxStorageGi, "max-workspace-storage-gi", 1024,
+		"Maximum spec.storage.size in GiB. Set 0 to disable. (G2 / RT-6.1).")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -95,6 +107,19 @@ func main() {
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &webhooks.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
+	})
+
+	// G2 — Workspace admission webhook closes F1.2.1 (registry allow-list),
+	// F1.2.2 (status forge), F1.2.9 (storage class allow-list), and RT-6.1
+	// (storage size upper bound). Configuration is operator-supplied via
+	// flags so the same chart works in every deployment topology.
+	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-workspace", &webhook.Admission{
+		Handler: &webhooks.WorkspaceValidator{
+			Decoder:                  webhookDecoder,
+			AllowedImageRegistries:   splitNonEmpty(allowedImageRegistries, ","),
+			AllowedStorageClassNames: splitNonEmpty(allowedStorageClassNames, ","),
+			MaxStorageGi:             maxStorageGi,
+		},
 	})
 
 	// Set up controllers

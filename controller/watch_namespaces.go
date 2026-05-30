@@ -37,3 +37,26 @@ func parseWatchNamespaces(s string) map[string]cache.Config {
 	}
 	return out
 }
+
+// splitNonEmpty splits s on sep and returns the non-empty trimmed
+// elements. Used by main.go to thread comma-list flags into the
+// admission validators (allowed-image-registries, allowed-storage-
+// class-names, etc.).
+func splitNonEmpty(s, sep string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

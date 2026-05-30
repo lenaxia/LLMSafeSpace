@@ -469,3 +469,164 @@ func TestG26_DatastoreNetworkPolicy_OptOut(t *testing.T) {
 			"datastore.networkPolicy.enabled=false must omit valkey NetworkPolicy")
 	}
 }
+
+// =============================================================================
+// G2 — Workspace ValidatingWebhookConfiguration + controller flag wiring
+// =============================================================================
+//
+// Closes F1.2.1, F1.2.2, F1.2.9, RT-2.18, RT-6.10, RT-6.1. The chart-side
+// fix is two contracts:
+//
+//   1. ValidatingWebhookConfiguration includes a webhook for `workspaces`
+//      pointing at /validate-llmsafespace-dev-v1-workspace.
+//   2. The controller deployment passes --allowed-image-registries,
+//      --allowed-storage-class-names, and --max-workspace-storage-gi
+//      to the controller binary, populated from values.yaml.
+
+// findControllerArgs locates the controller container's args list in
+// the rendered Deployment.
+func findControllerArgs(t *testing.T, docs []map[string]any) []string {
+	t.Helper()
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		if !strings.Contains(name, "controller") {
+			continue
+		}
+		spec, _ := d["spec"].(map[string]any)
+		tmpl, _ := spec["template"].(map[string]any)
+		podSpec, _ := tmpl["spec"].(map[string]any)
+		containers, _ := podSpec["containers"].([]any)
+		if len(containers) == 0 {
+			continue
+		}
+		c, _ := containers[0].(map[string]any)
+		raw, _ := c["args"].([]any)
+		out := make([]string, 0, len(raw))
+		for _, a := range raw {
+			if s, ok := a.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// TestG2_WebhookConfig_IncludesWorkspace asserts the
+// ValidatingWebhookConfiguration carries a webhook for the workspaces
+// resource. Without this entry the workspace webhook never receives
+// admission requests and the registry allow-list is bypassed for any
+// kubectl-direct workspace creation.
+func TestG2_WebhookConfig_IncludesWorkspace(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, d := range docs {
+		if d["kind"] != "ValidatingWebhookConfiguration" {
+			continue
+		}
+		webhooks, _ := d["webhooks"].([]any)
+		var sawWorkspace bool
+		for _, w := range webhooks {
+			wm, _ := w.(map[string]any)
+			cc, _ := wm["clientConfig"].(map[string]any)
+			svc, _ := cc["service"].(map[string]any)
+			path, _ := svc["path"].(string)
+			if path == "/validate-llmsafespace-dev-v1-workspace" {
+				sawWorkspace = true
+				rules, _ := wm["rules"].([]any)
+				require.NotEmpty(t, rules, "workspace webhook must declare at least one rule")
+				rule, _ := rules[0].(map[string]any)
+				resources, _ := rule["resources"].([]any)
+				require.Contains(t, resources, "workspaces")
+				ops, _ := rule["operations"].([]any)
+				require.Contains(t, ops, "CREATE")
+				require.Contains(t, ops, "UPDATE")
+				break
+			}
+		}
+		require.True(t, sawWorkspace,
+			"ValidatingWebhookConfiguration must include a webhook for /validate-llmsafespace-dev-v1-workspace")
+		return
+	}
+	t.Fatal("no ValidatingWebhookConfiguration rendered")
+}
+
+// TestG2_ControllerArgs_PassesAllowedImageRegistries asserts the
+// controller deployment receives the --allowed-image-registries flag
+// populated from values.yaml. Default values.yaml ships a non-empty
+// list (ghcr.io/lenaxia/) so the flag must appear by default.
+func TestG2_ControllerArgs_PassesAllowedImageRegistries(t *testing.T) {
+	docs := helmTemplate(t, "")
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args, "controller container must have args")
+
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--allowed-image-registries=") {
+			found = a
+			break
+		}
+	}
+	require.NotEmpty(t, found,
+		"--allowed-image-registries flag must be set when webhooks.allowedImageRegistries is non-empty")
+	require.Contains(t, found, "ghcr.io/lenaxia/",
+		"default --allowed-image-registries must include ghcr.io/lenaxia/ (G2)")
+}
+
+// TestG2_ControllerArgs_OmitsAllowedRegistriesWhenEmpty validates the
+// negative-case rendering: with an empty list the flag is omitted so
+// the controller's default (also empty list) takes effect.
+func TestG2_ControllerArgs_OmitsAllowedRegistriesWhenEmpty(t *testing.T) {
+	docs := helmTemplate(t, "webhooks:\n  allowedImageRegistries: []\n")
+	args := findControllerArgs(t, docs)
+	for _, a := range args {
+		require.False(t, strings.HasPrefix(a, "--allowed-image-registries="),
+			"--allowed-image-registries must NOT be set when the values list is empty (avoids '--flag=' which Go flag parses as empty)")
+	}
+}
+
+// TestG2_ControllerArgs_PassesMaxStorageGi asserts the upper-bound
+// flag flows through. Default 1024 must be the rendered value.
+func TestG2_ControllerArgs_PassesMaxStorageGi(t *testing.T) {
+	docs := helmTemplate(t, "")
+	args := findControllerArgs(t, docs)
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--max-workspace-storage-gi=") {
+			found = a
+			break
+		}
+	}
+	require.Equal(t, "--max-workspace-storage-gi=1024", found,
+		"controller must receive the default 1024 GiB upper-bound flag (G2 / RT-6.1)")
+}
+
+// TestG2_ControllerArgs_HonorsOperatorOverride confirms the operator
+// can change the upper bound and add storage class allow-list entries
+// through values.yaml, and the deployment re-renders with the new
+// values.
+func TestG2_ControllerArgs_HonorsOperatorOverride(t *testing.T) {
+	docs := helmTemplate(t, `webhooks:
+  allowedImageRegistries:
+    - "registry.k8s.io/"
+  allowedStorageClassNames:
+    - "longhorn"
+    - "gp3"
+  maxWorkspaceStorageGi: 64
+`)
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args)
+
+	asMap := map[string]string{}
+	for _, a := range args {
+		if i := strings.Index(a, "="); i > 0 {
+			asMap[a[:i]] = a[i+1:]
+		}
+	}
+	require.Equal(t, "registry.k8s.io/", asMap["--allowed-image-registries"])
+	require.Equal(t, "longhorn,gp3", asMap["--allowed-storage-class-names"])
+	require.Equal(t, "64", asMap["--max-workspace-storage-gi"])
+}

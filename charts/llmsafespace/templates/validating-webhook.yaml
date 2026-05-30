@@ -1,6 +1,12 @@
 {{- if .Values.webhooks.enabled }}
 # ValidatingWebhookConfiguration — routes admission requests for
-# runtimeenvironments to the controller webhook server.
+# runtimeenvironments AND workspaces to the controller webhook server.
+#
+# G2 (Epic 17): the workspaces webhook closes F1.2.1 (registry allow-list),
+# F1.2.2 (status forge), F1.2.9 (storage class allow-list), and RT-6.1
+# (storage size upper bound). Configuration lives on the controller
+# deployment via --allowed-image-registries, --allowed-storage-class-names,
+# and --max-workspace-storage-gi flags (see controller-deployment.yaml).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -27,4 +33,21 @@ webhooks:
         resources: ["runtimeenvironments"]
         operations: ["CREATE", "UPDATE"]
         scope: Cluster
+  - name: vworkspace.llmsafespace.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ include "llmsafespace.fullname" . }}-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-llmsafespace-dev-v1-workspace
+        port: 443
+    rules:
+      - apiGroups: ["llmsafespace.dev"]
+        apiVersions: ["v1"]
+        resources: ["workspaces"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
 {{- end }}
