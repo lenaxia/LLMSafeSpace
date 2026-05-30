@@ -79,6 +79,13 @@ type WorkspaceSpec struct {
 	// Runtime is the runtime environment (e.g. "python:3.11").
 	Runtime string `json:"runtime"`
 
+	// Architecture is the CPU architecture for the workspace pod.
+	// The controller sets a nodeSelector to schedule on matching nodes.
+	// Changing this field triggers a pod recreation.
+	// +kubebuilder:validation:Enum=amd64;arm64
+	// +kubebuilder:default=amd64
+	Architecture string `json:"architecture,omitempty"`
+
 	// +kubebuilder:validation:Enum=standard;high
 	// +kubebuilder:default=standard
 	SecurityLevel string `json:"securityLevel,omitempty"`

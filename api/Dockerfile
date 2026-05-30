@@ -4,6 +4,8 @@
 #
 #   docker build -f api/Dockerfile -t llmsafespace/api:dev .
 
+ARG TARGETARCH=amd64
+
 FROM golang:1.25 AS builder
 
 WORKDIR /workspace
@@ -26,7 +28,7 @@ COPY controller/ controller/
 ARG VERSION=dev
 ARG BUILD_TIME=unknown
 
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build \
         -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \

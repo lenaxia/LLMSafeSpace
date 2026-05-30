@@ -1,9 +1,11 @@
+ARG TARGETARCH=amd64
+
 FROM ghcr.io/lenaxia/llmsafespace/base:latest
 
 USER root
 
 # Install Go
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 ENV GO_VERSION=1.20.5
 RUN curl -sSL https://golang.org/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
