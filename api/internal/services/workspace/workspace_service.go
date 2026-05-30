@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
@@ -913,9 +914,16 @@ func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID 
 // is the live channel; the two together guarantee bound secrets reach
 // the pod regardless of its lifecycle state.
 //
-// Returns nil on apiserver success even when the Secret was newly
-// created vs. updated. Errors are returned to the caller (rather than
-// only logged) so the bind handler can surface them at Warn (Bug 2).
+// The Get-then-Update path uses retry.RetryOnConflict so two concurrent
+// SetBindings calls (e.g. from two API replicas) cannot lose updates:
+// the second writer's Update will receive a 409 Conflict from the
+// apiserver and the helper re-Gets and retries with the latest
+// resourceVersion. Without this, the later writer would silently
+// overwrite the earlier writer's payload.
+//
+// Returns nil on apiserver success regardless of create-vs-update.
+// Errors are returned to the caller (rather than only logged) so the
+// bind handler can surface them at Warn (Bug 2).
 func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error {
 	if workspaceID == "" {
 		return fmt.Errorf("workspaceID is required")
@@ -924,37 +932,49 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 	clientset := s.k8sClient.Clientset()
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: s.config.Namespace,
-			Labels: map[string]string{
-				"app":                        "llmsafespace",
-				"llmsafespace.dev/workspace": workspaceID,
-				"llmsafespace.dev/ephemeral": "true",
-			},
-		},
-		Data: map[string][]byte{
-			"secrets.json": secretsJSON,
-		},
+	labels := map[string]string{
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
 	}
 
-	existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-	if err == nil {
-		existing.Data = desired.Data
-		if existing.Labels == nil {
-			existing.Labels = desired.Labels
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
+		if err == nil {
+			existing.Data = map[string][]byte{"secrets.json": secretsJSON}
+			// Merge labels: preserve any additions made by an
+			// operator while ensuring our markers are present.
+			if existing.Labels == nil {
+				existing.Labels = map[string]string{}
+			}
+			for k, v := range labels {
+				existing.Labels[k] = v
+			}
+			if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+				return err // retry.RetryOnConflict examines the error
+			}
+			return nil
 		}
-		if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("update secrets manifest: %w", err)
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("get secrets manifest: %w", err)
+		}
+		desired := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.config.Namespace,
+				Labels:    labels,
+			},
+			Data: map[string][]byte{"secrets.json": secretsJSON},
+		}
+		if _, err := secretClient.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+			// AlreadyExists means another writer created it between
+			// our Get and Create — surface as conflict so retry
+			// re-runs the Get path.
+			if k8serrors.IsAlreadyExists(err) {
+				return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, err)
+			}
+			return fmt.Errorf("create secrets manifest: %w", err)
 		}
 		return nil
-	}
-	if !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("get secrets manifest: %w", err)
-	}
-	if _, err := secretClient.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create secrets manifest: %w", err)
-	}
-	return nil
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 )
 
@@ -351,14 +352,16 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 	if err != nil {
 		return 0, errors.New("invalid password")
 	}
+	// Register the wipe immediately so a failure between here and the
+	// newDEK generation cannot leak oldDEK to the GC unwiped.
+	defer zeroBytes(oldDEK)
 
 	newDEK, err := GenerateDEK()
 	if err != nil {
 		return 0, fmt.Errorf("generate new DEK: %w", err)
 	}
-	// Defence-in-depth: zero the DEKs once we are done with them.
+	// Defence-in-depth: zero the new DEK once we are done with it.
 	defer zeroBytes(newDEK)
-	defer zeroBytes(oldDEK)
 
 	newVersion := record.KeyVersion + 1
 
@@ -400,13 +403,21 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 	return newVersion, nil
 }
 
-// zeroBytes overwrites b with zeros so secret material does not linger
-// in memory after the function that owned it returns. The compiler is
-// not allowed to elide this write because the slice escapes via the
-// caller; in practice a constant-time wipe is unnecessary here since
-// the goal is GC-window reduction, not timing-channel resistance.
+// zeroBytes overwrites b with zeros to reduce the time secret material
+// lingers in memory after the function that owned it returns.
+//
+// The Go specification does NOT formally guarantee that this write
+// cannot be eliminated by the compiler. In practice the current Go
+// compiler does not elide it (the slice escapes via the caller), and
+// the runtime.KeepAlive call below explicitly defeats any future
+// elimination by extending b's lifetime past the loop. This is
+// best-effort defence-in-depth, not a confidentiality boundary —
+// callers must not rely on this for timing-channel resistance, and
+// the underlying memory may have been swapped to disk before the wipe
+// runs anyway.
 func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+	runtime.KeepAlive(b)
 }

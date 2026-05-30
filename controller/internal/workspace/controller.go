@@ -990,6 +990,12 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
 			ws.Status.RestartCount++
+			// Reset the counter so the next pod starts with a clean
+			// slate. Without this reset, the first connection-refused
+			// failure on the freshly-spawned pod immediately re-trips
+			// the threshold and we recreate forever (validator
+			// finding on Bug 12 follow-up).
+			ws.Status.ConsecutiveHealthFailures = 0
 		}
 		return
 	}
@@ -1016,6 +1022,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
 			ws.Status.RestartCount++
+			ws.Status.ConsecutiveHealthFailures = 0
 		}
 		return
 	}

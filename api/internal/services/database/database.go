@@ -417,33 +417,59 @@ func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, ima
 }
 
 // MarkWorkspaceDeleted soft-deletes a workspace by setting deleted_at and
-// purges any user_secret_bindings rows pointing at it. The bindings table
-// has no FK to workspaces.id (the column types differ historically) so a
-// soft delete leaves orphan binding rows behind unless we clean up here
-// explicitly. See Bug 11 in worklog 0085.
+// purges any user_secret_bindings rows pointing at it within a single
+// transaction. The bindings table has no FK to workspaces.id (the column
+// types differ historically) so a soft delete leaves orphan binding rows
+// behind unless we clean up here explicitly. See Bug 11 in worklog 0085.
+//
+// The two writes are wrapped in a single transaction so an API-process
+// crash between them cannot leave a soft-deleted workspace with orphan
+// bindings (validator finding on Bug 11 follow-up).
 func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) {
 	if workspaceID == "" {
 		return
 	}
-	_, err := s.DB.ExecContext(ctx,
-		"UPDATE workspaces SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-		workspaceID)
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Error("failed to begin tx for workspace soft-delete", err, "workspaceID", workspaceID)
+		}
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE workspaces SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+		workspaceID); err != nil {
 		if s.Logger != nil {
 			s.Logger.Error("failed to mark workspace deleted in DB", err, "workspaceID", workspaceID)
 		}
 		return
 	}
-	if _, err := s.DB.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM user_secret_bindings WHERE workspace_id = $1",
 		workspaceID); err != nil {
-		// Non-fatal: the workspace is already soft-deleted; orphan
-		// binding rows are a hygiene issue, not a correctness one.
+		// Non-fatal but the tx must commit; surface the failure at
+		// Warn so operators see hygiene degradation while the
+		// soft-delete itself still happens.
 		if s.Logger != nil {
-			s.Logger.Warn("failed to delete user_secret_bindings for deleted workspace",
+			s.Logger.Warn("failed to delete user_secret_bindings for deleted workspace; rolling back",
 				"workspaceID", workspaceID, "error", err.Error())
 		}
+		return
 	}
+	if err := tx.Commit(); err != nil {
+		if s.Logger != nil {
+			s.Logger.Error("failed to commit workspace soft-delete tx", err, "workspaceID", workspaceID)
+		}
+		return
+	}
+	committed = true
 }
 
 // ListWorkspaces lists workspaces for a user with pagination.
