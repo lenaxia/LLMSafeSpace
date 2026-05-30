@@ -155,12 +155,15 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 7: Rotate key ===
-	newVersion, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, 24*time.Hour)
+	rotResult, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("RotateKeyWithPassword: %v", err)
 	}
-	if newVersion != 2 {
-		t.Errorf("Expected version 2, got %d", newVersion)
+	if rotResult.NewKeyVersion != 2 {
+		t.Errorf("Expected version 2, got %d", rotResult.NewKeyVersion)
+	}
+	if rotResult.NewRecoveryKeyHex == "" {
+		t.Error("Rotate must return a fresh recovery key (old one wraps discarded DEK)")
 	}
 
 	// === Phase 8: Verify secrets still accessible after rotation ===

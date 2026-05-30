@@ -487,6 +487,19 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey}, nil
 }
 
+// dummyBcryptHash is a real, well-formed bcrypt hash (cost 12) of an
+// arbitrary password the system never accepts. We use a real hash
+// rather than a hand-rolled string of zeros because the bcrypt
+// library validates the hash form (length, version prefix, salt
+// charset) BEFORE running the KDF; an invalid hash short-circuits in
+// microseconds and re-opens the user-enumeration timing channel
+// (validator finding N5 in worklog 0094 pass-2 audit).
+//
+// This hash has the canonical 60-byte length, a $2a$12$ prefix, and
+// 22 bcrypt-base64 salt chars + 31 hash chars. CompareHashAndPassword
+// against any password runs the full cost-12 KDF before failing.
+const dummyBcryptHash = "$2a$12$7c6XjTynpWE0yY.2/uC1IufZqmLuVCoJSv3MFVWCPBaWVDaPPwXj."
+
 // VerifyPassword checks the supplied password against the stored
 // bcrypt hash for userID. Returns nil on match, ErrInvalidPassword on
 // any mismatch / not-found / DB error. The error returned is
@@ -504,11 +517,9 @@ func (s *Service) VerifyPassword(ctx context.Context, userID string, password []
 		// Run a dummy bcrypt compare so the response time is
 		// indistinguishable from the real-user-wrong-password
 		// branch. The constant cost prevents user enumeration via
-		// timing.
-		_ = bcrypt.CompareHashAndPassword(
-			[]byte("$2a$12$0000000000000000000000000000000000000000000000000000"),
-			password,
-		)
+		// timing. Hash is real (60 chars, $2a$12$ prefix) so bcrypt
+		// runs the full KDF before failing.
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), password)
 		return secrets.ErrInvalidPassword
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), password); err != nil {

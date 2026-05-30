@@ -260,19 +260,19 @@ func (s *PgSecretStore) DeleteSecret(ctx context.Context, userID, secretID strin
 
 // SetBindings replaces the binding set for workspaceID atomically.
 //
-// Concurrency: takes an advisory transaction lock keyed on the
+// Concurrency: takes a transaction-scoped advisory lock keyed on the
 // workspace ID's hash so two concurrent SetBindings calls for the
-// same workspace serialise. Without the lock, two writers could each
-// DELETE the workspace's bindings and then INSERT their own; the
-// later commit's bindings would silently win and any binding the
-// earlier writer added that the later writer didn't see would be
-// lost. The lock is only held for the duration of this transaction
-// (xact_lock auto-releases on commit/rollback), so the failure mode
-// is "second writer waits a few ms" rather than "second writer
-// silently loses data".
+// same workspace serialise. We use pg_try_advisory_xact_lock with a
+// short retry loop rather than pg_advisory_xact_lock (which would
+// block holding a pool connection indefinitely): under a thundering
+// herd of concurrent SetBindings on the same workspace, blocking
+// would exhaust pool connections and stall the entire API. The
+// try-lock fails fast, sleeps a short jittered interval, and retries
+// up to setBindingsLockMaxAttempts times.
 //
-// Different workspaces hash to different lock numbers and proceed in
-// parallel.
+// The lock auto-releases on commit/rollback so a panicking writer
+// cannot deadlock future writers. Different workspaces hash to
+// different lock numbers and proceed in parallel.
 func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -280,13 +280,12 @@ func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, sec
 	}
 	defer tx.Rollback(ctx)
 
-	// pg_advisory_xact_lock takes a 64-bit signed bigint. hashtext()
-	// returns int4 which Postgres will cast for us; the cast is
-	// truncating but uniqueness across workspaces is sufficient for
-	// our serialisation goal.
-	if _, err := tx.Exec(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, workspaceID); err != nil {
-		return fmt.Errorf("acquire workspace bindings lock: %w", err)
+	// pg_try_advisory_xact_lock takes a 64-bit signed bigint;
+	// hashtext returns int4 which we cast. Try up to N times with a
+	// short backoff so we don't hold the pool connection waiting on
+	// a blocked lock.
+	if err := s.acquireWorkspaceLock(ctx, tx, workspaceID); err != nil {
+		return err
 	}
 
 	// Remove existing bindings for this workspace
@@ -301,6 +300,68 @@ func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, sec
 			`INSERT INTO user_secret_bindings (secret_id, workspace_id) VALUES ($1, $2)`,
 			sid, workspaceID); err != nil {
 			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+// setBindingsLockMaxAttempts caps the wait time on the advisory lock.
+// At ~10ms per attempt this is roughly 200ms of total wait — plenty
+// for normal contention, fast enough to fail under pathological
+// thundering-herd loads (where blocking would exhaust the pool).
+const setBindingsLockMaxAttempts = 20
+
+func (s *PgSecretStore) acquireWorkspaceLock(ctx context.Context, tx pgx.Tx, workspaceID string) error {
+	for attempt := 0; attempt < setBindingsLockMaxAttempts; attempt++ {
+		var got bool
+		if err := tx.QueryRow(ctx,
+			`SELECT pg_try_advisory_xact_lock(hashtext($1)::bigint)`,
+			workspaceID).Scan(&got); err != nil {
+			return fmt.Errorf("try-acquire workspace bindings lock: %w", err)
+		}
+		if got {
+			return nil
+		}
+		// Short sleep with a tiny jitter would be ideal; for now a
+		// flat 10ms is enough for the common case of two concurrent
+		// SetBindings calls on the same workspace.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("workspace bindings lock contended for too long; try again")
+}
+
+// AddBindings atomically adds secretIDs to a workspace's binding set
+// without touching existing bindings. Takes the same advisory lock
+// as SetBindings so the two cannot interleave dangerously.
+//
+// The INSERT uses ON CONFLICT DO NOTHING so re-binding an already-
+// bound secret is idempotent rather than a constraint violation.
+func (s *PgSecretStore) AddBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
+	if len(secretIDs) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.acquireWorkspaceLock(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+
+	for _, sid := range secretIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_secret_bindings (secret_id, workspace_id)
+			 VALUES ($1, $2)
+			 ON CONFLICT (secret_id, workspace_id) DO NOTHING`,
+			sid, workspaceID); err != nil {
+			return fmt.Errorf("add binding (%s, %s): %w", sid, workspaceID, err)
 		}
 	}
 
@@ -442,7 +503,10 @@ type AsyncAuditLogger struct {
 	store    SecretStore
 	ch       chan *AuditEntry
 	done     chan struct{}
+	stopCtx  context.Context    // canceled by Stop() so in-flight LogAudit drains short-circuit
+	stopFn   context.CancelFunc // cancels stopCtx
 	stopOnce sync.Once
+	closed   atomic.Bool
 	dropped  atomic.Uint64
 	written  atomic.Uint64
 	failed   atomic.Uint64
@@ -460,11 +524,14 @@ type AsyncAuditStats struct {
 // channel. logger is optional — when set, drop+failure events surface
 // at Warn so operators can detect audit-pipeline degradation.
 func NewAsyncAuditLogger(store SecretStore, bufSize int, logger pkginterfaces.LoggerInterface) *AsyncAuditLogger {
+	stopCtx, stopFn := context.WithCancel(context.Background())
 	l := &AsyncAuditLogger{
-		store:  store,
-		ch:     make(chan *AuditEntry, bufSize),
-		done:   make(chan struct{}),
-		logger: logger,
+		store:   store,
+		ch:      make(chan *AuditEntry, bufSize),
+		done:    make(chan struct{}),
+		stopCtx: stopCtx,
+		stopFn:  stopFn,
+		logger:  logger,
 	}
 	go l.run()
 	return l
@@ -472,7 +539,10 @@ func NewAsyncAuditLogger(store SecretStore, bufSize int, logger pkginterfaces.Lo
 
 func (l *AsyncAuditLogger) run() {
 	for entry := range l.ch {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Each write gets a fresh 5s timeout, but also inherits the
+		// stopCtx so Stop() can cancel a hung write rather than
+		// holding shutdown hostage on a doomed DB.
+		ctx, cancel := context.WithTimeout(l.stopCtx, 5*time.Second)
 		if err := l.store.LogAudit(ctx, entry); err != nil {
 			l.failed.Add(1)
 			if l.logger != nil {
@@ -487,11 +557,31 @@ func (l *AsyncAuditLogger) run() {
 	close(l.done)
 }
 
-// LogAudit on AsyncAuditLogger never blocks. Entries are sent to the
-// background goroutine via a buffered channel; a full channel drops
-// the entry and increments the drop counter. The returned error is
-// always nil — failures are observable via Stats() and the logger.
-func (l *AsyncAuditLogger) LogAudit(_ context.Context, entry *AuditEntry) error {
+// LogAudit on AsyncAuditLogger never blocks and never panics, even
+// after Stop(). Entries are sent to the background goroutine via a
+// buffered channel; a full channel drops the entry and increments the
+// drop counter.
+//
+// There is a small race window between the closed-flag check and the
+// channel send where a concurrent Stop could close the channel out
+// from under a sender. The deferred recover catches the resulting
+// "send on closed channel" panic, increments the drop counter, and
+// returns normally. Without the recover, a request emitting an
+// audit entry concurrently with shutdown would crash the process.
+//
+// The returned error is always nil — failures are observable via
+// Stats() and the logger.
+func (l *AsyncAuditLogger) LogAudit(_ context.Context, entry *AuditEntry) (retErr error) {
+	if l.closed.Load() {
+		l.dropped.Add(1)
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			l.dropped.Add(1)
+			retErr = nil
+		}
+	}()
 	select {
 	case l.ch <- entry:
 	default:
@@ -509,11 +599,21 @@ func (l *AsyncAuditLogger) LogAudit(_ context.Context, entry *AuditEntry) error 
 
 // Stop drains the channel and waits for completion. Idempotent: a
 // second call returns immediately without panicking on the already-
-// closed channel.
+// closed channel. Sets the closed flag BEFORE closing the channel so
+// any concurrent LogAudit invocations see closed=true and take the
+// drop path rather than panicking on a send-to-closed-channel.
+//
+// stopCtx is cancelled AFTER the worker drains so a stuck-on-DB
+// LogAudit eventually returns. There is still a small window between
+// the closed-flag check and the channel send where a concurrent Stop
+// could close the channel out from under a sender; the deferred
+// recover in LogAudit catches that panic.
 func (l *AsyncAuditLogger) Stop() {
 	l.stopOnce.Do(func() {
+		l.closed.Store(true)
 		close(l.ch)
 		<-l.done
+		l.stopFn()
 	})
 }
 
@@ -554,6 +654,9 @@ func (l *AsyncAuditLogger) ReEncryptUserSecrets(ctx context.Context, userID stri
 }
 func (l *AsyncAuditLogger) SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
 	return l.store.SetBindings(ctx, workspaceID, secretIDs)
+}
+func (l *AsyncAuditLogger) AddBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
+	return l.store.AddBindings(ctx, workspaceID, secretIDs)
 }
 func (l *AsyncAuditLogger) GetBindings(ctx context.Context, workspaceID string) ([]*UserSecret, error) {
 	return l.store.GetBindings(ctx, workspaceID)

@@ -205,7 +205,10 @@ func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID 
 	if commit != nil {
 		// Drop the lock so commit's downstream callbacks can re-enter
 		// the adapter without deadlocking. The mutation phase below
-		// re-acquires.
+		// re-acquires and re-validates each id (a concurrent
+		// DeleteSecret during the unlocked window could have removed
+		// rows from a.secrets — without re-validation we'd nil-deref
+		// on the next line).
 		a.mu.Unlock()
 		err := commit(ctx)
 		a.mu.Lock()
@@ -214,7 +217,13 @@ func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID 
 		}
 	}
 	for id, newCT := range updates {
-		s := a.secrets[id]
+		s, ok := a.secrets[id]
+		if !ok || s == nil {
+			// Concurrent DeleteSecret removed this row during the
+			// commit-callback window. Skip silently — the secret no
+			// longer exists, so nothing to re-encrypt.
+			continue
+		}
 		s.Ciphertext = newCT
 		s.KeyVersion = newKeyVersion
 	}
@@ -247,6 +256,29 @@ func (a *dbSecretStoreAdapter) SetBindings(_ context.Context, workspaceID string
 	defer a.mu.Unlock()
 	a.init()
 	a.bindings[workspaceID] = secretIDs
+	return nil
+}
+
+func (a *dbSecretStoreAdapter) AddBindings(_ context.Context, workspaceID string, secretIDs []string) error {
+	if len(secretIDs) == 0 {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.init()
+	existing := a.bindings[workspaceID]
+	seen := make(map[string]struct{}, len(existing)+len(secretIDs))
+	for _, id := range existing {
+		seen[id] = struct{}{}
+	}
+	for _, id := range secretIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		existing = append(existing, id)
+	}
+	a.bindings[workspaceID] = existing
 	return nil
 }
 

@@ -73,14 +73,23 @@ req() {
 
 register_user() {
   local email="$1" password="$2"
+  # Username is derived from email-local-part so each test user has a
+  # distinct username (the users table has a UNIQUE(username)
+  # constraint in some deployments). Stdout MUST flow back to the
+  # caller — req prints the http_code on stdout and that's what the
+  # caller captures via REG_STATUS=$(register_user ...). A leftover
+  # redirect from a previous version was discarding the code and
+  # making every register-status assertion fail spuriously.
+  local username
+  username=$(echo "$email" | cut -d@ -f1)-${SUITE_TS}
   req POST /api/v1/auth/register \
-    "{\"username\":\"u${SUITE_TS}\",\"email\":\"$email\",\"password\":\"$password\"}" >/dev/null
+    "{\"username\":\"$username\",\"email\":\"$email\",\"password\":\"$password\"}"
 }
 
 login_user() {
   local email="$1" password="$2"
   req POST /api/v1/auth/login \
-    "{\"email\":\"$email\",\"password\":\"$password\"}" >/dev/null
+    "{\"email\":\"$email\",\"password\":\"$password\"}"
 }
 
 echo "=== LLMSafeSpace Secrets E2E Tests ==="
@@ -160,7 +169,7 @@ assert_status "Bug 9 setup: pre-rotation secret created" 201 "$PRE_STATUS"
 PRE_ID=$(echo "$PRE_BODY" | jq -r .id)
 
 # baseline reveal
-REVEAL_BEFORE_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA")
+REVEAL_BEFORE_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" "{\"password\":\"$PASS_ALPHA\"}" "$TOKEN_ALPHA")
 REVEAL_BEFORE_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 baseline reveal pre-rotate" 200 "$REVEAL_BEFORE_STATUS"
 assert_contains "Bug 9 baseline reveal returns plaintext" "$REVEAL_BEFORE_BODY" "$PRE_ROTATE_VALUE"
@@ -172,7 +181,7 @@ assert_status "Bug 9 rotate-key returns 200" 200 "$ROT_STATUS"
 assert_contains "Bug 9 rotate-key reports new keyVersion" "$ROT_BODY" '"keyVersion"'
 
 # CRITICAL: pre-rotation secret must STILL decrypt with the same token.
-REVEAL_AFTER_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA")
+REVEAL_AFTER_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" "{\"password\":\"$PASS_ALPHA\"}" "$TOKEN_ALPHA")
 REVEAL_AFTER_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 reveal AFTER rotate returns 200" 200 "$REVEAL_AFTER_STATUS"
 assert_contains "Bug 9 reveal AFTER rotate returns same plaintext" "$REVEAL_AFTER_BODY" "$PRE_ROTATE_VALUE"
@@ -181,7 +190,7 @@ assert_contains "Bug 9 reveal AFTER rotate returns same plaintext" "$REVEAL_AFTE
 login_user "$EMAIL_ALPHA" "$PASS_ALPHA"
 LOGIN_BODY=$(cat "$RESP_FILE")
 TOKEN_ALPHA2=$(echo "$LOGIN_BODY" | jq -r .token)
-REVEAL_RELOGIN_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA2")
+REVEAL_RELOGIN_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" "{\"password\":\"$PASS_ALPHA\"}" "$TOKEN_ALPHA2")
 REVEAL_RELOGIN_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 reveal after RELOGIN returns 200" 200 "$REVEAL_RELOGIN_STATUS"
 assert_contains "Bug 9 reveal after RELOGIN returns same plaintext" "$REVEAL_RELOGIN_BODY" "$PRE_ROTATE_VALUE"
@@ -211,7 +220,7 @@ assert_not_contains "W7 user-B list does not see user-A's secrets" "$LIST_BODY" 
 CROSS_STATUS=$(req GET "/api/v1/secrets/$ALPHA_SECRET_ID" '' "$TOKEN_BETA")
 assert_status "W7 cross-user GET returns 404 (uniform)" 404 "$CROSS_STATUS"
 
-CROSS_REVEAL_STATUS=$(req POST "/api/v1/secrets/$ALPHA_SECRET_ID/reveal" '' "$TOKEN_BETA")
+CROSS_REVEAL_STATUS=$(req POST "/api/v1/secrets/$ALPHA_SECRET_ID/reveal" "{\"password\":\"$PASS_BETA\"}" "$TOKEN_BETA")
 assert_status "W7 cross-user reveal returns 404 (uniform)" 404 "$CROSS_REVEAL_STATUS"
 
 # --- W10: password change preserves existing secrets (DEK is unchanged).
@@ -223,7 +232,7 @@ assert_status "W10 password change returns 204" 204 "$PWCH_STATUS"
 login_user "$EMAIL_ALPHA" "$NEW_PASS_ALPHA"
 TOKEN_ALPHA3=$(jq -r .token "$RESP_FILE")
 
-REVEAL_PW_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA3")
+REVEAL_PW_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" "{\"password\":\"$NEW_PASS_ALPHA\"}" "$TOKEN_ALPHA3")
 REVEAL_PW_BODY=$(cat "$RESP_FILE")
 assert_status "W10 reveal after password change returns 200" 200 "$REVEAL_PW_STATUS"
 assert_contains "W10 reveal after password change returns same plaintext" "$REVEAL_PW_BODY" "$PRE_ROTATE_VALUE"

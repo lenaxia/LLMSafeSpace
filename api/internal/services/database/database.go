@@ -454,11 +454,14 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM user_secret_bindings WHERE workspace_id = $1",
 		workspaceID); err != nil {
-		// Non-fatal but the tx must commit; surface the failure at
-		// Warn so operators see hygiene degradation while the
-		// soft-delete itself still happens.
+		// Bindings DELETE failure rolls the entire transaction back:
+		// neither the soft-delete nor the bindings purge land. The
+		// caller's next reconcile retries from a clean state. We
+		// prefer this over committing the soft-delete with orphan
+		// bindings — the orphan rows are exactly the Bug-11 hazard
+		// we are trying to eliminate.
 		if s.Logger != nil {
-			s.Logger.Warn("failed to delete user_secret_bindings for deleted workspace; rolling back",
+			s.Logger.Warn("failed to delete user_secret_bindings for deleted workspace; rolling back entire tx",
 				"workspaceID", workspaceID, "error", err.Error())
 		}
 		return

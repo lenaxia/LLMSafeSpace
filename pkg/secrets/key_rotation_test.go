@@ -30,12 +30,15 @@ func TestKeyService_RotateKeyWithPassword(t *testing.T) {
 	dekBefore, _ := svc.GetDEK(ctx, "sess-1")
 
 	// Rotate
-	newVersion, err := svc.RotateKeyWithPassword(ctx, "user-1", password, "sess-1", time.Hour)
+	result, err := svc.RotateKeyWithPassword(ctx, "user-1", password, "sess-1", time.Hour)
 	if err != nil {
 		t.Fatalf("RotateKeyWithPassword failed: %v", err)
 	}
-	if newVersion != 2 {
-		t.Errorf("Expected version 2, got %d", newVersion)
+	if result.NewKeyVersion != 2 {
+		t.Errorf("Expected version 2, got %d", result.NewKeyVersion)
+	}
+	if result.NewRecoveryKeyHex == "" {
+		t.Error("Rotation must return a fresh recovery key (the old one wraps the discarded DEK)")
 	}
 
 	// DEK should be different after rotation
@@ -74,12 +77,12 @@ func TestKeyService_RotateKeyWithPassword_MultipleRotations(t *testing.T) {
 
 	// Rotate 3 times
 	for i := 0; i < 3; i++ {
-		v, err := svc.RotateKeyWithPassword(ctx, "user-1", password, "sess-1", time.Hour)
+		r, err := svc.RotateKeyWithPassword(ctx, "user-1", password, "sess-1", time.Hour)
 		if err != nil {
 			t.Fatalf("Rotation %d failed: %v", i+1, err)
 		}
-		if v != i+2 {
-			t.Errorf("Rotation %d: expected version %d, got %d", i+1, i+2, v)
+		if r.NewKeyVersion != i+2 {
+			t.Errorf("Rotation %d: expected version %d, got %d", i+1, i+2, r.NewKeyVersion)
 		}
 	}
 

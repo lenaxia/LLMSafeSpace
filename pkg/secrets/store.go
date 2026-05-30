@@ -34,6 +34,16 @@ type SecretStore interface {
 
 	// Bindings
 	SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error
+	// AddBindings atomically adds secretIDs to a workspace's binding
+	// set without removing any existing bindings. Implementations
+	// MUST take the same workspace-scoped advisory lock as
+	// SetBindings so concurrent Add+Set callers serialise. Existing
+	// bindings to the same secret are silently ignored
+	// (INSERT ... ON CONFLICT DO NOTHING semantics).
+	//
+	// Used by SetWorkspaceEnv to add new env-secrets without racing
+	// on a Get-then-Set window — see worklog 0094 pass-2 finding O1.
+	AddBindings(ctx context.Context, workspaceID string, secretIDs []string) error
 	GetBindings(ctx context.Context, workspaceID string) ([]*UserSecret, error)
 	GetBindingsForSecret(ctx context.Context, secretID string) ([]string, error)
 

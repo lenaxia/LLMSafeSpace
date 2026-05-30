@@ -3,7 +3,6 @@ package secrets
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -53,7 +52,7 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	// Get current key version
 	record, err := s.keys.store.GetUserKey(ctx, userID)
 	if err != nil || record == nil {
-		return nil, errors.New("user key material not found")
+		return nil, ErrUserKeysMissing
 	}
 
 	metadata := req.Metadata
@@ -168,7 +167,7 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID, sec
 
 	record, err := s.keys.store.GetUserKey(ctx, userID)
 	if err != nil || record == nil {
-		return errors.New("user key material not found")
+		return ErrUserKeysMissing
 	}
 
 	secret.Ciphertext = ciphertext
@@ -271,6 +270,39 @@ func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID str
 		if !existingIDs[sid] {
 			s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
 		}
+	}
+	return nil
+}
+
+// AddBindings adds secretIDs to a workspace's binding set without
+// removing any existing bindings. The store-level implementation
+// takes a workspace-scoped advisory lock so concurrent SetBindings /
+// AddBindings calls cannot lose updates (worklog 0094 pass-2 finding
+// O1). Each secret's ownership is verified before the binding is
+// recorded; an unowned secret produces ErrSecretNotFound.
+//
+// Used by SetWorkspaceEnv to merge newly-created env-secrets into
+// the workspace bindings without the Get-then-Set window the previous
+// implementation suffered from.
+func (s *SecretService) AddBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) error {
+	if len(secretIDs) == 0 {
+		return nil
+	}
+	for _, sid := range secretIDs {
+		secret, err := s.store.GetSecret(ctx, userID, sid)
+		if err != nil {
+			return err
+		}
+		if secret == nil {
+			return fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
+		}
+	}
+	if err := s.store.AddBindings(ctx, workspaceID, secretIDs); err != nil {
+		return fmt.Errorf("add bindings: %w", err)
+	}
+	for _, sid := range secretIDs {
+		sid := sid
+		s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
 	}
 	return nil
 }

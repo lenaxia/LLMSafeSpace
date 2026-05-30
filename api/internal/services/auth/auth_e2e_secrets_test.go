@@ -372,6 +372,25 @@ func (m *memSecretStore) SetBindings(_ context.Context, ws string, ids []string)
 	m.bindings[ws] = ids
 	return nil
 }
+func (m *memSecretStore) AddBindings(_ context.Context, ws string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	existing := m.bindings[ws]
+	seen := make(map[string]struct{}, len(existing)+len(ids))
+	for _, id := range existing {
+		seen[id] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		existing = append(existing, id)
+	}
+	m.bindings[ws] = existing
+	return nil
+}
 func (m *memSecretStore) GetBindings(_ context.Context, ws string) ([]*secrets.UserSecret, error) {
 	sids := m.bindings[ws]
 	var result []*secrets.UserSecret

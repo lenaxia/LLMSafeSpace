@@ -502,12 +502,16 @@ func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
 
 	// Rotate. After this, the OLD DEK is gone forever; if we have not
 	// re-encrypted, GetSecret + DecryptSecretValue fails on every row.
-	newVersion, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, time.Hour)
+	rotResult, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, time.Hour)
 	if err != nil {
 		t.Fatalf("RotateKeyWithPassword: %v", err)
 	}
+	newVersion := rotResult.NewKeyVersion
 	if newVersion != 2 {
 		t.Fatalf("expected key_version=2 after rotate, got %d", newVersion)
+	}
+	if rotResult.NewRecoveryKeyHex == "" {
+		t.Fatal("rotate must return a fresh recovery key — the old one wraps the discarded DEK")
 	}
 
 	// Every pre-rotation secret must still decrypt. This is the
@@ -552,5 +556,90 @@ func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret post-rotate: %v", err)
+	}
+}
+
+// TestKeyService_RotateKey_IssuesFreshRecoveryKey is the regression
+// test for A2 in worklog 0094 pass-2 audit: rotation rotates the DEK,
+// so the previous recovery key (which wraps the now-discarded old
+// DEK) must be replaced with a fresh one. Without this, a user who
+// rotates and then later forgets their password discovers via
+// ResetWithRecoveryKey that the recovery flow yields the OLD DEK,
+// against which every secret (now encrypted with the NEW DEK) is
+// undecryptable — total data loss.
+func TestKeyService_RotateKey_IssuesFreshRecoveryKey(t *testing.T) {
+	ctx := context.Background()
+	keyStore := newMockKeyStore()
+	cache := newMockDEKCache()
+	keySvc := NewKeyService(keyStore, cache)
+	secretStore := newMockSecretStore()
+	secretSvc := NewSecretService(keySvc, secretStore)
+
+	userID := "user-recover-after-rotate"
+	password := []byte("orig-password-1")
+	sessionID := "sess-1"
+
+	originalRecoveryHex, err := keySvc.InitializeUserKeys(ctx, userID, password)
+	if err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	// Create a pre-rotation secret.
+	plaintext := "pre-rotate-secret-value"
+	if _, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+		Name: "pre", Type: SecretTypeEnvSecret, Value: plaintext,
+		Metadata: []byte(`{"var_name":"P"}`),
+	}); err != nil {
+		t.Fatalf("CreateSecret pre-rotate: %v", err)
+	}
+
+	// Rotate.
+	rot, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, time.Hour)
+	if err != nil {
+		t.Fatalf("RotateKeyWithPassword: %v", err)
+	}
+	if rot.NewRecoveryKeyHex == "" {
+		t.Fatal("rotation must return a fresh recovery key")
+	}
+	if rot.NewRecoveryKeyHex == originalRecoveryHex {
+		t.Fatal("fresh recovery key must differ from the original")
+	}
+
+	// Old recovery key must be REJECTED post-rotation.
+	if _, err := keySvc.ResetWithRecoveryKey(ctx, userID, originalRecoveryHex, []byte("new-pw-1")); err == nil {
+		t.Fatal("Old recovery key must NOT work after rotation; it would unwrap the discarded old DEK")
+	}
+
+	// New recovery key MUST work.
+	freshRecoveryHexAfterReset, err := keySvc.ResetWithRecoveryKey(ctx, userID, rot.NewRecoveryKeyHex, []byte("new-pw-1"))
+	if err != nil {
+		t.Fatalf("ResetWithRecoveryKey with new key: %v — A2 regression: rotation did not refresh the recovery wrap", err)
+	}
+	if freshRecoveryHexAfterReset == "" {
+		t.Error("ResetWithRecoveryKey must yield another fresh recovery key")
+	}
+
+	// And after the recovery-driven password reset, the pre-rotation
+	// secret must STILL decrypt — confirms the recovery flow yielded
+	// the same DEK that user_secrets are now encrypted with.
+	if err := keySvc.UnlockDEK(ctx, userID, []byte("new-pw-1"), "sess-after-reset", time.Hour); err != nil {
+		t.Fatalf("UnlockDEK after reset: %v", err)
+	}
+	listed, err := secretSvc.ListSecrets(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected 1 secret post-reset, got %d", len(listed))
+	}
+	got, err := secretSvc.DecryptSecretValue(ctx, userID, "sess-after-reset", listed[0].ID)
+	if err != nil {
+		t.Fatalf("DecryptSecretValue post-rotation-then-reset: %v — recovery flow yielded the wrong DEK", err)
+	}
+	if string(got) != plaintext {
+		t.Errorf("plaintext mismatch: got %q want %q", string(got), plaintext)
 	}
 }

@@ -234,6 +234,28 @@ func (m *testSecretStore) SetBindings(_ context.Context, workspaceID string, sec
 	return nil
 }
 
+func (m *testSecretStore) AddBindings(_ context.Context, workspaceID string, secretIDs []string) error {
+	if len(secretIDs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing := m.bindings[workspaceID]
+	seen := make(map[string]struct{}, len(existing)+len(secretIDs))
+	for _, id := range existing {
+		seen[id] = struct{}{}
+	}
+	for _, id := range secretIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		existing = append(existing, id)
+	}
+	m.bindings[workspaceID] = existing
+	return nil
+}
+
 func (m *testSecretStore) GetBindings(_ context.Context, workspaceID string) ([]*secrets.UserSecret, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

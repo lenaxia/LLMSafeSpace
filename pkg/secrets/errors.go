@@ -41,4 +41,11 @@ var (
 	// password" and "session expired", reducing what an attacker
 	// who has stolen a JWT can learn.
 	ErrInvalidPassword = errors.New("invalid password")
+
+	// ErrUserKeysMissing is returned when the user_keys row for the
+	// caller does not exist (e.g. legacy account that pre-dates
+	// Epic 10 key initialisation, or a half-failed Register).
+	// Handlers map this to 412 Precondition Failed so the client
+	// knows to re-run InitializeUserKeys (re-login).
+	ErrUserKeysMissing = errors.New("user key material not found")
 )

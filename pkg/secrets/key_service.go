@@ -201,7 +201,10 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID string, oldPassw
 	defer zeroBytes(oldKEK)
 	dek, err := UnwrapDEK(oldKEK, record.WrappedDEK)
 	if err != nil {
-		return fmt.Errorf("unwrap DEK with old password: %w", err)
+		// Invalid password: bcrypt-style uniform failure code so the
+		// handler can map to 403 via errors.Is rather than substring
+		// matching on the bcrypt/AEAD error message.
+		return fmt.Errorf("%w: %v", ErrInvalidPassword, err)
 	}
 	defer zeroBytes(dek)
 
@@ -250,7 +253,7 @@ func (s *KeyService) ResetWithRecoveryKey(ctx context.Context, userID string, re
 
 	dek, err := UnwrapDEK(recoveryKEK, record.WrappedDEKRecovery)
 	if err != nil {
-		return "", errors.New("invalid recovery key")
+		return "", fmt.Errorf("%w: recovery key did not unwrap", ErrInvalidPassword)
 	}
 	defer zeroBytes(dek)
 
@@ -308,6 +311,16 @@ func (s *KeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	return record != nil, nil
 }
 
+// RotationResult is what RotateKeyWithPassword returns. NewKeyVersion
+// is the bumped key_version; NewRecoveryKeyHex is a freshly-issued
+// recovery key (the previous one wraps the now-discarded old DEK and
+// is invalid after rotation). Callers MUST surface NewRecoveryKeyHex
+// to the user once — the API does not store it anywhere recoverable.
+type RotationResult struct {
+	NewKeyVersion     int
+	NewRecoveryKeyHex string
+}
+
 // RotateKeyWithPassword rotates the user's DEK and eagerly re-encrypts
 // every secret row under the new DEK in a single transaction.
 //
@@ -315,70 +328,91 @@ func (s *KeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 //
 //  1. Verify the password by unwrapping the current DEK with the derived KEK.
 //  2. Generate a new random DEK.
-//  3. Walk all user_secrets rows; decrypt each with the old DEK and
+//  3. Generate a new recovery key + salt; the old recovery key wraps
+//     the old (about-to-be-discarded) DEK and would be useless after
+//     rotation. Without this, ResetWithRecoveryKey post-rotate would
+//     unwrap a DEK that no longer matches user_secrets.
+//  4. Walk all user_secrets rows; decrypt each with the old DEK and
 //     re-encrypt with the new DEK. The store implementation runs this
 //     under a single atomic operation so partial failures cannot leave
 //     orphaned rows.
-//  4. Wrap the new DEK with the same KEK and bump key_version.
-//  5. Refresh the session DEK cache.
+//  5. Wrap the new DEK with the same KEK and bump key_version,
+//     INSIDE the same tx (commit closure). Wrap newDEK with the new
+//     recoveryKEK and update user_keys.wrapped_dek_recovery in the
+//     same tx.
+//  6. Refresh the session DEK cache.
 //
-// If step 3 fails, neither the user_keys row nor any secret row is
-// changed: the rotation is aborted with the old DEK still wrapping the
-// secrets. This is the contract Bug 9 in worklog 0085 violated by
-// updating user_keys first and discarding the old DEK before secrets
-// could be migrated, leaving every pre-rotation row undecryptable.
+// If any step in 4 or 5 fails, the entire tx rolls back: secrets stay
+// at the old key_version, user_keys keeps the old wrapped DEK, the
+// old recovery key still works. The rotation is a no-op from the
+// client's perspective (modulo the function's error return).
 //
 // SetSecretStore must be called before RotateKeyWithPassword; otherwise
 // the function refuses to run.
-func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (newKeyVersion int, err error) {
+func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (RotationResult, error) {
 	if s.secretStore == nil {
-		return 0, errors.New("rotate-key not configured: secret store missing")
+		return RotationResult{}, errors.New("rotate-key not configured: secret store missing")
 	}
 
 	record, err := s.store.GetUserKey(ctx, userID)
 	if err != nil {
-		return 0, fmt.Errorf("get user key: %w", err)
+		return RotationResult{}, fmt.Errorf("get user key: %w", err)
 	}
 	if record == nil {
-		return 0, errors.New("no key material found for user")
+		return RotationResult{}, errors.New("no key material found for user")
 	}
 
 	kek, err := DeriveKEK(password, record.Salt, kekInfo)
 	if err != nil {
-		return 0, fmt.Errorf("derive KEK: %w", err)
+		return RotationResult{}, fmt.Errorf("derive KEK: %w", err)
 	}
-	// Defence-in-depth: zero the KEK once we are done with it. The KEK
-	// is regenerable from password+salt so this is GC-window reduction
-	// rather than a confidentiality boundary, but it costs nothing.
 	defer zeroBytes(kek)
 
 	oldDEK, err := UnwrapDEK(kek, record.WrappedDEK)
 	if err != nil {
-		return 0, errors.New("invalid password")
+		return RotationResult{}, ErrInvalidPassword
 	}
-	// Register the wipe immediately so a failure between here and the
-	// newDEK generation cannot leak oldDEK to the GC unwiped.
 	defer zeroBytes(oldDEK)
 
 	newDEK, err := GenerateDEK()
 	if err != nil {
-		return 0, fmt.Errorf("generate new DEK: %w", err)
+		return RotationResult{}, fmt.Errorf("generate new DEK: %w", err)
 	}
-	// Defence-in-depth: zero the new DEK once we are done with it.
 	defer zeroBytes(newDEK)
 
 	newVersion := record.KeyVersion + 1
 
 	newWrappedDEK, err := WrapDEK(kek, newDEK)
 	if err != nil {
-		return 0, fmt.Errorf("wrap new DEK: %w", err)
+		return RotationResult{}, fmt.Errorf("wrap new DEK: %w", err)
 	}
 
-	// Re-encrypt every secret under the new DEK AND atomically update
-	// user_keys.wrapped_dek in the same transaction. Without atomicity
-	// there is a window in which secrets are encrypted with newDEK but
-	// user_keys still wraps oldDEK; any UnlockDEK during that window
-	// produces oldDEK and every reveal fails.
+	// Generate a fresh recovery key and re-wrap the new DEK with it.
+	// The previous recovery key wrapped the OLD DEK; without this
+	// step, ResetWithRecoveryKey post-rotation would yield the old
+	// DEK and every secret (now encrypted with the new DEK) would be
+	// undecryptable — exactly the data-loss class of bug Bug 9 fixed
+	// for the password path. Argued as A2 in the worklog 0094 pass-2
+	// audit.
+	newRecoveryKey, err := GenerateRecoveryKey()
+	if err != nil {
+		return RotationResult{}, fmt.Errorf("generate new recovery key: %w", err)
+	}
+	defer zeroBytes(newRecoveryKey)
+	newRecoverySalt, err := GenerateSalt()
+	if err != nil {
+		return RotationResult{}, fmt.Errorf("generate new recovery salt: %w", err)
+	}
+	newRecoveryKEK, err := DeriveKEK(newRecoveryKey, newRecoverySalt, recInfo)
+	if err != nil {
+		return RotationResult{}, fmt.Errorf("derive new recovery KEK: %w", err)
+	}
+	defer zeroBytes(newRecoveryKEK)
+	newWrappedDEKRecovery, err := WrapDEK(newRecoveryKEK, newDEK)
+	if err != nil {
+		return RotationResult{}, fmt.Errorf("wrap new DEK with recovery KEK: %w", err)
+	}
+
 	transform := func(oldCT []byte) ([]byte, error) {
 		plaintext, derr := DecryptSecret(oldDEK, oldCT)
 		if derr != nil {
@@ -392,19 +426,27 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 		return newCT, nil
 	}
 	commit := func(txCtx context.Context) error {
-		// txCtx carries the active *pgx.Tx so the pg KeyStore runs
-		// the user_keys update inside the same transaction.
-		return s.store.UpdateWrappedDEK(txCtx, userID, newWrappedDEK, record.Salt, newVersion)
+		// Both writes run inside the same tx via withTx/txFromContext.
+		// If the recovery-wrap update fails, the entire rotation
+		// rolls back: secrets stay at old key_version, user_keys
+		// stays at old wrapped DEK + old recovery wrap.
+		if err := s.store.UpdateWrappedDEK(txCtx, userID, newWrappedDEK, record.Salt, newVersion); err != nil {
+			return err
+		}
+		return s.store.UpdateWrappedDEKRecovery(txCtx, userID, newWrappedDEKRecovery, newRecoverySalt)
 	}
 	if err := s.secretStore.ReEncryptUserSecrets(ctx, userID, newVersion, transform, commit); err != nil {
-		return 0, fmt.Errorf("re-encrypt user secrets: %w", err)
+		return RotationResult{}, fmt.Errorf("re-encrypt user secrets: %w", err)
 	}
 
 	if err := s.cache.CacheDEK(ctx, sessionID, newDEK, ttl); err != nil {
-		return 0, fmt.Errorf("cache new DEK: %w", err)
+		return RotationResult{}, fmt.Errorf("cache new DEK: %w", err)
 	}
 
-	return newVersion, nil
+	return RotationResult{
+		NewKeyVersion:     newVersion,
+		NewRecoveryKeyHex: hex.EncodeToString(newRecoveryKey),
+	}, nil
 }
 
 // zeroBytes overwrites b with zeros to reduce the time secret material

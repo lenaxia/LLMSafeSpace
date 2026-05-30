@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -391,13 +390,13 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 		}
 	}
 
-	// Step 2: live HTTP push. Skip when there is nothing to send (the
-	// agent already has nothing) or when the workspace has no live pod
-	// (the manifest write in step 1 is sufficient — the next pod start
-	// will mount it).
-	if len(secretsJSON) <= 2 {
-		return
-	}
+	// Step 2: live HTTP push. We send the payload even when it is
+	// the empty array '[]' — the agent uses this to CLEAR its
+	// in-memory secret materialisations. Without this an unbind
+	// leaves the live pod with stale plaintext until restart, even
+	// though the manifest is already empty and the next pod start
+	// would seed nothing (validator finding N8 in worklog 0094
+	// pass-2 audit).
 	if _, derr := h.doReload(ctx, userID, workspaceID, secretsJSON); derr != nil {
 		// errNoRunningPod is the expected case when the workspace has
 		// not been activated yet; downgrade to Info so it does not
@@ -475,18 +474,16 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 // SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
 // Creates or updates env-secret type secrets bound to this workspace.
 //
-// Concurrency: a single binding-set write at the end of the loop
-// snapshot-reads the workspace's bindings once. Two concurrent
-// SetWorkspaceEnv calls can still race on the binding set (the later
-// writer's snapshot does not include the earlier writer's new
-// secrets) — fixing that requires an advisory lock or a SERIALIZABLE
-// SetBindings, which is a separate concern. The within-call N+1 of
-// the previous implementation (re-reading bindings for every var) is
-// removed.
+// Concurrency: SetWorkspaceEnv only ADDs bindings (it never removes
+// — that's what DeleteWorkspaceEnv is for), so we can use the
+// store's AddBindings primitive which holds a workspace-scoped
+// advisory lock for the duration of the binding write. Two
+// concurrent SetWorkspaceEnv calls on the same workspace serialise
+// at the AddBindings step and neither's secrets are lost.
 //
-// Error handling: every UpdateSecret/CreateSecret/SetBindings failure
-// surfaces as 500 with the offending var name. Pre-fix the handler
-// returned 204 even when the writes silently failed.
+// Error handling: every UpdateSecret/CreateSecret/AddBindings
+// failure surfaces as 500 with the offending var name. Pre-fix the
+// handler returned 204 even when the writes silently failed.
 func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 	userID, sessionID := extractAuth(c)
 	if userID == "" {
@@ -505,20 +502,7 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Read existing bindings once; we'll union new secret IDs in at
-	// the end with a single SetBindings write.
-	currentBindings, err := h.svc.GetBindings(ctx, userID, workspaceID)
-	if err != nil {
-		h.warn("SetWorkspaceEnv: GetBindings failed",
-			"workspaceID", workspaceID, "userID", userID, "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read workspace bindings"})
-		return
-	}
-	bindingSet := make(map[string]struct{}, len(currentBindings.Bindings)+len(req.Vars))
-	for _, b := range currentBindings.Bindings {
-		bindingSet[b.SecretID] = struct{}{}
-	}
-
+	newBindings := make([]string, 0, len(req.Vars))
 	for varName, value := range req.Vars {
 		secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
 		metadata, _ := json.Marshal(map[string]string{"var_name": varName})
@@ -538,7 +522,7 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update env var: " + varName})
 				return
 			}
-			bindingSet[existing.ID] = struct{}{}
+			newBindings = append(newBindings, existing.ID)
 			continue
 		}
 		created, err := h.svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
@@ -551,15 +535,17 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set env var: " + varName})
 			return
 		}
-		bindingSet[created.ID] = struct{}{}
+		newBindings = append(newBindings, created.ID)
 	}
 
-	ids := make([]string, 0, len(bindingSet))
-	for id := range bindingSet {
-		ids = append(ids, id)
-	}
-	if err := h.svc.SetBindings(ctx, userID, workspaceID, ids); err != nil {
-		h.warn("SetWorkspaceEnv: SetBindings failed",
+	// AddBindings is atomic and idempotent: it adds these secret IDs
+	// to the workspace's binding set under a workspace-scoped
+	// advisory lock without touching any existing bindings. Two
+	// concurrent SetWorkspaceEnv calls on the same workspace
+	// serialise at this step rather than racing on a Get-then-Set
+	// snapshot (worklog 0094 pass-2 finding O1).
+	if err := h.svc.AddBindings(ctx, userID, workspaceID, newBindings); err != nil {
+		h.warn("SetWorkspaceEnv: AddBindings failed",
 			"workspaceID", workspaceID, "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit workspace bindings"})
 		return
@@ -654,7 +640,7 @@ func (h *SecretsHandler) GetAuditLog(c *gin.Context) {
 
 // KeyRotator is the interface needed by the rotation handler.
 type KeyRotator interface {
-	RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (int, error)
+	RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (secrets.RotationResult, error)
 	ChangePassword(ctx context.Context, userID string, oldPassword, newPassword []byte) error
 	ResetWithRecoveryKey(ctx context.Context, userID string, recoveryKeyHex string, newPassword []byte) (string, error)
 }
@@ -686,7 +672,11 @@ func (h *RotateKeyHandler) SetAuditFunc(f func(userID, action string)) {
 	h.auditFunc = f
 }
 
-// RotateKey handles POST /api/v1/account/rotate-key
+// RotateKey handles POST /api/v1/account/rotate-key.
+// On success the response includes the new keyVersion AND a freshly-
+// issued recoveryKey: the old recovery key wraps the now-discarded
+// old DEK, so the user must save the new one. This is a one-time
+// display — the API does not store it anywhere recoverable.
 func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 	userID, sessionID := extractAuth(c)
 	if userID == "" {
@@ -702,9 +692,9 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 		return
 	}
 
-	newVersion, err := h.keySvc.RotateKeyWithPassword(c.Request.Context(), userID, []byte(req.Password), sessionID, 24*time.Hour)
+	result, err := h.keySvc.RotateKeyWithPassword(c.Request.Context(), userID, []byte(req.Password), sessionID, 24*time.Hour)
 	if err != nil {
-		if strings.Contains(err.Error(), "invalid password") {
+		if errors.Is(err, secrets.ErrInvalidPassword) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid password"})
 			return
 		}
@@ -716,7 +706,10 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 		h.auditFunc(userID, "rotate")
 	}
 
-	c.JSON(http.StatusOK, gin.H{"keyVersion": newVersion})
+	c.JSON(http.StatusOK, gin.H{
+		"keyVersion":  result.NewKeyVersion,
+		"recoveryKey": result.NewRecoveryKeyHex,
+	})
 }
 
 // ChangePassword handles POST /api/v1/account/change-password
@@ -737,7 +730,7 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if err := h.keySvc.ChangePassword(c.Request.Context(), userID, []byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
-		if strings.Contains(err.Error(), "unwrap DEK") || strings.Contains(err.Error(), "invalid") {
+		if errors.Is(err, secrets.ErrInvalidPassword) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid current password"})
 			return
 		}
@@ -819,6 +812,8 @@ func handleSecretError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "secret with this name already exists"})
 	case errors.Is(err, secrets.ErrDEKUnavailable):
 		c.JSON(http.StatusForbidden, gin.H{"error": "encryption key not available; re-authenticate"})
+	case errors.Is(err, secrets.ErrUserKeysMissing):
+		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "user key material not initialised; please re-login"})
 	case errors.Is(err, secrets.ErrInvalidSecretType), errors.Is(err, secrets.ErrInvalidMetadata):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:

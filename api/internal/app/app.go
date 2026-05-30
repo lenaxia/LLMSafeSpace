@@ -40,6 +40,8 @@ type App struct {
 	instanceSettings *settings.InstanceService
 	userSettings     *settings.UserService
 	asyncAudit       *secrets.AsyncAuditLogger // nil if pgxpool path not used
+	secretsPool      *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
+	dekCacheClient   *redis.Client             // redis client for DEK cache; closed on shutdown
 	shutdownCh       chan struct{}
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -95,8 +97,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var secretsHandler *handlers.SecretsHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
+	var secretsPool *pgxpool.Pool            // closed on Shutdown
+	var dekCacheClient *redis.Client         // closed on Shutdown
 	{
-		dekCacheClient := redis.NewClient(&redis.Options{
+		dekCacheClient = redis.NewClient(&redis.Options{
 			Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 			Password: cfg.Redis.Password,
 			DB:       cfg.Redis.DB,
@@ -107,7 +111,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		pgxDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
 			cfg.Database.Password, cfg.Database.Database, cfg.Database.SSLMode)
-		secretsPool, pgxErr := pgxpool.New(context.Background(), pgxDSN)
+		var pgxErr error
+		secretsPool, pgxErr = pgxpool.New(context.Background(), pgxDSN)
 
 		var keyService *secrets.KeyService
 		var secretService *secrets.SecretService
@@ -251,6 +256,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		instanceSettings: instanceSettings,
 		userSettings:     userSettings,
 		asyncAudit:       asyncAudit,
+		secretsPool:      secretsPool,
+		dekCacheClient:   dekCacheClient,
 		shutdownCh:       make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -329,6 +336,19 @@ func (a *App) Shutdown() error {
 		stats := a.asyncAudit.Stats()
 		a.logger.Info("Async audit logger drained",
 			"written", stats.Written, "dropped", stats.Dropped, "failed", stats.Failed)
+	}
+
+	// Close the secrets pgxpool and Redis DEK cache last so any
+	// last-millisecond audit write through asyncAudit.run() above
+	// could complete. Both are nil-safe; we still nil-check for
+	// belt-and-braces against future "secrets disabled" config paths.
+	if a.secretsPool != nil {
+		a.secretsPool.Close()
+	}
+	if a.dekCacheClient != nil {
+		if err := a.dekCacheClient.Close(); err != nil {
+			a.logger.Error("Redis DEK cache close error", err)
+		}
 	}
 
 	a.k8sClient.Stop()
