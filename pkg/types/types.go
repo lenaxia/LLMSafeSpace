@@ -488,8 +488,6 @@ type WorkspaceMetadata struct {
 	Name         string    `json:"name" db:"name"`
 	Runtime      string    `json:"runtime" db:"runtime"`
 	StorageSize  string    `json:"storageSize" db:"storage_size"`
-	Phase        string    `json:"phase" db:"phase"`
-	PVCState     string    `json:"pvcState" db:"pvc_state"`
 	ImageTag     string    `json:"imageTag" db:"image_tag"`
 	AgentVersion string    `json:"agentVersion" db:"agent_version"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`

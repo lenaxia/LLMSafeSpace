@@ -246,6 +246,23 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		return r.recoverFromTransientPodLoss(ctx, workspace)
 	}
 
+	// Detect architecture drift: if the running pod's nodeSelector doesn't
+	// match the desired architecture, delete the pod so it gets recreated
+	// on a node with the correct arch. Skip if pod has no nodeSelector
+	// (legacy pod created before multi-arch support).
+	desiredArch := workspace.Spec.Architecture
+	if desiredArch == "" {
+		desiredArch = "amd64"
+	}
+	if pod.Spec.NodeSelector != nil && pod.Spec.NodeSelector["kubernetes.io/arch"] != desiredArch {
+		logger.Info("Architecture changed; recreating pod", "desired", desiredArch, "current", pod.Spec.NodeSelector["kubernetes.io/arch"])
+		r.deletePodByName(ctx, name, workspace.Namespace)
+		workspace.Status.Phase = v1.WorkspacePhaseCreating
+		workspace.Status.PodIP = ""
+		workspace.Status.Endpoint = ""
+		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	}
+
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
 			return r.recoverFromTransientPodLoss(ctx, workspace)
@@ -668,6 +685,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			InitContainers: initContainers,
 			Containers:     []corev1.Container{mainContainer},
 			Volumes:        volumes,
+			NodeSelector:   buildNodeSelector(workspace),
 			// G17 (Epic 17): Sandbox pods MUST NOT automount the default
 			// ServiceAccount token. The agent has no business calling the
 			// K8s API; mounting the token only widens the blast radius for
@@ -698,6 +716,16 @@ func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext
 		RunAsUser:  &runAsUser,
 		RunAsGroup: &runAsGroup,
 		FSGroup:    &runAsGroup,
+	}
+}
+
+func buildNodeSelector(workspace *v1.Workspace) map[string]string {
+	arch := workspace.Spec.Architecture
+	if arch == "" {
+		arch = "amd64"
+	}
+	return map[string]string{
+		"kubernetes.io/arch": arch,
 	}
 }
 

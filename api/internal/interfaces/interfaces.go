@@ -52,7 +52,6 @@ type DatabaseService interface {
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
 	DeleteWorkspace(ctx context.Context, workspaceID string) error
 	ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
-	SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pvcState string)
 	SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string)
 	MarkWorkspaceDeleted(ctx context.Context, workspaceID string)
 	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)

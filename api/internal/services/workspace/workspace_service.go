@@ -288,6 +288,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 	// kube-apiserver too) so there's nothing meaningful to fall back to.
 
 	items := make([]types.WorkspaceListItem, 0, len(metas))
+	phases := s.fetchUserWorkspacePhases(ctx, userID)
 	for _, m := range metas {
 		items = append(items, types.WorkspaceListItem{
 			ID:           m.ID,
@@ -295,7 +296,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			UserID:       m.UserID,
 			Runtime:      m.Runtime,
 			StorageSize:  m.StorageSize,
-			Phase:        m.Phase,
+			Phase:        phases[m.ID],
 			ImageTag:     m.ImageTag,
 			AgentVersion: m.AgentVersion,
 			CreatedAt:    m.CreatedAt,

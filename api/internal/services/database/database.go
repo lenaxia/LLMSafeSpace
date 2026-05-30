@@ -316,8 +316,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		return nil, nil
 	}
 	query := `
-        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
-        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at
         FROM workspaces
         WHERE id = $1
     `
@@ -328,8 +327,6 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.Name,
 		&ws.Runtime,
 		&ws.StorageSize,
-		&ws.Phase,
-		&ws.PVCState,
 		&ws.ImageTag,
 		&ws.AgentVersion,
 		&ws.CreatedAt,
@@ -403,22 +400,6 @@ func (s *Service) DeleteWorkspace(ctx context.Context, workspaceID string) error
 	return nil
 }
 
-// SyncWorkspacePhase updates the phase and pvc_state columns for a workspace.
-// This is fire-and-forget: errors are logged but not propagated.
-func (s *Service) SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pvcState string) {
-	if workspaceID == "" || phase == "" {
-		return
-	}
-	_, err := s.DB.ExecContext(ctx,
-		"UPDATE workspaces SET phase = $1, pvc_state = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
-		phase, pvcState, workspaceID)
-	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Error("failed to sync workspace phase to DB", err, "workspaceID", workspaceID, "phase", phase)
-		}
-	}
-}
-
 // SyncWorkspaceVersionInfo updates the image_tag and agent_version columns.
 // Called when the workspace status is fetched and version info is available.
 func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string) {
@@ -470,8 +451,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		return []*types.WorkspaceMetadata{}, pagination, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `
-        SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
-        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at
         FROM workspaces
         WHERE user_id = $1 AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -486,9 +466,8 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		var ws types.WorkspaceMetadata
 		if err := rows.Scan(
 			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
-			&ws.StorageSize, &ws.Phase, &ws.PVCState,
-			&ws.ImageTag, &ws.AgentVersion,
 			&ws.StorageSize,
+			&ws.ImageTag, &ws.AgentVersion,
 			&ws.CreatedAt, &ws.UpdatedAt,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
