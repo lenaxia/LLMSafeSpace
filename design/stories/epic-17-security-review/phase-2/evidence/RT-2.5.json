@@ -1,0 +1,15 @@
+{
+  "id": "RT-2.5",
+  "title": "Registration rate limiting",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "total": 10,
+      "200": 0,
+      "429": 0,
+      "elapsed_sec": 2.74
+    }
+  ],
+  "notes": ""
+}

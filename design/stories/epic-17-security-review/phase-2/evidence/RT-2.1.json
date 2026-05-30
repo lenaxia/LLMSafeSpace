@@ -1,0 +1,16 @@
+{
+  "id": "RT-2.1",
+  "title": "JWT signature bypass (alg:none, alg confusion)",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "alg_none_status": 401,
+      "alg_none_body": "{\"error\":\"Invalid or expired token\"}"
+    },
+    {
+      "empty_sig_status": 401
+    }
+  ],
+  "notes": ""
+}

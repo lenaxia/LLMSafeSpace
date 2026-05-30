@@ -1,0 +1,8 @@
+{
+  "id": "RT-2.16",
+  "title": ":sessionId path traversal upstream",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "evidence": [],
+  "notes": "requires an active workspace + provoking the proxy; deferred to Phase 5 RT-5.x where workspace lifecycle is in scope. Code review only at this stage: api/internal/handlers/proxy.go:171 confirms verbatim interpolation with no validation."
+}

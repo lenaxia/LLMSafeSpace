@@ -1,0 +1,27 @@
+{
+  "id": "RT-2.6",
+  "title": "Account lockout DoS via email-keyed lockout",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "evidence": [
+    {
+      "failed_login_statuses": [
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401
+      ]
+    },
+    {
+      "legit_login_after_failures": 401,
+      "body": "{\"error\":\"account temporarily locked due to too many failed attempts\"}"
+    }
+  ],
+  "notes": "unexpected HTTP 401"
+}

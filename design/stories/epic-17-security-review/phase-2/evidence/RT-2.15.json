@@ -1,0 +1,16 @@
+{
+  "id": "RT-2.15",
+  "title": "API key reveal in list endpoint",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "created_key_present_in_create_response": true,
+      "key_prefix": "lsp_8dc9"
+    },
+    {
+      "list_status": 200
+    }
+  ],
+  "notes": "list correctly omits key body"
+}

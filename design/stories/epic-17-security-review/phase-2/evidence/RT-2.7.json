@@ -1,0 +1,8 @@
+{
+  "id": "RT-2.7",
+  "title": "First-user-admin race",
+  "result": "SKIP",
+  "severity": "info",
+  "evidence": [],
+  "notes": "DB already populated; needs clean slate"
+}

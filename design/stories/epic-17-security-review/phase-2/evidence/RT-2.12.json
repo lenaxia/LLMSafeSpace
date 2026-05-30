@@ -1,0 +1,29 @@
+{
+  "id": "RT-2.12",
+  "title": "Admin role escalation",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/settings",
+      "status": 404
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/settings/foo",
+      "status": 404
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/credentials",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/credentials",
+      "status": 404
+    }
+  ],
+  "notes": " GET/api/v1/admin/settings=HTTP404; PUT/api/v1/admin/settings/foo=HTTP404; GET/api/v1/admin/credentials=HTTP404; POST/api/v1/admin/credentials=HTTP404;"
+}

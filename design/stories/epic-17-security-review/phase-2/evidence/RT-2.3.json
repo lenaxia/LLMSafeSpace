@@ -1,0 +1,13 @@
+{
+  "id": "RT-2.3",
+  "title": "Expired token replay",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "status": 401,
+      "body": "{\"error\":\"Invalid or expired token\"}"
+    }
+  ],
+  "notes": ""
+}
