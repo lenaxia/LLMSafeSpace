@@ -1,6 +1,8 @@
+ARG TARGETARCH=amd64
+
 FROM golang:1.25-bookworm AS redact-builder
 
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -16,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
 
 FROM golang:1.25-bookworm AS agentd-builder
 
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -32,7 +34,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
 
 FROM debian:bookworm-slim
 
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 
 # Override to use a different release: --build-arg OPENCODE_VERSION=<version>
 # Pinned to 1.15.12 (May 2026) — validated against the proxy code in
