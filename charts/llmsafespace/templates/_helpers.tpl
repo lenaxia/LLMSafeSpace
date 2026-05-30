@@ -108,6 +108,19 @@ Resolve image references — defaults the tag to .Chart.AppVersion if omitted.
 {{- printf "%s:%s" .Values.api.image.repository $tag -}}
 {{- end }}
 
+{{/*
+Pod selector labels for workspace (sandbox) pods. The controller's
+pod-builder applies these labels at controller/internal/workspace/
+controller.go:566 so this helper MUST stay in sync.
+
+Used by the workspace NetworkPolicy templates (Epic 17 G16) to scope
+default-deny ingress and egress allow-list rules.
+*/}}
+{{- define "llmsafespace.workspacePodSelectorLabels" -}}
+app: llmsafespace
+component: workspace
+{{- end }}
+
 {{- define "llmsafespace.controller.image" -}}
 {{- $tag := default .Chart.AppVersion .Values.controller.image.tag -}}
 {{- printf "%s:%s" .Values.controller.image.repository $tag -}}

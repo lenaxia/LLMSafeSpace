@@ -1,97 +1,35 @@
 #!/usr/bin/env bash
-# entrypoint-common.sh — Secret materializer for LLMSafeSpace pods.
-# Reads /sandbox-cfg/secrets.json and materializes secrets to correct paths.
-# All secrets are written to tmpfs (never to PVC).
+# entrypoint-common.sh — Boot-time secret materialization shim.
+#
+# As of Epic 17 G2 remediation (worklog 0078), all secret materialization
+# is performed by the `workspace-agentd materialize` Go subcommand. This
+# script is a thin shim that:
+#
+#   1. Verifies the agentd binary exists in the runtime image (a missing
+#      binary is a build error, not a runtime degradation).
+#   2. Invokes the materialize subcommand. The subcommand:
+#       - reads /sandbox-cfg/secrets.json (no-op if absent),
+#       - validates each secret entry against the threat-model invariants
+#         in pkg/agentd/secrets,
+#       - writes credential files with mode 0600 atomic-on-create,
+#       - skips invalid entries (T5: never blocks pod boot for one bad
+#         entry), reporting the rejection reason to stderr.
+#
+# Threat-model invariants this shim preserves:
+#
+#   T1 No interpretation of secret values by the shell. The materializer
+#      is a Go binary; no plaintext ever passes through bash word-splitting.
+#   T2 No file ever exists with mode > 0600 for credential material.
+#   T5 An invalid secret skips that secret only; the rest still apply.
+#
+# See pkg/agentd/secrets/secrets.go for the implementation and
+# pkg/agentd/secrets/secrets_test.go for the bash-subprocess regression
+# corpus that locks these invariants in place.
 set -euo pipefail
 
-SECRETS_FILE="/sandbox-cfg/secrets.json"
-ENV_FILE="/tmp/secrets-env"
-# ↑ These paths must match pkg/agentd/types.go constants (SecretsEnvPath, AgentConfigPath, PasswordPath)
-SSH_DIR="$HOME/.ssh"
-
-# If no secrets.json exists, write empty config
-if [[ ! -f "$SECRETS_FILE" ]]; then
-    echo '{}' > /tmp/agent-config.json
-    return 0 2>/dev/null || true
+if ! command -v workspace-agentd >/dev/null 2>&1; then
+    echo "entrypoint-common: workspace-agentd binary missing from runtime image" >&2
+    exit 1
 fi
 
-# Initialize
-echo '{}' > /tmp/agent-config.json
-: > "$ENV_FILE"
-mkdir -p "$SSH_DIR"
-chmod 700 "$SSH_DIR"
-
-# Parse secrets.json — array of {type, name, metadata, plaintext}
-SECRET_COUNT=$(jq -r 'length' "$SECRETS_FILE")
-
-for i in $(seq 0 $((SECRET_COUNT - 1))); do
-    TYPE=$(jq -r ".[$i].type" "$SECRETS_FILE")
-    NAME=$(jq -r ".[$i].name" "$SECRETS_FILE")
-    PLAINTEXT=$(jq -r ".[$i].plaintext" "$SECRETS_FILE")
-    METADATA=$(jq -c ".[$i].metadata // {}" "$SECRETS_FILE")
-
-    case "$TYPE" in
-        llm-provider)
-            echo "$PLAINTEXT" > /tmp/agent-config.json
-            ;;
-
-        ssh-key)
-            KEY_TYPE=$(echo "$METADATA" | jq -r '.key_type // "ed25519"')
-            HOST=$(echo "$METADATA" | jq -r '.host // "github.com"')
-            KEY_PATH="$SSH_DIR/id_${KEY_TYPE}_${NAME}"
-
-            echo "$PLAINTEXT" > "$KEY_PATH"
-            chmod 600 "$KEY_PATH"
-
-            # Add host entry to ssh config
-            cat >> "$SSH_DIR/config" <<EOF
-Host $HOST
-    IdentityFile $KEY_PATH
-    StrictHostKeyChecking accept-new
-EOF
-            ;;
-
-        git-credential)
-            HOST=$(echo "$METADATA" | jq -r '.host // "github.com"')
-            PROTOCOL=$(echo "$METADATA" | jq -r '.protocol // "https"')
-
-            # Append to git-credentials file
-            echo "${PROTOCOL}://oauth2:${PLAINTEXT}@${HOST}" >> "$HOME/.git-credentials"
-            git config --global credential.helper store 2>/dev/null || true
-            ;;
-
-        secret-file)
-            MOUNT_PATH=$(echo "$METADATA" | jq -r '.mount_path')
-            if [[ -n "$MOUNT_PATH" && "$MOUNT_PATH" != "null" ]]; then
-                # Force secret files under safe tmpfs directory
-                SAFE_PATH="$HOME/.secrets/${MOUNT_PATH##*/home/sandbox/.secrets/}"
-                SAFE_PATH="${SAFE_PATH//\.\.\//}"
-                mkdir -p "$(dirname "$SAFE_PATH")"
-                echo "$PLAINTEXT" > "$SAFE_PATH"
-                chmod 600 "$SAFE_PATH"
-            fi
-            ;;
-
-        env-secret)
-            VAR_NAME=$(echo "$METADATA" | jq -r '.var_name')
-            if [[ -n "$VAR_NAME" && "$VAR_NAME" != "null" ]]; then
-                echo "export ${VAR_NAME}='${PLAINTEXT}'" >> "$ENV_FILE"
-            fi
-            ;;
-    esac
-done
-
-# Set ssh config permissions
-if [[ -f "$SSH_DIR/config" ]]; then
-    chmod 600 "$SSH_DIR/config"
-fi
-
-# Set git-credentials permissions
-if [[ -f "$HOME/.git-credentials" ]]; then
-    chmod 600 "$HOME/.git-credentials"
-fi
-
-# Source env file for current shell
-if [[ -s "$ENV_FILE" ]]; then
-    chmod 600 "$ENV_FILE"
-fi
+workspace-agentd materialize

@@ -1,0 +1,89 @@
+# Phase 0 RT-0.3: deliberately-vulnerable control fixture.
+#
+# Purpose: kube-hunter / trivy / nuclei finding rates are validated
+# against this fixture before Phase 1 begins. If the planted bugs are
+# NOT detected, the tooling has a false-negative and Phase 1 results
+# cannot be trusted.
+#
+# Planted bugs (each maps to a kube-hunter check):
+#
+#   1. KHV050 — pod runs with hostNetwork + privileged + hostPID.
+#      kube-hunter's "privileged container" passive scanner should flag
+#      this on cluster discovery.
+#   2. CVE-2014-6271 (Shellshock) via a vulnerable bash version in the
+#      container — trivy must detect at least one HIGH+ CVE on the
+#      image. Image: vulhub/bash-cve-2014-6271 is too old; we use a
+#      busybox:1.30 (CVE-2018-1000517) which trivy currently flags as
+#      HIGH and is small/fast.
+#   3. ServiceAccount token automount = true (default) on a pod whose
+#      SA has cluster-admin rights — kubeaudit's "auto-mount-sa-token"
+#      check should flag it.
+#
+# This fixture is deployed in the dedicated namespace
+# `pentest-control-fixture` so it cannot interfere with LLMSafeSpace
+# state.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pentest-control-fixture
+  labels:
+    pentest.llmsafespace.dev/role: control-fixture
+    pentest.llmsafespace.dev/danger: "true"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: control-fixture-sa
+  namespace: pentest-control-fixture
+---
+# Bug 3: cluster-admin to a pod's SA. kubeaudit / kube-hunter should flag
+# this on RBAC enumeration.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: control-fixture-cluster-admin
+  labels:
+    pentest.llmsafespace.dev/role: control-fixture-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: control-fixture-sa
+    namespace: pentest-control-fixture
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: control-fixture-pod
+  namespace: pentest-control-fixture
+  labels:
+    app: control-fixture
+spec:
+  serviceAccountName: control-fixture-sa
+  # Bug 1: hostNetwork + hostPID + privileged. Any responsible CIS
+  # Benchmark pod-level check fails this pod.
+  hostNetwork: true
+  hostPID: true
+  # Bug 3 (cont): SA token automount left at default (true). DO NOT set
+  # automountServiceAccountToken: false on this fixture; that would
+  # make the bug invisible.
+  containers:
+    - name: vuln
+      # Bug 2: pinned vulnerable image. Trivy must report at least one
+      # CVE ≥ HIGH on this image. busybox:1.30 has multiple HIGH-rated
+      # CVEs and is ~1.5 MB so the pull is fast.
+      image: busybox:1.30
+      command: ["sh", "-c", "while true; do sleep 60; done"]
+      securityContext:
+        # Bug 1 (cont): privileged.
+        privileged: true
+        runAsUser: 0
+        capabilities:
+          add: ["SYS_ADMIN", "NET_ADMIN"]
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "64Mi"

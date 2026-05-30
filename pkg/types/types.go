@@ -474,6 +474,14 @@ type WorkspaceConditionResult struct {
 }
 
 // WorkspaceMetadata is the database record for a workspace.
+//
+// Phase and pvc_state used to live here as a denormalised cache of the
+// Workspace CRD's status fields. The cache was removed in migration 9
+// because it was eventually-consistent at best (best-effort writes from
+// `syncPhase`) and routinely diverged from the CRD shortly after creation,
+// which caused the sidebar to render new workspaces with no phase. The CRD
+// is now the only source of truth; phase is fetched directly from the
+// kube-apiserver in `ListWorkspaces` and `enforceMaxActiveWorkspaces`.
 type WorkspaceMetadata struct {
 	ID           string    `json:"id" db:"id"`
 	UserID       string    `json:"userId" db:"user_id"`

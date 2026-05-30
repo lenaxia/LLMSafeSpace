@@ -317,6 +317,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 	}
 	query := `
         SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
         FROM workspaces
         WHERE id = $1
     `
@@ -440,7 +441,7 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 		return
 	}
 	_, err := s.DB.ExecContext(ctx,
-		"UPDATE workspaces SET deleted_at = NOW(), phase = 'Deleted', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+		"UPDATE workspaces SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
 		workspaceID)
 	if err != nil {
 		if s.Logger != nil {
@@ -470,6 +471,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 	}
 	rows, err := s.DB.QueryContext(ctx, `
         SELECT id, user_id, name, runtime, storage_size, phase, pvc_state, image_tag, agent_version, created_at, updated_at
+        SELECT id, user_id, name, runtime, storage_size, created_at, updated_at
         FROM workspaces
         WHERE user_id = $1 AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -486,6 +488,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
 			&ws.StorageSize, &ws.Phase, &ws.PVCState,
 			&ws.ImageTag, &ws.AgentVersion,
+			&ws.StorageSize,
 			&ws.CreatedAt, &ws.UpdatedAt,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)

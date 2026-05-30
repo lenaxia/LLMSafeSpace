@@ -251,6 +251,10 @@ func TestGetWorkspace_DBError_ReturnsInternal(t *testing.T) {
 }
 
 // ===== ListWorkspaces =====
+//
+// Phase is owned by the Workspace CRD; the DB stores immutable metadata only.
+// ListWorkspaces issues one label-scoped CRD list per call and joins phase by
+// name. These tests pin that contract.
 
 func TestListWorkspaces_HappyPath(t *testing.T) {
 	f := newFixture(t)
@@ -263,11 +267,19 @@ func TestListWorkspaces_HappyPath(t *testing.T) {
 	}
 	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 2, Limit: 10}, nil)
 
+	crdList := &v1.WorkspaceList{Items: []v1.Workspace{
+		{ObjectMeta: metav1.ObjectMeta{Name: "ws-1"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "ws-2"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended}},
+	}}
+	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(crdList, nil)
+
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
 
 	assert.NoError(t, err)
 	assert.Len(t, result.Items, 2)
 	assert.Equal(t, "ws-1", result.Items[0].ID)
+	assert.Equal(t, "Active", result.Items[0].Phase, "phase comes from the CRD")
+	assert.Equal(t, "Suspended", result.Items[1].Phase, "phase comes from the CRD")
 	assert.Equal(t, 2, result.Pagination.Total)
 }
 
@@ -276,6 +288,7 @@ func TestListWorkspaces_Empty_ReturnsEmptyList(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return([]*types.WorkspaceMetadata{}, &types.PaginationMetadata{Total: 0, Limit: 10}, nil)
+	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
 
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
 
@@ -295,6 +308,50 @@ func TestListWorkspaces_DBFails_ReturnsInternal(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace_list_failed")
+}
+
+// When the kube-apiserver is unavailable we cannot determine phase. The list
+// endpoint must NOT fail the request — it returns the items with empty phase
+// so the rest of the dashboard still loads. The platform is unusable in this
+// state regardless (every other endpoint also needs k8s) but failing the list
+// page would compound the outage.
+func TestListWorkspaces_K8sListFails_ReturnsItemsWithEmptyPhase(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	metas := []*types.WorkspaceMetadata{
+		{ID: "ws-1", UserID: "user1", Name: "ws1", StorageSize: "10Gi", CreatedAt: now},
+	}
+	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 1, Limit: 10}, nil)
+	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).
+		Return((*v1.WorkspaceList)(nil), errors.New("apiserver down"))
+
+	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
+
+	assert.NoError(t, err)
+	assert.Len(t, result.Items, 1)
+	assert.Equal(t, "", result.Items[0].Phase, "no CRD => no phase")
+}
+
+// A DB row that has no matching CRD (e.g. mid-deletion) is still returned with
+// empty phase rather than dropped from the response.
+func TestListWorkspaces_CRDMissing_PhaseEmpty(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	metas := []*types.WorkspaceMetadata{
+		{ID: "ws-1", UserID: "user1", Name: "ws1", StorageSize: "10Gi", CreatedAt: now},
+	}
+	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 1, Limit: 10}, nil)
+	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
+
+	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
+
+	assert.NoError(t, err)
+	assert.Len(t, result.Items, 1)
+	assert.Equal(t, "", result.Items[0].Phase)
 }
 
 // ===== DeleteWorkspace =====
@@ -384,12 +441,26 @@ func TestResumeWorkspace_HappyPath(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	// Pre-existing activity timestamp from before suspension. Resume must
+	// move this forward; otherwise handleActive would see an old timestamp
+	// and immediately re-suspend.
+	staleActivity := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	suspendedCrd.Status.LastActivityAt = &staleActivity
+
+	var captured *v1.Workspace
 	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
-	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(suspendedCrd, nil)
+	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).
+		Run(func(args mock.Arguments) { captured = args.Get(0).(*v1.Workspace) }).
+		Return(suspendedCrd, nil)
 
 	err := f.svc.ResumeWorkspace(ctx, "user1", "ws-1")
 
 	assert.NoError(t, err)
+	require.NotNil(t, captured, "UpdateStatus must be called")
+	assert.Equal(t, v1.WorkspacePhaseResuming, captured.Status.Phase)
+	require.NotNil(t, captured.Status.LastActivityAt, "LastActivityAt must be reset on resume")
+	assert.WithinDuration(t, time.Now(), captured.Status.LastActivityAt.Time, 5*time.Second,
+		"LastActivityAt must advance to a recent time, was %v", captured.Status.LastActivityAt.Time)
 	f.ws.AssertExpectations(t)
 }
 
