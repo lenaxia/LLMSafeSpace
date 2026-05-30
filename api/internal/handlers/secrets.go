@@ -17,10 +17,11 @@ import (
 
 // SecretsHandler handles HTTP requests for the secrets API.
 type SecretsHandler struct {
-	svc            *secrets.SecretService
-	podIPResolver  PodIPResolver
-	manifestWriter SecretsManifestWriter
-	logger         pkginterfaces.LoggerInterface
+	svc              *secrets.SecretService
+	podIPResolver    PodIPResolver
+	manifestWriter   SecretsManifestWriter
+	logger           pkginterfaces.LoggerInterface
+	passwordVerifier PasswordVerifier
 }
 
 // PodIPResolver looks up the pod IP for a workspace.
@@ -38,9 +39,30 @@ type SecretsManifestWriter interface {
 	EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error
 }
 
+// PasswordVerifier confirms a user's password against the stored bcrypt
+// hash. Used by RevealSecret to enforce a re-authentication gate before
+// returning plaintext: a stolen JWT alone must not be sufficient to
+// extract every secret. Implementations MUST run constant-time
+// comparison (bcrypt.CompareHashAndPassword satisfies this) and MUST
+// return a sentinel-typed error rather than the raw bcrypt error so
+// the handler can map it to a uniform 403 without leaking timing or
+// state information.
+type PasswordVerifier interface {
+	VerifyPassword(ctx context.Context, userID string, password []byte) error
+}
+
 // NewSecretsHandler creates a new SecretsHandler.
 func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
+}
+
+// SetPasswordVerifier installs the verifier used to confirm the
+// caller's password on RevealSecret. If left nil the reveal handler
+// rejects every request with 503; this is intentional because shipping
+// without password verification is exactly the security theatre we
+// fixed (validator finding on RevealSecret in worklog 0094 audit).
+func (h *SecretsHandler) SetPasswordVerifier(v PasswordVerifier) {
+	h.passwordVerifier = v
 }
 
 // SetPodIPResolver sets the resolver for looking up pod IPs.
@@ -172,7 +194,13 @@ func (h *SecretsHandler) DeleteSecret(c *gin.Context) {
 }
 
 // RevealSecret handles POST /api/v1/secrets/:id/reveal
-// Requires password confirmation to decrypt and return the secret value.
+// Requires password reconfirmation: a stolen JWT alone must not be
+// sufficient to extract every secret. Without a configured
+// PasswordVerifier the handler returns 503 — shipping without
+// verification is exactly the security theatre the validator audit
+// flagged. The bcrypt.CompareHashAndPassword call inside the verifier
+// is constant-time, so failed-password timing does not differentiate
+// from missing-DEK timing in practice.
 func (h *SecretsHandler) RevealSecret(c *gin.Context) {
 	userID, sessionID := extractAuth(c)
 	if userID == "" {
@@ -189,10 +217,24 @@ func (h *SecretsHandler) RevealSecret(c *gin.Context) {
 		return
 	}
 
-	// Verify password by attempting to validate it (re-derive KEK)
-	// The sessionID already has the DEK cached from login, so we just decrypt.
-	// The password confirmation is a UX gate, not a crypto gate.
-	_ = req.Password // TODO: verify password against bcrypt hash for extra security
+	if h.passwordVerifier == nil {
+		// Fail closed: refusing to serve reveals without verification
+		// is safer than serving them without verification.
+		h.warn("RevealSecret blocked: no password verifier configured",
+			"userID", userID, "secretID", secretID)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "password verification not configured"})
+		return
+	}
+	if err := h.passwordVerifier.VerifyPassword(c.Request.Context(), userID, []byte(req.Password)); err != nil {
+		// Uniform 403 regardless of why verification failed (wrong
+		// password, user not found, bcrypt error). Do not log the
+		// raw error at the request level since it could include
+		// bcrypt diagnostic detail; warn-level only.
+		h.warn("RevealSecret password verification failed",
+			"userID", userID, "secretID", secretID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid password"})
+		return
+	}
 
 	plaintext, err := h.svc.DecryptSecretValue(c.Request.Context(), userID, sessionID, secretID)
 	if err != nil {
