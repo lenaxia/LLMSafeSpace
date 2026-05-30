@@ -10,9 +10,13 @@ const brokerChannelBuffer = 16
 // All fields beyond Type are zero-valued when not applicable to the event type.
 //
 // Event types:
-//   - "workspace.phase": workspace phase changed; Phase is set.
-//   - "session.status":  session idle/busy notification; SessionID and Status are set.
-//   - "opencode.event":  raw event forwarded from the opencode agent; EventType and Data are set.
+//   - "workspace.phase":           workspace phase changed; Phase is set.
+//   - "session.status":            session idle/busy notification; SessionID and Status are set.
+//   - "opencode.event":            raw event forwarded from the opencode agent; EventType and Data are set.
+//   - "agent.question":            agent is asking the user a question; Data is *agent.QuestionRequest.
+//   - "agent.question.resolved":   question was answered or dismissed; Data is map[string]string{request_id, session_id}.
+//   - "agent.permission":          agent needs permission approval; Data is *agent.PermissionRequest.
+//   - "agent.permission.resolved": permission was approved or denied; Data is map[string]string{request_id, session_id, reply}.
 type WorkspaceSSEEvent struct {
 	Type      string      `json:"type"`
 	Phase     string      `json:"phase,omitempty"`

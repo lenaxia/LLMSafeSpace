@@ -892,8 +892,21 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 
 // emitNormalizedInputEvent detects question/permission events from the agent
 // and publishes stable, agent-agnostic events for the frontend.
+//
+// rawData is the full opencode SSE envelope as captured from the wire:
+//
+//	{"type":"permission.asked","properties":{"id":"per_...","sessionID":"ses_...",...}}
+//
+// The dialect parsers expect the inner properties object, so we unwrap the
+// envelope here before dispatching. Per US-16.3 design.
 func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData string) {
-	properties := json.RawMessage(rawData)
+	var envelope struct {
+		Properties json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(rawData), &envelope); err != nil || len(envelope.Properties) == 0 {
+		return
+	}
+	properties := envelope.Properties
 
 	if h.dialect.IsQuestionAsked(eventType) {
 		req, err := h.dialect.ParseQuestionRequest(eventType, properties)
