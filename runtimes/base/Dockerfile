@@ -30,7 +30,7 @@ COPY pkg/ ./pkg/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath -o /out/workspace-agentd ./cmd/workspace-agentd
 
-FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
+FROM debian:bookworm-slim
 
 ARG TARGETARCH=amd64
 
