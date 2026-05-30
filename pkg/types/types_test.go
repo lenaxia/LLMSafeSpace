@@ -31,3 +31,16 @@ func TestCachedSession_HasWorkspaceID(t *testing.T) {
 	_, ok := typ.FieldByName("WorkspaceID")
 	assert.True(t, ok, "CachedSession should have WorkspaceID not SandboxID")
 }
+
+// WorkspaceMetadata is the persisted DB record. Phase and PVCState used to be
+// cached here but were removed because the CRD is the source of truth and the
+// cache caused divergence (see migration 9). This test guards against
+// re-introducing those fields by accident.
+func TestWorkspaceMetadata_DoesNotCachePhaseOrPVCState(t *testing.T) {
+	typ := reflect.TypeOf(WorkspaceMetadata{})
+	for _, forbidden := range []string{"Phase", "PVCState"} {
+		_, ok := typ.FieldByName(forbidden)
+		assert.False(t, ok,
+			"WorkspaceMetadata.%s must not exist; phase/pvc state are owned by the Workspace CRD", forbidden)
+	}
+}
