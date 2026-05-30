@@ -29,7 +29,7 @@ func TestSecretService_PrepareSecretsForInjection_MultipleTypes(t *testing.T) {
 
 	// Create secrets of different types
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "anthropic", Type: SecretTypeLLMProvider, Value: `{"apiKey":"sk-ant-123","provider":"anthropic"}`,
+		Name: "anthropic", Type: SecretTypeAPIKey, Value: `{"apiKey":"sk-ant-123","provider":"anthropic"}`,
 		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
 	})
 	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
@@ -65,7 +65,7 @@ func TestSecretService_PrepareSecretsForInjection_MultipleTypes(t *testing.T) {
 		typeMap[s.Type] = s.Plaintext
 	}
 
-	if v, ok := typeMap[SecretTypeLLMProvider]; !ok || v == "" {
+	if v, ok := typeMap[SecretTypeAPIKey]; !ok || v == "" {
 		t.Error("LLM provider secret missing or empty")
 	}
 	if v, ok := typeMap[SecretTypeSSHKey]; !ok || v == "" {
@@ -99,7 +99,7 @@ func TestSecretService_PrepareSecretsForInjection_AuditLogged(t *testing.T) {
 	ctx := context.Background()
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "audited-inject", Type: SecretTypeLLMProvider, Value: "val",
+		Name: "audited-inject", Type: SecretTypeAPIKey, Value: "val",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
@@ -132,7 +132,7 @@ func TestSecretService_PrepareSecretsForInjection_PreservesMetadata(t *testing.T
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "file-secret", Type: SecretTypeSecretFile, Value: "cert-content",
-		Metadata: json.RawMessage(`{"mount_path":"/workspace/.secrets/cert.pem"}`),
+		Metadata: json.RawMessage(`{"mount_path":"cert.pem"}`),
 	})
 	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
@@ -147,7 +147,7 @@ func TestSecretService_PrepareSecretsForInjection_PreservesMetadata(t *testing.T
 
 	var meta map[string]string
 	json.Unmarshal(injected[0].Metadata, &meta)
-	if meta["mount_path"] != "/workspace/.secrets/cert.pem" {
+	if meta["mount_path"] != "cert.pem" {
 		t.Errorf("Metadata mount_path not preserved: %v", meta)
 	}
 }
@@ -177,7 +177,7 @@ func TestSecretService_PrepareSecretsForInjection_CrossTenantIsolation(t *testin
 
 	// User 1 creates and binds a secret
 	s1, _ := svc.CreateSecret(ctx, "user-1", sess1, CreateSecretRequest{
-		Name: "private", Type: SecretTypeLLMProvider, Value: "user1-key",
+		Name: "private", Type: SecretTypeAPIKey, Value: "user1-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 	svc.SetBindings(ctx, "user-1", "ws-user1", []string{s1.ID})

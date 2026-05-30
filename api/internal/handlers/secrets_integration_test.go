@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
@@ -21,7 +22,7 @@ func TestHandler_E2E_CreateListGetDeleteRoundTrip(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	createBody := `{"name":"e2e-secret","type":"llm-provider","value":"sk-e2e-test-key","metadata":{"provider":"openai","model":"gpt-4o"}}`
+	createBody := `{"name":"e2e-secret","type":"api-key","value":"sk-e2e-test-key","metadata":{"provider":"openai","model":"gpt-4o"}}`
 	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	cReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -132,7 +133,7 @@ func TestHandler_E2E_BindingFullCycle(t *testing.T) {
 	// Create 2 secrets
 	ids := make([]string, 2)
 	for i, name := range []string{"bind-a", "bind-b"} {
-		body := `{"name":"` + name + `","type":"llm-provider","value":"v","metadata":{"provider":"x"}}`
+		body := `{"name":"` + name + `","type":"api-key","value":"v","metadata":{"provider":"x"}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -210,17 +211,17 @@ func TestHandler_CreateSecret_AllTypesViaHTTP(t *testing.T) {
 		body     string
 		wantCode int
 	}{
-		{"llm-provider", `{"name":"llm","type":"llm-provider","value":"sk-123","metadata":{"provider":"anthropic"}}`, 201},
+		{"api-key", `{"name":"llm","type":"api-key","value":"sk-123","metadata":{"provider":"anthropic"}}`, 201},
 		{"ssh-key", `{"name":"ssh","type":"ssh-key","value":"key-data","metadata":{"key_type":"ed25519","host":"github.com"}}`, 201},
 		{"git-credential", `{"name":"git","type":"git-credential","value":"ghp_xxx","metadata":{"host":"github.com"}}`, 201},
-		{"secret-file", `{"name":"file","type":"secret-file","value":"cert","metadata":{"mount_path":"/app/cert.pem"}}`, 201},
+		{"secret-file", `{"name":"file","type":"secret-file","value":"cert","metadata":{"mount_path":"app/cert.pem"}}`, 201},
 		{"env-secret", `{"name":"env","type":"env-secret","value":"postgres://...","metadata":{"var_name":"DB_URL"}}`, 201},
 		{"invalid-type", `{"name":"bad","type":"nope","value":"x"}`, 400},
 		{"ssh-no-metadata", `{"name":"ssh2","type":"ssh-key","value":"x"}`, 400},
 		{"file-no-path", `{"name":"file2","type":"secret-file","value":"x","metadata":{"other":"y"}}`, 400},
 		{"env-no-var", `{"name":"env2","type":"env-secret","value":"x","metadata":{"other":"y"}}`, 400},
-		{"empty-name", `{"name":"","type":"llm-provider","value":"x"}`, 400},
-		{"missing-value", `{"name":"novalue","type":"llm-provider"}`, 400},
+		{"empty-name", `{"name":"","type":"api-key","value":"x"}`, 400},
+		{"missing-value", `{"name":"novalue","type":"api-key"}`, 400},
 	}
 
 	for _, tt := range tests {
@@ -245,7 +246,7 @@ func TestHandler_ConcurrentRequests(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
 			name := string(rune('a'+idx)) + "-concurrent"
-			body := `{"name":"` + name + `","type":"llm-provider","value":"v` + name + `","metadata":{"provider":"x"}}`
+			body := `{"name":"` + name + `","type":"api-key","value":"v` + name + `","metadata":{"provider":"x"}}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -450,4 +451,206 @@ type staticPodIPResolver struct {
 
 func (r *staticPodIPResolver) GetWorkspacePodIP(_ context.Context, _, _ string) (string, error) {
 	return r.addr, nil
+}
+
+// fakeManifestWriter records calls so tests can assert on durability writes.
+type fakeManifestWriter struct {
+	mu    sync.Mutex
+	calls []fakeManifestWriterCall
+	err   error
+}
+
+type fakeManifestWriterCall struct {
+	WorkspaceID  string
+	SecretsBytes []byte
+}
+
+func (f *fakeManifestWriter) EnsureSecretsManifest(_ context.Context, workspaceID string, secretsJSON []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeManifestWriterCall{WorkspaceID: workspaceID, SecretsBytes: append([]byte(nil), secretsJSON...)})
+	return f.err
+}
+
+// recordingLogger captures Warn calls so tests can verify Bug 2 — that
+// failures of the auto-push are no longer silently swallowed.
+type recordingLogger struct {
+	mu    sync.Mutex
+	warns []recordingLoggerEntry
+	infos []recordingLoggerEntry
+	errs  []recordingLoggerEntry
+}
+
+type recordingLoggerEntry struct {
+	Msg    string
+	Fields []interface{}
+}
+
+func (r *recordingLogger) Debug(_ string, _ ...interface{})            {}
+func (r *recordingLogger) Info(msg string, fields ...interface{})      { r.append(&r.infos, msg, fields) }
+func (r *recordingLogger) Warn(msg string, fields ...interface{})      { r.append(&r.warns, msg, fields) }
+func (r *recordingLogger) Error(msg string, _ error, _ ...interface{}) { r.append(&r.errs, msg, nil) }
+func (r *recordingLogger) Fatal(_ string, _ error, _ ...interface{})   {}
+func (r *recordingLogger) Sync() error                                 { return nil }
+func (r *recordingLogger) With(_ ...interface{}) pkginterfaces.LoggerInterface {
+	return r
+}
+
+func (r *recordingLogger) append(dst *[]recordingLoggerEntry, msg string, fields []interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	*dst = append(*dst, recordingLoggerEntry{Msg: msg, Fields: fields})
+}
+
+func (r *recordingLogger) warnCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.warns)
+}
+
+// TestHandler_BindWritesManifestForDurability is the regression test for
+// Bug 3 in worklog 0085: SetBindings must persist a K8s Secret manifest
+// so a future pod restart sees the bound secrets, not just push to the
+// live agent. Without this, secrets vanish on every pod recycle.
+func TestHandler_BindWritesManifestForDurability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	_, err := keySvc.InitializeUserKeys(ctx, userID, password)
+	if err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	writer := &fakeManifestWriter{}
+
+	handler := NewSecretsHandler(svc)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""}) // simulate no live pod
+	handler.SetSecretsManifestWriter(writer)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+	router.POST("/api/v1/secrets", handler.CreateSecret)
+	wsGroup := router.Group("/api/v1/workspaces")
+	wsGroup.PUT("/:id/bindings", handler.SetBindings)
+
+	createBody := `{"name":"durable","type":"env-secret","value":"v1","metadata":{"var_name":"DURABLE"}}`
+	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
+	cReq.Header.Set("Content-Type", "application/json")
+	cw := httptest.NewRecorder()
+	router.ServeHTTP(cw, cReq)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("Create: expected 201, got %d", cw.Code)
+	}
+	var created secrets.SecretResponse
+	json.Unmarshal(cw.Body.Bytes(), &created)
+
+	bindBody, _ := json.Marshal(map[string][]string{"secretIds": {created.ID}})
+	bReq := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-durable/bindings", bytes.NewBuffer(bindBody))
+	bReq.Header.Set("Content-Type", "application/json")
+	bw := httptest.NewRecorder()
+	router.ServeHTTP(bw, bReq)
+	if bw.Code != http.StatusNoContent {
+		t.Fatalf("Bind: expected 204, got %d: %s", bw.Code, bw.Body.String())
+	}
+
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if len(writer.calls) != 1 {
+		t.Fatalf("expected exactly 1 manifest write, got %d", len(writer.calls))
+	}
+	if writer.calls[0].WorkspaceID != "ws-durable" {
+		t.Errorf("manifest written for wrong workspace: %s", writer.calls[0].WorkspaceID)
+	}
+	// Manifest payload must be the same shape as the agentd push payload —
+	// a top-level JSON array of secrets.
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(writer.calls[0].SecretsBytes, &arr); err != nil {
+		t.Fatalf("manifest payload not valid JSON array: %v: %s", err, writer.calls[0].SecretsBytes)
+	}
+	if len(arr) != 1 {
+		t.Fatalf("manifest must contain the bound secret, got %d entries", len(arr))
+	}
+}
+
+// TestHandler_BindLogsReloadFailure is the regression test for Bug 2 in
+// worklog 0085: pushSecretsToAgent silently swallowed every error from
+// doReload. We now require these to surface in the logger so operators
+// can detect "live push" failures even when the bind itself succeeded.
+func TestHandler_BindLogsReloadFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	if _, err := keySvc.InitializeUserKeys(ctx, userID, password); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	logger := &recordingLogger{}
+	handler := NewSecretsHandler(svc)
+	handler.SetLogger(logger)
+	// Resolver returns an unreachable address so HTTP push fails.
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1:1"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+	router.POST("/api/v1/secrets", handler.CreateSecret)
+	wsGroup := router.Group("/api/v1/workspaces")
+	wsGroup.PUT("/:id/bindings", handler.SetBindings)
+
+	createBody := `{"name":"warn-test","type":"env-secret","value":"v1","metadata":{"var_name":"WARN"}}`
+	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
+	cReq.Header.Set("Content-Type", "application/json")
+	cw := httptest.NewRecorder()
+	router.ServeHTTP(cw, cReq)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("Create: expected 201, got %d", cw.Code)
+	}
+	var created secrets.SecretResponse
+	json.Unmarshal(cw.Body.Bytes(), &created)
+
+	bindBody, _ := json.Marshal(map[string][]string{"secretIds": {created.ID}})
+	bReq := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-warn/bindings", bytes.NewBuffer(bindBody))
+	bReq.Header.Set("Content-Type", "application/json")
+	bw := httptest.NewRecorder()
+	router.ServeHTTP(bw, bReq)
+
+	if bw.Code != http.StatusNoContent {
+		t.Fatalf("Bind should still succeed even when push fails, got %d", bw.Code)
+	}
+	if logger.warnCount() == 0 {
+		t.Fatal("Bug 2 regression: SetBindings push failure must surface in logs as Warn")
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,14 +17,23 @@ type SecretService struct {
 }
 
 // NewSecretService creates a new SecretService.
+//
+// As a side-effect we register the SecretStore on the KeyService so
+// RotateKeyWithPassword can re-encrypt secrets in-place (Bug 9 in
+// worklog 0085). The two services share a store anyway; this just makes
+// the linkage explicit at construction time.
 func NewSecretService(keys *KeyService, store SecretStore) *SecretService {
+	if keys != nil {
+		keys.SetSecretStore(store)
+	}
 	return &SecretService{keys: keys, store: store}
 }
 
 // CreateSecret encrypts and stores a new secret.
 func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID string, req CreateSecretRequest) (*SecretResponse, error) {
 	if !ValidSecretTypes[req.Type] {
-		return nil, fmt.Errorf("invalid secret type: %s", req.Type)
+		return nil, fmt.Errorf("invalid secret type: %s (valid: %s)",
+			req.Type, formatSecretTypes(ValidSecretTypesList()))
 	}
 
 	if err := validateMetadata(req.Type, req.Metadata); err != nil {
@@ -341,13 +352,47 @@ func validateMetadata(secretType SecretType, metadata json.RawMessage) error {
 			return errors.New("ssh-key metadata requires key_type field")
 		}
 	case SecretTypeSecretFile:
-		if _, ok := m["mount_path"]; !ok {
+		mp, ok := m["mount_path"]
+		if !ok {
 			return errors.New("secret-file metadata requires mount_path field")
+		}
+		mpStr, _ := mp.(string)
+		if err := validateMountPath(mpStr); err != nil {
+			return err
 		}
 	case SecretTypeEnvSecret:
 		if _, ok := m["var_name"]; !ok {
 			return errors.New("env-secret metadata requires var_name field")
 		}
+	}
+	return nil
+}
+
+// validateMountPath enforces the same path-traversal rules as the
+// in-pod materializer's resolveMountPath, applied at the API layer as
+// defence-in-depth (Bug 13 in worklog 0085). Rejects empty paths,
+// absolute paths, and any relative path that resolves outside its
+// (notional) base directory after Clean.
+func validateMountPath(mp string) error {
+	if strings.TrimSpace(mp) == "" {
+		return errors.New("mount_path is empty")
+	}
+	if filepath.IsAbs(mp) {
+		return fmt.Errorf("mount_path %q must be relative to the secrets base directory", mp)
+	}
+	// Notional base must be deep enough that filepath.Rel can produce a
+	// "../" prefix when an input escapes; using "/" loses that signal
+	// because filepath.Clean strips leading "..". The concrete base in
+	// production is /home/sandbox/.secrets but only the depth matters
+	// for this check.
+	const base = "/llmsafespace/notional/secrets"
+	candidate := filepath.Clean(filepath.Join(base, mp))
+	rel, err := filepath.Rel(base, candidate)
+	if err != nil {
+		return fmt.Errorf("invalid mount_path %q: %w", mp, err)
+	}
+	if rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("mount_path %q escapes secrets base directory", mp)
 	}
 	return nil
 }

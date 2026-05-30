@@ -114,7 +114,7 @@ func TestE2E_RealAuth_SecretCRUD(t *testing.T) {
 
 	// === Create secret (THIS is what failed with BUG 2) ===
 	resp = doPost(t, client, base+"/api/v1/secrets",
-		`{"name":"my-key","type":"llm-provider","value":"sk-secret-123","metadata":{"provider":"openai"}}`, token)
+		`{"name":"my-key","type":"api-key","value":"sk-secret-123","metadata":{"provider":"openai"}}`, token)
 	if resp.StatusCode != 201 {
 		body := make([]byte, 512)
 		n, _ := resp.Body.Read(body)
@@ -224,8 +224,8 @@ func (m *fullMockDB) ListWorkspaces(context.Context, string, int, int) ([]*types
 }
 func (m *fullMockDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error) { return false, nil }
-func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)  { return false, nil }
+func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }
+func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)      { return false, nil }
 func (m *fullMockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
@@ -335,6 +335,29 @@ func (m *memSecretStore) ListSecrets(_ context.Context, uid string) ([]*secrets.
 }
 func (m *memSecretStore) UpdateSecret(_ context.Context, s *secrets.UserSecret) error {
 	m.secrets[s.ID] = s
+	return nil
+}
+func (m *memSecretStore) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	updates := make(map[string][]byte)
+	for id, s := range m.secrets {
+		if s.UserID != userID {
+			continue
+		}
+		newCT, err := transform(s.Ciphertext)
+		if err != nil {
+			return err
+		}
+		updates[id] = newCT
+	}
+	if commit != nil {
+		if err := commit(ctx); err != nil {
+			return err
+		}
+	}
+	for id, newCT := range updates {
+		m.secrets[id].Ciphertext = newCT
+		m.secrets[id].KeyVersion = newKeyVersion
+	}
 	return nil
 }
 func (m *memSecretStore) DeleteSecret(_ context.Context, uid, id string) error {

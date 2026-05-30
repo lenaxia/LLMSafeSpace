@@ -118,8 +118,8 @@ func (m *mockDB) ListWorkspaces(context.Context, string, int, int) ([]*types.Wor
 }
 func (m *mockDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *mockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *mockDB) CheckPermission(string, string, string, string) (bool, error) { return false, nil }
-func (m *mockDB) CheckResourceOwnership(string, string, string) (bool, error)  { return false, nil }
+func (m *mockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }
+func (m *mockDB) CheckResourceOwnership(string, string, string) (bool, error)      { return false, nil }
 func (m *mockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }

@@ -401,8 +401,8 @@ func (m *Materializer) applyOne(s Secret) SecretResult {
 	r := SecretResult{Type: s.Type, Name: s.Name}
 
 	if err := validateName(s.Name); err != nil {
-		// llm-provider does not require a meaningful name; allow it.
-		if s.Type != "llm-provider" {
+		// api-key does not require a meaningful name; allow it.
+		if s.Type != "api-key" {
 			r.Outcome = OutcomeSkipped
 			r.Reason = err.Error()
 			return r
@@ -411,8 +411,8 @@ func (m *Materializer) applyOne(s Secret) SecretResult {
 
 	var err error
 	switch s.Type {
-	case "llm-provider":
-		err = m.applyLLMProvider(s)
+	case "api-key":
+		err = m.applyAPIKey(s)
 	case "ssh-key":
 		err = m.applySSHKey(s)
 	case "git-credential":
@@ -457,11 +457,11 @@ func newValidationError(format string, args ...interface{}) error {
 
 // --- per-type appliers ----------------------------------------------------
 
-func (m *Materializer) applyLLMProvider(s Secret) error {
+func (m *Materializer) applyAPIKey(s Secret) error {
 	// PLAINTEXT is opaque opencode JSON; we don't validate its shape, only
 	// the fact that it's non-empty.
 	if s.Plaintext == "" {
-		return newValidationError("llm-provider plaintext is empty")
+		return newValidationError("api-key plaintext is empty")
 	}
 	return atomicWrite(m.FS, m.Paths.AgentConfigPath, []byte(s.Plaintext), 0o600)
 }

@@ -3,7 +3,7 @@ import { api } from "./client";
 export interface SecretResponse {
   id: string;
   name: string;
-  type: "llm-provider" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
+  type: "api-key" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
   metadata: Record<string, string>;
   createdAt: string;
   updatedAt: string;

@@ -460,3 +460,97 @@ func TestKeyService_DEKAvailable(t *testing.T) {
 		t.Error("DEK should be available after unlock")
 	}
 }
+
+// TestKeyService_RotateKey_EagerlyReEncryptsSecrets is the regression test
+// for Bug 9 in worklog 0085: KEK rotation must walk every user_secrets row
+// and re-encrypt under the new DEK. Without this, all pre-rotation secrets
+// become permanently undecryptable (data loss).
+func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
+	ctx := context.Background()
+	keyStore := newMockKeyStore()
+	cache := newMockDEKCache()
+	keySvc := NewKeyService(keyStore, cache)
+	secretStore := newMockSecretStore()
+	secretSvc := NewSecretService(keySvc, secretStore)
+
+	userID := "user-rotate"
+	password := []byte("rotate-password-123")
+	sessionID := "rotate-sess"
+
+	if _, err := keySvc.InitializeUserKeys(ctx, userID, password); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	// Create three secrets pre-rotation, each with a distinct plaintext.
+	plaintexts := map[string]string{
+		"alpha": "alpha-value-pre-rotate",
+		"beta":  "beta-value-pre-rotate",
+		"gamma": "gamma-value-pre-rotate",
+	}
+	for name, value := range plaintexts {
+		_, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+			Name: name, Type: SecretTypeEnvSecret, Value: value,
+			Metadata: []byte(`{"var_name":"X"}`),
+		})
+		if err != nil {
+			t.Fatalf("CreateSecret %s: %v", name, err)
+		}
+	}
+
+	// Rotate. After this, the OLD DEK is gone forever; if we have not
+	// re-encrypted, GetSecret + DecryptSecretValue fails on every row.
+	newVersion, err := keySvc.RotateKeyWithPassword(ctx, userID, password, sessionID, time.Hour)
+	if err != nil {
+		t.Fatalf("RotateKeyWithPassword: %v", err)
+	}
+	if newVersion != 2 {
+		t.Fatalf("expected key_version=2 after rotate, got %d", newVersion)
+	}
+
+	// Every pre-rotation secret must still decrypt. This is the
+	// load-bearing assertion for Bug 9.
+	listed, err := secretSvc.ListSecrets(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(listed) != len(plaintexts) {
+		t.Fatalf("expected %d secrets after rotate, got %d", len(plaintexts), len(listed))
+	}
+	for _, sr := range listed {
+		got, err := secretSvc.DecryptSecretValue(ctx, userID, sessionID, sr.ID)
+		if err != nil {
+			t.Fatalf("DecryptSecretValue(%s) after rotate: %v — Bug 9 has regressed", sr.Name, err)
+		}
+		want := plaintexts[sr.Name]
+		if string(got) != want {
+			t.Errorf("post-rotate plaintext mismatch for %s: got %q, want %q", sr.Name, string(got), want)
+		}
+	}
+
+	// Every row must now carry the new key_version. Otherwise the lazy
+	// path would still be required and a future rotation would orphan
+	// these rows again.
+	for _, sr := range listed {
+		raw, err := secretStore.GetSecret(ctx, userID, sr.ID)
+		if err != nil {
+			t.Fatalf("GetSecret raw: %v", err)
+		}
+		if raw.KeyVersion != newVersion {
+			t.Errorf("secret %s: expected key_version=%d after rotate, got %d",
+				sr.Name, newVersion, raw.KeyVersion)
+		}
+	}
+
+	// New secrets created post-rotation must also work — confirms the
+	// rotation did not corrupt the active DEK cache.
+	_, err = secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+		Name: "post-rotate", Type: SecretTypeEnvSecret, Value: "post",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret post-rotate: %v", err)
+	}
+}

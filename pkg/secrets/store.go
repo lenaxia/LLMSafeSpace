@@ -11,6 +11,27 @@ type SecretStore interface {
 	UpdateSecret(ctx context.Context, secret *UserSecret) error
 	DeleteSecret(ctx context.Context, userID, secretID string) error
 
+	// ReEncryptUserSecrets re-encrypts every row owned by userID in a
+	// single atomic operation. The transform closure receives the old
+	// ciphertext for a row and must return the new ciphertext (decrypted
+	// with the old DEK and re-encrypted with the new one). After all
+	// rows are re-encrypted but before the transaction commits, the
+	// commit closure is invoked with the same tx so the caller can
+	// piggyback related updates (e.g. user_keys.wrapped_dek) into the
+	// same atomic unit; if commit returns non-nil the entire transaction
+	// rolls back. Implementations MUST run all of this in a single
+	// SERIALIZABLE transaction with retry on serialization failure.
+	//
+	// A partial state would leave rows decryptable only by a key the
+	// system has discarded — the failure mode of Bug 9 in worklog 0085.
+	ReEncryptUserSecrets(
+		ctx context.Context,
+		userID string,
+		newKeyVersion int,
+		transform func(oldCiphertext []byte) (newCiphertext []byte, err error),
+		commit func(ctx context.Context) error,
+	) error
+
 	// Bindings
 	SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error
 	GetBindings(ctx context.Context, workspaceID string) ([]*UserSecret, error)

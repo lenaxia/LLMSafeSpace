@@ -11,7 +11,9 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -63,7 +65,7 @@ func TestSecretsWiring_E2E(t *testing.T) {
 	wsGroup.GET("/:id/bindings", secretsHandler.GetBindings)
 
 	// === Test: Create secret ===
-	body := `{"name":"wiring-test","type":"llm-provider","value":"sk-wired-123","metadata":{"provider":"openai"}}`
+	body := `{"name":"wiring-test","type":"api-key","value":"sk-wired-123","metadata":{"provider":"openai"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -152,7 +154,52 @@ func TestRouterConfig_SecretsHandler(t *testing.T) {
 	}
 }
 
-// memDEKCache is a simple in-memory DEK cache for testing without Redis.
+// TestSecretsHandler_PodIPResolverWired is the regression test for Bug 1
+// in worklog 0085: app.New must call SetPodIPResolver on the secrets
+// handler. Without this the reload-secrets endpoint and the SetBindings
+// auto-push both silently no-op (returning 503 / swallowing the error).
+//
+// We test the wiring helper directly rather than constructing the full
+// App because app.New requires PostgreSQL/Redis; the helper is the unit
+// of behaviour we actually care about.
+func TestSecretsHandler_PodIPResolverWired(t *testing.T) {
+	keyStore := &dbKeyStoreAdapter{}
+	dekCache := &memDEKCache{store: make(map[string][]byte)}
+	keyService := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := &dbSecretStoreAdapter{}
+	secretService := secrets.NewSecretService(keyService, secretStore)
+
+	h := handlers.NewSecretsHandler(secretService)
+	if h.HasPodIPResolver() {
+		t.Fatalf("freshly-constructed SecretsHandler must not have a resolver")
+	}
+
+	// Same call app.New makes; if this stops being valid the wiring is
+	// either changed deliberately (update the test) or it has regressed.
+	h.SetPodIPResolver(newSecretsPodIPResolver(
+		&fakeAppCRDGetter{},
+		&fakeAppDBLookup{},
+		nil, // logger optional in this smoke test
+	))
+
+	if !h.HasPodIPResolver() {
+		t.Fatalf("SetPodIPResolver must populate the handler's resolver")
+	}
+}
+
+// fakeAppCRDGetter / fakeAppDBLookup are placeholders used only to
+// confirm the resolver constructor accepts compatible adapter types.
+// Behavioural tests live in secrets_podip_resolver_test.go.
+type fakeAppCRDGetter struct{}
+
+func (f *fakeAppCRDGetter) GetWorkspace(string) (*v1.Workspace, error) { return nil, nil }
+
+type fakeAppDBLookup struct{}
+
+func (f *fakeAppDBLookup) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
+	return nil, nil
+}
+
 type memDEKCache struct {
 	store map[string][]byte
 }

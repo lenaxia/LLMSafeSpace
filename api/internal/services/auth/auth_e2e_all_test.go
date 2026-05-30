@@ -103,7 +103,7 @@ func TestE2E_RealAuth_ChangePassword(t *testing.T) {
 
 	// Secrets should still work with new token
 	resp = doPost(t, c, base+"/api/v1/secrets",
-		`{"name":"after-pw-change","type":"llm-provider","value":"sk-test","metadata":{"provider":"x"}}`, newToken)
+		`{"name":"after-pw-change","type":"api-key","value":"sk-test","metadata":{"provider":"x"}}`, newToken)
 	if resp.StatusCode != 201 {
 		t.Fatalf("Create after pw change: expected 201, got %d: %s", resp.StatusCode, readAll(t, resp))
 	}
@@ -191,7 +191,7 @@ func TestE2E_RealAuth_RotateKey_ThenSecrets(t *testing.T) {
 
 	// Create a secret before rotation
 	resp := doPost(t, c, base+"/api/v1/secrets",
-		`{"name":"pre-rotate","type":"llm-provider","value":"sk-before","metadata":{"provider":"x"}}`, token)
+		`{"name":"pre-rotate","type":"api-key","value":"sk-before","metadata":{"provider":"x"}}`, token)
 	if resp.StatusCode != 201 {
 		t.Fatalf("Create pre-rotate: %d", resp.StatusCode)
 	}
@@ -207,7 +207,7 @@ func TestE2E_RealAuth_RotateKey_ThenSecrets(t *testing.T) {
 
 	// Create a secret after rotation (uses new DEK)
 	resp = doPost(t, c, base+"/api/v1/secrets",
-		`{"name":"post-rotate","type":"llm-provider","value":"sk-after","metadata":{"provider":"y"}}`, token)
+		`{"name":"post-rotate","type":"api-key","value":"sk-after","metadata":{"provider":"y"}}`, token)
 	if resp.StatusCode != 201 {
 		t.Fatalf("Create post-rotate: expected 201, got %d: %s", resp.StatusCode, readAll(t, resp))
 	}

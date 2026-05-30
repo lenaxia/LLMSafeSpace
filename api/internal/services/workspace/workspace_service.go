@@ -901,11 +901,30 @@ func ContextWithSessionID(ctx context.Context, sessionID string) context.Context
 }
 
 func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID string, secretsJSON []byte) {
+	if err := s.EnsureSecretsManifest(ctx, workspaceID, secretsJSON); err != nil {
+		s.logger.Error("Failed to write ephemeral secrets secret", err, "workspaceID", workspaceID)
+	}
+}
+
+// EnsureSecretsManifest writes (create-or-update) the K8s Secret named
+// `workspace-secrets-<id>` consumed by the in-pod init container. This is
+// the durable channel for binding delivery: a pod restart re-reads the
+// Secret on its next start. The HTTP `/v1/reload-secrets` push to agentd
+// is the live channel; the two together guarantee bound secrets reach
+// the pod regardless of its lifecycle state.
+//
+// Returns nil on apiserver success even when the Secret was newly
+// created vs. updated. Errors are returned to the caller (rather than
+// only logged) so the bind handler can surface them at Warn (Bug 2).
+func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error {
+	if workspaceID == "" {
+		return fmt.Errorf("workspaceID is required")
+	}
 	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
 	clientset := s.k8sClient.Clientset()
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
-	secret := &corev1.Secret{
+	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: s.config.Namespace,
@@ -922,13 +941,20 @@ func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID 
 
 	existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil {
-		existing.Data = secret.Data
+		existing.Data = desired.Data
+		if existing.Labels == nil {
+			existing.Labels = desired.Labels
+		}
 		if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
-			s.logger.Error("Failed to update ephemeral secrets secret", err, "workspaceID", workspaceID)
+			return fmt.Errorf("update secrets manifest: %w", err)
 		}
-	} else {
-		if _, err := secretClient.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-			s.logger.Error("Failed to create ephemeral secrets secret", err, "workspaceID", workspaceID)
-		}
+		return nil
 	}
+	if !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("get secrets manifest: %w", err)
+	}
+	if _, err := secretClient.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create secrets manifest: %w", err)
+	}
+	return nil
 }

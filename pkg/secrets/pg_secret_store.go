@@ -2,10 +2,12 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -87,6 +89,141 @@ func (s *PgSecretStore) UpdateSecret(ctx context.Context, secret *UserSecret) er
 		 WHERE id = $5 AND user_id = $6`,
 		secret.Ciphertext, secret.KeyVersion, secret.Metadata, secret.UpdatedAt, secret.ID, secret.UserID)
 	return err
+}
+
+// pgxTxKey is a private context key used to thread an active *pgx.Tx
+// through callbacks invoked from inside ReEncryptUserSecrets. The
+// PgKeyStore reads this key when present so its UpdateWrappedDEK runs
+// inside the same transaction as the secret re-encryption (Bug 9 fix
+// in worklog 0094 — the user_keys update and the user_secrets walk
+// must be atomic; without this they were two separate statements with
+// a partial-failure window between them).
+type pgxTxKey struct{}
+
+// withTx returns a context carrying tx for downstream stores to detect.
+func withTx(ctx context.Context, tx pgx.Tx) context.Context {
+	return context.WithValue(ctx, pgxTxKey{}, tx)
+}
+
+// txFromContext returns the tx threaded into ctx, if any.
+func txFromContext(ctx context.Context) pgx.Tx {
+	if tx, ok := ctx.Value(pgxTxKey{}).(pgx.Tx); ok {
+		return tx
+	}
+	return nil
+}
+
+// ReEncryptUserSecrets walks every user_secrets row owned by userID
+// inside a single SERIALIZABLE transaction, retrying on serialization
+// failure. After the walk completes the commit closure runs in the
+// same transaction so callers (KeyService.RotateKeyWithPassword) can
+// update related rows (e.g. user_keys.wrapped_dek) atomically. If
+// commit returns non-nil the entire transaction rolls back: secrets
+// stay encrypted with the old DEK and user_keys stays unchanged.
+//
+// A row-count cap of maxRotateRows is enforced to prevent a malicious
+// or pathological account from holding the rotation transaction open
+// indefinitely.
+//
+// See Bug 9 in worklog 0085 / 0086.
+func (s *PgSecretStore) ReEncryptUserSecrets(
+	ctx context.Context,
+	userID string,
+	newKeyVersion int,
+	transform func([]byte) ([]byte, error),
+	commit func(ctx context.Context) error,
+) error {
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := s.runReEncryptTx(ctx, userID, newKeyVersion, transform, commit)
+		if err == nil {
+			return nil
+		}
+		// pgx 5.x exposes serialization_failure as SQLSTATE "40001"; we
+		// retry transparently a small bounded number of times.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "40001" {
+			lastErr = err
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("rotate-key: serialization failure persisted after %d retries: %w", maxRetries, lastErr)
+}
+
+// maxRotateRows is the largest number of secrets a single rotation may
+// touch. Set high enough that no realistic user hits it (~16k secrets)
+// but low enough that a runaway never holds the rotation tx open for
+// minutes.
+const maxRotateRows = 16384
+
+func (s *PgSecretStore) runReEncryptTx(
+	ctx context.Context,
+	userID string,
+	newKeyVersion int,
+	transform func([]byte) ([]byte, error),
+	commit func(ctx context.Context) error,
+) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx,
+		`SELECT id, ciphertext FROM user_secrets WHERE user_id = $1 FOR UPDATE`, userID)
+	if err != nil {
+		return fmt.Errorf("select for update: %w", err)
+	}
+
+	type pending struct {
+		id            string
+		newCiphertext []byte
+	}
+	pendings := make([]pending, 0, 64)
+	for rows.Next() {
+		if len(pendings) >= maxRotateRows {
+			rows.Close()
+			return fmt.Errorf("rotate-key: too many secrets (>%d) for user %s", maxRotateRows, userID)
+		}
+		var id string
+		var ct []byte
+		if err := rows.Scan(&id, &ct); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan row: %w", err)
+		}
+		newCT, err := transform(ct)
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("transform secret %s: %w", id, err)
+		}
+		pendings = append(pendings, pending{id: id, newCiphertext: newCT})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate rows: %w", err)
+	}
+
+	now := time.Now()
+	for _, p := range pendings {
+		if _, err := tx.Exec(ctx,
+			`UPDATE user_secrets SET ciphertext = $1, key_version = $2, updated_at = $3
+			 WHERE id = $4 AND user_id = $5`,
+			p.newCiphertext, newKeyVersion, now, p.id, userID); err != nil {
+			return fmt.Errorf("update secret %s: %w", p.id, err)
+		}
+	}
+
+	// Run caller's atomic-commit hook inside the same tx so user_keys
+	// updates land or roll back together with the re-encrypted rows.
+	if commit != nil {
+		if err := commit(withTx(ctx, tx)); err != nil {
+			return fmt.Errorf("commit hook: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *PgSecretStore) DeleteSecret(ctx context.Context, userID, secretID string) error {

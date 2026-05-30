@@ -6,10 +6,20 @@ import (
 	"time"
 )
 
-func TestKeyService_RotateKeyWithPassword(t *testing.T) {
+// newRotationTestService constructs a KeyService wired to an empty
+// SecretStore. RotateKeyWithPassword refuses to run without a store
+// (Bug 9 fix in worklog 0094) so every rotation test must provide one;
+// these tests don't care about secrets, only about the key lifecycle.
+func newRotationTestService() (*KeyService, *mockKeyStore, *mockDEKCache) {
 	store := newMockKeyStore()
 	cache := newMockDEKCache()
 	svc := NewKeyService(store, cache)
+	svc.SetSecretStore(newMockSecretStore())
+	return svc, store, cache
+}
+
+func TestKeyService_RotateKeyWithPassword(t *testing.T) {
+	svc, store, _ := newRotationTestService()
 	ctx := context.Background()
 
 	password := []byte("my-password")
@@ -42,9 +52,7 @@ func TestKeyService_RotateKeyWithPassword(t *testing.T) {
 }
 
 func TestKeyService_RotateKeyWithPassword_WrongPassword(t *testing.T) {
-	store := newMockKeyStore()
-	cache := newMockDEKCache()
-	svc := NewKeyService(store, cache)
+	svc, _, _ := newRotationTestService()
 	ctx := context.Background()
 
 	_, _ = svc.InitializeUserKeys(ctx, "user-1", []byte("correct"))
@@ -57,9 +65,7 @@ func TestKeyService_RotateKeyWithPassword_WrongPassword(t *testing.T) {
 }
 
 func TestKeyService_RotateKeyWithPassword_MultipleRotations(t *testing.T) {
-	store := newMockKeyStore()
-	cache := newMockDEKCache()
-	svc := NewKeyService(store, cache)
+	svc, store, _ := newRotationTestService()
 	ctx := context.Background()
 
 	password := []byte("pw")
@@ -84,9 +90,7 @@ func TestKeyService_RotateKeyWithPassword_MultipleRotations(t *testing.T) {
 }
 
 func TestKeyService_RotateKeyWithPassword_LoginAfterRotation(t *testing.T) {
-	store := newMockKeyStore()
-	cache := newMockDEKCache()
-	svc := NewKeyService(store, cache)
+	svc, _, _ := newRotationTestService()
 	ctx := context.Background()
 
 	password := []byte("pw")

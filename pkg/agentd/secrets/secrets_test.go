@@ -499,7 +499,7 @@ func TestG2_SecretFile_PathTraversal(t *testing.T) {
 func TestG20_AllFilesCreatedWithMode0600(t *testing.T) {
 	m, fs := newFixture(t)
 	_, err := m.Materialize([]Secret{
-		{Type: "llm-provider", Name: "p", Plaintext: `{"key":"val"}`},
+		{Type: "api-key", Name: "p", Plaintext: `{"key":"val"}`},
 		{Type: "ssh-key", Name: "k", Metadata: map[string]string{"key_type": "ed25519", "host": "github.com"}, Plaintext: "kbytes"},
 		{Type: "git-credential", Name: "c", Metadata: map[string]string{"host": "github.com", "protocol": "https"}, Plaintext: "abc"},
 		{Type: "secret-file", Name: "s", Metadata: map[string]string{"mount_path": "f.txt"}, Plaintext: "data"},

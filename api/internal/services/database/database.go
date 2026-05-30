@@ -416,7 +416,11 @@ func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, ima
 	}
 }
 
-// MarkWorkspaceDeleted soft-deletes a workspace by setting deleted_at.
+// MarkWorkspaceDeleted soft-deletes a workspace by setting deleted_at and
+// purges any user_secret_bindings rows pointing at it. The bindings table
+// has no FK to workspaces.id (the column types differ historically) so a
+// soft delete leaves orphan binding rows behind unless we clean up here
+// explicitly. See Bug 11 in worklog 0085.
 func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) {
 	if workspaceID == "" {
 		return
@@ -427,6 +431,17 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Error("failed to mark workspace deleted in DB", err, "workspaceID", workspaceID)
+		}
+		return
+	}
+	if _, err := s.DB.ExecContext(ctx,
+		"DELETE FROM user_secret_bindings WHERE workspace_id = $1",
+		workspaceID); err != nil {
+		// Non-fatal: the workspace is already soft-deleted; orphan
+		// binding rows are a hygiene issue, not a correctness one.
+		if s.Logger != nil {
+			s.Logger.Warn("failed to delete user_secret_bindings for deleted workspace",
+				"workspaceID", workspaceID, "error", err.Error())
 		}
 	}
 }

@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -9,7 +10,10 @@ import (
 type SecretType string
 
 const (
-	SecretTypeLLMProvider   SecretType = "llm-provider"
+	// SecretTypeAPIKey is for LLM-provider / generic API-key secrets
+	// (OpenAI, Anthropic, etc.). Renamed from "llm-provider" in
+	// migration 000010 to match the threat model and SDK examples.
+	SecretTypeAPIKey        SecretType = "api-key"
 	SecretTypeSSHKey        SecretType = "ssh-key"
 	SecretTypeGitCredential SecretType = "git-credential"
 	SecretTypeSecretFile    SecretType = "secret-file"
@@ -18,11 +22,47 @@ const (
 
 // ValidSecretTypes is the set of allowed secret types.
 var ValidSecretTypes = map[SecretType]bool{
-	SecretTypeLLMProvider:   true,
+	SecretTypeAPIKey:        true,
 	SecretTypeSSHKey:        true,
 	SecretTypeGitCredential: true,
 	SecretTypeSecretFile:    true,
 	SecretTypeEnvSecret:     true,
+}
+
+// ValidSecretTypesList returns the canonical list of valid secret types,
+// in stable order. Used to format the error message returned when a
+// caller submits an invalid type, so the response is self-documenting.
+func ValidSecretTypesList() []SecretType {
+	return []SecretType{
+		SecretTypeAPIKey,
+		SecretTypeSSHKey,
+		SecretTypeGitCredential,
+		SecretTypeSecretFile,
+		SecretTypeEnvSecret,
+	}
+}
+
+// MetadataRequirementsBySecretType is a self-documenting map of which
+// metadata keys each secret type requires. Surfaced in error responses
+// (Bug 7 in worklog 0085) so callers don't have to reverse-engineer the
+// schema from 400s.
+var MetadataRequirementsBySecretType = map[SecretType][]string{
+	SecretTypeAPIKey:        {}, // optional: provider, model
+	SecretTypeSSHKey:        {"key_type"},
+	SecretTypeGitCredential: {}, // optional: host
+	SecretTypeSecretFile:    {"mount_path"},
+	SecretTypeEnvSecret:     {"var_name"},
+}
+
+// formatSecretTypes joins SecretType values with commas for use in
+// error messages (e.g. "api-key, ssh-key, git-credential, secret-file,
+// env-secret"). Stable order.
+func formatSecretTypes(types []SecretType) string {
+	parts := make([]string, 0, len(types))
+	for _, t := range types {
+		parts = append(parts, string(t))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // UserSecret represents an encrypted secret record.

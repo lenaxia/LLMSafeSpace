@@ -9,18 +9,31 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 // SecretsHandler handles HTTP requests for the secrets API.
 type SecretsHandler struct {
-	svc           *secrets.SecretService
-	podIPResolver PodIPResolver
+	svc            *secrets.SecretService
+	podIPResolver  PodIPResolver
+	manifestWriter SecretsManifestWriter
+	logger         pkginterfaces.LoggerInterface
 }
 
 // PodIPResolver looks up the pod IP for a workspace.
 type PodIPResolver interface {
 	GetWorkspacePodIP(ctx context.Context, userID, workspaceID string) (string, error)
+}
+
+// SecretsManifestWriter persists the per-workspace ephemeral K8s Secret
+// (`workspace-secrets-<id>`) used by the in-pod init container to seed
+// `/sandbox-cfg/secrets.json` on every pod start. Without this, secrets
+// pushed via the live HTTP reload path vanish on pod recycle (Bug 3 in
+// worklog 0085). The writer is responsible for create-or-update semantics
+// and for choosing the appropriate K8s namespace.
+type SecretsManifestWriter interface {
+	EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error
 }
 
 // NewSecretsHandler creates a new SecretsHandler.
@@ -31,6 +44,28 @@ func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 // SetPodIPResolver sets the resolver for looking up pod IPs.
 func (h *SecretsHandler) SetPodIPResolver(r PodIPResolver) {
 	h.podIPResolver = r
+}
+
+// HasPodIPResolver reports whether a PodIPResolver has been configured.
+// Used by wiring tests to verify the handler is fully constructed; without
+// a resolver the reload-secrets endpoint and the SetBindings auto-push
+// silently no-op (Bug 1 + Bug 2 in worklog 0085).
+func (h *SecretsHandler) HasPodIPResolver() bool {
+	return h.podIPResolver != nil
+}
+
+// SetSecretsManifestWriter installs the writer used to persist the
+// per-workspace K8s Secret on bind. Optional; if nil, only the live HTTP
+// push runs and bound secrets do not survive pod restarts.
+func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
+	h.manifestWriter = w
+}
+
+// SetLogger installs the logger used to surface non-fatal failures from
+// the bind-time auto-push. Optional; if nil, failures are silent (which
+// is exactly Bug 2 in worklog 0085 — do not leave nil in production).
+func (h *SecretsHandler) SetLogger(l pkginterfaces.LoggerInterface) {
+	h.logger = l
 }
 
 // CreateSecret handles POST /api/v1/secrets
@@ -269,15 +304,91 @@ type reloadResult struct {
 	Restarted bool `json:"restarted"`
 }
 
+// pushSecretsToAgent runs the bind-time delivery of the latest secret
+// snapshot for a workspace. Two side-effects are intentional and ordered:
+//
+//  1. EnsureSecretsManifest writes/updates the per-workspace K8s Secret
+//     `workspace-secrets-<id>` that the pod's init container reads at
+//     start time. This MUST run unconditionally, including when there
+//     is no live pod yet, because the pod has not yet been created
+//     when a freshly-spawned workspace receives its first bind. Without
+//     this write the next pod-create would mount nothing.
+//  2. doReload pushes the same payload to the live agentd over HTTP so
+//     pods that are already running see the change without a restart.
+//     This step is skipped when there are no bindings to push (the
+//     empty-array short-circuit) or when the resolver reports no
+//     running pod.
+//
+// Both steps are best-effort: the bind itself has already committed to
+// Postgres before this function is called, the user gets 204, and any
+// transient failure here is recoverable on the next bind or pod start.
+// Failures are surfaced to operators via Warn-level logs (Bug 2 in
+// worklog 0085) rather than silently swallowed.
 func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID string) {
 	_, sessionID := extractAuth(c)
-	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
-	if err != nil || len(secretsJSON) <= 2 {
+	ctx := c.Request.Context()
+
+	secretsJSON, err := h.svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	if err != nil {
+		h.warn("PrepareSecretsForInjection failed",
+			"workspaceID", workspaceID, "error", err.Error())
 		return
 	}
 
-	_, _ = h.doReload(c.Request.Context(), userID, workspaceID, secretsJSON)
+	// Step 1: durable manifest. secretsJSON is `[]` when no bindings
+	// exist; the writer accepts that and effectively clears the
+	// workspace's secret state on the next pod start. Run regardless
+	// of whether a pod is currently running — this is the only path
+	// that seeds the K8s Secret a future pod will mount.
+	if h.manifestWriter != nil {
+		if werr := h.manifestWriter.EnsureSecretsManifest(ctx, workspaceID, secretsJSON); werr != nil {
+			h.warn("EnsureSecretsManifest failed",
+				"workspaceID", workspaceID, "error", werr.Error())
+		}
+	}
+
+	// Step 2: live HTTP push. Skip when there is nothing to send (the
+	// agent already has nothing) or when the workspace has no live pod
+	// (the manifest write in step 1 is sufficient — the next pod start
+	// will mount it).
+	if len(secretsJSON) <= 2 {
+		return
+	}
+	if _, derr := h.doReload(ctx, userID, workspaceID, secretsJSON); derr != nil {
+		// errNoRunningPod is the expected case when the workspace has
+		// not been activated yet; downgrade to Info so it does not
+		// pollute Warn-level dashboards. Everything else is a real
+		// failure operators need to see.
+		if derr == errNoRunningPod {
+			h.info("reload-secrets skipped: no running pod",
+				"workspaceID", workspaceID)
+			return
+		}
+		h.warn("reload-secrets push to agent failed",
+			"workspaceID", workspaceID, "error", derr.Error())
+	}
 }
+
+func (h *SecretsHandler) warn(msg string, fields ...interface{}) {
+	if h.logger != nil {
+		h.logger.Warn(msg, fields...)
+	}
+}
+
+func (h *SecretsHandler) info(msg string, fields ...interface{}) {
+	if h.logger != nil {
+		h.logger.Info(msg, fields...)
+	}
+}
+
+// reloadHTTPClient is the bounded-timeout client used for the live
+// HTTP push to in-pod agentd. Without an explicit timeout, http.Post
+// inherits no deadline and a slow or hung agent could block the bind
+// handler indefinitely; the handler itself is invoked from a Gin
+// request goroutine that holds an open client connection. 5s covers a
+// healthy agent (sub-100ms in practice) with margin for transient
+// network jitter.
+var reloadHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID string, secretsJSON []byte) (*reloadResult, error) {
 	if h.podIPResolver == nil {
@@ -289,7 +400,12 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 	}
 
 	agentdURL := fmt.Sprintf("http://%s:4097/v1/reload-secrets", podIP)
-	resp, err := http.Post(agentdURL, "application/json", bytes.NewReader(secretsJSON))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, agentdURL, bytes.NewReader(secretsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("build reload request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := reloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach workspace agent: %w", err)
 	}
