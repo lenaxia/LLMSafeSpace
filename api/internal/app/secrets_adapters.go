@@ -309,14 +309,21 @@ func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ se
 type duplicateErr struct{ name string }
 
 func (e *duplicateErr) Error() string { return "duplicate secret: " + e.name }
+func (e *duplicateErr) Unwrap() error { return secrets.ErrDuplicateSecret }
 
 type notFoundErr struct{ id string }
 
 func (e *notFoundErr) Error() string { return "not found: " + e.id }
+func (e *notFoundErr) Unwrap() error { return secrets.ErrSecretNotFound }
 
 func generateID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	// crypto/rand.Read is documented to never fail on Linux/macOS in
+	// practice, but if entropy is somehow unavailable we'd produce
+	// id collisions. Panic rather than silently degrading.
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("generateID: crypto/rand.Read failed: %v", err))
+	}
 	return fmt.Sprintf("%x", b)
 }
 
