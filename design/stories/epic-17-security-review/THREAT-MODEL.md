@@ -325,7 +325,7 @@ All gaps below have been verified against the codebase. Each entry cites exact f
 
 | Component | Spoofing | Tampering | Repudiation | Info Disclosure | DoS | Elevation |
 |-----------|----------|-----------|-------------|-----------------|-----|-----------|
-| **API Auth** | JWT forgery (mitigated: signing key + HMAC-only check); API key theft | Token replay (G18 fixed: dual-key revocation enforced) | No audit of failed auth (GAP) | Error messages leak user existence (fixed) | Account lockout abuse (G13) | First-user-admin (G8) |
+| **API Auth** | JWT forgery (mitigated: signing key + HMAC-only check); API key theft | Token replay (G18 dormant: RevokeToken correct but `/auth/logout` does not call it — RT-4.13) | No audit of failed auth (GAP) | Login timing exposes registered emails (G27); secret values logged unredacted (G25) | Account lockout abuse (G13) | First-user-admin (G8) |
 | **Proxy** | Workspace ID spoofing (mitigated: ownership check) | Response tampering (mitigated: same-cluster network — G4 if MITM) | No per-request audit trail | Credential leak in responses (mitigated: redaction read-path only) | Connection exhaustion (mitigated: limits) | N/A |
 | **Controller** | SA token theft (mitigated: bound tokens) | CRD manipulation (mitigated: webhooks) | Controller actions not individually audited | Secret read access (G5) | CRD spam (mitigated: quotas) | Cluster-wide SA (G5) |
 | **Sandbox Pod** | N/A (no auth within pod) | PVC data corruption | No file-level audit | Credential in env/files (G3, G15); G2/G20 fixed (atomic 0600 writes); G17 fixed (no SA token automount) | Resource exhaustion (mitigated: limits) | Container escape (mitigated: seccomp, caps; G1 unmitigated) |
