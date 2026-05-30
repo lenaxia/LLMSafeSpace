@@ -1,0 +1,44 @@
+# Phase 0 / Epic 17 pentest — pinned tool versions.
+#
+# Format: <name> <version> <install-hint>
+#
+# Why pin versions: pentest findings must reproduce. A new kube-hunter
+# release that adds a check would silently turn "no findings" into
+# "real findings" without anything in our codebase changing. By pinning
+# we make any tool-version change a deliberate decision recorded in this
+# file.
+#
+# Sha256 sums are NOT pinned in this file because the upstream release
+# pages publish them and rotating them belongs to a separate operator
+# task. The expectation: install scripts in this directory verify
+# downloaded artefacts against the upstream-published sha256.
+#
+# Bumps to this file MUST be accompanied by a worklog entry justifying
+# the change.
+
+# Cluster runtime (already on operator's box; check version)
+kind                  0.23.0     https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+kubectl               1.29.6     https://dl.k8s.io/release/v1.29.6/bin/linux/amd64/kubectl
+helm                  3.13.3     https://get.helm.sh/helm-v3.13.3-linux-amd64.tar.gz
+
+# CNI for NetworkPolicy enforcement (RT-0.1, G16 validation)
+cilium-cli            0.16.13    https://github.com/cilium/cilium-cli/releases/download/v0.16.13/cilium-linux-amd64.tar.gz
+cilium-image          1.15.6     # docker image: quay.io/cilium/cilium:v1.15.6
+
+# Pentest tooling (Phase 1+)
+kube-hunter           0.6.8      pip install kube-hunter==0.6.8
+trivy                 0.55.0     https://github.com/aquasecurity/trivy/releases/download/v0.55.0/trivy_0.55.0_Linux-64bit.tar.gz
+grype                 0.79.6     https://github.com/anchore/grype/releases/download/v0.79.6/grype_0.79.6_linux_amd64.tar.gz
+syft                  1.10.0     https://github.com/anchore/syft/releases/download/v1.10.0/syft_1.10.0_linux_amd64.tar.gz
+cosign                2.4.0      https://github.com/sigstore/cosign/releases/download/v2.4.0/cosign-linux-amd64
+nuclei                3.3.0      https://github.com/projectdiscovery/nuclei/releases/download/v3.3.0/nuclei_3.3.0_linux_amd64.zip
+ffuf                  2.1.0      https://github.com/ffuf/ffuf/releases/download/v2.1.0/ffuf_2.1.0_linux_amd64.tar.gz
+kubeaudit             0.22.2     https://github.com/Shopify/kubeaudit/releases/download/v0.22.2/kubeaudit_0.22.2_linux_amd64.tar.gz
+
+# Frontend XSS fuzzing (RT-7.9)
+playwright-image      1.45.0     # docker image: mcr.microsoft.com/playwright:v1.45.0
+
+# Utility tools (versions are floors, not pins; any modern version works)
+jq                    1.6+
+curl                  any
+python3               3.10+

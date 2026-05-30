@@ -1,0 +1,65 @@
+# Kubernetes audit policy for Epic 17 Phase 0 / pentest baseline.
+#
+# Pentest hypothesis: any escape from a sandbox pod that touches the K8s
+# API will produce a Request-or-RequestResponse audit event. The pentest
+# uses the audit log as ground truth for "did the attack reach the API?".
+#
+# Levels:
+#   None          - drop the event entirely
+#   Metadata      - log who/what/when, no body
+#   Request       - log request body (no response body)
+#   RequestResponse - log both
+#
+# We use Metadata as the floor for everything (so we can prove negatives:
+# "no audit entry exists for this pod's SA → it never called the API")
+# and escalate to Request/RequestResponse for security-relevant verbs.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  # Don't log the request-received stage; it doubles event volume and
+  # the response-complete stage carries the same info.
+  - "RequestReceived"
+rules:
+  # 1. Pentest-priority: any access to Secrets, ServiceAccounts, or
+  #    pods/exec by anything OTHER than system components.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["secrets", "serviceaccounts/token", "pods/exec", "pods/portforward", "pods/attach"]
+    omitManagedFields: true
+
+  # 2. Network policy and RBAC changes — escalations that should never
+  #    originate from a workspace pod.
+  - level: RequestResponse
+    resources:
+      - group: "networking.k8s.io"
+        resources: ["networkpolicies"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["*"]
+
+  # 3. Workspace and RuntimeEnvironment CRDs — the LLMSafeSpace
+  #    surface area. Track every mutation.
+  - level: Request
+    resources:
+      - group: "llmsafespace.dev"
+        resources: ["*"]
+
+  # 4. Drop noisy system reads from controller managers, kubelets, and
+  #    schedulers; otherwise the log fills with watch heartbeats and
+  #    real signal is hard to find.
+  - level: None
+    users:
+      - "system:kube-controller-manager"
+      - "system:kube-scheduler"
+      - "system:kube-proxy"
+      - "system:apiserver"
+    verbs: ["get", "list", "watch"]
+
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # 5. Default: Metadata for every other request. Floor coverage so
+  #    "no audit entry" really means no API call happened.
+  - level: Metadata
+    omitManagedFields: true
