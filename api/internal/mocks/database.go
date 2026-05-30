@@ -115,10 +115,6 @@ func (m *MockDatabaseService) ListWorkspaces(ctx context.Context, userID string,
 	return workspaces, pagination, args.Error(2)
 }
 
-func (m *MockDatabaseService) SyncWorkspacePhase(ctx context.Context, workspaceID, phase, pvcState string) {
-	m.Called(ctx, workspaceID, phase, pvcState)
-}
-
 func (m *MockDatabaseService) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) {
 	m.Called(ctx, workspaceID)
 }

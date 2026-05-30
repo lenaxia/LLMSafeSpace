@@ -340,6 +340,12 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *v1.
 	}
 	workspace.Status.Phase = v1.WorkspacePhaseCreating
 	workspace.Status.SuspendedAt = nil
+	// Reset idle clock: the workspace was idle before suspension, but the
+	// resume action itself counts as user activity. Without this, handleActive
+	// would compare LastActivityAt (pre-suspend) against now and immediately
+	// re-suspend the workspace.
+	now := metav1.Now()
+	workspace.Status.LastActivityAt = &now
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)
 }
 

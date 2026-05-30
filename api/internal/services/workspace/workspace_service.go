@@ -41,29 +41,6 @@ type Service struct {
 	config           *Config
 }
 
-func (s *Service) syncPhase(workspaceID string, phase v1.WorkspacePhase) {
-	if phase == "" || workspaceID == "" {
-		return
-	}
-	pvcState := v1.PVCStateNone
-	switch phase {
-	case v1.WorkspacePhaseActive, v1.WorkspacePhaseCreating, v1.WorkspacePhaseResuming:
-		pvcState = v1.PVCStateCluster
-	case v1.WorkspacePhaseSuspended, v1.WorkspacePhaseSuspending:
-		pvcState = v1.PVCStateCluster
-	case v1.WorkspacePhaseTerminating, v1.WorkspacePhaseTerminated, v1.WorkspacePhaseFailed:
-		pvcState = v1.PVCStateNone
-	}
-	db := s.dbService
-	if db == nil {
-		return
-	}
-	go func() {
-		defer func() { recover() }()
-		db.SyncWorkspacePhase(context.Background(), workspaceID, string(phase), string(pvcState))
-	}()
-}
-
 func (s *Service) markDeleted(workspaceID string) {
 	db := s.dbService
 	if db == nil {
@@ -216,8 +193,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
-	s.syncPhase(created.Name, created.Status.Phase)
-
 	// Auto-provision default credentials if enabled
 
 	ws := &types.Workspace{
@@ -275,14 +250,12 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 		UserID:      meta.UserID,
 		Runtime:     meta.Runtime,
 		StorageSize: meta.StorageSize,
-		Phase:       meta.Phase,
 		CreatedAt:   meta.CreatedAt,
 		UpdatedAt:   meta.UpdatedAt,
 	}
 	if crd != nil {
 		ws.Phase = string(crd.Status.Phase)
 		ws.PVCName = crd.Status.PVCName
-		s.syncPhase(workspaceID, crd.Status.Phase)
 	}
 
 	return ws, nil
@@ -308,6 +281,13 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 		return nil, apierrors.NewInternalError("workspace_list_failed", err)
 	}
 
+	// Phase is owned by the Workspace CRD; the DB only stores immutable
+	// metadata. We enrich the list with phase via a single label-scoped LIST.
+	// On k8s error the items are returned with empty phase; the platform is
+	// already unusable in that scenario (every other operation hits the
+	// kube-apiserver too) so there's nothing meaningful to fall back to.
+	phaseByID := s.fetchUserWorkspacePhases(ctx, userID)
+
 	items := make([]types.WorkspaceListItem, 0, len(metas))
 	for _, m := range metas {
 		items = append(items, types.WorkspaceListItem{
@@ -316,13 +296,37 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			UserID:      m.UserID,
 			Runtime:     m.Runtime,
 			StorageSize: m.StorageSize,
-			Phase:       m.Phase,
+			Phase:       phaseByID[m.ID],
 			CreatedAt:   m.CreatedAt,
 			UpdatedAt:   m.UpdatedAt,
 		})
 	}
 
 	return &types.WorkspaceListResult{Items: items, Pagination: pagination}, nil
+}
+
+// fetchUserWorkspacePhases returns id -> phase for the user's workspaces by
+// listing CRDs filtered with the user-id label. Returns nil on k8s error so
+// callers degrade gracefully (empty phase is propagated to the API response).
+// A nil map is safe to read from in Go.
+func (s *Service) fetchUserWorkspacePhases(ctx context.Context, userID string) map[string]string {
+	if s.k8sClient == nil || userID == "" {
+		return nil
+	}
+	list, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).List(metav1.ListOptions{
+		LabelSelector: "user-id=" + userID,
+	})
+	if err != nil {
+		s.logger.Warn("Failed to list workspaces from CRDs for phase enrichment",
+			"userID", userID, "error", err.Error())
+		return nil
+	}
+	out := make(map[string]string, len(list.Items))
+	for i := range list.Items {
+		w := &list.Items[i]
+		out[w.Name] = string(w.Status.Phase)
+	}
+	return out
 }
 
 // DeleteWorkspace marks a workspace as terminating and deletes the CRD.
@@ -368,7 +372,6 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 	}
 
 	if crd.Status.Phase == v1.WorkspacePhaseSuspended || crd.Status.Phase == v1.WorkspacePhaseSuspending {
-		s.syncPhase(workspaceID, crd.Status.Phase)
 		return nil
 	}
 
@@ -385,8 +388,6 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		s.logger.Error("Failed to update workspace status to Suspending", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_suspend_failed", err)
 	}
-
-	s.syncPhase(workspaceID, v1.WorkspacePhaseSuspending)
 
 	s.logger.Info("Workspace suspend initiated", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -411,7 +412,6 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	}
 
 	if isActivePhase(crd.Status.Phase) {
-		s.syncPhase(workspaceID, crd.Status.Phase)
 		return nil
 	}
 
@@ -424,12 +424,16 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	}
 
 	crd.Status.Phase = v1.WorkspacePhaseResuming
+	// Reset idle clock so the controller's handleActive does not immediately
+	// re-suspend the workspace using a stale pre-suspension activity time.
+	// The controller's handleResuming also resets this; mirroring it here is
+	// belt-and-suspenders against unfavorable reconcile orderings.
+	now := metav1.Now()
+	crd.Status.LastActivityAt = &now
 	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
 		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_resume_failed", err)
 	}
-
-	s.syncPhase(workspaceID, v1.WorkspacePhaseResuming)
 
 	s.logger.Info("Workspace resume initiated", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -487,8 +491,6 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	}
 	result.DiskUsedBytes = crd.Status.DiskUsedBytes
 	result.DiskTotalBytes = crd.Status.DiskTotalBytes
-
-	s.syncPhase(workspaceID, crd.Status.Phase)
 
 	return result, nil
 }
@@ -684,7 +686,6 @@ func (s *Service) waitForWorkspaceActive(ctx context.Context, workspaceID string
 			return "", apierrors.NewInternalError("workspace_get_failed", err)
 		}
 		if crd.Status.Phase == v1.WorkspacePhaseActive && crd.Status.PodIP != "" {
-			s.syncPhase(workspaceID, crd.Status.Phase)
 			return crd.Status.PodIP, nil
 		}
 		if crd.Status.Phase == v1.WorkspacePhaseFailed || crd.Status.Phase == v1.WorkspacePhaseTerminated {

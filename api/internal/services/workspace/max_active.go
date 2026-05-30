@@ -6,7 +6,6 @@ import (
 	"sort"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -35,27 +34,26 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 		return "", nil
 	}
 
-	// List user's workspaces to find active ones
+	// List user's workspaces (DB rows for ordering by UpdatedAt) and fetch
+	// the live phase from CRDs. Phase is owned by the CRD; the DB no longer
+	// caches it.
 	result, _, err := s.dbService.ListWorkspaces(ctx, userID, 100, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to list workspaces for enforcement: %w", err)
 	}
+
+	phaseByID := s.fetchUserWorkspacePhases(ctx, userID)
 
 	var active []*types.WorkspaceMetadata
 	for _, ws := range result {
 		if ws.ID == targetWorkspaceID {
 			continue
 		}
-		if ws.Phase == "Running" || ws.Phase == "Active" {
+		if isActivePhase(v1.WorkspacePhase(phaseByID[ws.ID])) {
 			active = append(active, ws)
 		}
 	}
 
-	if len(active) < maxActive {
-		return "", nil
-	}
-
-	active = s.verifyActivePhases(ctx, active)
 	if len(active) < maxActive {
 		return "", nil
 	}
@@ -137,24 +135,4 @@ func parseStorageSize(s string) int64 {
 
 func isActivePhase(p v1.WorkspacePhase) bool {
 	return p == v1.WorkspacePhaseActive || p == v1.WorkspacePhaseCreating || p == v1.WorkspacePhaseResuming
-}
-
-func (s *Service) verifyActivePhases(ctx context.Context, candidates []*types.WorkspaceMetadata) []*types.WorkspaceMetadata {
-	if s.k8sClient == nil {
-		return candidates
-	}
-	var verified []*types.WorkspaceMetadata
-	for _, ws := range candidates {
-		crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(ws.ID, metav1.GetOptions{})
-		if err != nil {
-			verified = append(verified, ws)
-			continue
-		}
-		if isActivePhase(crd.Status.Phase) {
-			verified = append(verified, ws)
-		} else {
-			s.syncPhase(ws.ID, crd.Status.Phase)
-		}
-	}
-	return verified
 }

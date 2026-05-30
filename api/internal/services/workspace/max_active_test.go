@@ -60,9 +60,16 @@ func TestEnforceMaxActive_BelowCap_NoSuspension(t *testing.T) {
 		logger:           &testLogger{},
 		instanceSettings: instanceSvc,
 		dbService: &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-			{ID: "ws-1", Phase: "Running", UpdatedAt: time.Now().Add(-1 * time.Hour)},
-			{ID: "ws-2", Phase: "Running", UpdatedAt: time.Now()},
+			{ID: "ws-1", UpdatedAt: time.Now().Add(-1 * time.Hour)},
+			{ID: "ws-2", UpdatedAt: time.Now()},
 		}},
+		k8sClient: &mockK8sForMaxActive{
+			workspaces: map[string]*v1.Workspace{
+				"ws-1": {ObjectMeta: metav1.ObjectMeta{Name: "ws-1"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+				"ws-2": {ObjectMeta: metav1.ObjectMeta{Name: "ws-2"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+			},
+		},
+		config: &Config{Namespace: "default"},
 	}
 
 	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
@@ -83,8 +90,8 @@ func TestEnforceMaxActive_AtCap_SuspendsStalest(t *testing.T) {
 
 	now := time.Now()
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-		{ID: "ws-old", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-2 * time.Hour)},
-		{ID: "ws-new", UserID: "user-1", Phase: "Running", UpdatedAt: now},
+		{ID: "ws-old", UserID: "user-1", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-new", UserID: "user-1", UpdatedAt: now},
 	}}
 
 	k8sMock := &mockK8sForMaxActive{
@@ -142,13 +149,19 @@ func TestEnforceMaxActive_ExcludesTarget(t *testing.T) {
 	now := time.Now()
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
 		// The target workspace is Running — should be excluded from count
-		{ID: "ws-target", Phase: "Running", UpdatedAt: now},
+		{ID: "ws-target", UpdatedAt: now},
 	}}
 
 	svc := &Service{
 		logger:           &testLogger{},
 		instanceSettings: instanceSvc,
 		dbService:        db,
+		k8sClient: &mockK8sForMaxActive{
+			workspaces: map[string]*v1.Workspace{
+				"ws-target": {ObjectMeta: metav1.ObjectMeta{Name: "ws-target"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+			},
+		},
+		config: &Config{Namespace: "default"},
 	}
 
 	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
@@ -169,15 +182,23 @@ func TestEnforceMaxActive_SuspendedWorkspacesNotCounted(t *testing.T) {
 
 	now := time.Now()
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-		{ID: "ws-1", Phase: "Running", UpdatedAt: now},
-		{ID: "ws-2", Phase: "Suspended", UpdatedAt: now.Add(-1 * time.Hour)},
-		{ID: "ws-3", Phase: "Terminated", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-1", UpdatedAt: now},
+		{ID: "ws-2", UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "ws-3", UpdatedAt: now.Add(-2 * time.Hour)},
 	}}
 
 	svc := &Service{
 		logger:           &testLogger{},
 		instanceSettings: instanceSvc,
 		dbService:        db,
+		k8sClient: &mockK8sForMaxActive{
+			workspaces: map[string]*v1.Workspace{
+				"ws-1": {ObjectMeta: metav1.ObjectMeta{Name: "ws-1"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+				"ws-2": {ObjectMeta: metav1.ObjectMeta{Name: "ws-2"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended}},
+				"ws-3": {ObjectMeta: metav1.ObjectMeta{Name: "ws-3"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseTerminated}},
+			},
+		},
+		config: &Config{Namespace: "default"},
 	}
 
 	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
@@ -199,8 +220,8 @@ func TestEnforceMaxActive_StaleDBPhase_SkipsAlreadySuspended(t *testing.T) {
 
 	now := time.Now()
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-		{ID: "ws-stale", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-2 * time.Hour)},
-		{ID: "ws-real", UserID: "user-1", Phase: "Running", UpdatedAt: now},
+		{ID: "ws-stale", UserID: "user-1", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-real", UserID: "user-1", UpdatedAt: now},
 	}}
 
 	k8sMock := &mockK8sForMaxActive{
@@ -242,8 +263,8 @@ func TestEnforceMaxActive_StaleDBPhase_AllStale_NoSuspension(t *testing.T) {
 
 	now := time.Now()
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-		{ID: "ws-stale-1", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-2 * time.Hour)},
-		{ID: "ws-stale-2", UserID: "user-1", Phase: "Active", UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "ws-stale-1", UserID: "user-1", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-stale-2", UserID: "user-1", UpdatedAt: now.Add(-1 * time.Hour)},
 	}}
 
 	k8sMock := &mockK8sForMaxActive{
@@ -284,10 +305,13 @@ func TestEnforceMaxActive_StaleDBPhase_Mixed_SuspendsCorrectStalest(t *testing.T
 	instanceSvc := settings.NewInstanceService(store, nil)
 
 	now := time.Now()
+	// DB rows no longer carry phase (column dropped in migration 9). The
+	// function must rely entirely on the CRD list to determine which
+	// workspaces are actually active.
 	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
-		{ID: "ws-stale", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-3 * time.Hour)},
-		{ID: "ws-real-1", UserID: "user-1", Phase: "Running", UpdatedAt: now.Add(-1 * time.Hour)},
-		{ID: "ws-real-2", UserID: "user-1", Phase: "Active", UpdatedAt: now},
+		{ID: "ws-stale", UserID: "user-1", UpdatedAt: now.Add(-3 * time.Hour)},
+		{ID: "ws-real-1", UserID: "user-1", UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "ws-real-2", UserID: "user-1", UpdatedAt: now},
 	}}
 
 	k8sMock := &mockK8sForMaxActive{
@@ -343,15 +367,6 @@ func (m *mockDBForMaxActive) GetWorkspace(_ context.Context, workspaceID string)
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *mockDBForMaxActive) SyncWorkspacePhase(_ context.Context, workspaceID, phase, _ string) {
-	for _, ws := range m.workspaces {
-		if ws.ID == workspaceID {
-			ws.Phase = phase
-			return
-		}
-	}
-}
-
 // mockK8sForMaxActive satisfies the k8s client interface for suspend calls.
 type mockK8sForMaxActive struct {
 	pkginterfaces.KubernetesClient
@@ -381,6 +396,14 @@ func (m *mockWSInterfaceForMaxActive) Get(name string, _ metav1.GetOptions) (*v1
 		return ws, nil
 	}
 	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockWSInterfaceForMaxActive) List(_ metav1.ListOptions) (*v1.WorkspaceList, error) {
+	out := &v1.WorkspaceList{}
+	for _, ws := range m.workspaces {
+		out.Items = append(out.Items, *ws)
+	}
+	return out, nil
 }
 
 func (m *mockWSInterfaceForMaxActive) UpdateStatus(ws *v1.Workspace) (*v1.Workspace, error) {
