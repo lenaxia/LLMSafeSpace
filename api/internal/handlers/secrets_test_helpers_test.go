@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -121,7 +122,7 @@ func (m *testSecretStore) CreateSecret(_ context.Context, secret *secrets.UserSe
 	defer m.mu.Unlock()
 	for _, s := range m.secrets {
 		if s.UserID == secret.UserID && s.Name == secret.Name {
-			return errors.New("duplicate secret: " + secret.Name)
+			return fmt.Errorf("%w: %s", secrets.ErrDuplicateSecret, secret.Name)
 		}
 	}
 	if secret.ID == "" {

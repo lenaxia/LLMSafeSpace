@@ -32,8 +32,8 @@ func NewSecretService(keys *KeyService, store SecretStore) *SecretService {
 // CreateSecret encrypts and stores a new secret.
 func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID string, req CreateSecretRequest) (*SecretResponse, error) {
 	if !ValidSecretTypes[req.Type] {
-		return nil, fmt.Errorf("invalid secret type: %s (valid: %s)",
-			req.Type, formatSecretTypes(ValidSecretTypesList()))
+		return nil, fmt.Errorf("%w: %s (valid: %s)",
+			ErrInvalidSecretType, req.Type, formatSecretTypes(ValidSecretTypesList()))
 	}
 
 	if err := validateMetadata(req.Type, req.Metadata); err != nil {
@@ -42,7 +42,7 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("encryption unavailable: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
 
 	ciphertext, err := EncryptSecret(dek, []byte(req.Value))
@@ -114,7 +114,7 @@ func (s *SecretService) GetSecret(ctx context.Context, userID, secretID string) 
 		return nil, err
 	}
 	if secret == nil {
-		return nil, errors.New("secret not found")
+		return nil, ErrSecretNotFound
 	}
 	return &SecretResponse{
 		ID:        secret.ID,
@@ -153,12 +153,12 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID, sec
 		return err
 	}
 	if secret == nil {
-		return errors.New("secret not found")
+		return ErrSecretNotFound
 	}
 
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("encryption unavailable: %w", err)
+		return fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
 
 	ciphertext, err := EncryptSecret(dek, []byte(req.Value))
@@ -196,7 +196,7 @@ func (s *SecretService) DeleteSecret(ctx context.Context, userID, secretID strin
 		return err
 	}
 	if secret == nil {
-		return errors.New("secret not found")
+		return ErrSecretNotFound
 	}
 
 	if err := s.store.DeleteSecret(ctx, userID, secretID); err != nil {
@@ -214,12 +214,12 @@ func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionI
 		return nil, err
 	}
 	if secret == nil {
-		return nil, errors.New("secret not found")
+		return nil, ErrSecretNotFound
 	}
 
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("encryption unavailable: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
 
 	plaintext, err := DecryptSecret(dek, secret.Ciphertext)
@@ -240,7 +240,7 @@ func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID str
 			return err
 		}
 		if secret == nil {
-			return fmt.Errorf("secret %s not found", sid)
+			return fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
 		}
 	}
 
@@ -294,10 +294,18 @@ func (s *SecretService) GetBindings(ctx context.Context, userID, workspaceID str
 }
 
 // GetBindingsForSecret returns workspace IDs that a secret is bound to.
+//
+// Ownership-failure modes (secret not found, secret owned by someone
+// else) are conflated to a uniform empty result so the response shape
+// does not leak existence cross-tenant. Genuine system errors (DB
+// outage on the lookup) propagate so the handler can return 5xx
+// instead of a misleading empty 200.
 func (s *SecretService) GetBindingsForSecret(ctx context.Context, userID, secretID string) ([]string, error) {
-	// Verify ownership
 	secret, err := s.store.GetSecret(ctx, userID, secretID)
-	if err != nil || secret == nil {
+	if err != nil {
+		return nil, fmt.Errorf("get secret for ownership check: %w", err)
+	}
+	if secret == nil {
 		return nil, nil
 	}
 	return s.store.GetBindingsForSecret(ctx, secretID)
@@ -327,34 +335,36 @@ func (s *SecretService) audit(ctx context.Context, userID, action string, secret
 }
 
 // validateMetadata validates type-specific metadata requirements.
+// Errors wrap ErrInvalidMetadata so callers can use errors.Is to map
+// any failure to a 400 response (handlers/secrets.go::handleSecretError).
 func validateMetadata(secretType SecretType, metadata json.RawMessage) error {
 	if metadata == nil || string(metadata) == "{}" || string(metadata) == "null" {
 		// Metadata is optional for most types, but required for some
 		switch secretType {
 		case SecretTypeSSHKey:
-			return errors.New("ssh-key requires metadata with key_type field")
+			return fmt.Errorf("%w: ssh-key requires metadata with key_type field", ErrInvalidMetadata)
 		case SecretTypeSecretFile:
-			return errors.New("secret-file requires metadata with mount_path field")
+			return fmt.Errorf("%w: secret-file requires metadata with mount_path field", ErrInvalidMetadata)
 		case SecretTypeEnvSecret:
-			return errors.New("env-secret requires metadata with var_name field")
+			return fmt.Errorf("%w: env-secret requires metadata with var_name field", ErrInvalidMetadata)
 		}
 		return nil
 	}
 
 	var m map[string]interface{}
 	if err := json.Unmarshal(metadata, &m); err != nil {
-		return fmt.Errorf("invalid metadata JSON: %w", err)
+		return fmt.Errorf("%w: invalid metadata JSON: %v", ErrInvalidMetadata, err)
 	}
 
 	switch secretType {
 	case SecretTypeSSHKey:
 		if _, ok := m["key_type"]; !ok {
-			return errors.New("ssh-key metadata requires key_type field")
+			return fmt.Errorf("%w: ssh-key metadata requires key_type field", ErrInvalidMetadata)
 		}
 	case SecretTypeSecretFile:
 		mp, ok := m["mount_path"]
 		if !ok {
-			return errors.New("secret-file metadata requires mount_path field")
+			return fmt.Errorf("%w: secret-file metadata requires mount_path field", ErrInvalidMetadata)
 		}
 		mpStr, _ := mp.(string)
 		if err := validateMountPath(mpStr); err != nil {
@@ -362,7 +372,7 @@ func validateMetadata(secretType SecretType, metadata json.RawMessage) error {
 		}
 	case SecretTypeEnvSecret:
 		if _, ok := m["var_name"]; !ok {
-			return errors.New("env-secret metadata requires var_name field")
+			return fmt.Errorf("%w: env-secret metadata requires var_name field", ErrInvalidMetadata)
 		}
 	}
 	return nil
@@ -371,14 +381,21 @@ func validateMetadata(secretType SecretType, metadata json.RawMessage) error {
 // validateMountPath enforces the same path-traversal rules as the
 // in-pod materializer's resolveMountPath, applied at the API layer as
 // defence-in-depth (Bug 13 in worklog 0085). Rejects empty paths,
-// absolute paths, and any relative path that resolves outside its
-// (notional) base directory after Clean.
+// absolute paths, the bare base directory ("."), and any relative path
+// that resolves outside its (notional) base directory after Clean.
+//
+// All failures wrap ErrInvalidMetadata so callers can map them to a
+// 400 response without substring matching.
 func validateMountPath(mp string) error {
 	if strings.TrimSpace(mp) == "" {
-		return errors.New("mount_path is empty")
+		return fmt.Errorf("%w: mount_path is empty", ErrInvalidMetadata)
 	}
 	if filepath.IsAbs(mp) {
-		return fmt.Errorf("mount_path %q must be relative to the secrets base directory", mp)
+		return fmt.Errorf("%w: mount_path %q must be relative to the secrets base directory", ErrInvalidMetadata, mp)
+	}
+	cleaned := filepath.Clean(mp)
+	if cleaned == "." {
+		return fmt.Errorf("%w: mount_path may not name the base directory itself", ErrInvalidMetadata)
 	}
 	// Notional base must be deep enough that filepath.Rel can produce a
 	// "../" prefix when an input escapes; using "/" loses that signal
@@ -389,10 +406,10 @@ func validateMountPath(mp string) error {
 	candidate := filepath.Clean(filepath.Join(base, mp))
 	rel, err := filepath.Rel(base, candidate)
 	if err != nil {
-		return fmt.Errorf("invalid mount_path %q: %w", mp, err)
+		return fmt.Errorf("%w: invalid mount_path %q: %v", ErrInvalidMetadata, mp, err)
 	}
 	if rel == "." || strings.HasPrefix(rel, "..") {
-		return fmt.Errorf("mount_path %q escapes secrets base directory", mp)
+		return fmt.Errorf("%w: mount_path %q escapes secrets base directory", ErrInvalidMetadata, mp)
 	}
 	return nil
 }

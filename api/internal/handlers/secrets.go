@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -606,7 +608,7 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 
 	newVersion, err := h.keySvc.RotateKeyWithPassword(c.Request.Context(), userID, []byte(req.Password), sessionID, 24*time.Hour)
 	if err != nil {
-		if contains(err.Error(), "invalid password") {
+		if strings.Contains(err.Error(), "invalid password") {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid password"})
 			return
 		}
@@ -639,7 +641,7 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if err := h.keySvc.ChangePassword(c.Request.Context(), userID, []byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
-		if contains(err.Error(), "unwrap DEK") || contains(err.Error(), "invalid") {
+		if strings.Contains(err.Error(), "unwrap DEK") || strings.Contains(err.Error(), "invalid") {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid current password"})
 			return
 		}
@@ -690,47 +692,40 @@ func (h *RotateKeyHandler) RecoverAccount(c *gin.Context) {
 }
 
 // extractAuth gets userID and sessionID (jti) from the Gin context.
+// Both values are type-asserted with the comma-ok form so a malformed
+// context (e.g. middleware put a non-string under the key) produces an
+// empty result rather than a goroutine panic that takes down the
+// request. Empty userID is treated as unauthenticated by every caller.
 func extractAuth(c *gin.Context) (userID, sessionID string) {
-	uid, exists := c.Get("userID")
-	if !exists {
-		return "", ""
+	if uid, exists := c.Get("userID"); exists {
+		if s, ok := uid.(string); ok {
+			userID = s
+		}
 	}
-	userID = uid.(string)
-
-	// sessionID is the JWT's jti claim, set by auth middleware
-	sid, exists := c.Get("sessionID")
-	if exists {
-		sessionID = sid.(string)
+	if sid, exists := c.Get("sessionID"); exists {
+		if s, ok := sid.(string); ok {
+			sessionID = s
+		}
 	}
 	return userID, sessionID
 }
 
-// handleSecretError maps domain errors to HTTP responses.
+// handleSecretError maps domain errors to HTTP responses using
+// errors.Is rather than substring matching. The string-matching
+// predecessor was fragile to upstream wrap text and silently
+// mis-routed any future error containing the words "requires" /
+// "not found" / "duplicate". Sentinels live in pkg/secrets/errors.go.
 func handleSecretError(c *gin.Context, err error) {
-	msg := err.Error()
 	switch {
-	case contains(msg, "not found"):
+	case errors.Is(err, secrets.ErrSecretNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "secret not found"})
-	case contains(msg, "duplicate"):
+	case errors.Is(err, secrets.ErrDuplicateSecret):
 		c.JSON(http.StatusConflict, gin.H{"error": "secret with this name already exists"})
-	case contains(msg, "unavailable"):
+	case errors.Is(err, secrets.ErrDEKUnavailable):
 		c.JSON(http.StatusForbidden, gin.H{"error": "encryption key not available; re-authenticate"})
-	case contains(msg, "invalid secret type"), contains(msg, "requires metadata"), contains(msg, "requires"):
-		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+	case errors.Is(err, secrets.ErrInvalidSecretType), errors.Is(err, secrets.ErrInvalidMetadata):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

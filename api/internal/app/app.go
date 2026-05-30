@@ -331,8 +331,13 @@ func loadCredentialKeySet(cfg *config.Config) *credentials.EncryptionKeySet {
 		}
 	}
 	// Fallback: generate a random key (development only — not persisted across restarts).
+	// rand.Read failure is fatal: a zero-byte key would leak every
+	// credential it wraps. We panic at startup rather than serve traffic
+	// with broken crypto.
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed during credential key fallback: %v", err))
+	}
 	return &credentials.EncryptionKeySet{
 		Keys: []credentials.EncryptionKey{{Version: 1, Key: key}},
 	}

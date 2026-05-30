@@ -297,7 +297,7 @@ type memSecretStore struct {
 func (m *memSecretStore) CreateSecret(_ context.Context, s *secrets.UserSecret) error {
 	for _, ex := range m.secrets {
 		if ex.UserID == s.UserID && ex.Name == s.Name {
-			return fmt.Errorf("duplicate secret: %s", s.Name)
+			return fmt.Errorf("%w: %s", secrets.ErrDuplicateSecret, s.Name)
 		}
 	}
 	m.counter++
@@ -363,7 +363,7 @@ func (m *memSecretStore) ReEncryptUserSecrets(ctx context.Context, userID string
 func (m *memSecretStore) DeleteSecret(_ context.Context, uid, id string) error {
 	s := m.secrets[id]
 	if s == nil || s.UserID != uid {
-		return fmt.Errorf("not found: %s", id)
+		return fmt.Errorf("%w: %s", secrets.ErrSecretNotFound, id)
 	}
 	delete(m.secrets, id)
 	return nil

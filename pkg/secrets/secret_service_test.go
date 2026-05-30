@@ -195,13 +195,19 @@ func (m *mockSecretStore) QueryAudit(_ context.Context, userID string, _ AuditQu
 	return result, nil
 }
 
+// duplicateError wraps the package's ErrDuplicateSecret sentinel so
+// errors.Is on the result of mockSecretStore.CreateSecret correctly
+// classifies the error in handler tests. Without the Unwrap method,
+// the handler's errors.Is(err, ErrDuplicateSecret) would not match.
 type duplicateError struct{ name string }
 
 func (e *duplicateError) Error() string { return "duplicate secret: " + e.name }
+func (e *duplicateError) Unwrap() error { return ErrDuplicateSecret }
 
 type notFoundError struct{ id string }
 
 func (e *notFoundError) Error() string { return "not found: " + e.id }
+func (e *notFoundError) Unwrap() error { return ErrSecretNotFound }
 
 // --- Helper to set up a test SecretService with unlocked DEK ---
 

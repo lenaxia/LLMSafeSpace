@@ -28,7 +28,17 @@ func (s *PgSecretStore) CreateSecret(ctx context.Context, secret *UserSecret) er
 		 RETURNING id, created_at, updated_at`,
 		secret.UserID, secret.Name, secret.Type, secret.Ciphertext, secret.KeyVersion, secret.Metadata)
 
-	return row.Scan(&secret.ID, &secret.CreatedAt, &secret.UpdatedAt)
+	if err := row.Scan(&secret.ID, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
+		// 23505 = unique_violation. Wrap as ErrDuplicateSecret so the
+		// handler can map to 409 via errors.Is rather than substring
+		// matching on the pg error message.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return fmt.Errorf("%w: %s", ErrDuplicateSecret, secret.Name)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *PgSecretStore) GetSecret(ctx context.Context, userID, secretID string) (*UserSecret, error) {
@@ -125,7 +135,7 @@ func txFromContext(ctx context.Context) pgx.Tx {
 // or pathological account from holding the rotation transaction open
 // indefinitely.
 //
-// See Bug 9 in worklog 0085 / 0086.
+// See Bug 9 in worklog 0085 / 0094.
 func (s *PgSecretStore) ReEncryptUserSecrets(
 	ctx context.Context,
 	userID string,
@@ -134,22 +144,22 @@ func (s *PgSecretStore) ReEncryptUserSecrets(
 	commit func(ctx context.Context) error,
 ) error {
 	const maxRetries = 3
-	var lastErr error
+	var err error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := s.runReEncryptTx(ctx, userID, newKeyVersion, transform, commit)
+		err = s.runReEncryptTx(ctx, userID, newKeyVersion, transform, commit)
 		if err == nil {
 			return nil
 		}
 		// pgx 5.x exposes serialization_failure as SQLSTATE "40001"; we
-		// retry transparently a small bounded number of times.
+		// retry transparently a small bounded number of times. Any
+		// other error short-circuits the loop and is returned as-is.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "40001" {
-			lastErr = err
 			continue
 		}
 		return err
 	}
-	return fmt.Errorf("rotate-key: serialization failure persisted after %d retries: %w", maxRetries, lastErr)
+	return fmt.Errorf("rotate-key: serialization failure persisted after %d retries: %w", maxRetries, err)
 }
 
 // maxRotateRows is the largest number of secrets a single rotation may
