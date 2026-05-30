@@ -111,17 +111,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		var secretService *secrets.SecretService
 		var auditStore secrets.SecretStore
 		if pgxErr != nil {
-			log.Warn("Failed to create pgxpool for secrets; using in-memory adapters", "error", pgxErr.Error())
-			memStore := &dbSecretStoreAdapter{}
-			keyService = secrets.NewKeyService(&dbKeyStoreAdapter{}, dekCache)
-			secretService = secrets.NewSecretService(keyService, memStore)
-			auditStore = memStore
-		} else {
-			pgStore := secrets.NewPgSecretStore(secretsPool)
-			keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
-			secretService = secrets.NewSecretService(keyService, pgStore)
-			auditStore = pgStore
+			// Refusing to start is the only correct response: the
+			// in-memory adapter fallback (dbSecretStoreAdapter,
+			// dbKeyStoreAdapter) is racy, unbounded in audit log
+			// growth, and loses every secret + key on restart. It
+			// existed for dev-environment convenience but in any
+			// shape resembling production it is silent data loss
+			// disguised as graceful degradation. Tests use the
+			// in-memory adapters directly via NewSecretService;
+			// production must always have pgxpool.
+			cancel()
+			return nil, fmt.Errorf("create pgxpool for secrets store: %w (refusing to fall back to in-memory; the in-memory secret/key adapters lose data on restart and are not safe for any environment that handles real user secrets)", pgxErr)
 		}
+		pgStore := secrets.NewPgSecretStore(secretsPool)
+		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
+		secretService = secrets.NewSecretService(keyService, pgStore)
+		auditStore = pgStore
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
