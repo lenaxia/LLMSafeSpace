@@ -264,3 +264,208 @@ func TestG16_PoliciesScopeToWorkspaceNamespace(t *testing.T) {
 			"NetworkPolicy %q must have an explicit namespace", metaName(p))
 	}
 }
+
+// =============================================================================
+// G26 — Datastore credentials + datastore NetworkPolicies
+// =============================================================================
+//
+// These tests guard the Critical finding from worklog 0089 (RT-4.5):
+//
+//   - postgres-password defaulted to the literal string "changeme"
+//   - redis-password defaulted to "" (Valkey reported `requirepass` empty)
+//   - No NetworkPolicy gated postgres or valkey ingress
+//
+// The chart fix has three contracts:
+//
+//   1. If the operator does not supply a postgres password, the chart
+//      auto-generates a random 32+ character one (mirrors jwtSecret).
+//      No literal "changeme" may appear in the rendered Secret.
+//   2. Same for redis-password.
+//   3. When `datastore.networkPolicy.enabled` (default true) the chart
+//      renders two NetworkPolicy objects naming `app=postgres` and
+//      `app=valkey` selectors, each with an ingress rule restricting
+//      traffic to the API + migrate-job pod selectors only.
+//
+// Each test deliberately reverses to FAIL if the contract drifts (mutation-
+// validated: revert the fix in values.yaml or the new template; the test
+// must turn red).
+
+// secretByName returns the Opaque Secret with stringData/data keys for the
+// given chart-internal secret name. The test passes empty extra-values
+// to exercise the "operator did not provide a password" code path.
+func secretByName(docs []map[string]any, name string) map[string]any {
+	for _, d := range docs {
+		if d["kind"] != "Secret" {
+			continue
+		}
+		if metaName(d) == name {
+			return d
+		}
+	}
+	return nil
+}
+
+func secretValue(t *testing.T, sec map[string]any, key string) string {
+	t.Helper()
+	if sd, ok := sec["stringData"].(map[string]any); ok {
+		if v, ok := sd[key].(string); ok {
+			return v
+		}
+	}
+	if d, ok := sec["data"].(map[string]any); ok {
+		if v, ok := d[key].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// TestG26_DefaultRender_PostgresPasswordIsGenerated proves that a fresh
+// `helm template` with no overrides does NOT render the literal
+// "changeme" as the postgres password. Pre-fix this test FAILs because
+// values.yaml seeded the default.
+func TestG26_DefaultRender_PostgresPasswordIsGenerated(t *testing.T) {
+	docs := helmTemplate(t, "")
+	// The chart's secret is named per release; helmTemplate uses
+	// release "test" (see helmTemplate impl above).
+	var sec map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Secret" {
+			meta, _ := d["metadata"].(map[string]any)
+			ns, _ := meta["namespace"].(string)
+			// Only consider the platform credentials Secret, not any
+			// per-workspace ephemeral secrets.
+			if ns == "test-ns" {
+				sec = d
+				break
+			}
+		}
+	}
+	require.NotNil(t, sec, "platform credentials Secret must be rendered by default")
+
+	pw := secretValue(t, sec, "postgres-password")
+	require.NotEqual(t, "changeme", pw,
+		"postgres-password must NOT default to the literal 'changeme' (G26)")
+	require.GreaterOrEqual(t, len(pw), 24,
+		"auto-generated postgres-password must be at least 24 chars; got %d", len(pw))
+}
+
+// TestG26_DefaultRender_RedisPasswordIsGenerated mirrors the postgres
+// test for the Valkey/Redis password. Pre-fix the value defaulted to
+// the empty string, which Valkey treats as "no auth required".
+func TestG26_DefaultRender_RedisPasswordIsGenerated(t *testing.T) {
+	docs := helmTemplate(t, "")
+	var sec map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Secret" {
+			meta, _ := d["metadata"].(map[string]any)
+			if ns, _ := meta["namespace"].(string); ns == "test-ns" {
+				sec = d
+				break
+			}
+		}
+	}
+	require.NotNil(t, sec, "platform credentials Secret must be rendered")
+
+	pw := secretValue(t, sec, "redis-password")
+	require.NotEmpty(t, pw,
+		"redis-password must NOT default to empty (Valkey requirepass would be unset; G26)")
+	require.GreaterOrEqual(t, len(pw), 24,
+		"auto-generated redis-password must be at least 24 chars; got %d", len(pw))
+}
+
+// TestG26_OperatorOverride_PostgresPasswordIsRespected proves the
+// operator can still pin a specific password (no surprise rotation on
+// upgrade). This guards the rotation-safety property: an existing
+// installation with a known password must keep it across `helm upgrade`.
+func TestG26_OperatorOverride_PostgresPasswordIsRespected(t *testing.T) {
+	docs := helmTemplate(t, "externalSecret:\n  postgresPassword: \"operator-supplied-9876\"\n  redisPassword: \"operator-redis-1234\"\n")
+	var sec map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Secret" {
+			meta, _ := d["metadata"].(map[string]any)
+			if ns, _ := meta["namespace"].(string); ns == "test-ns" {
+				sec = d
+				break
+			}
+		}
+	}
+	require.NotNil(t, sec)
+	require.Equal(t, "operator-supplied-9876", secretValue(t, sec, "postgres-password"))
+	require.Equal(t, "operator-redis-1234", secretValue(t, sec, "redis-password"))
+}
+
+// TestG26_DefaultRender_HasPostgresIngressPolicy verifies a NetworkPolicy
+// named per the chart's helper exists, selects pods with `app=postgres`,
+// and has at least one ingress rule restricting the source.
+func TestG26_DefaultRender_HasPostgresIngressPolicy(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var pgPolicy map[string]any
+	for _, p := range policies {
+		spec, _ := p["spec"].(map[string]any)
+		sel, _ := spec["podSelector"].(map[string]any)
+		ml, _ := sel["matchLabels"].(map[string]any)
+		if app, _ := ml["app"].(string); app == "postgres" {
+			pgPolicy = p
+			break
+		}
+	}
+	require.NotNil(t, pgPolicy,
+		"a NetworkPolicy selecting `app=postgres` must be rendered by default (G26)")
+
+	spec, _ := pgPolicy["spec"].(map[string]any)
+	policyTypes, _ := spec["policyTypes"].([]any)
+	require.Contains(t, policyTypes, "Ingress",
+		"postgres NetworkPolicy must declare Ingress in policyTypes")
+	ingress, _ := spec["ingress"].([]any)
+	require.NotEmpty(t, ingress,
+		"postgres NetworkPolicy must have at least one ingress rule")
+}
+
+// TestG26_DefaultRender_HasValkeyIngressPolicy is the Valkey twin of the
+// above. Same shape, different selector.
+func TestG26_DefaultRender_HasValkeyIngressPolicy(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var vkPolicy map[string]any
+	for _, p := range policies {
+		spec, _ := p["spec"].(map[string]any)
+		sel, _ := spec["podSelector"].(map[string]any)
+		ml, _ := sel["matchLabels"].(map[string]any)
+		if app, _ := ml["app"].(string); app == "valkey" {
+			vkPolicy = p
+			break
+		}
+	}
+	require.NotNil(t, vkPolicy,
+		"a NetworkPolicy selecting `app=valkey` must be rendered by default (G26)")
+
+	spec, _ := vkPolicy["spec"].(map[string]any)
+	policyTypes, _ := spec["policyTypes"].([]any)
+	require.Contains(t, policyTypes, "Ingress")
+	ingress, _ := spec["ingress"].([]any)
+	require.NotEmpty(t, ingress,
+		"valkey NetworkPolicy must have at least one ingress rule")
+}
+
+// TestG26_DatastoreNetworkPolicy_OptOut lets operators who manage their
+// own policies disable the chart's datastore policies without having
+// to disable the workspace policies (which are critical and should
+// stay on by default). Different toggles, separate concerns.
+func TestG26_DatastoreNetworkPolicy_OptOut(t *testing.T) {
+	docs := helmTemplate(t, "datastore:\n  networkPolicy:\n    enabled: false\n")
+	policies := findByKind(docs, "NetworkPolicy")
+	for _, p := range policies {
+		spec, _ := p["spec"].(map[string]any)
+		sel, _ := spec["podSelector"].(map[string]any)
+		ml, _ := sel["matchLabels"].(map[string]any)
+		app, _ := ml["app"].(string)
+		require.NotEqual(t, "postgres", app,
+			"datastore.networkPolicy.enabled=false must omit postgres NetworkPolicy")
+		require.NotEqual(t, "valkey", app,
+			"datastore.networkPolicy.enabled=false must omit valkey NetworkPolicy")
+	}
+}

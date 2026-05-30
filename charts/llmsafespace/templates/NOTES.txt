@@ -85,3 +85,63 @@ RBAC SCOPE: namespace
 The controller has Role-scoped permissions in {{ .Release.Namespace }} only.
 Resources in other namespaces will not be reconciled.
 {{- end }}
+
+{{- if .Values.externalSecret.create }}
+
+DATASTORE CREDENTIALS (G26)
+===========================
+
+The chart manages `{{ include "llmsafespace.secretName" . }}` containing
+postgres-password, redis-password, and jwt-secret. On first install the
+chart auto-generates random 32-char passwords for postgres+redis and a
+64-char jwt secret. The Secret is annotated `helm.sh/resource-policy: keep`
+so it survives `helm uninstall` (re-installing on top reuses the same
+values, preserving JWT validity for active sessions).
+
+ROTATION SAFETY: subsequent `helm upgrade` calls preserve the existing
+random values from the live cluster Secret (via `lookup`). EXCEPT: if
+the live Secret contains the historical insecure defaults
+("changeme" for postgres-password, empty for redis-password — see
+RT-4.5), the chart will re-randomise on upgrade to bring you out of
+the vulnerable state.
+
+POSTGRES ROLE PASSWORD ROTATION (manual step required for upgrades only):
+
+  Helm rotates the value in the K8s Secret. For an existing Postgres
+  whose data dir was bootstrapped with a different password (e.g. the
+  documented "changeme" baseline), the role password inside Postgres
+  itself must also be rotated:
+
+    NEW_PWD=$(kubectl -n {{ .Release.Namespace }} get secret {{ include "llmsafespace.secretName" . }} -o jsonpath='{.data.postgres-password}' | base64 -d)
+    kubectl -n {{ .Release.Namespace }} exec deploy/postgres -- \
+      psql -U {{ .Values.postgresql.user }} -d {{ .Values.postgresql.database }} \
+      -c "ALTER USER {{ .Values.postgresql.user }} WITH PASSWORD '$NEW_PWD';"
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/postgres
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/{{ include "llmsafespace.fullname" . }}-api
+
+  After the postgres pod restarts, both the env-var (from the rotated
+  Secret) and the role row in pg_authid (rotated by ALTER USER) match.
+  Skipping this step leaves Postgres accepting the old password.
+
+VALKEY/REDIS PASSWORD ROTATION:
+
+  Valkey reads --requirepass from the env at startup; restart the
+  valkey pod after the chart rotates the Secret:
+
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/valkey
+
+DATASTORE NETWORK POLICY:
+
+  The chart ships NetworkPolicy resources blocking ingress to postgres
+  and valkey except from the API deployment and migration Job. If the
+  postgres/valkey pods carry non-default labels (i.e. you didn't deploy
+  via local/postgres-redis.yaml or local/deps-*.yaml), override the
+  selectors:
+
+    --set datastore.networkPolicy.postgresPodSelectorLabels.app.kubernetes.io/name=postgres
+    --set datastore.networkPolicy.valkeyPodSelectorLabels.app.kubernetes.io/name=valkey
+
+  Disable the datastore policies entirely with
+  --set datastore.networkPolicy.enabled=false (e.g. when using a
+  managed Postgres/Redis outside the cluster).
+{{- end }}

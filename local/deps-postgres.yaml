@@ -1,3 +1,23 @@
+---
+# G26 (Epic 17 worklog 0089 RT-4.5): postgres credentials are read from
+# the same Secret (`llmsafespace-credentials`) that the API and migration
+# Job consume. The chart's secret.yaml auto-generates a 32-char random
+# password on first install and reuses the existing one across upgrades
+# via `lookup`, so this manifest never needs to know the password value.
+#
+# To bootstrap the live cluster after the chart fix:
+#   1. helm upgrade llmsafespace ./charts/llmsafespace -n default --reuse-values
+#      (this regenerates llmsafespace-credentials with random values)
+#   2. kubectl -n default rollout restart deploy/postgres
+#      (forces postgres to pick up the new env-from)
+#   3. kubectl -n default delete pvc postgres-data; kubectl apply -f local/deps-postgres.yaml
+#      (only needed if the postgres data dir was bootstrapped with the old
+#      'changeme' superuser password — postgres init runs only on empty
+#      data directories so a password change requires a re-init OR an
+#      ALTER USER inside the running pod)
+#
+# For multi-tenant production, prefer CloudNativePG / Bitnami postgresql
+# chart / cloud-managed Postgres; see charts/llmsafespace/README.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +41,10 @@ spec:
             - name: POSTGRES_USER
               value: llmsafespace
             - name: POSTGRES_PASSWORD
-              value: changeme
+              valueFrom:
+                secretKeyRef:
+                  name: llmsafespace-credentials
+                  key: postgres-password
             - name: POSTGRES_DB
               value: llmsafespace
           ports:

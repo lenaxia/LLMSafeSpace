@@ -1,3 +1,19 @@
+---
+# G26 (Epic 17 worklog 0089 RT-4.5): valkey REQUIRES password authentication.
+# The password is read from the same `llmsafespace-credentials` Secret
+# the chart generates (auto-randomised on first install). Pre-fix valkey
+# ran with `requirepass=""`, accepting unauthenticated connections from
+# anywhere in the cluster.
+#
+# Bootstrap order (same as deps-postgres.yaml):
+#   1. helm upgrade llmsafespace ./charts/llmsafespace -n default --reuse-values
+#   2. kubectl apply -f local/deps-valkey.yaml
+#   3. kubectl -n default rollout restart deploy/valkey
+#
+# The startup arg pulls the password from the env var (which valkey
+# expands at startup); valkey 8 supports this via $VALKEY_PASSWORD-style
+# expansion or via --requirepass with shell expansion. We use the latter
+# wrapped in `sh -c` to keep the dependency surface minimal.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,11 +33,27 @@ spec:
       containers:
         - name: valkey
           image: valkey/valkey:8-alpine
+          # `sh -c` is needed so the shell expands $REDIS_PASSWORD before
+          # the valkey-server binary executes. exec keeps PID 1 as
+          # valkey so signals are forwarded correctly.
+          command: ["/bin/sh"]
+          args:
+            - "-c"
+            - 'exec valkey-server --requirepass "$REDIS_PASSWORD"'
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: llmsafespace-credentials
+                  key: redis-password
           ports:
             - containerPort: 6379
           readinessProbe:
             exec:
-              command: ["valkey-cli", "ping"]
+              command:
+                - sh
+                - -c
+                - 'valkey-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG'
             initialDelaySeconds: 3
             periodSeconds: 5
           resources:

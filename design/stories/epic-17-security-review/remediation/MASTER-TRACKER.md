@@ -53,7 +53,7 @@ the row.
 | G23 | `/workspace` PVC mount lacks nosuid | Medium | MINE | StorageClass mountOptions |
 | G24 | No seccompProfile | Low | MINE | `controller/internal/workspace/controller.go` PodSecurityContext |
 | G25 | Secret `value` field logged unredacted | High | OTHER (secrets-mgmt logging path) | `api/internal/middleware/logging.go:54` |
-| G26 | Postgres `changeme` + Valkey empty `requirepass` | Critical | MINE | Helm chart secret + NetPols |
+| G26 | Postgres `changeme` + Valkey empty `requirepass` | Critical | MINE — code-fix landed worklog 0095, awaiting live re-pentest | Helm chart secret + NetPols |
 | G27 | Login response timing reveals registered emails | Medium | MINE | `api/internal/services/auth/auth.go` |
 | G28 | Bind handler no-op for first-time secret delivery | High | OTHER (secrets-mgmt) | `api/internal/handlers/secrets.go:307-356` |
 | G29 | Path-traversal mount_path accepted by API | Medium | OTHER (secrets-mgmt) | `pkg/secrets/secret_service.go` validateMountPath |

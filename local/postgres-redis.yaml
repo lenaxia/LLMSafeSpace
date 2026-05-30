@@ -1,11 +1,22 @@
 ---
-# Minimal Postgres + Redis for kind-based local testing of LLMSafeSpace.
+# Minimal Postgres + Valkey for kind-based local testing of LLMSafeSpace.
 # THIS IS A DEVELOPMENT-ONLY LAYOUT. Do NOT use in production:
 #   - PVC sized at 1Gi (no resize semantics tested)
-#   - Postgres password is in plain ConfigMap-style env (acceptable only in
-#     a single-developer kind cluster)
-#   - No backup, no replication, no monitoring, no resource limits enforced
-#   - postgres image is :17-alpine (lightweight; production should pin digest)
+#   - No backup, no replication, no monitoring
+#   - postgres image pinned to :17-alpine but not by digest
+#
+# G26 (Epic 17 worklog 0089 RT-4.5) — passwords are read from the same
+# `llmsafespace-credentials` Secret the chart auto-generates. The chart
+# must be installed first (it ships the Secret as a pre-install hook
+# with helm.sh/hook-weight=-15). If you apply this manifest before the
+# chart, the postgres pod will CrashLoopBackoff with "POSTGRES_PASSWORD
+# environment variable is required" — that's the desired fail-loud
+# behaviour (no silent fallback to "changeme").
+#
+# Pod labels match `charts/llmsafespace/templates/datastore-network-policy.yaml`'s
+# selectors (`app: postgres`, `app: valkey`). Renaming/changing those
+# labels here without also updating the NetPol selectors will break
+# in-namespace ingress for both API and the migration Job.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -30,15 +41,18 @@ kind: Deployment
 metadata:
   name: postgres
   namespace: llmsafespace
-  labels: { app.kubernetes.io/name: postgres }
+  labels:
+    app: postgres
 spec:
   replicas: 1
   strategy: { type: Recreate }
   selector:
-    matchLabels: { app.kubernetes.io/name: postgres }
+    matchLabels:
+      app: postgres
   template:
     metadata:
-      labels: { app.kubernetes.io/name: postgres }
+      labels:
+        app: postgres
     spec:
       containers:
         - name: postgres
@@ -49,7 +63,10 @@ spec:
             - name: POSTGRES_USER
               value: llmsafespace
             - name: POSTGRES_PASSWORD
-              value: changeme
+              valueFrom:
+                secretKeyRef:
+                  name: llmsafespace-credentials
+                  key: postgres-password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
@@ -81,42 +98,76 @@ spec:
   type: ClusterIP
   ports:
     - { name: postgres, port: 5432, targetPort: postgres }
-  selector: { app.kubernetes.io/name: postgres }
+  selector:
+    app: postgres
 ---
 # ============================================================================
-# Redis
+# Valkey (Redis-compatible). Authenticated via REDIS_PASSWORD from the
+# chart's credentials Secret; valkey runs with --requirepass enforced.
 # ============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-master
+  name: valkey
   namespace: llmsafespace
-  labels: { app.kubernetes.io/name: redis }
+  labels:
+    app: valkey
 spec:
   replicas: 1
   selector:
-    matchLabels: { app.kubernetes.io/name: redis }
+    matchLabels:
+      app: valkey
   template:
     metadata:
-      labels: { app.kubernetes.io/name: redis }
+      labels:
+        app: valkey
     spec:
       containers:
-        - name: redis
-          image: redis:7-alpine
-          # Persistence is intentionally OFF for kind-only dev.
-          # If you want it, add: --save 60 1 --appendonly yes
-          args: [redis-server, --save, ""]
+        - name: valkey
+          image: valkey/valkey:8-alpine
+          # Use sh -c so the shell expands $REDIS_PASSWORD before
+          # valkey-server starts. exec keeps PID 1 as valkey for proper
+          # signal handling.
+          command: [/bin/sh]
+          args:
+            - "-c"
+            - 'exec valkey-server --save "" --requirepass "$REDIS_PASSWORD"'
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: llmsafespace-credentials
+                  key: redis-password
           ports:
-            - { name: redis, containerPort: 6379 }
+            - { name: valkey, containerPort: 6379 }
           readinessProbe:
-            tcpSocket: { port: redis }
+            exec:
+              command:
+                - sh
+                - -c
+                - 'valkey-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG'
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            tcpSocket: { port: redis }
+            tcpSocket: { port: valkey }
             initialDelaySeconds: 10
             periodSeconds: 10
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: llmsafespace
+spec:
+  type: ClusterIP
+  ports:
+    - { name: valkey, port: 6379, targetPort: valkey }
+  selector:
+    app: valkey
+---
+# Backwards-compatibility alias for charts/clusters that still reference
+# `redis-master` as the host name. Selecting via `app: valkey` keeps both
+# Service names backed by the same Deployment.
 apiVersion: v1
 kind: Service
 metadata:
@@ -125,5 +176,6 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - { name: redis, port: 6379, targetPort: redis }
-  selector: { app.kubernetes.io/name: redis }
+    - { name: redis, port: 6379, targetPort: valkey }
+  selector:
+    app: valkey

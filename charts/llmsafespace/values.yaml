@@ -245,10 +245,45 @@ externalSecret:
   existingSecret: ""
 
   # Used only when externalSecret.create is true.
-  # SECURITY: prefer --set or --values overrides over committing real values.
-  postgresPassword: "changeme"
+  # SECURITY (G26): all three credentials are auto-generated as 32-char
+  # alphanumeric strings on first install when left empty here. Pin a
+  # specific value via --set or --values only when you need to match an
+  # external Postgres/Redis instance whose password is already known.
+  # Leaving them empty means "let the chart pick a strong default and
+  # keep it stable across upgrades" — the Secret is annotated
+  # `helm.sh/resource-policy: keep` so the random value is generated
+  # once and persisted.
+  #
+  # ROTATION-OUT-OF-VULNERABLE-STATE: if a previous chart version left
+  # postgres-password="changeme" or redis-password="" in the live Secret,
+  # the next `helm upgrade` will re-randomise both values and the
+  # operator MUST then run the ALTER USER procedure documented in
+  # NOTES.txt to bring the running Postgres role in sync.
+  postgresPassword: ""
   redisPassword: ""
-  jwtSecret: ""  # if empty, a random 64-byte hex string is generated at install
+  jwtSecret: ""
+
+# ----------------------------------------------------------------------------
+# Datastore NetworkPolicies (G26)
+# ----------------------------------------------------------------------------
+# The chart ships NetworkPolicy resources blocking ingress to postgres and
+# valkey except from the API deployment and migration Job. Workspace pods
+# (selectable by `component=workspace`) cannot reach the datastores.
+#
+# Enabled by default but gated by the master `networkPolicy.enabled` toggle
+# AND `datastore.networkPolicy.enabled`. Disable per-class without
+# disabling the workspace policies if needed.
+datastore:
+  networkPolicy:
+    enabled: true
+    # Pod label selectors for the postgres / valkey pods. The defaults
+    # match local/postgres-redis.yaml and local/deps-{postgres,valkey}.yaml.
+    # If you deploy postgres via Bitnami helm chart, override with
+    # `{ app.kubernetes.io/name: postgresql }`.
+    postgresPodSelectorLabels:
+      app: postgres
+    valkeyPodSelectorLabels:
+      app: valkey
 
 # Postgres connection (consumed by the API config).
 postgresql:
