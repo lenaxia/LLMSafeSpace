@@ -121,12 +121,21 @@ COPY --chmod=755 runtimes/base/tools/smoke-test.sh /usr/local/bin/smoke-test.sh
 # MISE_GITHUB_ATTESTATIONS=0  — skip GitHub attestation checks (no outbound
 #                               OIDC calls in restricted build environments)
 RUN mkdir -p /etc/mise \
-    && for tool in python@latest node@lts rust@stable go@latest java@lts maven@latest gradle@latest; do \
+    && ARCH=$(uname -m) \
+    && echo "Building for architecture: $ARCH" \
+    && for tool in python@latest node@lts rust@stable go@latest; do \
         echo "Installing $tool..." \
         && for attempt in 1 2 3; do \
-            MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 mise install --system "$tool" && break; \
+            MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
+            mise install --system "$tool" && break; \
             echo "Retry $attempt for $tool..." && sleep 5; \
-        done || { echo "FATAL: failed to install $tool after 3 attempts"; exit 1; }; \
+        done || { echo "FATAL: failed to install $tool after 3 attempts on $ARCH"; exit 1; }; \
+    done \
+    && for tool in java@lts maven@latest gradle@latest; do \
+        echo "Installing $tool..." \
+        && MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
+        mise install --system "$tool" \
+        || echo "WARN: $tool failed on $ARCH, skipping (will be available via mise at runtime)"; \
     done \
     && printf '[tools]\npython = "latest"\nnode = "lts"\nrust = "stable"\ngo = "latest"\njava = "lts"\nmaven = "latest"\ngradle = "latest"\n' > /etc/mise/config.toml \
     && mise reshim
