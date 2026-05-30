@@ -1,4 +1,4 @@
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 
 FROM golang:1.25-bookworm AS redact-builder
 
