@@ -11,6 +11,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -148,6 +149,32 @@ func (a *dbSecretStoreAdapter) UpdateSecret(_ context.Context, secret *secrets.U
 	return nil
 }
 
+func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	a.init()
+	updates := make(map[string][]byte)
+	for id, s := range a.secrets {
+		if s.UserID != userID {
+			continue
+		}
+		newCT, err := transform(s.Ciphertext)
+		if err != nil {
+			return err
+		}
+		updates[id] = newCT
+	}
+	if commit != nil {
+		if err := commit(ctx); err != nil {
+			return err
+		}
+	}
+	for id, newCT := range updates {
+		s := a.secrets[id]
+		s.Ciphertext = newCT
+		s.KeyVersion = newKeyVersion
+	}
+	return nil
+}
+
 func (a *dbSecretStoreAdapter) DeleteSecret(_ context.Context, userID, secretID string) error {
 	a.init()
 	s, ok := a.secrets[secretID]
@@ -279,4 +306,89 @@ type k8sWorkspaceGetterAdapter struct {
 
 func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
 	return a.client.LlmsafespaceV1().Workspaces(a.namespace).Get(id, metav1.GetOptions{})
+}
+
+// workspaceCRDGetter is the minimal interface needed by secretsPodIPResolver.
+// Defined here (rather than reusing handlers.WorkspaceGetter) to keep the
+// dependency direction one-way: app depends on handlers, not the other way.
+type workspaceCRDGetter interface {
+	GetWorkspace(id string) (*v1.Workspace, error)
+}
+
+// dbOwnerLookup is the minimal interface needed to verify workspace ownership
+// for the secrets reload path. We require the database lookup (rather than
+// trusting the CRD's spec.owner) because the API treats PostgreSQL as the
+// authority for ownership at the API layer.
+type dbOwnerLookup interface {
+	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
+}
+
+// secretsPodIPResolver resolves the pod IP for a workspace owned by a given
+// user. Returns ("", nil) if the workspace is not owned by the caller, is
+// not Active, has no PodIP yet, or the apiserver/DB is transiently
+// unavailable. The handler treats every empty result as errNoRunningPod
+// (409 Conflict) so the response shape is uniform across "you don't own
+// this workspace" / "doesn't exist" / "DB is having a bad day" — this is
+// deliberate: we do not want to leak workspace existence cross-user via
+// status-code differences.
+//
+// Transient-failure errors (DB or apiserver blips) are still observable
+// to operators because the resolver logs them at Warn before returning
+// empty. Without that log a Postgres outage would produce silent 409s
+// across the fleet with no signal in the API logs (Finding 2 in worklog
+// 0094 follow-up audit).
+//
+// This adapter exists because handlers.SecretsHandler.SetPodIPResolver was
+// never called from app.New — see Bug 1 in worklog 0085. Without it the
+// reload-secrets endpoint returned 503 unconditionally and SetBindings'
+// auto-push silently failed.
+type secretsPodIPResolver struct {
+	crd    workspaceCRDGetter
+	db     dbOwnerLookup
+	logger pkginterfaces.LoggerInterface
+}
+
+func newSecretsPodIPResolver(crd workspaceCRDGetter, db dbOwnerLookup, logger pkginterfaces.LoggerInterface) *secretsPodIPResolver {
+	return &secretsPodIPResolver{crd: crd, db: db, logger: logger}
+}
+
+func (r *secretsPodIPResolver) GetWorkspacePodIP(ctx context.Context, userID, workspaceID string) (string, error) {
+	if userID == "" || workspaceID == "" {
+		return "", nil
+	}
+
+	// Ownership check first: a user must not be able to discover or push
+	// to a pod they do not own. We treat both "not found", "owned by
+	// someone else", and "DB blip" as a uniform empty result. The DB
+	// blip is logged so operators can detect it.
+	if r.db != nil {
+		meta, err := r.db.GetWorkspace(ctx, workspaceID)
+		if err != nil {
+			if r.logger != nil {
+				r.logger.Warn("secretsPodIPResolver: DB lookup failed; downgrading to no-running-pod",
+					"workspaceID", workspaceID, "error", err.Error())
+			}
+			return "", nil
+		}
+		if meta == nil || meta.UserID != userID {
+			return "", nil
+		}
+	}
+
+	ws, err := r.crd.GetWorkspace(workspaceID)
+	if err != nil {
+		// Workspace CR missing or apiserver error — caller treats as
+		// "no running pod"; do not surface raw K8s errors upstream.
+		// Logged at Debug because CR-not-found is the common case for
+		// freshly-created or terminating workspaces.
+		if r.logger != nil {
+			r.logger.Debug("secretsPodIPResolver: CRD lookup failed",
+				"workspaceID", workspaceID, "error", err.Error())
+		}
+		return "", nil
+	}
+	if ws == nil || ws.Status.Phase != v1.WorkspacePhaseActive {
+		return "", nil
+	}
+	return ws.Status.PodIP, nil
 }

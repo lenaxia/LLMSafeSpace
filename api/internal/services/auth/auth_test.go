@@ -604,6 +604,147 @@ func TestRegister_CreateUserError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// fakeKeyService is a minimal in-process KeyServiceInterface for asserting
+// on the Register/Login DEK lifecycle without spinning up a real key service.
+type fakeKeyService struct {
+	initCalls   []fakeKeyInitCall
+	unlockCalls []fakeKeyUnlockCall
+	hasKeysFn   func(ctx context.Context, userID string) (bool, error)
+	initErr     error
+	unlockErr   error
+	recoveryKey string
+}
+
+type fakeKeyInitCall struct {
+	UserID   string
+	Password string
+}
+
+type fakeKeyUnlockCall struct {
+	UserID    string
+	Password  string
+	SessionID string
+	TTL       time.Duration
+}
+
+func (f *fakeKeyService) InitializeUserKeys(ctx context.Context, userID string, password []byte) (string, error) {
+	f.initCalls = append(f.initCalls, fakeKeyInitCall{UserID: userID, Password: string(password)})
+	if f.initErr != nil {
+		return "", f.initErr
+	}
+	if f.recoveryKey == "" {
+		return "deadbeefcafef00d", nil
+	}
+	return f.recoveryKey, nil
+}
+
+func (f *fakeKeyService) UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error {
+	f.unlockCalls = append(f.unlockCalls, fakeKeyUnlockCall{
+		UserID:    userID,
+		Password:  string(password),
+		SessionID: sessionID,
+		TTL:       ttl,
+	})
+	return f.unlockErr
+}
+
+func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
+	if f.hasKeysFn != nil {
+		return f.hasKeysFn(ctx, userID)
+	}
+	return true, nil
+}
+
+// TestRegister_UnlocksDEKAndReturnsRecoveryKey is the regression test for
+// Bug 5 (Register must UnlockDEK so the new user can immediately CreateSecret)
+// and Bug 10 (Register must surface the recovery key one time so the user
+// can save it; the API does not store it anywhere recoverable).
+func TestRegister_UnlocksDEKAndReturnsRecoveryKey(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "fresh@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(5, nil)
+	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+
+	ks := &fakeKeyService{recoveryKey: "feedfacecafebabe1234567890abcdef"}
+	svc.SetKeyService(ks)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "fresh",
+		Email:    "fresh@example.com",
+		Password: "securepassword123",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// Bug 5: UnlockDEK must be invoked with the JWT's jti so the issued
+	// token can be used for secret operations without a re-login.
+	require.Len(t, ks.initCalls, 1, "InitializeUserKeys must be called exactly once")
+	require.Len(t, ks.unlockCalls, 1, "UnlockDEK must be called exactly once on register")
+	assert.Equal(t, ks.initCalls[0].UserID, ks.unlockCalls[0].UserID)
+	assert.Equal(t, "securepassword123", ks.unlockCalls[0].Password)
+	assert.NotEmpty(t, ks.unlockCalls[0].SessionID, "UnlockDEK sessionID must be the JWT jti")
+	assert.Equal(t, utilities.ExtractJTI(resp.Token), ks.unlockCalls[0].SessionID,
+		"UnlockDEK sessionID must match the issued token's jti")
+	assert.Equal(t, svc.tokenDuration, ks.unlockCalls[0].TTL)
+
+	// Bug 10: the recovery key produced by InitializeUserKeys must reach
+	// the response. There is no other way for the user to obtain it.
+	assert.Equal(t, "feedfacecafebabe1234567890abcdef", resp.RecoveryKey,
+		"register response must include the one-time recovery key")
+}
+
+// TestRegister_KeyInitFailureFailsClosed verifies that a failure to
+// initialise encryption keys aborts registration. Returning a JWT against
+// a half-initialised user produces the same Bug 5 symptom (403 on every
+// secret operation), so the failure is fatal.
+func TestRegister_KeyInitFailureFailsClosed(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "fail@example.com").Return(nil, nil)
+	mockDb.On("CountUsers", ctx).Return(5, nil)
+	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+
+	ks := &fakeKeyService{initErr: errors.New("key svc down")}
+	svc.SetKeyService(ks)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "fail",
+		Email:    "fail@example.com",
+		Password: "securepassword123",
+	})
+
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Empty(t, ks.unlockCalls, "UnlockDEK must not be called when InitializeUserKeys fails")
+}
+
+// TestLogin_OmitsRecoveryKey ensures the RecoveryKey field is never set on
+// login responses. The recovery key is generated once at registration; it
+// is not retrievable via login. Returning anything here would be a leak of
+// stale or fabricated material.
+func TestLogin_OmitsRecoveryKey(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("mypassword"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
+		ID: "u1", Username: "user", Email: "user@example.com",
+		PasswordHash: string(hash), Active: true,
+	}, nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{
+		Email: "user@example.com", Password: "mypassword",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Empty(t, resp.RecoveryKey, "login response must never include a recovery key")
+}
+
 func TestLogin_Success(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()

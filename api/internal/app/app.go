@@ -124,6 +124,23 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
+		// Without this the SecretsHandler returns 503 for every reload
+		// request and the SetBindings auto-push silently no-ops; see
+		// Bug 1 + Bug 2 in worklog 0085.
+		secretsHandler.SetPodIPResolver(newSecretsPodIPResolver(
+			&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+			dbSvc,
+			log,
+		))
+		secretsHandler.SetLogger(log)
+		// Wire the manifest writer so SetBindings persists a K8s Secret
+		// (`workspace-secrets-<id>`) read by the pod init container on
+		// every start. The live HTTP push alone is not durable; see
+		// Bug 3 in worklog 0085.
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			secretsHandler.SetSecretsManifestWriter(wsSvc)
+		}
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {

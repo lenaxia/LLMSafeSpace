@@ -14,7 +14,7 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 
 	// Create
 	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "integration-test", Type: SecretTypeLLMProvider,
+		Name: "integration-test", Type: SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-test-123","provider":"openai"}`,
 		Metadata: json.RawMessage(`{"provider":"openai","model":"gpt-4o"}`),
 	})
@@ -33,7 +33,7 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	if got.Name != "integration-test" {
 		t.Errorf("Name mismatch: %s", got.Name)
 	}
-	if got.Type != SecretTypeLLMProvider {
+	if got.Type != SecretTypeAPIKey {
 		t.Errorf("Type mismatch: %s", got.Type)
 	}
 
@@ -86,7 +86,7 @@ func TestIntegration_BindingLifecycle(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		name := []string{"key-a", "key-b", "key-c"}[i]
 		s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-			Name: name, Type: SecretTypeLLMProvider, Value: "val-" + name,
+			Name: name, Type: SecretTypeAPIKey, Value: "val-" + name,
 			Metadata: json.RawMessage(`{"provider":"x"}`),
 		})
 		ids[i] = s.ID
@@ -203,7 +203,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 
 	// Create
 	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "audit-complete", Type: SecretTypeLLMProvider, Value: "v",
+		Name: "audit-complete", Type: SecretTypeAPIKey, Value: "v",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
@@ -249,7 +249,7 @@ func TestIntegration_RecoveryKeyFullFlow(t *testing.T) {
 
 	// Create a secret
 	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
-		Name: "precious", Type: SecretTypeLLMProvider, Value: "my-precious-key",
+		Name: "precious", Type: SecretTypeAPIKey, Value: "my-precious-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
@@ -305,7 +305,7 @@ func TestIntegration_SecretTypeSpecificMetadata(t *testing.T) {
 	}{
 		{"ssh with host", SecretTypeSSHKey, `{"key_type":"rsa","host":"gitlab.com"}`, "host", "gitlab.com"},
 		{"git with protocol", SecretTypeGitCredential, `{"host":"bitbucket.org","protocol":"https"}`, "host", "bitbucket.org"},
-		{"file with path", SecretTypeSecretFile, `{"mount_path":"/app/config.yaml"}`, "mount_path", "/app/config.yaml"},
+		{"file with path", SecretTypeSecretFile, `{"mount_path":"app/config.yaml"}`, "mount_path", "app/config.yaml"},
 		{"env with var", SecretTypeEnvSecret, `{"var_name":"API_TOKEN"}`, "var_name", "API_TOKEN"},
 	}
 

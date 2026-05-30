@@ -347,3 +347,39 @@ func TestReconcile_Failed_NoAction(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Zero(t, result.RequeueAfter)
 }
+
+// TestReconcile_Failed_CleansUpSecrets is the regression test for Bug 12
+// in worklog 0085: workspaces stuck in Failed phase used to leak the
+// per-workspace K8s Secrets indefinitely (45h+ in the wild). Failed phase
+// must purge them so future reconciles converge on a clean state.
+func TestReconcile_Failed_CleansUpSecrets(t *testing.T) {
+	ws := makeWorkspace("ws-fail-cleanup", "default", v1.WorkspacePhaseFailed)
+	pwSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-pw-ws-fail-cleanup", Namespace: "default"},
+		Data:       map[string][]byte{"password": []byte("p")},
+	}
+	credSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-creds-ws-fail-cleanup", Namespace: "default"},
+		Data:       map[string][]byte{"creds": []byte("c")},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-secrets-ws-fail-cleanup", Namespace: "default"},
+		Data:       map[string][]byte{"secrets.json": []byte("[]")},
+	}
+
+	r := reconcilerFor(t, ws, pwSecret, credSecret, userSecret)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-fail-cleanup", "default"))
+	require.NoError(t, err)
+
+	// All three Secrets must be gone after one reconcile.
+	for _, name := range []string{
+		"workspace-pw-ws-fail-cleanup",
+		"workspace-creds-ws-fail-cleanup",
+		"workspace-secrets-ws-fail-cleanup",
+	} {
+		var got corev1.Secret
+		err := r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, &got)
+		assert.True(t, err != nil, "Bug 12: %s must be deleted on Failed reconcile", name)
+	}
+}

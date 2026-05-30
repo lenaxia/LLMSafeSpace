@@ -238,6 +238,48 @@ func TestCheckAgentHealth_ConnectionRefused(t *testing.T) {
 	assert.Equal(t, int32(1), ws.Status.ConsecutiveHealthFailures)
 }
 
+// TestCheckAgentHealth_ConnectionRefused_RestartsAfterThreshold is the
+// regression test for Bug 12 in worklog 0085: a stale pod IP (e.g. pod
+// deleted out from under us) used to drive ConsecutiveHealthFailures to
+// 36+ without ever triggering a recreate. After threshold the controller
+// must transition the workspace back to Creating so the pod is rebuilt.
+func TestCheckAgentHealth_ConnectionRefused_RestartsAfterThreshold(t *testing.T) {
+	opencode.Register()
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-stuck", "default", v1.WorkspacePhaseActive)
+	ws.UID = "ws-stuck-uid"
+	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &past
+	ws.Status.PodIP = "127.0.0.1"
+	ws.Status.ConsecutiveHealthFailures = 2 // one more push to threshold
+
+	pod := makeRunningPod(podName("ws-stuck", string(ws.UID)), "default", "127.0.0.1")
+
+	origInterval := healthCheckInterval
+	origPort := agentdPort
+	healthCheckInterval = 0
+	agentdPort = 1 // unreachable port
+	defer func() {
+		healthCheckInterval = origInterval
+		agentdPort = origPort
+	}()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws, pod).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	r.checkAgentHealth(context.Background(), ws)
+
+	assert.Equal(t, int32(3), ws.Status.ConsecutiveHealthFailures)
+	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase,
+		"Bug 12: must transition to Creating once threshold reached, not loop forever")
+	assert.Empty(t, ws.Status.PodIP)
+	assert.Equal(t, int32(1), ws.Status.RestartCount)
+}
+
 func TestCheckAgentHealth_SuccessResetsFailures(t *testing.T) {
 	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
 		Healthy: true, Ready: true, Connected: []string{"opencode"},

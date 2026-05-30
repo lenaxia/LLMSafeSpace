@@ -63,7 +63,13 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	case v1.WorkspacePhaseTerminating:
 		return r.handleTerminating(ctx, workspace)
 	case v1.WorkspacePhaseFailed:
-		logger.Info("Workspace in Failed phase; manual intervention required")
+		// Clean up associated K8s Secrets so a Failed workspace does
+		// not leak workspace-creds-* / workspace-pw-* / workspace-secrets-*
+		// indefinitely (Bug 12 in worklog 0085). The cleanup helpers
+		// are no-ops if the Secret is already gone, so this is safe to
+		// call on every reconcile.
+		r.cleanupFailedWorkspaceSecrets(ctx, workspace)
+		logger.V(1).Info("Workspace in Failed phase; manual intervention required")
 		return ctrl.Result{}, nil
 	default:
 		logger.Info("Unknown workspace phase", "phase", workspace.Status.Phase)
@@ -472,6 +478,31 @@ func (r *WorkspaceReconciler) deleteEphemeralSecretsSecret(ctx context.Context, 
 	}
 	if err := r.Delete(ctx, secret); err != nil {
 		log.FromContext(ctx).V(1).Info("Failed to delete ephemeral secrets secret", "name", secretName, "error", err.Error())
+	}
+}
+
+// cleanupFailedWorkspaceSecrets deletes the per-workspace K8s Secrets
+// (`workspace-creds-*`, `workspace-pw-*`, `workspace-secrets-*`) when a
+// workspace has entered the Failed phase. The Secrets are useless once
+// the workspace is non-recoverable; leaving them behind is the symptom
+// of Bug 12 in worklog 0085 (Secrets persisting 45+ hours after pod
+// disappeared). Each Get is best-effort: missing-Secret is the desired
+// end state.
+func (r *WorkspaceReconciler) cleanupFailedWorkspaceSecrets(ctx context.Context, workspace *v1.Workspace) {
+	logger := log.FromContext(ctx)
+	for _, secretName := range []string{
+		fmt.Sprintf("workspace-secrets-%s", workspace.Name),
+		fmt.Sprintf("workspace-creds-%s", workspace.Name),
+		fmt.Sprintf("workspace-pw-%s", workspace.Name),
+	} {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: workspace.Namespace}, secret); err != nil {
+			continue // already gone or not found
+		}
+		if err := r.Delete(ctx, secret); err != nil {
+			logger.V(1).Info("Failed to delete Secret for Failed workspace",
+				"name", secretName, "error", err.Error())
+		}
 	}
 }
 
@@ -944,6 +975,22 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		ws.Status.ConsecutiveHealthFailures++
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
 			v1.ReasonHealthCheckFailed, err.Error())
+		// Pod is unreachable (connection refused / DNS failure / timeout).
+		// After threshold, the pod IP is almost certainly stale (e.g. the
+		// pod was deleted out from under us). Trigger a recreate, exactly
+		// as we do for the "agent says it's unhealthy" branch below. This
+		// fixes Bug 12 in worklog 0085, where ConsecutiveHealthFailures
+		// could climb to 36+ without the controller taking any action.
+		if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
+			podN := podName(ws.Name, string(ws.UID))
+			logger.Info("Agent unreachable beyond threshold; restarting pod",
+				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN, "lastError", err.Error())
+			r.deletePodByName(ctx, podN, ws.Namespace)
+			ws.Status.Phase = v1.WorkspacePhaseCreating
+			ws.Status.PodIP = ""
+			ws.Status.Endpoint = ""
+			ws.Status.RestartCount++
+		}
 		return
 	}
 	defer resp.Body.Close()

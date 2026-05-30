@@ -326,9 +326,14 @@ type LoginRequest struct {
 }
 
 // AuthResponse is returned after successful registration or login.
+//
+// RecoveryKey is populated only on registration (one-time display). It is
+// the user's sole opportunity to retrieve it; the API does not store it
+// anywhere recoverable. Login responses omit this field entirely.
 type AuthResponse struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
+	Token       string `json:"token"`
+	User        User   `json:"user"`
+	RecoveryKey string `json:"recoveryKey,omitempty"`
 }
 
 // CreateAPIKeyRequest is the request body for creating an API key.

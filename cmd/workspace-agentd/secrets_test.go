@@ -87,7 +87,7 @@ func TestMaterializeSubcommand_HappyPath(t *testing.T) {
 	secretsPath := filepath.Join(dir, "secrets.json")
 	require.NoError(t, os.WriteFile(secretsPath, []byte(`[
 		{"type":"env-secret","name":"a","metadata":{"var_name":"FOO"},"plaintext":"bar"},
-		{"type":"llm-provider","name":"p","plaintext":"{\"provider\":\"x\"}"}
+		{"type":"api-key","name":"p","plaintext":"{\"provider\":\"x\"}"}
 	]`), 0o600))
 
 	secretsBase := filepath.Join(dir, "secrets")

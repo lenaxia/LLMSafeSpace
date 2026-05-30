@@ -20,7 +20,7 @@ export interface WorkspaceSettings {
 }
 
 const SECRET_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
-  "llm-provider": { label: "LLM Providers", icon: "🤖" },
+  "api-key": { label: "LLM Providers", icon: "🤖" },
   "ssh-key": { label: "SSH Keys", icon: "🔑" },
   "git-credential": { label: "Git Credentials", icon: "📦" },
   "secret-file": { label: "Secret Files", icon: "📄" },

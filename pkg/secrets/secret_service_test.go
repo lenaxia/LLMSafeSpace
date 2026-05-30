@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,37 @@ func (m *mockSecretStore) UpdateSecret(_ context.Context, secret *UserSecret) er
 	}
 	cp := *secret
 	m.secrets[secret.ID] = &cp
+	return nil
+}
+
+func (m *mockSecretStore) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Two-pass: compute every new ciphertext first; if any transform
+	// fails, abort without modifying state. This mirrors the
+	// transactional contract the SecretStore interface promises.
+	updates := make(map[string][]byte)
+	for id, s := range m.secrets {
+		if s.UserID != userID {
+			continue
+		}
+		newCT, err := transform(s.Ciphertext)
+		if err != nil {
+			return err
+		}
+		updates[id] = newCT
+	}
+	// Run commit hook before any state change so failures roll back.
+	if commit != nil {
+		if err := commit(ctx); err != nil {
+			return err
+		}
+	}
+	for id, newCT := range updates {
+		s := m.secrets[id]
+		s.Ciphertext = newCT
+		s.KeyVersion = newKeyVersion
+	}
 	return nil
 }
 
@@ -206,7 +238,7 @@ func TestSecretService_CreateSecret_LLMProvider(t *testing.T) {
 
 	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name:     "my-anthropic-key",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    "sk-ant-api03-secret-key",
 		Metadata: json.RawMessage(`{"provider": "anthropic"}`),
 	})
@@ -217,8 +249,8 @@ func TestSecretService_CreateSecret_LLMProvider(t *testing.T) {
 	if resp.Name != "my-anthropic-key" {
 		t.Errorf("Expected name 'my-anthropic-key', got '%s'", resp.Name)
 	}
-	if resp.Type != SecretTypeLLMProvider {
-		t.Errorf("Expected type llm-provider, got %s", resp.Type)
+	if resp.Type != SecretTypeAPIKey {
+		t.Errorf("Expected type api-key, got %s", resp.Type)
 	}
 	if resp.ID == "" {
 		t.Error("Expected non-empty ID")
@@ -299,13 +331,106 @@ func TestSecretService_CreateSecret_InvalidType(t *testing.T) {
 	}
 }
 
+// TestSecretService_CreateSecret_InvalidType_ListsValidTypes is the
+// regression test for Bug 7 in worklog 0085: the error message must
+// enumerate the valid secret types so callers can fix the request
+// without consulting external docs.
+func TestSecretService_CreateSecret_InvalidType_ListsValidTypes(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "test", Type: "bogus", Value: "data",
+	})
+	if err == nil {
+		t.Fatal("Invalid type must error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"api-key", "ssh-key", "git-credential", "secret-file", "env-secret"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q must list valid type %q", msg, want)
+		}
+	}
+}
+
+// TestSecretService_CreateSecret_InvalidMetadata_NamesField is the
+// regression test for Bug 7: when metadata is missing a required key,
+// the error names the exact field expected (e.g. "var_name") so callers
+// don't have to reverse-engineer the schema.
+func TestSecretService_CreateSecret_InvalidMetadata_NamesField(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		secretType SecretType
+		wantField  string
+	}{
+		{SecretTypeSSHKey, "key_type"},
+		{SecretTypeSecretFile, "mount_path"},
+		{SecretTypeEnvSecret, "var_name"},
+	}
+	for _, tc := range cases {
+		_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+			Name: "n-" + string(tc.secretType), Type: tc.secretType, Value: "v",
+			Metadata: json.RawMessage(`{}`),
+		})
+		if err == nil {
+			t.Errorf("%s: missing metadata must error", tc.secretType)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantField) {
+			t.Errorf("%s: error %q must name field %q", tc.secretType, err.Error(), tc.wantField)
+		}
+	}
+}
+
+// TestSecretService_CreateSecret_RejectsAdversarialMountPath is the
+// regression test for Bug 13 in worklog 0085: API-layer defence-in-depth
+// against path-traversal in secret-file mount_path. The materializer's
+// resolveMountPath catches these too, but accepting them at the API
+// layer means adversarial input lives in the database long enough for a
+// future bug or migration to mishandle it.
+func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	bad := []string{
+		"../../etc/passwd",
+		"/etc/passwd",
+		"/../../etc/shadow",
+		"../escaped",
+		".../traversal",
+		"./valid/../../escape",
+		"foo/../../bar",
+		"", // empty
+	}
+	for _, mp := range bad {
+		_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+			Name: "f-" + mp, Type: SecretTypeSecretFile, Value: "x",
+			Metadata: json.RawMessage(`{"mount_path":"` + mp + `"}`),
+		})
+		if err == nil {
+			t.Errorf("mount_path %q must be rejected at the API layer", mp)
+		}
+	}
+
+	// Sanity: a safe path is still accepted.
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "safe-secret-file", Type: SecretTypeSecretFile, Value: "x",
+		Metadata: json.RawMessage(`{"mount_path":"config/app.yaml"}`),
+	})
+	if err != nil {
+		t.Errorf("safe mount_path was rejected: %v", err)
+	}
+}
+
 func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
 	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name:     "my-key",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    "value1",
 		Metadata: json.RawMessage(`{"provider": "openai"}`),
 	})
@@ -315,7 +440,7 @@ func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 
 	_, err = svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name:     "my-key",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    "value2",
 		Metadata: json.RawMessage(`{"provider": "openai"}`),
 	})
@@ -337,7 +462,7 @@ func TestSecretService_CreateSecret_NoSession(t *testing.T) {
 
 	_, err := svc.CreateSecret(ctx, "user-1", "no-session", CreateSecretRequest{
 		Name:  "test",
-		Type:  SecretTypeLLMProvider,
+		Type:  SecretTypeAPIKey,
 		Value: "val",
 	})
 	if err == nil {
@@ -351,7 +476,7 @@ func TestSecretService_GetSecret(t *testing.T) {
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name:     "test-secret",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    "secret-value",
 		Metadata: json.RawMessage(`{"provider": "openai"}`),
 	})
@@ -380,7 +505,7 @@ func TestSecretService_ListSecrets(t *testing.T) {
 	ctx := context.Background()
 
 	svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeLLMProvider, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
 	})
 	svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"DB_URL"}`),
@@ -400,7 +525,7 @@ func TestSecretService_UpdateSecret(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "updatable", Type: SecretTypeLLMProvider, Value: "old-value", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "updatable", Type: SecretTypeAPIKey, Value: "old-value", Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
 	err := svc.UpdateSecret(ctx, "user-1", sessionID, created.ID, UpdateSecretRequest{
@@ -438,7 +563,7 @@ func TestSecretService_DeleteSecret(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "deletable", Type: SecretTypeLLMProvider, Value: "val", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "deletable", Type: SecretTypeAPIKey, Value: "val", Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
 	err := svc.DeleteSecret(ctx, "user-1", created.ID)
@@ -468,7 +593,7 @@ func TestSecretService_DecryptSecretValue(t *testing.T) {
 
 	originalValue := "sk-super-secret-key-12345"
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "decrypt-test", Type: SecretTypeLLMProvider, Value: originalValue, Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "decrypt-test", Type: SecretTypeAPIKey, Value: originalValue, Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
 	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, created.ID)
@@ -485,7 +610,7 @@ func TestSecretService_SetAndGetBindings(t *testing.T) {
 	ctx := context.Background()
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeLLMProvider, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
 	})
 	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"X"}`),
@@ -521,7 +646,7 @@ func TestSecretService_AuditLogging(t *testing.T) {
 
 	// Create a secret (generates audit entry)
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "audited", Type: SecretTypeLLMProvider, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "audited", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
 	// Update (generates audit entry)
@@ -557,7 +682,7 @@ func TestSecretService_DeleteSecret_CascadesBindings(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "bound-secret", Type: SecretTypeLLMProvider, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "bound-secret", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
 	// Bind to workspace

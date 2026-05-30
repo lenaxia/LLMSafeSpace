@@ -443,11 +443,24 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		return nil, errors.New("registration failed")
 	}
 
-	// Initialize encryption keys for secret management (Epic 10)
+	// Initialize encryption keys for secret management (Epic 10).
+	//
+	// Key initialisation MUST succeed: a half-initialised user (row exists,
+	// no DEK) cannot perform any secret operation and login itself cannot
+	// recover from this state without re-deriving the KEK from the
+	// password (which requires `user_keys` to exist). We therefore fail
+	// the entire registration when key init fails.
+	//
+	// We also unlock the DEK in the same call so the JWT issued below is
+	// usable for secret operations immediately. Without this, the new user
+	// would receive a token whose jti has no DEK in cache and every secret
+	// call would return 403 until they re-logged in (Bug 5, worklog 0085).
+	var recoveryKey string
 	if s.keyService != nil {
-		if _, err := s.keyService.InitializeUserKeys(ctx, userID, []byte(req.Password)); err != nil {
+		recoveryKey, err = s.keyService.InitializeUserKeys(ctx, userID, []byte(req.Password))
+		if err != nil {
 			s.logger.Error("Register: failed to initialize user keys", err, "user_id", userID)
-			// Non-fatal: user can still use the system, keys will be initialized on first secret creation
+			return nil, errors.New("registration failed")
 		}
 	}
 
@@ -456,8 +469,21 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		return nil, errors.New("registration failed")
 	}
 
+	if s.keyService != nil {
+		jti := utilities.ExtractJTI(token)
+		if jti == "" {
+			s.logger.Error("Register: issued token has empty jti; refusing registration",
+				fmt.Errorf("empty jti"), "user_id", userID)
+			return nil, errors.New("registration failed")
+		}
+		if err := s.keyService.UnlockDEK(ctx, userID, []byte(req.Password), jti, s.tokenDuration); err != nil {
+			s.logger.Error("Register: failed to unlock DEK", err, "user_id", userID)
+			return nil, errors.New("registration failed")
+		}
+	}
+
 	user.PasswordHash = ""
-	return &types.AuthResponse{Token: token, User: *user}, nil
+	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey}, nil
 }
 
 func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {

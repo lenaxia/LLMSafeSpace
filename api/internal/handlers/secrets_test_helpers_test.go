@@ -179,6 +179,33 @@ func (m *testSecretStore) UpdateSecret(_ context.Context, secret *secrets.UserSe
 	return nil
 }
 
+func (m *testSecretStore) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updates := make(map[string][]byte)
+	for id, s := range m.secrets {
+		if s.UserID != userID {
+			continue
+		}
+		newCT, err := transform(s.Ciphertext)
+		if err != nil {
+			return err
+		}
+		updates[id] = newCT
+	}
+	if commit != nil {
+		if err := commit(ctx); err != nil {
+			return err
+		}
+	}
+	for id, newCT := range updates {
+		s := m.secrets[id]
+		s.Ciphertext = newCT
+		s.KeyVersion = newKeyVersion
+	}
+	return nil
+}
+
 func (m *testSecretStore) DeleteSecret(_ context.Context, userID, secretID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

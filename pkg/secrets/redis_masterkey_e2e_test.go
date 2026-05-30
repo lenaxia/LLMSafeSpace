@@ -89,7 +89,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 	// === Phase 3: Create a secret (uses the cached DEK) ===
 	created, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
 		Name:     "e2e-master-key-secret",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    "sk-super-secret-value-that-must-be-encrypted",
 		Metadata: json.RawMessage(`{"provider":"test"}`),
 	})

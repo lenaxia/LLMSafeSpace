@@ -5,7 +5,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 
 const SECRET_TYPES = [
-  { value: "llm-provider", label: "LLM Providers", icon: "🤖", metaFields: ["provider"] },
+  { value: "api-key", label: "LLM Providers", icon: "🤖", metaFields: ["provider"] },
   { value: "ssh-key", label: "SSH Keys", icon: "🔑", metaFields: ["key_type", "host"] },
   { value: "git-credential", label: "Git Credentials", icon: "📦", metaFields: ["host"] },
   { value: "secret-file", label: "Secret Files", icon: "📄", metaFields: ["mount_path"] },
@@ -374,7 +374,7 @@ function padToBlockSize(data: Uint8Array, blockSize: number): Uint8Array {
 function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onError: (e: string) => void }) {
   const { toast } = useToast();
   const [name, setName] = useState("");
-  const [type, setType] = useState<SecretType>("llm-provider");
+  const [type, setType] = useState<SecretType>("api-key");
   const [value, setValue] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);

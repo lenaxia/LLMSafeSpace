@@ -19,16 +19,16 @@ func TestSecretService_CreateSecret_AllTypes(t *testing.T) {
 		errMatch string
 	}{
 		{
-			name: "llm-provider with metadata",
+			name: "api-key with metadata",
 			req: CreateSecretRequest{
-				Name: "openai", Type: SecretTypeLLMProvider, Value: "sk-123",
+				Name: "openai", Type: SecretTypeAPIKey, Value: "sk-123",
 				Metadata: json.RawMessage(`{"provider":"openai","model":"gpt-4"}`),
 			},
 		},
 		{
-			name: "llm-provider without metadata (optional)",
+			name: "api-key without metadata (optional)",
 			req: CreateSecretRequest{
-				Name: "bare-llm", Type: SecretTypeLLMProvider, Value: "sk-456",
+				Name: "bare-llm", Type: SecretTypeAPIKey, Value: "sk-456",
 			},
 		},
 		{
@@ -63,7 +63,7 @@ func TestSecretService_CreateSecret_AllTypes(t *testing.T) {
 			name: "secret-file valid",
 			req: CreateSecretRequest{
 				Name: "cert", Type: SecretTypeSecretFile, Value: "cert-pem-data",
-				Metadata: json.RawMessage(`{"mount_path":"/workspace/.secrets/cert.pem"}`),
+				Metadata: json.RawMessage(`{"mount_path":"cert.pem"}`),
 			},
 		},
 		{
@@ -133,7 +133,7 @@ func TestSecretService_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			name := "concurrent-" + string(rune('a'+idx))
 			_, errs[idx] = svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-				Name: name, Type: SecretTypeLLMProvider, Value: "val",
+				Name: name, Type: SecretTypeAPIKey, Value: "val",
 				Metadata: json.RawMessage(`{"provider":"x"}`),
 			})
 		}(i)
@@ -175,7 +175,7 @@ func TestSecretService_EncryptionIsolation(t *testing.T) {
 
 	// User 1 creates a secret
 	created, err := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
-		Name: "private", Type: SecretTypeLLMProvider, Value: "user1-secret-key",
+		Name: "private", Type: SecretTypeAPIKey, Value: "user1-secret-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 	if err != nil {
@@ -200,7 +200,7 @@ func TestSecretService_UpdatePreservesEncryption(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "rotate-test", Type: SecretTypeLLMProvider, Value: "original",
+		Name: "rotate-test", Type: SecretTypeAPIKey, Value: "original",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
@@ -231,7 +231,7 @@ func TestSecretService_BindingMultipleWorkspaces(t *testing.T) {
 
 	// Create one secret
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "shared-key", Type: SecretTypeLLMProvider, Value: "v",
+		Name: "shared-key", Type: SecretTypeAPIKey, Value: "v",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 
@@ -257,11 +257,11 @@ func TestSecretService_RebindReplacesExisting(t *testing.T) {
 	ctx := context.Background()
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeLLMProvider, Value: "v1",
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1",
 		Metadata: json.RawMessage(`{"provider":"a"}`),
 	})
 	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-2", Type: SecretTypeLLMProvider, Value: "v2",
+		Name: "key-2", Type: SecretTypeAPIKey, Value: "v2",
 		Metadata: json.RawMessage(`{"provider":"b"}`),
 	})
 
@@ -296,7 +296,7 @@ func TestKeyService_PasswordChange_SecretsStillDecryptable(t *testing.T) {
 
 	// Create a secret
 	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
-		Name: "persist", Type: SecretTypeLLMProvider, Value: "my-api-key",
+		Name: "persist", Type: SecretTypeAPIKey, Value: "my-api-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 

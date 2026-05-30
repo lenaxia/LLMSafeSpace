@@ -149,7 +149,7 @@ export interface SecretResponse {
 
 export interface CreateSecretRequest {
   name: string;
-  type: "llm-provider" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
+  type: "api-key" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
   value: string;
   metadata?: unknown;
 }

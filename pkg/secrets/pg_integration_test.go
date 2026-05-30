@@ -166,7 +166,7 @@ func TestPgSecretStore_CRUD(t *testing.T) {
 	secret := &UserSecret{
 		UserID:     userID,
 		Name:       "pg-test-secret",
-		Type:       SecretTypeLLMProvider,
+		Type:       SecretTypeAPIKey,
 		Ciphertext: []byte("encrypted-data-here"),
 		KeyVersion: 1,
 		Metadata:   json.RawMessage(`{"provider":"openai"}`),
@@ -243,12 +243,12 @@ func TestPgSecretStore_DuplicateName(t *testing.T) {
 	})
 
 	store.CreateSecret(ctx, &UserSecret{
-		UserID: userID, Name: "dup-name", Type: SecretTypeLLMProvider,
+		UserID: userID, Name: "dup-name", Type: SecretTypeAPIKey,
 		Ciphertext: []byte("ct1"), KeyVersion: 1, Metadata: json.RawMessage("{}"),
 	})
 
 	err := store.CreateSecret(ctx, &UserSecret{
-		UserID: userID, Name: "dup-name", Type: SecretTypeLLMProvider,
+		UserID: userID, Name: "dup-name", Type: SecretTypeAPIKey,
 		Ciphertext: []byte("ct2"), KeyVersion: 1, Metadata: json.RawMessage("{}"),
 	})
 	if err == nil {
@@ -274,7 +274,7 @@ func TestPgSecretStore_Bindings(t *testing.T) {
 	})
 
 	// Create 2 secrets
-	s1 := &UserSecret{UserID: userID, Name: "bind-1", Type: SecretTypeLLMProvider, Ciphertext: []byte("c1"), KeyVersion: 1, Metadata: json.RawMessage("{}")}
+	s1 := &UserSecret{UserID: userID, Name: "bind-1", Type: SecretTypeAPIKey, Ciphertext: []byte("c1"), KeyVersion: 1, Metadata: json.RawMessage("{}")}
 	s2 := &UserSecret{UserID: userID, Name: "bind-2", Type: SecretTypeEnvSecret, Ciphertext: []byte("c2"), KeyVersion: 1, Metadata: json.RawMessage(`{"var_name":"X"}`)}
 	store.CreateSecret(ctx, s1)
 	store.CreateSecret(ctx, s2)
@@ -374,7 +374,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 
 	// Create secret
 	created, err := svc.CreateSecret(ctx, userID, "e2e-session", CreateSecretRequest{
-		Name: "pg-e2e-secret", Type: SecretTypeLLMProvider,
+		Name: "pg-e2e-secret", Type: SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-real-test-key"}`,
 		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
 	})

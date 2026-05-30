@@ -45,7 +45,22 @@ func (s *PgKeyStore) CreateUserKey(ctx context.Context, record *UserKeyRecord) e
 	return nil
 }
 
+// UpdateWrappedDEK updates the wrapped DEK for a user. When the
+// context carries an active *pgx.Tx (threaded through by
+// SecretStore.ReEncryptUserSecrets via withTx), the UPDATE runs inside
+// that transaction so the user_keys row and the user_secrets re-encrypt
+// commit or roll back atomically. Otherwise the UPDATE runs on the
+// pool directly. See Bug 9 in worklog 0094.
 func (s *PgKeyStore) UpdateWrappedDEK(ctx context.Context, userID string, wrappedDEK []byte, salt []byte, keyVersion int) error {
+	if tx := txFromContext(ctx); tx != nil {
+		_, err := tx.Exec(ctx,
+			`UPDATE user_keys SET wrapped_dek = $1, salt = $2, key_version = $3, rotated_at = NOW() WHERE user_id = $4`,
+			wrappedDEK, salt, keyVersion, userID)
+		if err != nil {
+			return fmt.Errorf("update wrapped_dek (tx): %w", err)
+		}
+		return nil
+	}
 	_, err := s.pool.Exec(ctx,
 		`UPDATE user_keys SET wrapped_dek = $1, salt = $2, key_version = $3, rotated_at = NOW() WHERE user_id = $4`,
 		wrappedDEK, salt, keyVersion, userID)

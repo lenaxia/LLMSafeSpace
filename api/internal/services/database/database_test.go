@@ -805,3 +805,49 @@ func TestUpdateUser(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
+
+// TestMarkWorkspaceDeleted_PurgesBindings is the regression test for
+// Bug 11 in worklog 0085: deleting a workspace must also purge its
+// user_secret_bindings rows. The bindings table has no FK to
+// workspaces.id (column types differ historically), so without an
+// explicit DELETE we accumulate orphan rows over time.
+func TestMarkWorkspaceDeleted_PurgesBindings(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectExec("UPDATE workspaces SET deleted_at = NOW.*").
+		WithArgs("ws-to-delete").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM user_secret_bindings WHERE workspace_id = .*").
+		WithArgs("ws-to-delete").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	service.MarkWorkspaceDeleted(context.Background(), "ws-to-delete")
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("MarkWorkspaceDeleted must DELETE bindings: %v", err)
+	}
+}
+
+// TestMarkWorkspaceDeleted_BindingDeleteFailureDoesNotBreakSoftDelete
+// verifies that the soft-delete still happens even if the binding
+// cleanup fails. The bindings cleanup is hygiene; the workspace
+// soft-delete is correctness.
+func TestMarkWorkspaceDeleted_BindingDeleteFailureDoesNotBreakSoftDelete(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectExec("UPDATE workspaces SET deleted_at = NOW.*").
+		WithArgs("ws-id").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM user_secret_bindings WHERE workspace_id = .*").
+		WithArgs("ws-id").
+		WillReturnError(sql.ErrConnDone)
+
+	// Must not panic.
+	service.MarkWorkspaceDeleted(context.Background(), "ws-id")
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

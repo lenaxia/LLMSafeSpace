@@ -94,7 +94,7 @@ func TestE2E_RealHTTPServer(t *testing.T) {
 	assertStatus(t, resp, 401, "bad token")
 
 	// === Phase 2: Create secret ===
-	body := `{"name":"anthropic-key","type":"llm-provider","value":"sk-ant-api03-real-secret","metadata":{"provider":"anthropic"}}`
+	body := `{"name":"anthropic-key","type":"api-key","value":"sk-ant-api03-real-secret","metadata":{"provider":"anthropic"}}`
 	resp = post(t, c, base+"/api/v1/secrets", body, token)
 	assertStatus(t, resp, 201, "create")
 	var created struct {

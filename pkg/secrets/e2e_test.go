@@ -41,7 +41,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	// === Phase 3: Create secrets of all types ===
 	llmSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
 		Name:     "anthropic-prod",
-		Type:     SecretTypeLLMProvider,
+		Type:     SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-ant-api03-xxx","provider":"anthropic","model":"claude-sonnet-4-20250514"}`,
 		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
 	})
@@ -83,7 +83,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		Name:     "tls-cert",
 		Type:     SecretTypeSecretFile,
 		Value:    "-----BEGIN CERTIFICATE-----\nMIIBxTCCAW...",
-		Metadata: json.RawMessage(`{"mount_path":"/workspace/.secrets/tls.pem"}`),
+		Metadata: json.RawMessage(`{"mount_path":"tls.pem"}`),
 	})
 	if err != nil {
 		t.Fatalf("Create file secret: %v", err)
@@ -135,7 +135,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		}
 		switch s.Name {
 		case "anthropic-prod":
-			if s.Type != SecretTypeLLMProvider {
+			if s.Type != SecretTypeAPIKey {
 				t.Errorf("Wrong type for anthropic-prod: %s", s.Type)
 			}
 		case "github-deploy-key":
@@ -164,12 +164,16 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 8: Verify secrets still accessible after rotation ===
-	// Note: in production, old-version secrets would be lazily re-encrypted.
-	// With the new DEK, we can't decrypt old ciphertext directly.
-	// This is expected — the lazy migration happens on next read.
-	// For this test, we verify the new DEK is active.
+	// RotateKeyWithPassword eagerly re-encrypts every secret under the
+	// new DEK before bumping key_version (Bug 9 fix in worklog 0094).
+	// All pre-rotation secrets must therefore decrypt with the new DEK.
 	if !keySvc.DEKAvailable(ctx, sessionID) {
 		t.Error("DEK should be available after rotation")
+	}
+	for _, sr := range []string{envSecret.ID, sshSecret.ID, gitSecret.ID, fileSecret.ID, llmSecret.ID} {
+		if _, derr := svc.DecryptSecretValue(ctx, userID, sessionID, sr); derr != nil {
+			t.Fatalf("post-rotation reveal of %s: %v — Bug 9 has regressed", sr, derr)
+		}
 	}
 
 	// === Phase 9: Password change ===
