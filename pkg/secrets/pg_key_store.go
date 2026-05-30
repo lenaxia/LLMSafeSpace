@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -25,7 +26,7 @@ func (s *PgKeyStore) GetUserKey(ctx context.Context, userID string) (*UserKeyRec
 
 	var r UserKeyRecord
 	err := row.Scan(&r.UserID, &r.KeyVersion, &r.WrappedDEK, &r.WrappedDEKRecovery, &r.Salt, &r.RecoverySalt, &r.CreatedAt, &r.RotatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -52,29 +53,34 @@ func (s *PgKeyStore) CreateUserKey(ctx context.Context, record *UserKeyRecord) e
 // commit or roll back atomically. Otherwise the UPDATE runs on the
 // pool directly. See Bug 9 in worklog 0094.
 func (s *PgKeyStore) UpdateWrappedDEK(ctx context.Context, userID string, wrappedDEK []byte, salt []byte, keyVersion int) error {
+	const sqlStmt = `UPDATE user_keys SET wrapped_dek = $1, salt = $2, key_version = $3, rotated_at = NOW() WHERE user_id = $4`
 	if tx := txFromContext(ctx); tx != nil {
-		_, err := tx.Exec(ctx,
-			`UPDATE user_keys SET wrapped_dek = $1, salt = $2, key_version = $3, rotated_at = NOW() WHERE user_id = $4`,
-			wrappedDEK, salt, keyVersion, userID)
-		if err != nil {
+		if _, err := tx.Exec(ctx, sqlStmt, wrappedDEK, salt, keyVersion, userID); err != nil {
 			return fmt.Errorf("update wrapped_dek (tx): %w", err)
 		}
 		return nil
 	}
-	_, err := s.pool.Exec(ctx,
-		`UPDATE user_keys SET wrapped_dek = $1, salt = $2, key_version = $3, rotated_at = NOW() WHERE user_id = $4`,
-		wrappedDEK, salt, keyVersion, userID)
-	if err != nil {
+	if _, err := s.pool.Exec(ctx, sqlStmt, wrappedDEK, salt, keyVersion, userID); err != nil {
 		return fmt.Errorf("update wrapped_dek: %w", err)
 	}
 	return nil
 }
 
+// UpdateWrappedDEKRecovery updates the recovery-key wrap. Like
+// UpdateWrappedDEK, the implementation honours an active *pgx.Tx
+// threaded through the context (via withTx) so future callers that
+// want to bundle a recovery-key rotation into the same atomic unit as
+// the password-key rotation can do so. No current caller does, but
+// the parity with UpdateWrappedDEK closes a latent footgun.
 func (s *PgKeyStore) UpdateWrappedDEKRecovery(ctx context.Context, userID string, wrappedDEKRecovery []byte, recoverySalt []byte) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE user_keys SET wrapped_dek_recovery = $1, recovery_salt = $2 WHERE user_id = $3`,
-		wrappedDEKRecovery, recoverySalt, userID)
-	if err != nil {
+	const sqlStmt = `UPDATE user_keys SET wrapped_dek_recovery = $1, recovery_salt = $2 WHERE user_id = $3`
+	if tx := txFromContext(ctx); tx != nil {
+		if _, err := tx.Exec(ctx, sqlStmt, wrappedDEKRecovery, recoverySalt, userID); err != nil {
+			return fmt.Errorf("update wrapped_dek_recovery (tx): %w", err)
+		}
+		return nil
+	}
+	if _, err := s.pool.Exec(ctx, sqlStmt, wrappedDEKRecovery, recoverySalt, userID); err != nil {
 		return fmt.Errorf("update wrapped_dek_recovery: %w", err)
 	}
 	return nil

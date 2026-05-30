@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // PgSecretStore implements SecretStore using PostgreSQL.
@@ -48,7 +52,7 @@ func (s *PgSecretStore) GetSecret(ctx context.Context, userID, secretID string) 
 
 	var sec UserSecret
 	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -64,7 +68,7 @@ func (s *PgSecretStore) GetSecretByName(ctx context.Context, userID, name string
 
 	var sec UserSecret
 	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -254,6 +258,21 @@ func (s *PgSecretStore) DeleteSecret(ctx context.Context, userID, secretID strin
 	return nil
 }
 
+// SetBindings replaces the binding set for workspaceID atomically.
+//
+// Concurrency: takes an advisory transaction lock keyed on the
+// workspace ID's hash so two concurrent SetBindings calls for the
+// same workspace serialise. Without the lock, two writers could each
+// DELETE the workspace's bindings and then INSERT their own; the
+// later commit's bindings would silently win and any binding the
+// earlier writer added that the later writer didn't see would be
+// lost. The lock is only held for the duration of this transaction
+// (xact_lock auto-releases on commit/rollback), so the failure mode
+// is "second writer waits a few ms" rather than "second writer
+// silently loses data".
+//
+// Different workspaces hash to different lock numbers and proceed in
+// parallel.
 func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -261,18 +280,26 @@ func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, sec
 	}
 	defer tx.Rollback(ctx)
 
+	// pg_advisory_xact_lock takes a 64-bit signed bigint. hashtext()
+	// returns int4 which Postgres will cast for us; the cast is
+	// truncating but uniqueness across workspaces is sufficient for
+	// our serialisation goal.
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, workspaceID); err != nil {
+		return fmt.Errorf("acquire workspace bindings lock: %w", err)
+	}
+
 	// Remove existing bindings for this workspace
-	_, err = tx.Exec(ctx, `DELETE FROM user_secret_bindings WHERE workspace_id = $1`, workspaceID)
-	if err != nil {
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM user_secret_bindings WHERE workspace_id = $1`, workspaceID); err != nil {
 		return err
 	}
 
 	// Insert new bindings
 	for _, sid := range secretIDs {
-		_, err = tx.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`INSERT INTO user_secret_bindings (secret_id, workspace_id) VALUES ($1, $2)`,
-			sid, workspaceID)
-		if err != nil {
+			sid, workspaceID); err != nil {
 			return err
 		}
 	}
@@ -397,19 +424,47 @@ func (s *PgSecretStore) QueryAudit(ctx context.Context, userID string, query Aud
 	return entries, rows.Err()
 }
 
-// AsyncAuditLogger wraps a SecretStore and logs audit entries asynchronously.
+// AsyncAuditLogger wraps a SecretStore and logs audit entries
+// asynchronously. The hot path (Log) never blocks: a full channel
+// drops the entry and increments DroppedCount, which operators can
+// scrape via Stats() and surface as an alert. Drains-on-Stop are
+// idempotent (Stop may be called multiple times without panicking).
+//
+// AsyncAuditLogger is itself a SecretStore — every CRUD method
+// delegates to the wrapped store, while LogAudit is the only method
+// that becomes asynchronous. This means callers can compose:
+//
+//	auditedStore := NewAsyncAuditLogger(pgStore, 4096)
+//	svc := NewSecretService(keys, auditedStore)
+//
+// and every audit write becomes non-blocking without further wiring.
 type AsyncAuditLogger struct {
-	store SecretStore
-	ch    chan *AuditEntry
-	done  chan struct{}
+	store    SecretStore
+	ch       chan *AuditEntry
+	done     chan struct{}
+	stopOnce sync.Once
+	dropped  atomic.Uint64
+	written  atomic.Uint64
+	failed   atomic.Uint64
+	logger   pkginterfaces.LoggerInterface
 }
 
-// NewAsyncAuditLogger creates an async audit logger with a buffered channel.
-func NewAsyncAuditLogger(store SecretStore, bufSize int) *AsyncAuditLogger {
+// AsyncAuditStats is the snapshot returned by AsyncAuditLogger.Stats.
+type AsyncAuditStats struct {
+	Dropped uint64 // entries dropped because the channel was full
+	Written uint64 // entries successfully persisted
+	Failed  uint64 // entries that reached the worker but the store rejected
+}
+
+// NewAsyncAuditLogger creates an async audit logger with a buffered
+// channel. logger is optional — when set, drop+failure events surface
+// at Warn so operators can detect audit-pipeline degradation.
+func NewAsyncAuditLogger(store SecretStore, bufSize int, logger pkginterfaces.LoggerInterface) *AsyncAuditLogger {
 	l := &AsyncAuditLogger{
-		store: store,
-		ch:    make(chan *AuditEntry, bufSize),
-		done:  make(chan struct{}),
+		store:  store,
+		ch:     make(chan *AuditEntry, bufSize),
+		done:   make(chan struct{}),
+		logger: logger,
 	}
 	go l.run()
 	return l
@@ -418,23 +473,94 @@ func NewAsyncAuditLogger(store SecretStore, bufSize int) *AsyncAuditLogger {
 func (l *AsyncAuditLogger) run() {
 	for entry := range l.ch {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = l.store.LogAudit(ctx, entry)
+		if err := l.store.LogAudit(ctx, entry); err != nil {
+			l.failed.Add(1)
+			if l.logger != nil {
+				l.logger.Warn("audit logger: store rejected entry",
+					"action", entry.Action, "userID", entry.UserID, "error", err.Error())
+			}
+		} else {
+			l.written.Add(1)
+		}
 		cancel()
 	}
 	close(l.done)
 }
 
-// Log sends an audit entry to the async channel.
-func (l *AsyncAuditLogger) Log(entry *AuditEntry) {
+// LogAudit on AsyncAuditLogger never blocks. Entries are sent to the
+// background goroutine via a buffered channel; a full channel drops
+// the entry and increments the drop counter. The returned error is
+// always nil — failures are observable via Stats() and the logger.
+func (l *AsyncAuditLogger) LogAudit(_ context.Context, entry *AuditEntry) error {
 	select {
 	case l.ch <- entry:
 	default:
-		// Channel full — drop entry rather than block hot path
+		l.dropped.Add(1)
+		if l.logger != nil {
+			// Warn at most once per drop; the volume is bounded by
+			// the channel-fill rate so this is acceptable noise.
+			l.logger.Warn("audit logger: channel full, dropping entry",
+				"action", entry.Action, "userID", entry.UserID,
+				"droppedTotal", l.dropped.Load())
+		}
+	}
+	return nil
+}
+
+// Stop drains the channel and waits for completion. Idempotent: a
+// second call returns immediately without panicking on the already-
+// closed channel.
+func (l *AsyncAuditLogger) Stop() {
+	l.stopOnce.Do(func() {
+		close(l.ch)
+		<-l.done
+	})
+}
+
+// Stats returns a snapshot of the dropped / written / failed counters.
+// Safe to call concurrently with logging.
+func (l *AsyncAuditLogger) Stats() AsyncAuditStats {
+	return AsyncAuditStats{
+		Dropped: l.dropped.Load(),
+		Written: l.written.Load(),
+		Failed:  l.failed.Load(),
 	}
 }
 
-// Stop drains the channel and waits for completion.
-func (l *AsyncAuditLogger) Stop() {
-	close(l.ch)
-	<-l.done
+// Pass-through methods so AsyncAuditLogger satisfies SecretStore.
+// Every CRUD operation delegates to the wrapped store; only LogAudit
+// is intercepted to make it asynchronous.
+
+func (l *AsyncAuditLogger) CreateSecret(ctx context.Context, secret *UserSecret) error {
+	return l.store.CreateSecret(ctx, secret)
+}
+func (l *AsyncAuditLogger) GetSecret(ctx context.Context, userID, secretID string) (*UserSecret, error) {
+	return l.store.GetSecret(ctx, userID, secretID)
+}
+func (l *AsyncAuditLogger) GetSecretByName(ctx context.Context, userID, name string) (*UserSecret, error) {
+	return l.store.GetSecretByName(ctx, userID, name)
+}
+func (l *AsyncAuditLogger) ListSecrets(ctx context.Context, userID string) ([]*UserSecret, error) {
+	return l.store.ListSecrets(ctx, userID)
+}
+func (l *AsyncAuditLogger) UpdateSecret(ctx context.Context, secret *UserSecret) error {
+	return l.store.UpdateSecret(ctx, secret)
+}
+func (l *AsyncAuditLogger) DeleteSecret(ctx context.Context, userID, secretID string) error {
+	return l.store.DeleteSecret(ctx, userID, secretID)
+}
+func (l *AsyncAuditLogger) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	return l.store.ReEncryptUserSecrets(ctx, userID, newKeyVersion, transform, commit)
+}
+func (l *AsyncAuditLogger) SetBindings(ctx context.Context, workspaceID string, secretIDs []string) error {
+	return l.store.SetBindings(ctx, workspaceID, secretIDs)
+}
+func (l *AsyncAuditLogger) GetBindings(ctx context.Context, workspaceID string) ([]*UserSecret, error) {
+	return l.store.GetBindings(ctx, workspaceID)
+}
+func (l *AsyncAuditLogger) GetBindingsForSecret(ctx context.Context, secretID string) ([]string, error) {
+	return l.store.GetBindingsForSecret(ctx, secretID)
+}
+func (l *AsyncAuditLogger) QueryAudit(ctx context.Context, userID string, query AuditQuery) ([]*AuditEntry, error) {
+	return l.store.QueryAudit(ctx, userID, query)
 }

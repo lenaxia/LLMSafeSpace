@@ -39,6 +39,7 @@ type App struct {
 	sessionIndexSvc  *sessionindex.Service
 	instanceSettings *settings.InstanceService
 	userSettings     *settings.UserService
+	asyncAudit       *secrets.AsyncAuditLogger // nil if pgxpool path not used
 	shutdownCh       chan struct{}
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -93,6 +94,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Wire secret management (Epic 10).
 	var secretsHandler *handlers.SecretsHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
+	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	{
 		dekCacheClient := redis.NewClient(&redis.Options{
 			Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
@@ -124,9 +126,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			return nil, fmt.Errorf("create pgxpool for secrets store: %w (refusing to fall back to in-memory; the in-memory secret/key adapters lose data on restart and are not safe for any environment that handles real user secrets)", pgxErr)
 		}
 		pgStore := secrets.NewPgSecretStore(secretsPool)
+		// Wrap the secret store in an async audit logger so audit
+		// writes do not block the request goroutine. The wrapper is
+		// itself a SecretStore (CRUD methods delegate; LogAudit goes
+		// through a 4096-entry buffered channel). Operators see drop
+		// counts via Stats() and Warn-level logs.
+		asyncAudit = secrets.NewAsyncAuditLogger(pgStore, 4096, log)
 		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
-		secretService = secrets.NewSecretService(keyService, pgStore)
-		auditStore = pgStore
+		secretService = secrets.NewSecretService(keyService, asyncAudit)
+		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
@@ -242,6 +250,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		sessionIndexSvc:  sessionIndexSvc,
 		instanceSettings: instanceSettings,
 		userSettings:     userSettings,
+		asyncAudit:       asyncAudit,
 		shutdownCh:       make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -311,6 +320,15 @@ func (a *App) Shutdown() error {
 
 	if err := a.sessionIndexSvc.Stop(); err != nil {
 		a.logger.Error("Session index shutdown error", err)
+	}
+
+	// Drain pending audit entries before tearing down the DB pool so
+	// pending writes get a fair chance to land.
+	if a.asyncAudit != nil {
+		a.asyncAudit.Stop()
+		stats := a.asyncAudit.Stats()
+		a.logger.Info("Async audit logger drained",
+			"written", stats.Written, "dropped", stats.Dropped, "failed", stats.Failed)
 	}
 
 	a.k8sClient.Stop()

@@ -52,7 +52,16 @@ func NewKeyService(store KeyStore, cache DEKCache) *KeyService {
 // re-encrypt every user_secrets row under the new DEK. Without this, the
 // rotate endpoint refuses to run rather than orphan secret rows under a
 // discarded DEK (Bug 9 in worklog 0085).
+//
+// Once set, the store cannot be silently reassigned: a silent
+// reassignment would mean RotateKeyWithPassword ignores secrets owned
+// by an abandoned store — exactly the Bug 9 hazard. Calling
+// SetSecretStore twice with different stores panics; calling with the
+// same store (idempotent re-init) is allowed.
 func (s *KeyService) SetSecretStore(store SecretStore) {
+	if s.secretStore != nil && s.secretStore != store {
+		panic("KeyService.SetSecretStore called twice with different stores; refusing to silently rebind")
+	}
 	s.secretStore = store
 }
 
@@ -297,11 +306,6 @@ func (s *KeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 		return false, err
 	}
 	return record != nil, nil
-}
-
-// RotateKey is unsupported; key rotation requires password confirmation.
-func (s *KeyService) RotateKey(ctx context.Context, userID, sessionID string) (newKeyVersion int, err error) {
-	return 0, errors.New("RotateKey requires password; use RotateKeyWithPassword instead")
 }
 
 // RotateKeyWithPassword rotates the user's DEK and eagerly re-encrypts
