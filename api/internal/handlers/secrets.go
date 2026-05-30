@@ -474,6 +474,19 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 
 // SetWorkspaceEnv handles PUT /api/v1/workspaces/:id/env
 // Creates or updates env-secret type secrets bound to this workspace.
+//
+// Concurrency: a single binding-set write at the end of the loop
+// snapshot-reads the workspace's bindings once. Two concurrent
+// SetWorkspaceEnv calls can still race on the binding set (the later
+// writer's snapshot does not include the earlier writer's new
+// secrets) — fixing that requires an advisory lock or a SERIALIZABLE
+// SetBindings, which is a separate concern. The within-call N+1 of
+// the previous implementation (re-reading bindings for every var) is
+// removed.
+//
+// Error handling: every UpdateSecret/CreateSecret/SetBindings failure
+// surfaces as 500 with the offending var name. Pre-fix the handler
+// returned 204 even when the writes silently failed.
 func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 	userID, sessionID := extractAuth(c)
 	if userID == "" {
@@ -490,31 +503,66 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+
+	// Read existing bindings once; we'll union new secret IDs in at
+	// the end with a single SetBindings write.
+	currentBindings, err := h.svc.GetBindings(ctx, userID, workspaceID)
+	if err != nil {
+		h.warn("SetWorkspaceEnv: GetBindings failed",
+			"workspaceID", workspaceID, "userID", userID, "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read workspace bindings"})
+		return
+	}
+	bindingSet := make(map[string]struct{}, len(currentBindings.Bindings)+len(req.Vars))
+	for _, b := range currentBindings.Bindings {
+		bindingSet[b.SecretID] = struct{}{}
+	}
+
 	for varName, value := range req.Vars {
 		secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
 		metadata, _ := json.Marshal(map[string]string{"var_name": varName})
 
-		// Try to update existing, create if not found
-		existing, _ := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
+		existing, err := h.svc.GetSecretByName(ctx, userID, secretName)
+		if err != nil {
+			h.warn("SetWorkspaceEnv: GetSecretByName failed",
+				"varName", varName, "workspaceID", workspaceID, "error", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up env var: " + varName})
+			return
+		}
 		if existing != nil {
-			h.svc.UpdateSecret(c.Request.Context(), userID, sessionID, existing.ID, secrets.UpdateSecretRequest{Value: value})
-		} else {
-			created, err := h.svc.CreateSecret(c.Request.Context(), userID, sessionID, secrets.CreateSecretRequest{
-				Name: secretName, Type: secrets.SecretTypeEnvSecret, Value: value,
-				Metadata: metadata,
-			})
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set env var: " + varName})
+			if err := h.svc.UpdateSecret(ctx, userID, sessionID, existing.ID,
+				secrets.UpdateSecretRequest{Value: value}); err != nil {
+				h.warn("SetWorkspaceEnv: UpdateSecret failed",
+					"varName", varName, "secretID", existing.ID, "error", err.Error())
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update env var: " + varName})
 				return
 			}
-			// Auto-bind to workspace
-			currentBindings, _ := h.svc.GetBindings(c.Request.Context(), userID, workspaceID)
-			ids := []string{created.ID}
-			for _, b := range currentBindings.Bindings {
-				ids = append(ids, b.SecretID)
-			}
-			h.svc.SetBindings(c.Request.Context(), userID, workspaceID, ids)
+			bindingSet[existing.ID] = struct{}{}
+			continue
 		}
+		created, err := h.svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+			Name: secretName, Type: secrets.SecretTypeEnvSecret, Value: value,
+			Metadata: metadata,
+		})
+		if err != nil {
+			h.warn("SetWorkspaceEnv: CreateSecret failed",
+				"varName", varName, "workspaceID", workspaceID, "error", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set env var: " + varName})
+			return
+		}
+		bindingSet[created.ID] = struct{}{}
+	}
+
+	ids := make([]string, 0, len(bindingSet))
+	for id := range bindingSet {
+		ids = append(ids, id)
+	}
+	if err := h.svc.SetBindings(ctx, userID, workspaceID, ids); err != nil {
+		h.warn("SetWorkspaceEnv: SetBindings failed",
+			"workspaceID", workspaceID, "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit workspace bindings"})
+		return
 	}
 
 	c.Status(http.StatusNoContent)
@@ -557,7 +605,13 @@ func (h *SecretsHandler) DeleteWorkspaceEnv(c *gin.Context) {
 	varName := c.Param("name")
 	secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
 
-	existing, _ := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
+	existing, err := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
+	if err != nil {
+		h.warn("DeleteWorkspaceEnv: GetSecretByName failed",
+			"varName", varName, "workspaceID", workspaceID, "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up env var"})
+		return
+	}
 	if existing == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "env var not found"})
 		return
