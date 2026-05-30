@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sync"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -18,16 +19,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// dbKeyStoreAdapter adapts the DatabaseService interface to secrets.KeyStore.
-// This is a temporary adapter until the database service exposes user_keys operations directly.
-// For now, it stores key material in memory (suitable for single-instance deployments).
-// TODO: Add GetUserKey/CreateUserKey/UpdateWrappedDEK to DatabaseService interface.
+// dbKeyStoreAdapter is an in-memory KeyStore used by app-level wiring
+// tests so they don't need a Postgres instance. It is NOT used in
+// production: app.New refuses to start if pgxpool initialisation fails.
+//
+// Concurrency: guarded by a mutex so future tests running with
+// t.Parallel() do not race; correctness is otherwise irrelevant
+// because every call within a single goroutine reads/writes the same
+// map atomically under the lock.
 type dbKeyStoreAdapter struct {
+	mu      sync.Mutex
 	db      interfaces.DatabaseService
 	memKeys map[string]*secrets.UserKeyRecord
 }
 
 func (a *dbKeyStoreAdapter) GetUserKey(_ context.Context, userID string) (*secrets.UserKeyRecord, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.memKeys == nil {
 		return nil, nil
 	}
@@ -40,6 +48,8 @@ func (a *dbKeyStoreAdapter) GetUserKey(_ context.Context, userID string) (*secre
 }
 
 func (a *dbKeyStoreAdapter) CreateUserKey(_ context.Context, record *secrets.UserKeyRecord) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.memKeys == nil {
 		a.memKeys = make(map[string]*secrets.UserKeyRecord)
 	}
@@ -49,6 +59,8 @@ func (a *dbKeyStoreAdapter) CreateUserKey(_ context.Context, record *secrets.Use
 }
 
 func (a *dbKeyStoreAdapter) UpdateWrappedDEK(_ context.Context, userID string, wrappedDEK []byte, salt []byte, keyVersion int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.memKeys == nil {
 		return nil
 	}
@@ -63,6 +75,8 @@ func (a *dbKeyStoreAdapter) UpdateWrappedDEK(_ context.Context, userID string, w
 }
 
 func (a *dbKeyStoreAdapter) UpdateWrappedDEKRecovery(_ context.Context, userID string, wrappedDEKRecovery []byte, recoverySalt []byte) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.memKeys == nil {
 		return nil
 	}
@@ -75,15 +89,29 @@ func (a *dbKeyStoreAdapter) UpdateWrappedDEKRecovery(_ context.Context, userID s
 	return nil
 }
 
-// dbSecretStoreAdapter adapts to secrets.SecretStore using in-memory storage.
-// TODO: Replace with PgSecretStore once pgxpool is exposed from database service.
+// dbSecretStoreAdapter is an in-memory SecretStore used by app-level
+// wiring tests. NOT used in production: app.New refuses to start if
+// pgxpool initialisation fails, which would otherwise be the only
+// caller of this adapter.
+//
+// Concurrency: guarded by a mutex so future tests running with
+// t.Parallel() do not race. The audit slice is bounded so a long test
+// run does not grow without bound.
 type dbSecretStoreAdapter struct {
+	mu       sync.Mutex
 	db       interfaces.DatabaseService
 	secrets  map[string]*secrets.UserSecret
 	bindings map[string][]string
 	audit    []*secrets.AuditEntry
 }
 
+// maxAdapterAuditEntries caps the in-memory audit slice. Production
+// uses pg-backed audit storage so this only affects test-suite memory
+// footprint; without the cap a long test run accumulates audit entries
+// without bound.
+const maxAdapterAuditEntries = 4096
+
+// init lazy-initialises maps. Caller must already hold a.mu.
 func (a *dbSecretStoreAdapter) init() {
 	if a.secrets == nil {
 		a.secrets = make(map[string]*secrets.UserSecret)
@@ -92,6 +120,8 @@ func (a *dbSecretStoreAdapter) init() {
 }
 
 func (a *dbSecretStoreAdapter) CreateSecret(_ context.Context, secret *secrets.UserSecret) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	for _, s := range a.secrets {
 		if s.UserID == secret.UserID && s.Name == secret.Name {
@@ -107,6 +137,8 @@ func (a *dbSecretStoreAdapter) CreateSecret(_ context.Context, secret *secrets.U
 }
 
 func (a *dbSecretStoreAdapter) GetSecret(_ context.Context, userID, secretID string) (*secrets.UserSecret, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	s, ok := a.secrets[secretID]
 	if !ok || s.UserID != userID {
@@ -117,6 +149,8 @@ func (a *dbSecretStoreAdapter) GetSecret(_ context.Context, userID, secretID str
 }
 
 func (a *dbSecretStoreAdapter) GetSecretByName(_ context.Context, userID, name string) (*secrets.UserSecret, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	for _, s := range a.secrets {
 		if s.UserID == userID && s.Name == name {
@@ -128,6 +162,8 @@ func (a *dbSecretStoreAdapter) GetSecretByName(_ context.Context, userID, name s
 }
 
 func (a *dbSecretStoreAdapter) ListSecrets(_ context.Context, userID string) ([]*secrets.UserSecret, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	var result []*secrets.UserSecret
 	for _, s := range a.secrets {
@@ -140,6 +176,8 @@ func (a *dbSecretStoreAdapter) ListSecrets(_ context.Context, userID string) ([]
 }
 
 func (a *dbSecretStoreAdapter) UpdateSecret(_ context.Context, secret *secrets.UserSecret) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	if _, ok := a.secrets[secret.ID]; !ok {
 		return &notFoundErr{secret.ID}
@@ -150,6 +188,8 @@ func (a *dbSecretStoreAdapter) UpdateSecret(_ context.Context, secret *secrets.U
 }
 
 func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID string, newKeyVersion int, transform func([]byte) ([]byte, error), commit func(context.Context) error) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	updates := make(map[string][]byte)
 	for id, s := range a.secrets {
@@ -163,7 +203,13 @@ func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID 
 		updates[id] = newCT
 	}
 	if commit != nil {
-		if err := commit(ctx); err != nil {
+		// Drop the lock so commit's downstream callbacks can re-enter
+		// the adapter without deadlocking. The mutation phase below
+		// re-acquires.
+		a.mu.Unlock()
+		err := commit(ctx)
+		a.mu.Lock()
+		if err != nil {
 			return err
 		}
 	}
@@ -176,6 +222,8 @@ func (a *dbSecretStoreAdapter) ReEncryptUserSecrets(ctx context.Context, userID 
 }
 
 func (a *dbSecretStoreAdapter) DeleteSecret(_ context.Context, userID, secretID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	s, ok := a.secrets[secretID]
 	if !ok || s.UserID != userID {
@@ -195,12 +243,16 @@ func (a *dbSecretStoreAdapter) DeleteSecret(_ context.Context, userID, secretID 
 }
 
 func (a *dbSecretStoreAdapter) SetBindings(_ context.Context, workspaceID string, secretIDs []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	a.bindings[workspaceID] = secretIDs
 	return nil
 }
 
 func (a *dbSecretStoreAdapter) GetBindings(_ context.Context, workspaceID string) ([]*secrets.UserSecret, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	sids := a.bindings[workspaceID]
 	var result []*secrets.UserSecret
@@ -214,6 +266,8 @@ func (a *dbSecretStoreAdapter) GetBindings(_ context.Context, workspaceID string
 }
 
 func (a *dbSecretStoreAdapter) GetBindingsForSecret(_ context.Context, secretID string) ([]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.init()
 	var ws []string
 	for wsID, sids := range a.bindings {
@@ -227,11 +281,22 @@ func (a *dbSecretStoreAdapter) GetBindingsForSecret(_ context.Context, secretID 
 }
 
 func (a *dbSecretStoreAdapter) LogAudit(_ context.Context, entry *secrets.AuditEntry) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.audit = append(a.audit, entry)
+	// Bound the slice — drop oldest when we exceed the cap. The cap
+	// is large enough for any realistic test run but small enough to
+	// keep memory bounded in long-running suites.
+	if len(a.audit) > maxAdapterAuditEntries {
+		drop := len(a.audit) - maxAdapterAuditEntries
+		a.audit = a.audit[drop:]
+	}
 	return nil
 }
 
 func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ secrets.AuditQuery) ([]*secrets.AuditEntry, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	var result []*secrets.AuditEntry
 	for _, e := range a.audit {
 		if e.UserID == userID {
