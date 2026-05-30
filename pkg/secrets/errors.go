@@ -33,4 +33,12 @@ var (
 	// missing a required field for the secret type, fails JSON
 	// validation, or contains an adversarial mount_path.
 	ErrInvalidMetadata = errors.New("invalid secret metadata")
+
+	// ErrInvalidPassword is returned by RevealSecret when the
+	// password reconfirmation step fails. The handler maps this to
+	// a uniform 403 — the same status used for missing DEK — so
+	// the response shape does not differentiate between "wrong
+	// password" and "session expired", reducing what an attacker
+	// who has stolen a JWT can learn.
+	ErrInvalidPassword = errors.New("invalid password")
 )

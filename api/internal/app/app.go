@@ -146,6 +146,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			secretsHandler.SetSecretsManifestWriter(wsSvc)
 		}
+		// Wire the password verifier so RevealSecret enforces a real
+		// re-authentication gate. Without this the field is theatre
+		// (validator finding on RevealSecret in worklog 0094 audit).
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			secretsHandler.SetPasswordVerifier(authSvc)
+		}
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {

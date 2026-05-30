@@ -20,6 +20,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -484,6 +485,36 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 
 	user.PasswordHash = ""
 	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey}, nil
+}
+
+// VerifyPassword checks the supplied password against the stored
+// bcrypt hash for userID. Returns nil on match, ErrInvalidPassword on
+// any mismatch / not-found / DB error. The error returned is
+// uniform — callers must NOT differentiate between "wrong password"
+// and "user does not exist" because doing so leaks user-existence
+// status (the same reason Login returns the generic "invalid
+// credentials" message).
+//
+// bcrypt.CompareHashAndPassword runs in constant time relative to the
+// hash cost, so timing-channel leakage is bounded by the bcrypt cost
+// (12 in this codebase) regardless of password length.
+func (s *Service) VerifyPassword(ctx context.Context, userID string, password []byte) error {
+	user, err := s.dbService.GetUser(ctx, userID)
+	if err != nil || user == nil {
+		// Run a dummy bcrypt compare so the response time is
+		// indistinguishable from the real-user-wrong-password
+		// branch. The constant cost prevents user enumeration via
+		// timing.
+		_ = bcrypt.CompareHashAndPassword(
+			[]byte("$2a$12$0000000000000000000000000000000000000000000000000000"),
+			password,
+		)
+		return secrets.ErrInvalidPassword
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), password); err != nil {
+		return secrets.ErrInvalidPassword
+	}
+	return nil
 }
 
 func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error) {

@@ -654,3 +654,119 @@ func TestHandler_BindLogsReloadFailure(t *testing.T) {
 		t.Fatal("Bug 2 regression: SetBindings push failure must surface in logs as Warn")
 	}
 }
+
+// stubPasswordVerifier is a deterministic fake for RevealSecret tests.
+type stubPasswordVerifier struct {
+	expected []byte
+	calls    int
+}
+
+func (v *stubPasswordVerifier) VerifyPassword(_ context.Context, _ string, password []byte) error {
+	v.calls++
+	if string(password) == string(v.expected) {
+		return nil
+	}
+	return secrets.ErrInvalidPassword
+}
+
+// TestHandler_RevealSecret_RequiresPasswordVerification is the
+// regression test for the validator's "RevealSecret is theatre"
+// finding. Pre-fix, the handler accepted any password (the field was
+// declared but never checked). Post-fix:
+//   - Without a configured verifier, reveal returns 503.
+//   - With a verifier, the wrong password returns 403 and never
+//     calls DecryptSecretValue.
+//   - The right password returns 200 + plaintext.
+func TestHandler_RevealSecret_RequiresPasswordVerification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	if _, err := keySvc.InitializeUserKeys(ctx, userID, password); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+		Name: "reveal-me", Type: secrets.SecretTypeEnvSecret, Value: "real-value",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	mkRouter := func(h *SecretsHandler) *gin.Engine {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("userID", userID)
+			c.Set("sessionID", sessionID)
+			c.Next()
+		})
+		router.POST("/api/v1/secrets/:id/reveal", h.RevealSecret)
+		return router
+	}
+
+	t.Run("no verifier configured returns 503", func(t *testing.T) {
+		h := NewSecretsHandler(svc)
+		body, _ := json.Marshal(map[string]string{"password": "anything"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/"+created.ID+"/reveal", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mkRouter(h).ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503 without verifier, got %d", w.Code)
+		}
+	})
+
+	t.Run("wrong password returns 403 and does not leak plaintext", func(t *testing.T) {
+		verifier := &stubPasswordVerifier{expected: password}
+		h := NewSecretsHandler(svc)
+		h.SetPasswordVerifier(verifier)
+
+		body, _ := json.Marshal(map[string]string{"password": "wrong"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/"+created.ID+"/reveal", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mkRouter(h).ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for wrong password, got %d: %s", w.Code, w.Body.String())
+		}
+		if verifier.calls != 1 {
+			t.Errorf("verifier must be invoked exactly once, got %d", verifier.calls)
+		}
+		if bytes.Contains(w.Body.Bytes(), []byte("real-value")) {
+			t.Errorf("403 response leaked plaintext: %s", w.Body.String())
+		}
+	})
+
+	t.Run("right password returns 200 and plaintext", func(t *testing.T) {
+		verifier := &stubPasswordVerifier{expected: password}
+		h := NewSecretsHandler(svc)
+		h.SetPasswordVerifier(verifier)
+
+		body, _ := json.Marshal(map[string]string{"password": string(password)})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/"+created.ID+"/reveal", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mkRouter(h).ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 for correct password, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("real-value")) {
+			t.Errorf("200 response missing plaintext: %s", w.Body.String())
+		}
+	})
+}
