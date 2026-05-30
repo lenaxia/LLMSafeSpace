@@ -79,6 +79,8 @@ Before any scanning begins, the test environment must be staged and tooling must
 
 **Exit criteria:** A control fixture has confirmed at least one expected vulnerability; logging is verified; rollback plan exists.
 
+**Implementation:** [`phase-0/`](./phase-0/) ships a reproducible bootstrap kit (`00-bootstrap.sh` through `exit-check.sh`) that satisfies all six RT-0.x deliverables. Operators run the scripts in numeric order; each is idempotent. See [phase-0/README.md](./phase-0/README.md) for execution detail. The kit explicitly uses Cilium (not the default kindnet) so the G16 NetworkPolicy fix is enforceable, and ships with a deliberately-vulnerable control fixture so tooling false-negatives are caught before they contaminate Phase 1 findings.
+
 ---
 
 ### Phase 1: Reconnaissance & Attack Surface Mapping
