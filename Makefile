@@ -16,7 +16,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
 all: test build
 
 build:
-	$(GOBUILD) -o $(BINARY_NAME) -v ./cmd/api
+	$(GOBUILD) -o $(BINARY_NAME) -v ./api/cmd/api
 
 clean:
 	$(GOCLEAN)
@@ -48,7 +48,10 @@ deepcopy:
 
 # Cross compilation
 build-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v ./cmd/api
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v ./api/cmd/api
+
+build-linux-arm64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BINARY_UNIX)-arm64 -v ./api/cmd/api
 
 docker-build:
 	docker build -t $(BINARY_NAME):latest .

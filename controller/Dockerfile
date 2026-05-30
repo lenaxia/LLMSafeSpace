@@ -26,7 +26,8 @@ COPY cmd/ cmd/
 ARG VERSION=dev
 ARG BUILD_TIME=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build \
         -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
         -o /out/manager \
