@@ -79,7 +79,12 @@ Before any scanning begins, the test environment must be staged and tooling must
 
 **Exit criteria:** A control fixture has confirmed at least one expected vulnerability; logging is verified; rollback plan exists.
 
-**Implementation:** [`phase-0/`](./phase-0/) ships a reproducible bootstrap kit (`00-bootstrap.sh` through `exit-check.sh`) that satisfies all six RT-0.x deliverables. Operators run the scripts in numeric order; each is idempotent. See [phase-0/README.md](./phase-0/README.md) for execution detail. The kit explicitly uses Cilium (not the default kindnet) so the G16 NetworkPolicy fix is enforceable, and ships with a deliberately-vulnerable control fixture so tooling false-negatives are caught before they contaminate Phase 1 findings.
+**Implementation:** Two reproducible kits, depending on target.
+
+- [`phase-0/`](./phase-0/) — fresh kind cluster. Provisions everything from scratch (cluster, Cilium, LLMSafeSpace, audit policy). Use this when no cluster is available or for clean-room validation.
+- [`phase-0-prod/`](./phase-0-prod/) — existing production-grade cluster where LLMSafeSpace is already deployed in a single-tenant test posture. Asserts cluster shape rather than provisioning, plants the control fixture in a dedicated `pentest-control-fixture` namespace, scopes all snapshot/cleanup operations to `default` + the fixture ns. Includes blast-radius rules (off-limits namespaces, no real email addresses, no attacker-controlled egress targets) that subsequent phases must respect.
+
+Both kits satisfy the same RT-0.x deliverables; choose based on what's available. See each kit's README for execution detail. Both ship with a deliberately-vulnerable control fixture so tooling false-negatives are caught before they contaminate Phase 1 findings.
 
 ---
 
