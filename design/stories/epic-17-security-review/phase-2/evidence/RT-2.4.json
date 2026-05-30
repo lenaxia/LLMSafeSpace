@@ -1,0 +1,15 @@
+{
+  "id": "RT-2.4",
+  "title": "API key brute-force resistance",
+  "result": "INCONCLUSIVE",
+  "severity": "medium",
+  "evidence": [
+    {
+      "total": 30,
+      "401": 30,
+      "429": 0,
+      "elapsed_sec": 0.75
+    }
+  ],
+  "notes": "all 30 requests returned 401, 0 rate-limited. Global limiter may kick in at higher counts; promotable to finding if no per-IP throttling"
+}

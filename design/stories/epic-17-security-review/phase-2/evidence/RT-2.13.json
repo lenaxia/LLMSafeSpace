@@ -1,0 +1,16 @@
+{
+  "id": "RT-2.13",
+  "title": "JWT revocation enforcement (G18 fix verification)",
+  "result": "FAIL",
+  "severity": "medium",
+  "evidence": [
+    {
+      "production_callers": 0,
+      "test_only": [
+        "auth_revocation_test.go",
+        "auth_test.go"
+      ]
+    }
+  ],
+  "notes": "G18 fix is correct in code (auth.go:209-220 writes both keys), but no production endpoint invokes RevokeToken. The feature is unreachable. Phase 1 RT-1.1 documented this; keeping the FAIL classification because the security control is not operational."
+}

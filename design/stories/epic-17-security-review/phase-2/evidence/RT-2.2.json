@@ -1,0 +1,13 @@
+{
+  "id": "RT-2.2",
+  "title": "JWT claim manipulation",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "status": 401,
+      "body": "{\"error\":\"Invalid or expired token\"}"
+    }
+  ],
+  "notes": ""
+}

@@ -1,0 +1,12 @@
+{
+  "id": "RT-2.10",
+  "title": "Session fixation",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "evidence": [
+    {
+      "first_call_cookie": ""
+    }
+  ],
+  "notes": "API uses bearer JWTs primarily; session cookie role is secondary. No exploitable fixation expected. INCONCLUSIVE \u2014 would need actual session-cookie auth path"
+}

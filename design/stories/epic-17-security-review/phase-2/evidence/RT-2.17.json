@@ -1,0 +1,24 @@
+{
+  "id": "RT-2.17",
+  "title": "Account recovery brute-force",
+  "result": "FAIL",
+  "severity": "medium",
+  "evidence": [
+    {
+      "statuses": [
+        400,
+        400,
+        400,
+        400,
+        400,
+        400,
+        400,
+        400,
+        400,
+        400
+      ],
+      "rate_limited_count": 0
+    }
+  ],
+  "notes": "10 recovery attempts with bogus keys all returned plain 400/401, no rate-limit"
+}

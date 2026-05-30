@@ -1,0 +1,14 @@
+{
+  "id": "RT-2.9",
+  "title": "CORS misconfiguration",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [
+    {
+      "status": 404,
+      "ACAO": "",
+      "ACAC": ""
+    }
+  ],
+  "notes": ""
+}

@@ -1,0 +1,8 @@
+{
+  "id": "RT-2.11",
+  "title": "Password change without recovery key",
+  "result": "PASS",
+  "severity": "info",
+  "evidence": [],
+  "notes": "requires creating an encrypted secret then losing password; structural verification only. Code review: api/internal/services/auth.go:386 password change re-derives KEK from new password but cannot decrypt old DEK \u2014 secrets become irrecoverable, which is the correct behaviour."
+}

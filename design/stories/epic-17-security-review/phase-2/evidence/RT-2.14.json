@@ -1,0 +1,8 @@
+{
+  "id": "RT-2.14",
+  "title": "Long-lived JWT after credential rotation",
+  "result": "FAIL",
+  "severity": "medium",
+  "evidence": [],
+  "notes": "Code review: api/internal/services/auth/auth.go has no kid header, no JWKS endpoint, no rotation primitive. JWT signing key is read once at startup. Worklog 0078 A8 confirmed REFUTED. Operator rotation requires restart-with-new-secret which immediately invalidates ALL active tokens (denial-of-service trade-off)."
+}
