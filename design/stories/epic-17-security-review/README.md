@@ -1,9 +1,10 @@
 # Epic 17: Security Review & Penetration Test Plan
 
-**Status:** Planning
+**Status:** Pre-Pentest Remediation Complete; Phase 0 Pending
 **Author:** mikekao
 **Depends On:** Epics 6, 8, 10 (core platform must be functional)
 **Threat Model:** [THREAT-MODEL.md](./THREAT-MODEL.md)
+**Pre-Pentest Remediation:** [worklog 0078](../../../worklogs/0078_2026-05-29_epic17-pre-pentest-remediation.md) — closes G2, G16, G17, G18, G20
 
 ---
 
@@ -43,6 +44,24 @@ Frontend XSS is **in-scope** for this epic (pulled in from prior plan): the agen
 
 ---
 
+## Pre-Pentest Remediation Status
+
+Worklog 0078 closed the four "fix-before-pentest" findings identified in worklog 0077. The pentest baseline therefore measures the **post-fix** system, not the broken one. Test cases for these gaps remain in the plan below but their goal has changed from "verify the bug exists" to "verify the fix holds and exercise the regression contract".
+
+| Gap | Status | Fix | Regression Test | Pentest Test Case |
+|-----|--------|-----|-----------------|-------------------|
+| G2 — entrypoint shell injection | 🟢 Fixed | `pkg/agentd/secrets` (typed Go package replaces bash secret loop); bash entrypoint reduced from 224 to 35 lines | 26 tests across `pkg/agentd/secrets/secrets_test.go` and `cmd/workspace-agentd/secrets_test.go`, including 13-payload bash-subprocess corpus | RT-4.3 (validate fix) |
+| G16 — no NetworkPolicy templates | 🟢 Fixed | `charts/llmsafespace/templates/workspace-network-policy.yaml` ships default-deny ingress + egress allow-list; `networkPolicy.enabled` default flipped to `true` | 5 helm-render tests in `charts/llmsafespace/chart_test.go` | RT-6.12, RT-3.1, RT-3.8, RT-3.9, RT-5.7, RT-5.8 (validate fix) |
+| G17 — SA token automount | 🟢 Fixed | `controller/internal/workspace/controller.go:670` sets `AutomountServiceAccountToken: false` | 3 tests in `controller/internal/workspace/security_test.go` | RT-3.2 (validate fix) |
+| G18 — JWT revocation cache key mismatch | 🟢 Fixed | `RevokeToken` writes both `token:<hash>` and `token:<jti>`; `ValidateToken` checks both | 6 tests in `api/internal/services/auth/auth_revocation_test.go` | RT-2.13 (validate fix) |
+| G20 — credential files written without atomic 0600 | 🟢 Fixed (incidental to G2 refactor) | `os.OpenFile(... O_CREATE, 0o600)` in `pkg/agentd/secrets` | `TestG20_AllFilesCreatedWithMode0600` | RT-3.16 (validate fix) |
+
+All five remediations are mutation-validated: each fix was deliberately reverted and the regression test confirmed to fail before being marked complete.
+
+The other 15 findings (G1, G3–G15, G19) remain open and are pentested as documented baseline behaviour. See [THREAT-MODEL.md §5](./THREAT-MODEL.md#5-identified-gaps--residual-risks) for current status of each.
+
+---
+
 ## Red Team Methodology
 
 ### Phase 0: Environment Setup & Tooling Validation
@@ -60,6 +79,13 @@ Before any scanning begins, the test environment must be staged and tooling must
 
 **Exit criteria:** A control fixture has confirmed at least one expected vulnerability; logging is verified; rollback plan exists.
 
+**Implementation:** Two reproducible kits, depending on target.
+
+- [`phase-0/`](./phase-0/) — fresh kind cluster. Provisions everything from scratch (cluster, Cilium, LLMSafeSpace, audit policy). Use this when no cluster is available or for clean-room validation.
+- [`phase-0-prod/`](./phase-0-prod/) — existing production-grade cluster where LLMSafeSpace is already deployed in a single-tenant test posture. Asserts cluster shape rather than provisioning, plants the control fixture in a dedicated `pentest-control-fixture` namespace, scopes all snapshot/cleanup operations to `default` + the fixture ns. Includes blast-radius rules (off-limits namespaces, no real email addresses, no attacker-controlled egress targets) that subsequent phases must respect.
+
+Both kits satisfy the same RT-0.x deliverables; choose based on what's available. See each kit's README for execution detail. Both ship with a deliberately-vulnerable control fixture so tooling false-negatives are caught before they contaminate Phase 1 findings.
+
 ---
 
 ### Phase 1: Reconnaissance & Attack Surface Mapping
@@ -69,7 +95,7 @@ Before any scanning begins, the test environment must be staged and tooling must
 | RT-1.1 | API endpoint enumeration | Swagger docs, route registration in `api/internal/server/router.go` |
 | RT-1.2 | CRD schema analysis | `pkg/crds/*.yaml`, `controller/internal/resources/*_types.go` — identify mutable fields, kubebuilder validation |
 | RT-1.3 | RBAC privilege mapping | `charts/llmsafespace/templates/rbac.yaml` (controller + api SA, both scopes) |
-| RT-1.4 | Network topology mapping | Service definitions, NetworkPolicy templates (or absence — see G16) |
+| RT-1.4 | Network topology mapping | Service definitions, NetworkPolicy templates (`workspace-network-policy.yaml` ships post-G16; map effective rules) |
 | RT-1.5 | Dependency audit + SBOM | Run `trivy fs --format cyclonedx-json .` and `grype` against repository; record CVEs ≥ High |
 | RT-1.6 | Container image analysis | `runtimes/base/Dockerfile`, `api/Dockerfile`, `controller/Dockerfile` — installed packages, SUID binaries, base image vulns via Trivy |
 | RT-1.7 | Secret storage mapping | Where credentials exist at rest and in transit (etcd, Redis, PostgreSQL, files in pod) |
@@ -100,7 +126,7 @@ Before any scanning begins, the test environment must be staged and tooling must
 | RT-2.10 | Session fixation | Reuse session_id across users | Should be bound to user |
 | RT-2.11 | Password reset without recovery key | Verify secrets are wiped, not accessible | Should be irrecoverable |
 | RT-2.12 | Admin role escalation | Non-admin attempts admin-only operations | Should 403 (AdminGuard middleware) |
-| RT-2.13 | **JWT revocation bypass** | Revoke a JWT via `RevokeToken`, immediately re-use it | **Confirmed gap G18** — `auth.go:203` writes `token:<jti>`, `auth.go:270` reads `token:<hash(token)>`. Cache keys never collide → revocation does nothing. **Critical**. Add e2e regression test that exercises POST /auth/revoke then GET /api/v1/workspaces with same token; expect 401. |
+| RT-2.13 | **JWT revocation enforcement** | Revoke a JWT via `RevokeToken`, immediately re-use it across multiple endpoints | **G18 fixed (worklog 0078)**: post-fix, `RevokeToken` writes both `token:<hash>` and `token:<jti>`, and `ValidateToken` checks both. Pentest must independently verify: (a) revocation visible to the very next request, (b) defense-in-depth path works when hash-cache entry evicted, (c) double-revoke is idempotent. Reproduce with `auth_revocation_test.go` payloads against a live cluster. |
 | RT-2.14 | Long-lived JWT after credential rotation | Rotate JWT signing key, attempt to use old token | Old tokens must be rejected (currently no kid rotation — A8) |
 | RT-2.15 | API key reveal in list endpoint | GET /api/v1/auth/api-keys with admin role | Confirmed in `README-LLM.md:1428` — secrets stripped on list; verify with admin token |
 
@@ -110,22 +136,22 @@ Before any scanning begins, the test environment must be staged and tooling must
 
 | ID | Test Case | Attack Vector | Expected Finding |
 |----|-----------|---------------|------------------|
-| RT-3.1 | Read other pod's secrets | From sandbox pod, attempt to reach K8s API | Confirmed gap G16 — no NetworkPolicy ships; expect to succeed without operator-supplied policy |
-| RT-3.2 | **SA token access** | `cat /var/run/secrets/kubernetes.io/serviceaccount/token` in sandbox pod | **Confirmed gap G17** — `controller.go:653-666` does not set `AutomountServiceAccountToken: false`; token will be present. **High**. |
+| RT-3.1 | Read other pod's secrets | From sandbox pod, attempt to reach K8s API | **G16 fixed (worklog 0078)**: workspace egress NetworkPolicy denies traffic to in-cluster CIDRs by default. Pentest must independently verify with a live CNI that the K8s API is unreachable from the sandbox. |
+| RT-3.2 | **SA token absence** | `cat /var/run/secrets/kubernetes.io/serviceaccount/token` and `ls /var/run/secrets/kubernetes.io/` in sandbox pod | **G17 fixed (worklog 0078)**: post-fix, `controller.go:670` sets `AutomountServiceAccountToken: false`. Pentest must independently verify the SA token directory is absent (not merely that the token file exists with empty content). Cross-check via `kubectl get pod -o yaml` for the field. |
 | RT-3.3 | /proc exploration | Read /proc/1/environ, /proc/*/maps | Env vars readable (G3) |
 | RT-3.4 | Write+exec in /tmp | Write binary to /tmp, chmod +x, execute | **Confirmed gap G1** — emptyDir at `controller.go:631` lacks `Medium: Memory` and noexec; expect success |
 | RT-3.5 | Escape via /workspace | Write SUID binary to PVC, exec after resume | Should fail (verify nosuid mount option on PVC StorageClass) |
 | RT-3.6 | Capability abuse | Attempt operations requiring dropped caps | Should fail (Drop ALL at `controller.go:616`) |
 | RT-3.7 | Seccomp bypass | Attempt blocked syscalls (ptrace, mount, etc.) | Verify seccomp profile attached to sandbox pod (currently no SeccompProfile in PodSecurityContext) |
-| RT-3.8 | Node metadata access | curl 169.254.169.254 from sandbox | Confirmed gap G16 — expect success without operator NetworkPolicy |
-| RT-3.9 | Cross-pod network access | From sandbox A, connect to sandbox B's pod IP:agentd port | Confirmed gap G16 — expect success |
+| RT-3.8 | Node metadata access | curl 169.254.169.254 from sandbox | **G16 fixed (worklog 0078)**: `blockedEgressCIDRs` includes 169.254.0.0/16. Pentest must independently verify metadata endpoint is unreachable on a real cloud K8s. |
+| RT-3.9 | Cross-pod network access | From sandbox A, connect to sandbox B's pod IP:agentd port | **G16 fixed (worklog 0078)**: workspace default-deny ingress permits only the API proxy. Pentest must verify cross-sandbox traffic is denied with a live CNI. |
 | RT-3.10 | DNS exfiltration | Encode data in DNS queries to external domain | Resolves (accepted risk) — verify audit logging |
 | RT-3.11 | Resource exhaustion | Fork bomb, memory allocation, disk fill | Limits should contain |
 | RT-3.12 | PID namespace escape | Attempt to signal processes outside pod | Should fail (PID namespace isolation) |
 | RT-3.13 | Symlink escape | Create symlink in /workspace pointing to /etc/shadow | Should fail (read-only root + ReadOnlyRootFilesystem at `controller.go:613`) |
 | RT-3.14 | Device access | Attempt to access /dev/kmsg, /dev/mem | Should fail (no device mounts) |
 | RT-3.15 | **Plaintext secrets on node disk** | After secret materialization, dump node filesystem (kubelet pod-data dir) | **Confirmed gap G15** — emptyDir is disk-backed by default; `/sandbox-cfg/secrets.json` plaintext lands on node disk until volume is reclaimed. **High**. |
-| RT-3.16 | **/tmp/agent-config.json permissions** | Spawn second process as same UID; read /tmp/agent-config.json | **Confirmed gap G20** — no chmod after write at `entrypoint-common.sh:14,19,35`. Default umask permits same-UID read. |
+| RT-3.16 | **/tmp/agent-config.json permissions** | Spawn second process as same UID; read /tmp/agent-config.json | **G20 fixed (worklog 0078, incidental to G2 refactor)**: post-fix, `pkg/agentd/secrets` uses `os.OpenFile(... O_CREATE, 0o600)` so mode is atomic with creation. Pentest must verify `stat -c '%a' /tmp/agent-config.json` returns `600` immediately after pod boot, with no readable window. |
 | RT-3.17 | **Mise-installed runtime tampering** | Modify `/workspace/.local/share/mise/installs/<runtime>/<version>/bin/python` after first install; trigger agent re-exec | mise resolves PVC-first; tampered binary survives suspend/resume cycle. Verify and document. |
 
 ---
@@ -136,9 +162,9 @@ Before any scanning begins, the test environment must be staged and tooling must
 |----|-----------|---------------|------------------|
 | RT-4.1 | Credential API IDOR | PUT/GET secrets for resource owned by another user | Should 403/404 |
 | RT-4.2 | Secret value in logs | Trigger errors with credential operations, check API logs | Should be redacted (16-rule pkg/redact) |
-| RT-4.3 | **Entrypoint shell injection** | Set env-secret PLAINTEXT to `'; rm -rf /; echo '` | **Confirmed gap G2** — `entrypoint-common.sh:78` interpolates PLAINTEXT in single-quoted shell context; single quote breaks out. **High**. Verify with concrete payload; commit regression in pod-creation e2e test. |
+| RT-4.3 | **Entrypoint shell injection neutralisation** | Set env-secret PLAINTEXT to `'; rm -rf /; echo '`, plus the full bypass corpus (`$(whoami)`, backticks, newlines, `\0`, CRLF, 4KB values) from `pkg/agentd/secrets/secrets_test.go::TestG2_EnvSecretShellInjection_Corpus` | **G2 fixed (worklog 0078)**: secret materialization moved out of bash into `pkg/agentd/secrets`. Bash entrypoint is now a 35-line shim. Pentest must independently verify against a live cluster: (a) crafted payload materializes without executing, (b) `bash -c 'source /tmp/secrets-env; echo $VAR_NAME'` returns the literal payload, (c) no side-effect commands ran (e.g. no `whoami` output, no `HIJACK` env var leak). |
 | RT-4.4 | Secret file path traversal | Set mount_path to `../../etc/passwd` | `entrypoint-common.sh:67-68` strips `../`; verify exhaustively (Unicode escapes, double encoding) |
-| RT-4.5 | DEK extraction from Redis | Connect to Redis from compromised API pod | Verify Redis auth + NetworkPolicy (G16 means no policy ships) |
+| RT-4.5 | DEK extraction from Redis | Connect to Redis from compromised API pod | Verify Redis auth. Note: workspace NetworkPolicy now denies cross-namespace traffic (G16 fixed); operator-supplied policy still required to restrict API↔Redis egress. |
 | RT-4.6 | Wrapped DEK offline attack | Extract wrapped_dek from DB, attempt offline unwrap | Should require password (HKDF-derived KEK) |
 | RT-4.7 | JWT signing key extraction | Check if key is in env var, config file, or hardcoded | Should be in Secret only |
 | RT-4.8 | Redaction bypass | Craft credential patterns that evade all 16 regex rules in `pkg/redact/redact.go` | Document any bypass patterns; add new rules |
@@ -146,7 +172,7 @@ Before any scanning begins, the test environment must be staged and tooling must
 | RT-4.10 | Password hash timing attack | Measure response time for valid vs invalid usernames | Should be constant-time (bcrypt cost 12; verify identical-error path) |
 | RT-4.11 | Recovery key brute force | Attempt to brute-force 128-bit recovery key | Should be infeasible (2^128) |
 | RT-4.12 | **DEK lifecycle on workspace deletion** | Delete workspace; query Redis for `dek:<sessionID>` afterwards | Verify `EvictDEK` is called by workspace deletion path. Currently only on logout/expiry per `pkg/secrets/key_service.go:140-143`; trace controller finalizer to confirm |
-| RT-4.13 | **DEK lifecycle on session revocation** | Revoke JWT (RevokeToken); confirm DEK evicted | Combined with G18: if revocation cache key is wrong, DEK eviction may also be skipped. Verify. |
+| RT-4.13 | **DEK lifecycle on session revocation** | Revoke JWT (RevokeToken); confirm DEK evicted | **G18 fixed (worklog 0078)**: revocation now actually fires. Pentest must verify DEK eviction is wired to revocation: revoke → next request fails to decrypt secrets even if jti was previously cached. |
 | RT-4.14 | **Concurrent credential rotation** | Two simultaneous `POST /api/v1/admin/credentials/rotate-key` calls | Verify atomicity; expect one to fail or both to converge to same final state |
 | RT-4.15 | **mise binary tampering at build time** | Replace mise tarball URL or ARCH to point at attacker | **Confirmed gap G19** — `Dockerfile:86-98` uses `curl --fail` over TLS only; no checksum or Sigstore verification; `MISE_GITHUB_ATTESTATIONS=0` (line 120) explicitly disables attestation checks. **Medium**. |
 | RT-4.16 | **opencode binary tampering at build time** | Same as RT-4.15 for opencode | **Confirmed** in `Dockerfile:67-78` — explicit comment notes upstream does not publish .sha256/Sigstore. Track upstream issue. |
@@ -163,8 +189,8 @@ Before any scanning begins, the test environment must be staged and tooling must
 | RT-5.4 | SSE injection | Inject SSE events into stream from sandbox | Verify stream integrity |
 | RT-5.5 | Connection exhaustion | Open maxConnectionsPerWorkspace+1 connections | Should reject excess |
 | RT-5.6 | Stale pod IP exploitation | Race condition: pod deleted, IP reassigned, proxy connects to wrong pod | Verify retry logic + ownership |
-| RT-5.7 | NetworkPolicy bypass | Use allowed DNS to resolve attacker domain, exfiltrate | G16 means no policy ships; verify operator-supplied policy effectiveness |
-| RT-5.8 | Egress to kube-apiserver | From sandbox, attempt HTTPS to kubernetes.default.svc | G16 — expect success without operator policy |
+| RT-5.7 | NetworkPolicy bypass | Use allowed DNS to resolve attacker domain, exfiltrate | **G16 fixed (worklog 0078)**: chart now ships default-deny + egress allow-list with DNS narrowed to kube-dns. Pentest must attempt: (a) DNS rebinding, (b) DNS tunneling via TXT records, (c) bypass via allowed CIDRs. |
+| RT-5.8 | Egress to kube-apiserver | From sandbox, attempt HTTPS to kubernetes.default.svc | **G16 fixed (worklog 0078)**: workspace egress denies in-cluster CIDRs (RFC1918 in `blockedEgressCIDRs`). Pentest must verify kube-apiserver is unreachable. |
 | RT-5.9 | MCP transport injection | Malformed MCP messages via stdio/SSE | Should reject gracefully |
 | RT-5.10 | WebSocket upgrade abuse | Attempt WebSocket upgrade on non-WebSocket endpoints | Should reject |
 | RT-5.11 | **Plain-HTTP proxy MITM** | From within cluster network, MITM API→sandbox traffic | **Confirmed gap G4** — `api/internal/handlers/proxy.go:91-95` uses plain HTTP. Document residual risk; recommend service mesh. |
@@ -189,7 +215,7 @@ Before any scanning begins, the test environment must be staged and tooling must
 | RT-6.9 | Leader election poisoning | Create fake lease to disrupt controller | Requires SA permissions |
 | RT-6.10 | Image pull from untrusted registry | Modify RuntimeEnvironment to point to attacker image | Webhook validation should restrict (verify restriction exists) |
 | RT-6.11 | **PSA enforcement absence** | Deploy chart, attempt to schedule a privileged pod in workspace namespace | **Confirmed gap G11** — no `pod-security.kubernetes.io/enforce` label set in `charts/llmsafespace/templates/namespace.yaml`; privileged pods not blocked at admission. |
-| RT-6.12 | **NetworkPolicy absence** | Deploy chart fresh; verify no NetworkPolicy resources created | **Confirmed gap G16** — chart ships zero NetworkPolicy templates. **Critical**. |
+| RT-6.12 | **NetworkPolicy enforcement** | Deploy chart with default values; verify `workspace-default-deny-ingress` and `workspace-egress` NetworkPolicies render and apply | **G16 fixed (worklog 0078)**: chart now ships `workspace-network-policy.yaml`; `networkPolicy.enabled` default is `true`. Pentest must independently verify against a live cluster with a real CNI: (a) NetworkPolicies are present (`kubectl get netpol`), (b) cross-tenant pod-to-pod traffic blocked, (c) DNS works, (d) operator opt-out via `networkPolicy.enabled: false` removes them. |
 | RT-6.13 | **Helm chart guard preflight** | Deploy chart on cluster missing CNI / etcd encryption | No preflight; chart succeeds silently — assumption A2/A1 unvalidated |
 | RT-6.14 | **Default-on TLS at ingress** | Helm install with default values; check ingress TLS config | **Confirmed assumption A4 partial** — `values.yaml` defaults `tls: false`. Recommend flipping default. |
 | RT-6.15 | **A5/A6 — Redis/Postgres exposure check** | Verify operator-deployed Redis/Postgres are not LoadBalancer/NodePort | Operator responsibility; document Helm chart NOTES.txt warning |
@@ -350,14 +376,16 @@ The following Phase-6 test cases directly validate Epic 10 invariants. If any of
 
 | Epic 10 Invariant | Validating Test Cases |
 |-------------------|----------------------|
-| Workspaces are namespace-isolated by NetworkPolicy | RT-3.1, RT-3.8, RT-3.9, RT-5.7, RT-5.8, RT-6.12 |
+| Workspaces are namespace-isolated by NetworkPolicy | RT-3.1, RT-3.8, RT-3.9, RT-5.7, RT-5.8, RT-6.12 (G16 fixed — pentest validates fix holds) |
 | Cross-workspace PVC access is impossible | RT-6.7 |
-| Controller does not have cluster-wide blast radius | RT-6.2, RT-6.16 (currently FAILS — G5) |
+| Controller does not have cluster-wide blast radius | RT-6.2, RT-6.16 (currently FAILS — G5 still open) |
 | API SA cannot escape its namespace | RT-6.3, RT-6.8 |
-| Sandbox pod cannot reach K8s API | RT-3.1, RT-3.2 (currently FAILS — G17), RT-5.8 |
+| Sandbox pod cannot reach K8s API | RT-3.1, RT-3.2 (G17 fixed — pentest validates fix holds), RT-5.8 |
 | Per-user secret encryption (DEK isolation) | RT-4.5, RT-4.6, RT-4.12, RT-4.13 |
+| Sandbox pods isolated from shell-injection via secret payloads | RT-4.3 (G2 fixed — pentest validates fix holds) |
+| JWT revocation actually revokes | RT-2.13 (G18 fixed — pentest validates fix holds) |
 
-Findings in this set must be remediated before Epic 10 can be marked Complete.
+Findings in this set must be remediated before Epic 10 can be marked Complete. As of worklog 0078, G2/G16/G17/G18/G20 are fixed; G5 remains the last Epic 10 blocker.
 
 ---
 

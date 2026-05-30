@@ -303,6 +303,10 @@ func TestReconcile_Resuming_TransitionsToCreating(t *testing.T) {
 	ws := makeWorkspace("ws-resume", "default", v1.WorkspacePhaseResuming)
 	past := metav1.Now()
 	ws.Status.SuspendedAt = &past
+	// Activity timestamp from before suspension. handleResuming must reset
+	// this; otherwise handleActive will see a long idle and re-suspend.
+	staleActivity := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+	ws.Status.LastActivityAt = &staleActivity
 	pwSecret := makePasswordSecret("ws-resume", "default")
 	r := reconcilerFor(t, ws, pwSecret)
 
@@ -313,6 +317,9 @@ func TestReconcile_Resuming_TransitionsToCreating(t *testing.T) {
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-resume", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase)
 	assert.Nil(t, updated.Status.SuspendedAt)
+	require.NotNil(t, updated.Status.LastActivityAt, "LastActivityAt must be reset on resume")
+	assert.WithinDuration(t, time.Now(), updated.Status.LastActivityAt.Time, 5*time.Second,
+		"LastActivityAt must advance to current time on resume")
 }
 
 func TestReconcile_Terminating_CleansUp(t *testing.T) {

@@ -225,6 +225,7 @@ func (m *fullMockDB) ListWorkspaces(context.Context, string, int, int) ([]*types
 func (m *fullMockDB) SyncWorkspacePhase(context.Context, string, string, string)       {}
 func (m *fullMockDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
+func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                 {}
 func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error) { return false, nil }
 func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)  { return false, nil }
 func (m *fullMockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {

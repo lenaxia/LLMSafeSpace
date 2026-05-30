@@ -37,6 +37,7 @@ vi.mock("../components/chat/ChatView", () => ({
         data-testid="chat-view"
         data-stream-parts={JSON.stringify(props.streamParts ?? [])}
         data-streaming={String(props.streaming ?? false)}
+        data-messages={JSON.stringify(props.messages ?? [])}
       >
         <textarea
           disabled={props.disabled as boolean}
@@ -188,6 +189,143 @@ describe("ChatPage SSE event handler", () => {
         return Array.isArray(key) && key[0] === "workspace-status";
       });
       expect(wsCalls).toHaveLength(0);
+    });
+
+    it("REGRESSION: idle event triggers reconcile that does NOT cause duplicate localMessage rendering", async () => {
+      // Prior bug: localMessages accumulated user+assistant messages on send,
+      // and reconcileOnIdle refetched history (which now contained the same
+      // messages), but localMessages was never cleared. The merge in
+      // `allMessages = [...history, ...localMessages]` rendered every
+      // message twice.
+      //
+      // Fix: clearing localMessages after the post-idle history refetch
+      // succeeds. History is the single source of truth once idle.
+      const user = userEvent.setup();
+      const qc = makeQueryClient();
+
+      // sendAsync resolves immediately; history starts empty then returns
+      // the persisted message after idle reconcile triggers a refetch.
+      let historyCallCount = 0;
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        historyCallCount++;
+        if (historyCallCount === 1) return Promise.resolve([]);
+        return Promise.resolve([
+          { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+          { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+        ]);
+      });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { container } = renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("textarea")).not.toBeDisabled());
+
+      // User sends a message
+      await user.click(container.querySelector("textarea")!);
+      await user.type(container.querySelector("textarea")!, "ping");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+      // Drive the idle SSE event — this triggers reconcileOnIdle which
+      // refetches history and SHOULD clear localMessages so the merged
+      // view (history + localMessages) does not duplicate.
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      // Wait for the reconcile refetch to land
+      await waitFor(() => expect(historyCallCount).toBeGreaterThanOrEqual(2));
+
+      // Wait for the merged messages render to update with deduped content.
+      // Read the actual rendered messages from the ChatView mock's data attr.
+      await waitFor(() => {
+        const view = container.querySelector('[data-testid="chat-view"]');
+        const messagesAttr = view?.getAttribute("data-messages") ?? "[]";
+        const messages = JSON.parse(messagesAttr) as Array<{ id: string; role: string; parts: Array<{ text?: string }> }>;
+        // EXACTLY 2 messages — no duplicates from localMessages+history merge
+        expect(messages).toHaveLength(2);
+        expect(messages.filter((m) => m.role === "user")).toHaveLength(1);
+        expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+      }, { timeout: 5_000 });
+    });
+
+    it("REGRESSION: assistant response is not duplicated when reconcileOnIdle's history fetch resolves BEFORE useChatStream's onComplete", async () => {
+      // Validated against production via DevTools Network panel:
+      // After session.status idle, two GET /message requests fire — one
+      // from useChatStream.send (line 70 of useChatStream.ts) and one
+      // from reconcileOnIdle's queryClient.refetchQueries.
+      //
+      // Race: if reconcileOnIdle's fetch resolves first, it clears
+      // localMessages and populates history. Then useChatStream.send's
+      // onComplete callback fires and re-adds the assistant message to
+      // localMessages → assistant renders TWICE (history + localMessages).
+      //
+      // Fix: handleSend's onComplete must NOT add the assistant message
+      // to localMessages. The streaming bubble shows it during streaming;
+      // history (refetched by reconcileOnIdle) is authoritative after.
+      const user = userEvent.setup();
+      const qc = makeQueryClient();
+
+      // history fetch resolution order:
+      //   call 1 (initial mount) → empty
+      //   call 2 (reconcileOnIdle's refetch) → [user, assistant]
+      //   call 3 (useChatStream.send's await) → [user, assistant]
+      // The race is the order of resolution between calls 2 and 3.
+      //
+      // Simulate the production race: reconcileOnIdle's fetch resolves
+      // first (e.g., its Promise hits microtask queue earlier), then
+      // useChatStream.send's fetch resolves second. We deliberately order
+      // resolutions to expose the bug.
+      let resolveCall3!: (history: unknown[]) => void;
+      let historyCallCount = 0;
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        historyCallCount++;
+        if (historyCallCount === 1) return Promise.resolve([]);
+        if (historyCallCount === 2) {
+          // reconcileOnIdle's refetch — resolve immediately
+          return Promise.resolve([
+            { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+            { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+          ]);
+        }
+        // call 3: useChatStream.send's history fetch — defer resolution
+        return new Promise<unknown[]>((res) => { resolveCall3 = res; });
+      });
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { container } = renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      await waitFor(() => expect(container.querySelector("textarea")).not.toBeDisabled());
+
+      await user.click(container.querySelector("textarea")!);
+      await user.type(container.querySelector("textarea")!, "ping");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+      // Idle SSE — drives BOTH paths concurrently:
+      //   1. notifySessionIdle → useChatStream.send's await resolves → call 3 begins
+      //   2. reconcileOnIdle → call 2 fires
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      // Wait for reconcileOnIdle's refetch (call 2) to land and update history
+      await waitFor(() => expect(historyCallCount).toBeGreaterThanOrEqual(3));
+
+      // Now resolve useChatStream.send's history fetch (call 3) AFTER
+      // reconcileOnIdle has cleared localMessages. This causes onComplete
+      // to fire and re-add the assistant message to the just-cleared
+      // localMessages — exactly the production race.
+      await act(async () => {
+        resolveCall3([
+          { id: "msg-user-real", role: "user", parts: [{ type: "text", text: "ping" }] },
+          { id: "msg-asst-real", role: "assistant", parts: [{ type: "text", text: "pong" }] },
+        ]);
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+      // Critical assertion: assistant renders EXACTLY ONCE despite the race
+      const view = container.querySelector('[data-testid="chat-view"]');
+      const messagesAttr = view?.getAttribute("data-messages") ?? "[]";
+      const messages = JSON.parse(messagesAttr) as Array<{ id: string; role: string; parts: Array<{ text?: string }> }>;
+      expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+      expect(messages.filter((m) => m.role === "user")).toHaveLength(1);
     });
   });
 

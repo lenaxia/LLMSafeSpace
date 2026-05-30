@@ -340,6 +340,12 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *v1.
 	}
 	workspace.Status.Phase = v1.WorkspacePhaseCreating
 	workspace.Status.SuspendedAt = nil
+	// Reset idle clock: the workspace was idle before suspension, but the
+	// resume action itself counts as user activity. Without this, handleActive
+	// would compare LastActivityAt (pre-suspend) against now and immediately
+	// re-suspend the workspace.
+	now := metav1.Now()
+	workspace.Status.LastActivityAt = &now
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)
 }
 
@@ -659,10 +665,19 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			InitContainers:  initContainers,
-			Containers:      []corev1.Container{mainContainer},
-			Volumes:         volumes,
-			SecurityContext: buildPodSecurityContext(workspace),
+			InitContainers: initContainers,
+			Containers:     []corev1.Container{mainContainer},
+			Volumes:        volumes,
+			// G17 (Epic 17): Sandbox pods MUST NOT automount the default
+			// ServiceAccount token. The agent has no business calling the
+			// K8s API; mounting the token only widens the blast radius for
+			// a compromised sandbox. Without this, kubelet writes a JWT to
+			// /var/run/secrets/kubernetes.io/serviceaccount/token that any
+			// process inside the pod can read. See
+			// `controller/internal/workspace/security_test.go` for the
+			// regression that locks this in.
+			AutomountServiceAccountToken: &falseVal,
+			SecurityContext:              buildPodSecurityContext(workspace),
 		},
 	}
 	return pod, nil

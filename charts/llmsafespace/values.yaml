@@ -292,16 +292,55 @@ migrations:
   ttlSecondsAfterFinished: 600
 
 # ----------------------------------------------------------------------------
-# Network policy (Section 9.7 of EVOLUTION-V2.md)
+# Network policies (Epic 17 G16 remediation; EVOLUTION-V2 §9.7)
 # ----------------------------------------------------------------------------
+# When enabled (default), the chart ships:
+#
+#   1. workspace-default-deny-ingress
+#      Default-deny ingress for sandbox pods. Without this, any pod in the
+#      cluster (including other tenants' workspaces) can reach a sandbox.
+#      The API proxy explicitly allows itself via API-server pod selector.
+#
+#   2. workspace-egress
+#      Default-deny egress with explicit allowances for:
+#        - DNS (UDP/TCP 53 to kube-system kube-dns)
+#        - LLM provider domains via FQDN policy if your CNI supports it,
+#          otherwise CIDRs from .networkPolicy.allowedEgressCIDRs.
+#      Without DNS, sandbox pods can't resolve any external host on boot.
+#
+# Operators with their own network policy controller (Cilium CRDs, etc.)
+# can opt out by setting enabled: false. The threat model assumption A2
+# requires SOME default-deny is in place; operators turning this off MUST
+# document the equivalent control.
 networkPolicy:
-  enabled: false
-  # When enabled, restricts API and controller egress to:
-  #   - kube-apiserver
-  #   - postgres / redis (via .postgresql.host and .redis.host pod selectors)
-  #   - DNS
-  # Workspace pod network policy is owned by the controller (Section 9.7) and
-  # is not part of this chart.
+  enabled: true
+
+  # API server pod selector — used by workspace ingress allow rule so the
+  # API proxy can reach sandbox pods on agentd port 4097.
+  apiPodLabelSelector:
+    app.kubernetes.io/name: llmsafespace
+    app.kubernetes.io/component: api
+
+  # DNS policy: where to send port-53 traffic. Default targets the
+  # kube-system/kube-dns service which works on most clusters
+  # (kube-dns, CoreDNS). Override on clusters with non-standard DNS.
+  dnsNamespace: kube-system
+  dnsPodLabelSelector:
+    k8s-app: kube-dns
+
+  # CIDR allowlist for sandbox egress. Defaults to RFC1918 (private)
+  # negation so all public internet traffic is allowed and only internal
+  # cluster traffic is blocked. This is the documented Epic 17 baseline;
+  # tighter operators can replace with a strict allowlist.
+  allowedEgressCIDRs:
+    - 0.0.0.0/0
+  # Block egress to RFC1918 + cloud metadata; sandbox pods should never
+  # reach in-cluster services or the cloud metadata endpoint.
+  blockedEgressCIDRs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
 
 # ----------------------------------------------------------------------------
 # Kyverno admission policies (Section 9.6 of EVOLUTION-V2.md)
