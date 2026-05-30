@@ -171,10 +171,16 @@ func (s *PgSecretStore) runReEncryptTx(
 	}
 	defer tx.Rollback(ctx)
 
+	// Plain SELECT (no FOR UPDATE) — SERIALIZABLE / SSI uses predicate
+	// locks and detects conflicting writes via 40001 abort. Adding
+	// FOR UPDATE on top would acquire physical row locks that SSI
+	// does not need and increases the abort rate when concurrent
+	// secret CRUD touches the same user. The retry loop in the caller
+	// handles 40001 transparently.
 	rows, err := tx.Query(ctx,
-		`SELECT id, ciphertext FROM user_secrets WHERE user_id = $1 FOR UPDATE`, userID)
+		`SELECT id, ciphertext FROM user_secrets WHERE user_id = $1`, userID)
 	if err != nil {
-		return fmt.Errorf("select for update: %w", err)
+		return fmt.Errorf("select user_secrets: %w", err)
 	}
 
 	type pending struct {

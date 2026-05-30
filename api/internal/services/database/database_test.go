@@ -810,39 +810,47 @@ func TestUpdateUser(t *testing.T) {
 // Bug 11 in worklog 0085: deleting a workspace must also purge its
 // user_secret_bindings rows. The bindings table has no FK to
 // workspaces.id (column types differ historically), so without an
-// explicit DELETE we accumulate orphan rows over time.
+// explicit DELETE we accumulate orphan rows over time. The two writes
+// run inside a single transaction so an API-process crash between
+// them cannot leave a soft-deleted workspace with orphan bindings.
 func TestMarkWorkspaceDeleted_PurgesBindings(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
+	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE workspaces SET deleted_at = NOW.*").
 		WithArgs("ws-to-delete").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM user_secret_bindings WHERE workspace_id = .*").
 		WithArgs("ws-to-delete").
 		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectCommit()
 
 	service.MarkWorkspaceDeleted(context.Background(), "ws-to-delete")
 
 	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("MarkWorkspaceDeleted must DELETE bindings: %v", err)
+		t.Fatalf("MarkWorkspaceDeleted must DELETE bindings inside a tx: %v", err)
 	}
 }
 
-// TestMarkWorkspaceDeleted_BindingDeleteFailureDoesNotBreakSoftDelete
-// verifies that the soft-delete still happens even if the binding
-// cleanup fails. The bindings cleanup is hygiene; the workspace
-// soft-delete is correctness.
-func TestMarkWorkspaceDeleted_BindingDeleteFailureDoesNotBreakSoftDelete(t *testing.T) {
+// TestMarkWorkspaceDeleted_BindingDeleteFailureRollsBack verifies that
+// when the bindings DELETE fails the entire transaction rolls back —
+// neither the soft-delete nor the bindings purge land. This is
+// stronger than the original behaviour (which committed the soft-delete
+// even if bindings failed) but ensures a clean atomic semantic.
+// Operators can retry MarkWorkspaceDeleted on the next reconcile.
+func TestMarkWorkspaceDeleted_BindingDeleteFailureRollsBack(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
+	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE workspaces SET deleted_at = NOW.*").
 		WithArgs("ws-id").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM user_secret_bindings WHERE workspace_id = .*").
 		WithArgs("ws-id").
 		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
 
 	// Must not panic.
 	service.MarkWorkspaceDeleted(context.Background(), "ws-id")

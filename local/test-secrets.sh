@@ -21,11 +21,16 @@ set -euo pipefail
 BASE_URL="${1:-http://localhost:8080}"
 PASS=0
 FAIL=0
-SUITE_TS="$(date +%s)"
+# Combine seconds with PID so two concurrent invocations don't collide
+# on identifiers (validator finding on test isolation).
+SUITE_TS="$(date +%s)-$$"
 EMAIL_DOMAIN="@secretstest.local"
+# Per-process temp file so concurrent runs do not clobber each other.
+RESP_FILE="$(mktemp -t secrets-resp.XXXXXX.json)"
+trap 'rm -f "$RESP_FILE"' EXIT
 
-ok()   { ((PASS++)); printf "\033[32m  PASS\033[0m %s\n" "$1"; }
-fail() { ((FAIL++)); printf "\033[31m  FAIL\033[0m %s — %s\n" "$1" "$2"; }
+ok()   { PASS=$((PASS+1)); printf "\033[32m  PASS\033[0m %s\n" "$1"; }
+fail() { FAIL=$((FAIL+1)); printf "\033[31m  FAIL\033[0m %s — %s\n" "$1" "$2"; }
 
 assert_status() {
   local label="$1" expected="$2" actual="$3"
@@ -57,7 +62,7 @@ assert_not_contains() {
 req() {
   # req METHOD PATH [BODY] [TOKEN]
   local method="$1" path="$2" body="${3:-}" token="${4:-}"
-  local args=(-sS -o /tmp/secrets-resp.json -w '%{http_code}')
+  local args=(-sS -o "$RESP_FILE" -w '%{http_code}')
   args+=( -X "$method" "$BASE_URL$path" )
   args+=( -H 'Content-Type: application/json' )
   if [ -n "$token" ]; then args+=( -H "Authorization: Bearer $token" ); fi
@@ -69,13 +74,13 @@ req() {
 register_user() {
   local email="$1" password="$2"
   req POST /api/v1/auth/register \
-    "{\"username\":\"u${SUITE_TS}\",\"email\":\"$email\",\"password\":\"$password\"}" >/tmp/secrets-status
+    "{\"username\":\"u${SUITE_TS}\",\"email\":\"$email\",\"password\":\"$password\"}" >/dev/null
 }
 
 login_user() {
   local email="$1" password="$2"
   req POST /api/v1/auth/login \
-    "{\"email\":\"$email\",\"password\":\"$password\"}" >/tmp/secrets-status
+    "{\"email\":\"$email\",\"password\":\"$password\"}" >/dev/null
 }
 
 echo "=== LLMSafeSpace Secrets E2E Tests ==="
@@ -89,7 +94,7 @@ EMAIL_ALPHA="alpha-${SUITE_TS}${EMAIL_DOMAIN}"
 PASS_ALPHA="alpha-pass-${SUITE_TS}"
 
 REG_STATUS=$(register_user "$EMAIL_ALPHA" "$PASS_ALPHA")
-REG_BODY=$(cat /tmp/secrets-resp.json)
+REG_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 5/10 register returns 201" 201 "$REG_STATUS"
 TOKEN_ALPHA=$(echo "$REG_BODY" | jq -r .token)
 RECOVERY_ALPHA=$(echo "$REG_BODY" | jq -r .recoveryKey)
@@ -103,7 +108,7 @@ fi
 # Bug 5: token from register must work for secret ops without re-login.
 ALPHA_FIRST_SECRET_PAYLOAD='{"name":"first-on-register","type":"env-secret","value":"v","metadata":{"var_name":"X"}}'
 S_STATUS=$(req POST /api/v1/secrets "$ALPHA_FIRST_SECRET_PAYLOAD" "$TOKEN_ALPHA")
-S_BODY=$(cat /tmp/secrets-resp.json)
+S_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 5 register-token can create a secret immediately" 201 "$S_STATUS"
 ALPHA_SECRET_ID=$(echo "$S_BODY" | jq -r .id)
 
@@ -114,7 +119,7 @@ assert_status "Bug 6 api-key accepted" 201 "$AK_STATUS"
 
 PAYLOAD_LEGACY='{"name":"legacy-name","type":"llm-provider","value":"sk-xxx","metadata":{"provider":"openai"}}'
 LEG_STATUS=$(req POST /api/v1/secrets "$PAYLOAD_LEGACY" "$TOKEN_ALPHA")
-LEG_BODY=$(cat /tmp/secrets-resp.json)
+LEG_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 6 llm-provider rejected" 400 "$LEG_STATUS"
 assert_contains "Bug 7 invalid-type error lists api-key" "$LEG_BODY" "api-key"
 assert_contains "Bug 7 invalid-type error lists ssh-key" "$LEG_BODY" "ssh-key"
@@ -122,13 +127,13 @@ assert_contains "Bug 7 invalid-type error lists ssh-key" "$LEG_BODY" "ssh-key"
 # --- Bug 7: missing-metadata error names the required field.
 EMPTY_VAR='{"name":"missing-var","type":"env-secret","value":"v","metadata":{}}'
 EV_STATUS=$(req POST /api/v1/secrets "$EMPTY_VAR" "$TOKEN_ALPHA")
-EV_BODY=$(cat /tmp/secrets-resp.json)
+EV_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 7 env-secret missing metadata returns 400" 400 "$EV_STATUS"
 assert_contains "Bug 7 error names var_name" "$EV_BODY" "var_name"
 
 EMPTY_KT='{"name":"missing-kt","type":"ssh-key","value":"-----BEGIN-----","metadata":{}}'
 KT_STATUS=$(req POST /api/v1/secrets "$EMPTY_KT" "$TOKEN_ALPHA")
-KT_BODY=$(cat /tmp/secrets-resp.json)
+KT_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 7 ssh-key missing metadata returns 400" 400 "$KT_STATUS"
 assert_contains "Bug 7 error names key_type" "$KT_BODY" "key_type"
 
@@ -137,7 +142,7 @@ for mp in "../../etc/passwd" "/etc/passwd" "../escape" "./valid/../../escape"; d
   esc_mp=$(echo "$mp" | jq -Rsa .) # JSON-encoded
   payload="{\"name\":\"bad-mp-$(echo "$mp" | tr -c 'a-zA-Z0-9' '_')\",\"type\":\"secret-file\",\"value\":\"x\",\"metadata\":{\"mount_path\":$esc_mp}}"
   status=$(req POST /api/v1/secrets "$payload" "$TOKEN_ALPHA")
-  body=$(cat /tmp/secrets-resp.json)
+  body=$(cat "$RESP_FILE")
   assert_status "Bug 13 reject mount_path '$mp'" 400 "$status"
   assert_contains "Bug 13 reject mount_path '$mp' error mentions mount_path" "$body" "mount_path"
 done
@@ -150,34 +155,34 @@ assert_status "Bug 13 safe relative mount_path accepted" 201 "$GOOD_STATUS"
 PRE_ROTATE_VALUE="pre-rotate-${SUITE_TS}"
 PRE_PAYLOAD="{\"name\":\"pre-rotate\",\"type\":\"env-secret\",\"value\":\"$PRE_ROTATE_VALUE\",\"metadata\":{\"var_name\":\"PRE\"}}"
 PRE_STATUS=$(req POST /api/v1/secrets "$PRE_PAYLOAD" "$TOKEN_ALPHA")
-PRE_BODY=$(cat /tmp/secrets-resp.json)
+PRE_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 setup: pre-rotation secret created" 201 "$PRE_STATUS"
 PRE_ID=$(echo "$PRE_BODY" | jq -r .id)
 
 # baseline reveal
 REVEAL_BEFORE_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA")
-REVEAL_BEFORE_BODY=$(cat /tmp/secrets-resp.json)
+REVEAL_BEFORE_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 baseline reveal pre-rotate" 200 "$REVEAL_BEFORE_STATUS"
 assert_contains "Bug 9 baseline reveal returns plaintext" "$REVEAL_BEFORE_BODY" "$PRE_ROTATE_VALUE"
 
 # rotate
 ROT_STATUS=$(req POST /api/v1/account/rotate-key "{\"password\":\"$PASS_ALPHA\"}" "$TOKEN_ALPHA")
-ROT_BODY=$(cat /tmp/secrets-resp.json)
+ROT_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 rotate-key returns 200" 200 "$ROT_STATUS"
 assert_contains "Bug 9 rotate-key reports new keyVersion" "$ROT_BODY" '"keyVersion"'
 
 # CRITICAL: pre-rotation secret must STILL decrypt with the same token.
 REVEAL_AFTER_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA")
-REVEAL_AFTER_BODY=$(cat /tmp/secrets-resp.json)
+REVEAL_AFTER_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 reveal AFTER rotate returns 200" 200 "$REVEAL_AFTER_STATUS"
 assert_contains "Bug 9 reveal AFTER rotate returns same plaintext" "$REVEAL_AFTER_BODY" "$PRE_ROTATE_VALUE"
 
 # Re-login post-rotate must also be able to decrypt the pre-rotate secret.
 login_user "$EMAIL_ALPHA" "$PASS_ALPHA"
-LOGIN_BODY=$(cat /tmp/secrets-resp.json)
+LOGIN_BODY=$(cat "$RESP_FILE")
 TOKEN_ALPHA2=$(echo "$LOGIN_BODY" | jq -r .token)
 REVEAL_RELOGIN_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA2")
-REVEAL_RELOGIN_BODY=$(cat /tmp/secrets-resp.json)
+REVEAL_RELOGIN_BODY=$(cat "$RESP_FILE")
 assert_status "Bug 9 reveal after RELOGIN returns 200" 200 "$REVEAL_RELOGIN_STATUS"
 assert_contains "Bug 9 reveal after RELOGIN returns same plaintext" "$REVEAL_RELOGIN_BODY" "$PRE_ROTATE_VALUE"
 
@@ -196,10 +201,10 @@ fi
 EMAIL_BETA="beta-${SUITE_TS}${EMAIL_DOMAIN}"
 PASS_BETA="beta-pass-${SUITE_TS}"
 register_user "$EMAIL_BETA" "$PASS_BETA"
-TOKEN_BETA=$(jq -r .token /tmp/secrets-resp.json)
+TOKEN_BETA=$(jq -r .token "$RESP_FILE")
 
 LIST_STATUS=$(req GET /api/v1/secrets '' "$TOKEN_BETA")
-LIST_BODY=$(cat /tmp/secrets-resp.json)
+LIST_BODY=$(cat "$RESP_FILE")
 assert_status "W7 user-B list returns 200" 200 "$LIST_STATUS"
 assert_not_contains "W7 user-B list does not see user-A's secrets" "$LIST_BODY" "$ALPHA_SECRET_ID"
 
@@ -216,10 +221,10 @@ PWCH_STATUS=$(req POST /api/v1/account/change-password \
 assert_status "W10 password change returns 204" 204 "$PWCH_STATUS"
 
 login_user "$EMAIL_ALPHA" "$NEW_PASS_ALPHA"
-TOKEN_ALPHA3=$(jq -r .token /tmp/secrets-resp.json)
+TOKEN_ALPHA3=$(jq -r .token "$RESP_FILE")
 
 REVEAL_PW_STATUS=$(req POST "/api/v1/secrets/$PRE_ID/reveal" '' "$TOKEN_ALPHA3")
-REVEAL_PW_BODY=$(cat /tmp/secrets-resp.json)
+REVEAL_PW_BODY=$(cat "$RESP_FILE")
 assert_status "W10 reveal after password change returns 200" 200 "$REVEAL_PW_STATUS"
 assert_contains "W10 reveal after password change returns same plaintext" "$REVEAL_PW_BODY" "$PRE_ROTATE_VALUE"
 
@@ -234,7 +239,7 @@ WS11_ID="ws11-${SUITE_TS}"
 WS11_CREATE_BODY="{\"name\":\"bug11-cleanup\",\"runtime\":\"python:3.11\"}"
 WS11_CREATE_STATUS=$(req POST "/api/v1/workspaces" "$WS11_CREATE_BODY" "$TOKEN_ALPHA3")
 if [ "$WS11_CREATE_STATUS" = "201" ] || [ "$WS11_CREATE_STATUS" = "202" ]; then
-  WS11_ID=$(jq -r .id /tmp/secrets-resp.json)
+  WS11_ID=$(jq -r .id "$RESP_FILE")
   ok "Bug 11 setup: workspace created ($WS11_ID)"
 
   # Bind the env-secret created earlier.
@@ -244,7 +249,7 @@ if [ "$WS11_CREATE_STATUS" = "201" ] || [ "$WS11_CREATE_STATUS" = "202" ]; then
 
   # Confirm the binding is visible.
   GETB11_STATUS=$(req GET "/api/v1/workspaces/$WS11_ID/bindings" '' "$TOKEN_ALPHA3")
-  GETB11_BODY=$(cat /tmp/secrets-resp.json)
+  GETB11_BODY=$(cat "$RESP_FILE")
   assert_status "Bug 11 GET bindings returns 200" 200 "$GETB11_STATUS"
   assert_contains "Bug 11 binding visible before delete" "$GETB11_BODY" "$PRE_ID"
 
@@ -265,7 +270,7 @@ if [ "$WS11_CREATE_STATUS" = "201" ] || [ "$WS11_CREATE_STATUS" = "202" ]; then
     # 404: workspace gone, bindings inaccessible (good)
     # 200 with empty list: also good (binding purged)
     if [ "$GETB11_AFTER_STATUS" = "200" ]; then
-      GETB11_AFTER_BODY=$(cat /tmp/secrets-resp.json)
+      GETB11_AFTER_BODY=$(cat "$RESP_FILE")
       assert_not_contains "Bug 11 binding purged after workspace delete" "$GETB11_AFTER_BODY" "$PRE_ID"
     else
       ok "Bug 11 GET bindings after delete returns 404 (workspace gone)"

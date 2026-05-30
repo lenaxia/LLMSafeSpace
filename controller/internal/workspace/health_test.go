@@ -273,7 +273,11 @@ func TestCheckAgentHealth_ConnectionRefused_RestartsAfterThreshold(t *testing.T)
 
 	r.checkAgentHealth(context.Background(), ws)
 
-	assert.Equal(t, int32(3), ws.Status.ConsecutiveHealthFailures)
+	// After threshold-trip the counter is reset to 0 so the
+	// freshly-spawned pod is not immediately re-restarted on its
+	// first connection-refused failure.
+	assert.Equal(t, int32(0), ws.Status.ConsecutiveHealthFailures,
+		"counter reset to 0 after restart so new pod starts clean")
 	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase,
 		"Bug 12: must transition to Creating once threshold reached, not loop forever")
 	assert.Empty(t, ws.Status.PodIP)
@@ -329,7 +333,12 @@ func TestCheckAgentHealth_UnhealthyRepairsPodAfterThreshold(t *testing.T) {
 	ws.Status.ConsecutiveHealthFailures = 2
 	r.checkAgentHealth(context.Background(), ws)
 
-	assert.Equal(t, int32(3), ws.Status.ConsecutiveHealthFailures)
+	// Counter is reset to 0 after the restart trigger so the
+	// freshly-spawned pod starts with a clean slate; without the reset
+	// the first connection-refused on the new pod would re-trip the
+	// threshold immediately.
+	assert.Equal(t, int32(0), ws.Status.ConsecutiveHealthFailures,
+		"counter must be reset to 0 after restart trigger; otherwise the new pod loops")
 	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase, "should transition to Creating to restart pod")
 	assert.Empty(t, ws.Status.PodIP, "PodIP should be cleared")
 	assert.Equal(t, int32(1), ws.Status.RestartCount, "RestartCount should increment")
@@ -412,7 +421,11 @@ func TestCheckAgentHealth_NoResetWhenHealthCheckAfterStart(t *testing.T) {
 	startTime := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	ws.Status.StartTime = &startTime
 	ws.Status.PodIP = "127.0.0.1"
-	ws.Status.ConsecutiveHealthFailures = 5
+	// Start below threshold so this test exercises the "preserve and
+	// increment" path without crossing into the threshold-restart
+	// branch (which legitimately resets the counter to 0 — covered by
+	// TestCheckAgentHealth_ConnectionRefused_RestartsAfterThreshold).
+	ws.Status.ConsecutiveHealthFailures = 1
 	ws.Status.LastHealthCheckAt = &metav1.Time{Time: startTime.Add(5 * time.Minute)}
 
 	origInterval := healthCheckInterval
@@ -428,8 +441,8 @@ func TestCheckAgentHealth_NoResetWhenHealthCheckAfterStart(t *testing.T) {
 	}()
 
 	r.checkAgentHealth(context.Background(), ws)
-	assert.Equal(t, int32(6), ws.Status.ConsecutiveHealthFailures,
-		"failures from current pod should be preserved and incremented")
+	assert.Equal(t, int32(2), ws.Status.ConsecutiveHealthFailures,
+		"failures from current pod should be preserved and incremented (below threshold)")
 }
 
 func TestCheckAgentHealth_EmptyPodIP(t *testing.T) {
