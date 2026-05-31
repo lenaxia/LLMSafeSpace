@@ -55,11 +55,20 @@ import (
 //     always passes — that means "use cluster default").
 //   - MaxStorageGi: maximum requested workspace storage in GiB. Any
 //     storage size above this is rejected. Set 0 to disable.
+//   - MaxCPUMillicores / MaxMemoryMi / MaxEphemeralStorageGi: maximum
+//     spec.resources.{cpu,memory,ephemeralStorage} accepted at
+//     admission. Closes F1.2.3 secondary surface (a user can declare
+//     999999999m CPU; the CRD pattern allows it; the pod stays Pending
+//     forever, wasting tenant quota — DoS at the API/etcd layer).
+//     Set 0 to disable each cap individually.
 type WorkspaceValidator struct {
 	Decoder                  admission.Decoder
 	AllowedImageRegistries   []string
 	AllowedStorageClassNames []string
 	MaxStorageGi             int64
+	MaxCPUMillicores         int64
+	MaxMemoryMi              int64
+	MaxEphemeralStorageGi    int64
 }
 
 // runtimeRefIsImage reports whether the runtime string looks like an
@@ -95,6 +104,79 @@ func runtimeRefHasTraversal(s string) bool {
 // in storageSizeGi.
 var storageSizePattern = regexp.MustCompile(`^([0-9]+)(Gi|Mi)$`)
 
+// cpuPattern matches the CRD's spec.resources.cpu pattern.
+var cpuPattern = regexp.MustCompile(`^([0-9]+)m$|^([0-9]+\.[0-9]+)$`)
+
+// memoryPattern matches the CRD's spec.resources.memory pattern (Ki|Mi|Gi).
+var memoryPattern = regexp.MustCompile(`^([0-9]+)(Ki|Mi|Gi)$`)
+
+// parseCPUMillis converts a CPU string ("500m" or "1.5") to integer
+// millicores. Returns (-1, err) on malformed input.
+func parseCPUMillis(s string) (int64, error) {
+	m := cpuPattern.FindStringSubmatch(s)
+	if m == nil {
+		return -1, fmt.Errorf("cpu %q does not match ^[0-9]+m$ or ^[0-9]+\\.[0-9]+$", s)
+	}
+	if m[1] != "" {
+		n, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			return -1, fmt.Errorf("cpu %q has invalid magnitude", s)
+		}
+		return n, nil
+	}
+	// Decimal form: parse "1.5" → 1500 millis.
+	whole, frac, _ := strings.Cut(m[2], ".")
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return -1, fmt.Errorf("cpu %q has invalid whole part", s)
+	}
+	if len(frac) > 3 {
+		frac = frac[:3]
+	}
+	for len(frac) < 3 {
+		frac += "0"
+	}
+	f, err := strconv.ParseInt(frac, 10, 64)
+	if err != nil {
+		return -1, fmt.Errorf("cpu %q has invalid fractional part", s)
+	}
+	return w*1000 + f, nil
+}
+
+// parseMemoryMi converts a memory string (Ki/Mi/Gi suffix) to integer
+// MiB, rounding sub-MiB allocations up to 1.
+func parseMemoryMi(s string) (int64, error) {
+	m := memoryPattern.FindStringSubmatch(s)
+	if m == nil {
+		return -1, fmt.Errorf("memory %q does not match ^[0-9]+(Ki|Mi|Gi)$", s)
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || n < 1 {
+		return -1, fmt.Errorf("memory %q has invalid magnitude", s)
+	}
+	switch m[2] {
+	case "Ki":
+		mi := (n + 1023) / 1024
+		if mi < 1 {
+			mi = 1
+		}
+		return mi, nil
+	case "Mi":
+		return n, nil
+	case "Gi":
+		return n * 1024, nil
+	}
+	return -1, fmt.Errorf("memory %q has unrecognized suffix", s)
+}
+
+// parseStorageGi converts a storage string (Mi/Gi) to integer GiB.
+// Used for spec.resources.ephemeralStorage; reuses the same suffix
+// grammar as storageSizeGi but kept as a separate function to express
+// intent.
+func parseStorageGi(s string) (int64, error) {
+	return storageSizeGi(s)
+}
+
 // storageSizeGi parses the spec.storage.size string and returns the
 // value in GiB, rounding Mi up to 1Gi (so 256Mi reports as 1Gi). Returns
 // (-1, error) on malformed input.
@@ -124,6 +206,83 @@ func storageSizeGi(s string) (int64, error) {
 // only the controller writes Status (via the status subresource).
 func statusIsZero(s v1.WorkspaceStatus) bool {
 	return reflect.DeepEqual(s, v1.WorkspaceStatus{})
+}
+
+// packageRequirementSafePattern is a CONSERVATIVE positive allow-list
+// for package-manager identifiers. It accepts ONLY:
+//
+//   - a leading alphabetic char (rejects leading `-` argv-injection
+//     attempts like `--index-url=...`, `-r/etc/passwd`, `-toolexec=...`),
+//     OR `@` for npm-scoped packages.
+//   - then alphanumerics, dot, dash, underscore.
+//   - optionally pip extras `[name1,name2]`.
+//   - optionally version constraints
+//     (`==`/`>=`/`<=`/`>`/`<`/`~=`/`!=` followed by a version expr,
+//     comma-separated for compound constraints).
+//   - optionally `@` followed by a version label (npm `@scope/pkg@1.0`,
+//     pip git ref `pkg@v1.0`).
+//
+// Notably FORBIDS:
+//   - leading dash (argv injection: `--index-url=`, `-r`, `-toolexec=`).
+//   - URL shapes (`git+https://`, `https://`, `file://`, `./path`, `/abs`)
+//     — these would let pip / npm / go install pull and execute
+//     attacker-controlled content (RCE).
+//   - whitespace and shell metacharacters (defended elsewhere too).
+//   - `..` path-traversal sequences.
+//
+// PEP 508 features deliberately NOT supported (operator must extend
+// the regex if they need them, accepting the trade-off):
+//   - environment markers (`pkg; python_version<3.10`).
+//   - URL specifiers (`pkg @ https://...`).
+//   - hash pinning (`pkg --hash=sha256:...`) — flags are blocked
+//     entirely.
+//
+// The trade-off is documented in `design/stories/epic-17-security-review/
+// remediation/MASTER-TRACKER.md` so a future PR can widen this with
+// eyes open.
+var packageRequirementSafePattern = regexp.MustCompile(
+	`^@?[a-zA-Z][a-zA-Z0-9._/-]*` + // name (optional npm scope, no leading dash, slashes for npm-scope/go-modules)
+		`(\[[a-zA-Z0-9._,-]+\])?` + // optional pip extras
+		`(@[a-zA-Z0-9._+/-]+)?` + // optional `@version` for npm or pip-git ref
+		`(([<>=!~]=?)[a-zA-Z0-9._+-]+(,([<>=!~]=?)[a-zA-Z0-9._+-]+)*)?` + // optional version constraints, comma-separated
+		`$`)
+
+// urlSchemePattern detects URL-shaped requirements that would let pip,
+// npm, or go install pull from an attacker-supplied location. Even if
+// the chars are otherwise safe, a payload like
+// `git+https://attacker.com/repo.git` is RCE via attacker `setup.py`.
+var urlSchemePattern = regexp.MustCompile(
+	`(?i)^(git\+|https?:|ssh:|ftp:|file:|svn\+|hg\+|bzr\+|\.\.?/|/)`)
+
+// validatePackageRequirement enforces a strict allow-list on each
+// Spec.Packages[].Requirements[] entry. Closes F1.2.5 (Epic 17).
+func validatePackageRequirement(req string) error {
+	req = strings.TrimSpace(req)
+	if req == "" {
+		return fmt.Errorf("requirement must not be empty")
+	}
+	if len(req) > 256 {
+		return fmt.Errorf("requirement exceeds the 256-character length limit")
+	}
+	if strings.HasPrefix(req, "-") {
+		return fmt.Errorf(
+			"requirement starts with '-' which would be interpreted as a flag " +
+				"by pip / npm / go install (argv injection)")
+	}
+	if urlSchemePattern.MatchString(req) {
+		return fmt.Errorf(
+			"requirement looks like a URL or path; URL/path installs are blocked " +
+				"to prevent RCE via attacker-controlled package sources")
+	}
+	if strings.Contains(req, "..") {
+		return fmt.Errorf("requirement contains forbidden '..' (path traversal)")
+	}
+	if !packageRequirementSafePattern.MatchString(req) {
+		return fmt.Errorf(
+			"requirement contains characters outside the conservative allow-list; " +
+				"only package-name + version-constraint syntax is permitted")
+	}
+	return nil
 }
 
 // Handle validates the Workspace resource. Errors are returned as
@@ -220,6 +379,51 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 			ws.Spec.Storage.Size, gi, v.MaxStorageGi))
 	}
 
+	// 4a. F1.2.3 — Spec.Resources.{cpu,memory,ephemeralStorage} caps.
+	//     The CRD's pattern validation lets through values like
+	//     "999999999m" CPU; admission can pin CPU+memory but pods
+	//     stay Pending forever, wasting tenant quota and confusing
+	//     operators. Reject before the workspace ever reaches the
+	//     scheduler.
+	if r := ws.Spec.Resources; r != nil {
+		if v.MaxCPUMillicores > 0 && r.CPU != "" {
+			millis, err := parseCPUMillis(r.CPU)
+			if err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.cpu %q: %s", r.CPU, err.Error()))
+			}
+			if millis > v.MaxCPUMillicores {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.cpu %q (%d millicores) exceeds the maximum %d millicores",
+					r.CPU, millis, v.MaxCPUMillicores))
+			}
+		}
+		if v.MaxMemoryMi > 0 && r.Memory != "" {
+			mi, err := parseMemoryMi(r.Memory)
+			if err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.memory %q: %s", r.Memory, err.Error()))
+			}
+			if mi > v.MaxMemoryMi {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.memory %q (%d Mi) exceeds the maximum %d Mi",
+					r.Memory, mi, v.MaxMemoryMi))
+			}
+		}
+		if v.MaxEphemeralStorageGi > 0 && r.EphemeralStorage != "" {
+			gi, err := parseStorageGi(r.EphemeralStorage)
+			if err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.ephemeralStorage %q: %s", r.EphemeralStorage, err.Error()))
+			}
+			if gi > v.MaxEphemeralStorageGi {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.ephemeralStorage %q (%d Gi) exceeds the maximum %d Gi",
+					r.EphemeralStorage, gi, v.MaxEphemeralStorageGi))
+			}
+		}
+	}
+
 	// 5. StorageClassName allow-list (optional). Empty = use cluster
 	//    default and is always permitted.
 	if v.AllowedStorageClassNames != nil && ws.Spec.Storage.StorageClassName != "" {
@@ -234,6 +438,25 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 			return admission.Denied(fmt.Sprintf(
 				"spec.storage.storageClassName %q is not in the allow-list %v",
 				ws.Spec.Storage.StorageClassName, v.AllowedStorageClassNames))
+		}
+	}
+
+	// 5a. F1.2.5 — Spec.Packages[].Requirements[] shell-injection guard.
+	//     Pre-fix the controller built `pip install --target=... <req>`
+	//     by string concatenation; an adversarial requirement like
+	//     "pkg; rm -rf /" got code-execution in the init container.
+	//     Defense in depth: the controller now shell-quotes every
+	//     requirement (see buildWorkspaceSetupScript). Belt-and-braces:
+	//     reject syntactically-impossible requirements at admission so
+	//     even a misconfigured cluster (failurePolicy=Ignore) gets
+	//     primary control.
+	for pkgIdx, pkgSet := range ws.Spec.Packages {
+		for reqIdx, req := range pkgSet.Requirements {
+			if err := validatePackageRequirement(req); err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.packages[%d].requirements[%d] %q: %s",
+					pkgIdx, reqIdx, req, err.Error()))
+			}
 		}
 	}
 

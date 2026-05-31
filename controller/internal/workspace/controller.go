@@ -708,6 +708,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			{Name: "tmp", MountPath: "/tmp"},
 			{Name: "sandbox-home", MountPath: "/home/sandbox"},
 		},
+		Resources: resourceRequirementsFor(workspace),
 	}
 
 	volumes := []corev1.Volume{
@@ -762,6 +763,61 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		},
 	}
 	return pod, nil
+}
+
+// resourceRequirementsFor maps the Workspace's spec.resources to a
+// corev1.ResourceRequirements block. Closes F1.2.3 (Epic 17): pre-fix
+// the controller never applied the operator-supplied resource limits,
+// so workspace pods ran without quota and could DoS the node.
+//
+// Behavior:
+//   - If spec.resources is nil, fall back to a sane default (matches
+//     the kubebuilder defaults documented on `WorkspaceSpec`):
+//     500m CPU, 512Mi memory, 1Gi ephemeral-storage. This guarantees
+//     every workspace carries at least basic limits even when the
+//     operator submits a minimal YAML.
+//   - Limits and Requests are set to the SAME value (1:1 mapping)
+//     because the workspace is a single-tenant interactive
+//     environment; QoS=Guaranteed simplifies eviction reasoning.
+//   - Quantity parsing failures fall back to the default rather than
+//     panicking. The CRD pattern + (future) webhook caps protect
+//     against bad input; if both are bypassed (e.g. CRD validation
+//     disabled cluster-wide), we degrade gracefully.
+func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirements {
+	const (
+		defaultCPU       = "500m"
+		defaultMemory    = "512Mi"
+		defaultEphemeral = "1Gi"
+	)
+	cpu := defaultCPU
+	memory := defaultMemory
+	ephemeral := defaultEphemeral
+	if r := workspace.Spec.Resources; r != nil {
+		if r.CPU != "" {
+			cpu = r.CPU
+		}
+		if r.Memory != "" {
+			memory = r.Memory
+		}
+		if r.EphemeralStorage != "" {
+			ephemeral = r.EphemeralStorage
+		}
+	}
+	parseOrDefault := func(s, fallback string) resource.Quantity {
+		if q, err := resource.ParseQuantity(s); err == nil {
+			return q
+		}
+		return resource.MustParse(fallback) // defaults are constants; safe
+	}
+	rl := corev1.ResourceList{
+		corev1.ResourceCPU:              parseOrDefault(cpu, defaultCPU),
+		corev1.ResourceMemory:           parseOrDefault(memory, defaultMemory),
+		corev1.ResourceEphemeralStorage: parseOrDefault(ephemeral, defaultEphemeral),
+	}
+	return corev1.ResourceRequirements{
+		Limits:   rl,
+		Requests: rl.DeepCopy(),
+	}
 }
 
 func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext {
@@ -867,6 +923,27 @@ func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev
 	}
 }
 
+// shellQuoteSingle wraps an argument in POSIX single quotes, escaping
+// any embedded single-quote bytes via the standard `'\”` pattern.
+// The result is safe to pass to /bin/sh as a single positional
+// argument: nothing inside the quotes is interpreted by the shell.
+//
+// Closes F1.2.5 (Epic 17): pre-fix the controller did
+//
+//	args += " " + req
+//	script += "pip install --target=... " + args
+//
+// which let an adversarial requirement string contain shell
+// metacharacters (`;`, `|`, `\“, `$()`) and break out of the pip
+// invocation. Post-fix every requirement is wrapped in single quotes,
+// so the only thing pip / npm / go install ever sees is the literal
+// requirement bytes — which they will reject as a parse error if
+// adversarial. Defense in depth: the admission webhook also rejects
+// these payloads at CREATE/UPDATE.
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func buildWorkspaceSetupScript(ws *v1.Workspace) string {
 	script := "#!/bin/sh\nset -e\nmkdir -p /workspace/packages\n"
 	for _, pkgSet := range ws.Spec.Packages {
@@ -875,21 +952,37 @@ func buildWorkspaceSetupScript(ws *v1.Workspace) string {
 		}
 		args := ""
 		for _, req := range pkgSet.Requirements {
-			args += " " + req
+			args += " " + shellQuoteSingle(req)
 		}
 		rt := pkgSet.Runtime
+		// `--` after the package-manager flags terminates argv parsing,
+		// so even if a requirement somehow starts with `-` (admission
+		// is normally blocking that), the package manager will treat
+		// it as a positional argument and reject it as an unknown
+		// package name rather than parsing it as a flag (RCE class —
+		// see worklog 0098 / F1.2.5 validator pass 2).
 		switch {
 		case len(rt) >= 6 && rt[:6] == "nodejs":
-			script += "cd /workspace/packages && npm install" + args + "\n"
+			script += "cd /workspace/packages && npm install --" + args + "\n"
 		case len(rt) >= 2 && rt[:2] == "go":
 			for _, req := range pkgSet.Requirements {
-				script += "cd /workspace/packages && go install " + req + "\n"
+				// `go install` does not support `--`; we rely on the
+				// admission webhook + shellQuoteSingle. The webhook
+				// rejects leading `-` and URL-shaped strings.
+				script += "cd /workspace/packages && go install " + shellQuoteSingle(req) + "\n"
 			}
 		default:
-			script += "pip install --target=/workspace/packages" + args + "\n"
+			script += "pip install --target=/workspace/packages --" + args + "\n"
 		}
 	}
 	if ws.Spec.InitScript != "" {
+		// InitScript is ALREADY a multi-line shell payload deliberately
+		// authored by the workspace owner. We do NOT shell-quote it (it
+		// is meant to BE a script). The here-document delimiter
+		// `INITSCRIPT` is literal-quoted so embedded $variables and
+		// $(commands) are preserved verbatim. F1.2.5 explicitly does
+		// NOT cover InitScript — that is by design a code-execution
+		// surface.
 		script += "cat > /tmp/init-script.sh << 'INITSCRIPT'\n"
 		script += ws.Spec.InitScript + "\n"
 		script += "INITSCRIPT\n"

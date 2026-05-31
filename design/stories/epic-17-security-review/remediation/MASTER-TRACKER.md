@@ -83,9 +83,9 @@ is the list of distinct items.
 | F1.1.7 | Login error messages enable user enumeration | Medium | duplicate of G27 | merged |
 | F1.2.1 | Spec.Runtime arbitrary image pull | Critical | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook validator (= RT-2.18, RT-6.10) |
 | F1.2.2 | Status.PodIP/PodName forge → SSRF + pod-exec hijack | Critical | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook subresource validation |
-| F1.2.3 | Spec.Resources.* not applied to pod | High | MINE | controller pod-spec generation |
+| F1.2.3 | Spec.Resources.* not applied to pod | High | MINE — code-fix landed worklog 0105, awaiting live re-pentest | controller pod-spec generation |
 | F1.2.4 | Spec.NetworkAccess not enforced | High | MINE | NetPol generation per workspace |
-| F1.2.5 | Spec.Packages[].Requirements[] shell injection | High | MINE | controller package init container |
+| F1.2.5 | Spec.Packages[].Requirements[] shell injection | High | MINE — code-fix landed worklog 0105, awaiting live re-pentest | controller package init container |
 | F1.2.6 | autoApprovePermissions schema drift | Medium | MINE | CRD schema |
 | F1.2.7 | Helm CRD drift | Medium | MINE | chart vs upstream CRD |
 | F1.2.8 | Spec.PodSecurityContext.SeccompProfile ignored | Medium | MINE | controller (relates G24) |

@@ -60,6 +60,15 @@ spec:
             {{- if hasKey .Values.webhooks "maxWorkspaceStorageGi" }}
             - --max-workspace-storage-gi={{ .Values.webhooks.maxWorkspaceStorageGi }}
             {{- end }}
+            {{- if hasKey .Values.webhooks "maxWorkspaceCPUMillicores" }}
+            - --max-workspace-cpu-millicores={{ .Values.webhooks.maxWorkspaceCPUMillicores }}
+            {{- end }}
+            {{- if hasKey .Values.webhooks "maxWorkspaceMemoryMi" }}
+            - --max-workspace-memory-mi={{ .Values.webhooks.maxWorkspaceMemoryMi }}
+            {{- end }}
+            {{- if hasKey .Values.webhooks "maxWorkspaceEphemeralStorageGi" }}
+            - --max-workspace-ephemeral-storage-gi={{ .Values.webhooks.maxWorkspaceEphemeralStorageGi }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metricsAddr | trimPrefix ":" | atoi }}

@@ -43,6 +43,9 @@ func main() {
 	var allowedImageRegistries string
 	var allowedStorageClassNames string
 	var maxStorageGi int64
+	var maxCPUMillicores int64
+	var maxMemoryMi int64
+	var maxEphemeralStorageGi int64
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
@@ -60,6 +63,12 @@ func main() {
 			"Workspace.spec.storage.storageClassName. Empty means accept any (G2 / F1.2.9).")
 	flag.Int64Var(&maxStorageGi, "max-workspace-storage-gi", 1024,
 		"Maximum spec.storage.size in GiB. Set 0 to disable. (G2 / RT-6.1).")
+	flag.Int64Var(&maxCPUMillicores, "max-workspace-cpu-millicores", 16000,
+		"Maximum spec.resources.cpu in millicores (16000 = 16 cores). Set 0 to disable. (G4 / F1.2.3).")
+	flag.Int64Var(&maxMemoryMi, "max-workspace-memory-mi", 65536,
+		"Maximum spec.resources.memory in MiB (65536 = 64GiB). Set 0 to disable. (G4 / F1.2.3).")
+	flag.Int64Var(&maxEphemeralStorageGi, "max-workspace-ephemeral-storage-gi", 100,
+		"Maximum spec.resources.ephemeralStorage in GiB. Set 0 to disable. (G4 / F1.2.3).")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -122,6 +131,9 @@ func main() {
 			AllowedImageRegistries:   splitNonEmpty(allowedImageRegistries, ","),
 			AllowedStorageClassNames: splitNonEmpty(allowedStorageClassNames, ","),
 			MaxStorageGi:             maxStorageGi,
+			MaxCPUMillicores:         maxCPUMillicores,
+			MaxMemoryMi:              maxMemoryMi,
+			MaxEphemeralStorageGi:    maxEphemeralStorageGi,
 		},
 	})
 

