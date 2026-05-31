@@ -449,6 +449,7 @@ func TestPgE2E_RotateKey_AtomicReEncryption(t *testing.T) {
 	defer pool.Close()
 
 	userID := fmt.Sprintf("rotate-%d", time.Now().UnixNano())
+	ensureTestUser(t, pool, userID)
 	defer cleanupUserKeys(t, pool, userID)
 	defer cleanupSecrets(t, pool, userID)
 
@@ -557,6 +558,7 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 	defer pool.Close()
 
 	userID := fmt.Sprintf("addb-%d", time.Now().UnixNano())
+	ensureTestUser(t, pool, userID)
 	defer cleanupUserKeys(t, pool, userID)
 	defer cleanupSecrets(t, pool, userID)
 
