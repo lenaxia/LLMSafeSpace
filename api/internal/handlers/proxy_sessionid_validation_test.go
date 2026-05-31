@@ -37,13 +37,13 @@ func TestG6_F112_RejectsTraversalSessionIDs(t *testing.T) {
 		"sess?query=evil",
 		"sess#fragment",
 		"sess..other",
-		"",                           // empty
-		"sess with space",            // whitespace
-		"sess\nnewline",              // newline
-		"sess\x00null",               // NUL
-		"sess'quote",                 // shell metacharacter
-		"sess$(whoami)",              // shell substitution
-		string(make([]byte, 130)),    // overlong (130 chars; cap is 128)
+		"",                        // empty
+		"sess with space",         // whitespace
+		"sess\nnewline",           // newline
+		"sess\x00null",            // NUL
+		"sess'quote",              // shell metacharacter
+		"sess$(whoami)",           // shell substitution
+		string(make([]byte, 130)), // overlong (130 chars; cap is 128)
 	} {
 		t.Run(payload, func(t *testing.T) {
 			assert.Error(t, validateSessionID(payload),
