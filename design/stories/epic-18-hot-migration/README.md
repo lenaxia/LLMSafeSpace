@@ -21,20 +21,20 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | # | Assumption | Validation |
 |---|-----------|------------|
 | A1 | Workspace CRD supports `ReadWriteMany` access mode | ✅ `WorkspaceStorageConfig.AccessMode` enum includes `ReadWriteMany` (`pkg/apis/llmsafespace/v1/workspace_types.go:19`) |
-| A2 | `buildPVC()` handles RWX | ✅ `controller.go:583`: `if workspace.Spec.Storage.AccessMode == "ReadWriteMany"` |
+| A2 | `buildPVC()` handles RWX | ✅ `controller.go:612`: `if workspace.Spec.Storage.AccessMode == "ReadWriteMany"` |
 | A3 | Proxy resolves backend via `workspace.Status.PodIP` per-request | ✅ `proxy.go:293` fetches workspace CRD; line 361 reads `Status.PodIP`; retries with fresh IP on connection error (line 371) |
-| A4 | Workspace reconciler sets PodIP during `handleCreating` only; `handleActive` does NOT re-set it | ✅ `controller.go:206` sets PodIP in handleCreating; handleActive only checks pod existence |
+| A4 | Workspace reconciler sets PodIP during `handleCreating` only; `handleActive` does NOT re-set it | ✅ `controller.go:235` sets PodIP in handleCreating; handleActive only checks pod existence |
 | A5 | Agentd tracks session state in memory via `sessionStatusTracker` | ✅ `cmd/workspace-agentd/main.go` — `statuses map[string]string` |
 | A6 | Opencode stores conversation data at `$XDG_DATA_HOME/opencode/` on PVC | ✅ Entrypoint: `XDG_DATA_HOME=/workspace/.local`; opencode: `xdg-basedir` in `global.ts:10` |
 | A7 | SSE reconnection is client-driven (standard protocol) | ✅ `proxy.go:233` sends `text/event-stream`; SSE spec requires client reconnect on close |
 | A8 | Current storage is Longhorn (RWO, ext4) | ✅ Threat model G23: `/dev/longhorn/pvc-... /workspace ext4 rw` |
-| A9 | Workspace reconciler finds pods by deterministic name `podName(workspace.Name, uid)` | ✅ `constants.go:45`; used in `handleCreating` (161), `handleActive` (226), `handleSuspending` (329), `handleTerminating` (377) |
-| A10 | `handleActive` calls `recoverFromTransientPodLoss` when pod missing → clears PodIP, sets Creating | ✅ `controller.go:248` |
-| A11 | `workspace.Status.PodName` is always set during `handleCreating` (line 187) | ✅ Set to `pod.Name` after pod creation |
+| A9 | Workspace reconciler finds pods by deterministic name `podName(workspace.Name, uid)` | ✅ `constants.go:45`; used in `handleCreating` (190), `handleActive` (255), `handleSuspending` (358), `handleTerminating` (406) |
+| A10 | `handleActive` calls `recoverFromTransientPodLoss` when pod missing → clears PodIP, sets Creating | ✅ `controller.go:277` |
+| A11 | `workspace.Status.PodName` is always set during `handleCreating` (line 216) | ✅ Set to `pod.Name` after pod creation |
 | A12 | Password is per-workspace Secret, same for source and target pods | ✅ `ensurePasswordSecret` creates `{workspace}-password`; mounted via volume |
 | A13 | Proxy uses single hardcoded namespace (`h.namespace`) | ✅ `proxy.go:293` — all `Workspaces(h.namespace)` calls |
-| A14 | Workspace reconciler sets OwnerReference on pods (workspace owns pod) | ✅ `controller.go:178`: `controllerutil.SetControllerReference(workspace, pod, r.Scheme)` |
-| A15 | `buildPod()` is unexported method on `WorkspaceReconciler` | ✅ `controller.go:611`: `func (r *WorkspaceReconciler) buildPod(...)` |
+| A14 | Workspace reconciler sets OwnerReference on pods (workspace owns pod) | ✅ `controller.go:207`: `controllerutil.SetControllerReference(workspace, pod, r.Scheme)` |
+| A15 | `buildPod()` is unexported method on `WorkspaceReconciler` | ✅ `controller.go:640`: `func (r *WorkspaceReconciler) buildPod(...)` |
 | A16 | Workspace admission webhook validates Workspace CRD only, not Pods | ✅ `workspace_webhook.go:17`: `resources=workspaces` — won't block migration controller pod creation |
 | A17 | Opencode uses SQLite (WAL mode) for session/conversation storage | ✅ `opencode-upstream/packages/opencode/src/storage/db.ts:104`: `PRAGMA journal_mode = WAL`; DB at `$XDG_DATA_HOME/opencode/opencode.db` |
 | A18 | SQLite + WAL over NFS = corruption if two processes open same DB | ✅ SQLite docs: WAL requires shared memory (`-shm` file via mmap); mmap not coherent across NFS clients. Two writers = guaranteed corruption |
@@ -155,7 +155,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 
 ### S18.2 — Migration CRD & Reconciler
 
-**Goal:** Define `Migration` CRD and implement the reconciler that orchestrates the 5-step migration sequence.
+**Goal:** Define `Migration` CRD and implement the reconciler that orchestrates the 8-step migration sequence.
 
 **Acceptance Criteria:**
 - [ ] `Migration` CRD in `pkg/apis/llmsafespace/v1/migration_types.go`
@@ -165,6 +165,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 - [ ] Write-ahead: phase persisted to status BEFORE executing next step
 - [ ] One active Migration per workspace — reject if another in-progress
 - [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=15s, StartingTarget=120s, CuttingOver=5s
+- [ ] Spot-triggered migrations use tighter timeouts (see S18.5): total budget 75s. Migration spec carries `timeoutBudgetSeconds` field; reconciler uses min(phase default, remaining budget).
 - [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
 - [ ] Failed → rollback: delete target pod, leave source running (if source opencode was stopped, restart it via `POST /v1/migrate/start-opencode`)
 - [ ] Target pod created via shared `pkg/workspace/pod.BuildPod()` with name `{workspace}-{uid[:8]}-mig`, nodeAffinity, and `AGENTD_SUPERVISE=false` env var (agentd starts without launching opencode)
@@ -195,6 +196,7 @@ status:
   sourcePodName: ws-abc123-a1b2c3d4
   targetPodName: ws-abc123-a1b2c3d4-mig
   cutoverDurationMs: 95
+  handoffDurationMs: 7200
 ```
 
 **Why migration controller creates pods directly:**
@@ -281,12 +283,13 @@ status:
 - [ ] AWS Node Termination Handler (NTH) deployed as DaemonSet on Spot nodes
 - [ ] NTH detects interruption via IMDS, cordons node, creates `Migration` CR per workspace pod
 - [ ] Priority based on session activity (busy > idle)
-- [ ] Must complete within 90s (30s buffer)
+- [ ] Spot migrations use tighter phase timeouts: CreatingTarget=20s, WaitingAgentd=10s, StoppingSource=10s, StartingTarget=30s, CuttingOver=5s (total budget: 75s, within 90s window)
+- [ ] If any phase exceeds its Spot timeout → abort migration, set workspace to `Suspending` immediately (don't wait for full timeout)
 - [ ] Timeout fallback: workspace enters `Suspending` (PVC retained, auto-resumes on next access)
 - [ ] Metrics: `spot_reclamation_total`, `spot_reclamation_succeeded`, `spot_reclamation_suspended`
 - [ ] Alert: suspension rate > 5% over 1 hour
 - [ ] Workspace pods annotated `karpenter.sh/do-not-disrupt: "true"`
-- [ ] Integration test: simulate interruption → verify migrate or suspend
+- [ ] Integration test: simulate interruption → verify migrate or suspend within 90s
 
 **Implementation Notes:**
 - NTH IMDS mode (no SQS). Cordons but does NOT delete pods.
@@ -451,7 +454,7 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | Q2 | gVisor + Java JIT? | 🔶 | Benchmark in S18.7 |
 | Q3 | EFS throughput mode? | 🔶 | Start elastic; switch if p99 > 10ms |
 | Q4 | Session state size? | ✅ | <50KB (routing table only) |
-| Q5 | Migration SLO? | ✅ | p99 cutover < 500ms, total < 10s |
+| Q5 | Migration SLO? | ✅ | p99 handoff gap < 15s, p99 total < 30s |
 | Q6 | EFS access point limit? | 🔶 | Second filesystem at 800 workspaces |
 | Q7 | Requires EFS? | ✅ | No. Any RWX CSI works |
 | Q8 | Pod conflict with workspace reconciler? | ✅ | Direct creation + `Status.PodName` adoption |
