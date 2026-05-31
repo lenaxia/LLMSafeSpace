@@ -14,12 +14,14 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -268,4 +270,154 @@ func TestG4_F125_PackageRequirementsAreNeitherShellEscapedNorPositionallyInjecte
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err,
 		"the rendered init script must be valid POSIX shell syntax: %s", out)
+}
+
+// =============================================================================
+// G4 part 2 — F1.2.4: Spec.NetworkAccess generates per-workspace NetworkPolicy
+// =============================================================================
+//
+// Pre-fix: Spec.NetworkAccess was completely ignored by the controller.
+// A user could declare `networkAccess.egress: [{domain: api.openai.com}]`
+// expecting outbound traffic to be limited to that allow-list, but the
+// controller never created a NetworkPolicy reflecting the field.
+//
+// Fix: when Spec.NetworkAccess is non-nil and has at least one Egress
+// entry, the controller creates a NetworkPolicy named
+// `workspace-egress-<ws>-<uid>` selecting just that workspace's pod
+// (via WorkspaceID label). Egress rules are generated from the
+// declared FQDN list with DNS-resolved /32 ipBlock entries plus
+// DNS port 53 to kube-dns.
+//
+// Trade-off note: standard k8s NetworkPolicy doesn't support FQDN
+// matching. We resolve at reconcile time and refresh on each pass
+// (controllers reconcile periodically, so the IP set self-refreshes).
+// Operators who need stricter FQDN guarantees should layer a Cilium
+// FQDN policy on top — out of scope for this fix.
+
+// stubResolver is a HostResolver implementation for hermetic tests:
+// no real DNS calls. Returns the predefined response (or an error) for
+// each host. Unknown hosts return NXDOMAIN-equivalent.
+type stubResolver struct {
+	hosts map[string][]string
+	err   error
+}
+
+func (s stubResolver) LookupHost(ctx context.Context, host string) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if v, ok := s.hosts[host]; ok {
+		return v, nil
+	}
+	return nil, fmt.Errorf("no such host: %s", host)
+}
+
+func TestG4_F124_GeneratesPerWorkspaceEgressPolicyWhenDeclared(t *testing.T) {
+	ws := newWorkspaceForSecurity(t)
+	ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+		Egress: []v1.WorkspaceEgressRule{
+			{Domain: "api.openai.com"},
+			{Domain: "api.anthropic.com"},
+		},
+	}
+	r := reconcilerFor(t)
+	r.HostResolver = stubResolver{hosts: map[string][]string{
+		"api.openai.com":    {"104.18.0.1"},
+		"api.anthropic.com": {"172.66.0.5"},
+	}}
+
+	np, err := r.buildWorkspaceEgressNetworkPolicy(context.Background(), ws)
+	require.NoError(t, err)
+	require.NotNil(t, np, "non-empty Egress must produce a NetworkPolicy")
+
+	// Pod selector must scope to just this workspace.
+	require.NotNil(t, np.Spec.PodSelector.MatchLabels)
+	require.Equal(t, ws.Name, np.Spec.PodSelector.MatchLabels[LabelWorkspace],
+		"per-workspace NetPol must select via LabelWorkspace")
+
+	// PolicyTypes must include Egress.
+	require.Contains(t, np.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+
+	// HTTPS rule with the public IPs as /32 ipBlocks.
+	foundHTTPS := false
+	for _, rule := range np.Spec.Egress {
+		hasHTTPS := false
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.IntValue() == 443 {
+				hasHTTPS = true
+			}
+		}
+		if !hasHTTPS {
+			continue
+		}
+		foundHTTPS = true
+		// Confirm the resolved IPs landed.
+		gotCIDRs := map[string]bool{}
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil {
+				gotCIDRs[peer.IPBlock.CIDR] = true
+			}
+		}
+		require.True(t, gotCIDRs["104.18.0.1/32"],
+			"HTTPS rule must include /32 for api.openai.com's public IP")
+		require.True(t, gotCIDRs["172.66.0.5/32"],
+			"HTTPS rule must include /32 for api.anthropic.com's public IP")
+	}
+	require.True(t, foundHTTPS,
+		"per-workspace NetPol must allow HTTPS to declared FQDNs")
+}
+
+func TestG4_F124_DropsResolvedPrivateIPs(t *testing.T) {
+	// Validator-found bypass class: a domain that resolves into RFC1918
+	// or 169.254/16 must NOT produce an ipBlock allow even though it
+	// passed the cluster-internal-suffix check at admission. (This is
+	// defense-in-depth — the webhook now blocks the cluster-internal
+	// suffixes, but if a public domain RESOLVES to a private IP, we
+	// still drop it.)
+	ws := newWorkspaceForSecurity(t)
+	ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+		Egress: []v1.WorkspaceEgressRule{
+			{Domain: "rebound.example.com"},
+		},
+	}
+	r := reconcilerFor(t)
+	r.HostResolver = stubResolver{hosts: map[string][]string{
+		"rebound.example.com": {"169.254.169.254", "10.0.0.5"},
+	}}
+
+	np, err := r.buildWorkspaceEgressNetworkPolicy(context.Background(), ws)
+	require.NoError(t, err)
+	require.NotNil(t, np)
+
+	// No ipBlock allow whatsoever for this set — both IPs are private.
+	for _, rule := range np.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil {
+				t.Fatalf("F1.2.4 broken: private/internal IP %q leaked into NetPol allow",
+					peer.IPBlock.CIDR)
+			}
+		}
+	}
+}
+
+func TestG4_F124_NilNetworkAccessProducesNoExtraPolicy(t *testing.T) {
+	ws := newWorkspaceForSecurity(t)
+	ws.Spec.NetworkAccess = nil
+	r := reconcilerFor(t)
+
+	np, err := r.buildWorkspaceEgressNetworkPolicy(context.Background(), ws)
+	require.NoError(t, err)
+	require.Nil(t, np,
+		"nil Spec.NetworkAccess must produce no per-workspace NetPol — chart-wide policy applies")
+}
+
+func TestG4_F124_EmptyEgressProducesNoExtraPolicy(t *testing.T) {
+	ws := newWorkspaceForSecurity(t)
+	ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{Egress: nil}
+	r := reconcilerFor(t)
+
+	np, err := r.buildWorkspaceEgressNetworkPolicy(context.Background(), ws)
+	require.NoError(t, err)
+	require.Nil(t, np,
+		"empty Egress must produce no per-workspace NetPol")
 }

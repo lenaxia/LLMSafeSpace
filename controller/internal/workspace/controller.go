@@ -33,6 +33,11 @@ import (
 type WorkspaceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// HostResolver is used by the per-workspace NetworkPolicy generator
+	// (network_policy.go) to resolve declared FQDNs to /32 ipBlocks at
+	// reconcile time. Tests inject a stub; production uses
+	// defaultHostResolver (net.DefaultResolver) when nil.
+	HostResolver HostResolver
 }
 
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -198,6 +203,14 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
+		// Ensure per-workspace egress NetworkPolicy BEFORE pod creation
+		// (F1.2.4 / G4 part 2). Built from spec.networkAccess.egress;
+		// no-op when the field is nil/empty (chart-wide policy applies).
+		// Failure is non-fatal: if DNS is flaky we still want the pod
+		// to come up; the next reconcile will retry.
+		if err := r.ensureWorkspaceEgressNetworkPolicy(ctx, workspace); err != nil {
+			logger.Error(err, "Failed to ensure per-workspace egress NetworkPolicy (continuing)")
+		}
 		// Pod doesn't exist — create it.
 		pod, buildErr := r.buildPod(ctx, workspace)
 		if buildErr != nil {
@@ -264,6 +277,16 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	logger := log.FromContext(ctx)
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
+
+	// Refresh per-workspace egress NetPol on every Active reconcile so
+	// (a) spec.networkAccess.egress changes take effect without a pod
+	// restart, (b) DNS-resolved /32 ipBlocks self-refresh as CDN IPs
+	// rotate, and (c) toggling NetworkAccess off cleanly deletes the
+	// policy. Failure is non-fatal — log and continue. (F1.2.4 / G4
+	// part 2 — validator pass 2 catch.)
+	if err := r.ensureWorkspaceEgressNetworkPolicy(ctx, workspace); err != nil {
+		logger.Error(err, "Failed to refresh per-workspace egress NetworkPolicy (continuing)")
+	}
 
 	// Check restart generation.
 	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {

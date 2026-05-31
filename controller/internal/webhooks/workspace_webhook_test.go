@@ -663,3 +663,110 @@ func TestG4_F123_WebhookCapsCPUMemoryAndEphemeral(t *testing.T) {
 		assert.True(t, resp.Allowed, "%v", resp.Result)
 	})
 }
+
+// =============================================================================
+// G4 part 2 — F1.2.4: Spec.NetworkAccess.Egress[].Domain validation
+// =============================================================================
+
+func TestG4_F124_RejectsClusterInternalDomain(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"kubernetes.default.svc.cluster.local",
+		"prometheus.monitoring.svc.cluster.local",
+		"redis-master.default.svc",
+		"any.local",
+		"my-app.internal",
+		"my-app.cluster.local.",
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+				Egress: []v1.WorkspaceEgressRule{{Domain: payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"cluster-internal domain %q must be rejected", payload)
+		})
+	}
+}
+
+func TestG4_F124_RejectsIPLiteralDomain(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"169.254.169.254",
+		"10.0.0.1",
+		"127.0.0.1",
+		"::1",
+		"fe80::1",
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+				Egress: []v1.WorkspaceEgressRule{{Domain: payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"IP literal %q must be rejected as a domain", payload)
+		})
+	}
+}
+
+func TestG4_F124_AllowsLegitimatePublicDomains(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, d := range []string{
+		"api.openai.com",
+		"api.anthropic.com",
+		"github.com",
+		"objects.githubusercontent.com",
+		"a-b-c.example.org",
+	} {
+		t.Run(d, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+				Egress: []v1.WorkspaceEgressRule{{Domain: d}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.True(t, resp.Allowed,
+				"legitimate public domain %q must pass: %v", d, resp.Result)
+		})
+	}
+}
+
+func TestG4_F124_RejectsMalformedDomains(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+	}
+	for _, payload := range []string{
+		"",
+		"  ",
+		"-leading-dash.example.com",
+		"trailing-dash-.example.com",
+		"has spaces.example.com",
+		"has;semicolon.example.com",
+		"localhost", // no TLD
+	} {
+		t.Run(payload, func(t *testing.T) {
+			ws := minimalValidWorkspace()
+			ws.Spec.NetworkAccess = &v1.WorkspaceNetworkAccess{
+				Egress: []v1.WorkspaceEgressRule{{Domain: payload}},
+			}
+			resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+			assert.False(t, resp.Allowed,
+				"malformed domain %q must be rejected", payload)
+		})
+	}
+}

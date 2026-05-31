@@ -6,6 +6,7 @@ package webhooks
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -285,6 +286,63 @@ func validatePackageRequirement(req string) error {
 	return nil
 }
 
+// internalDomainSuffixes is the cluster-internal suffix block-list
+// for spec.networkAccess.egress[].domain. Closes the F1.2.4 bypass
+// where a user could declare `kubernetes.default.svc.cluster.local`
+// and the controller would resolve it to the apiserver ClusterIP and
+// emit a /32 NetPol allow that defeats the chart's `blockedEgressCIDRs`
+// via NetworkPolicy union semantics.
+var internalDomainSuffixes = []string{
+	".cluster.local",
+	".svc",
+	".svc.cluster.local",
+	".local",
+	".internal",
+}
+
+// domainSafePattern accepts ASCII LDH (letters/digits/hyphen) labels
+// separated by dots, with an optional leading wildcard `*.`. Length
+// caps per RFC: 253 total, 63 per label.
+var domainSafePattern = regexp.MustCompile(
+	`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+
+// validateEgressDomain enforces the user-declared FQDN allow-list to
+// (a) be syntactically a hostname, (b) not target cluster-internal
+// suffixes, (c) not be an IP literal (which would bypass DNS-side
+// guarantees), (d) not exceed 253 chars total. Closes F1.2.4 bypass
+// class found by validator pass 2.
+func validateEgressDomain(d string) error {
+	d = strings.TrimSpace(d)
+	if d == "" {
+		return fmt.Errorf("domain must not be empty")
+	}
+	if len(d) > 253 {
+		return fmt.Errorf("domain exceeds the 253-character RFC limit")
+	}
+	if ip := net.ParseIP(d); ip != nil {
+		_ = ip
+		return fmt.Errorf(
+			"domain must be a hostname, not a literal IP address " +
+				"(IP literals bypass the cluster-internal suffix filter)")
+	}
+	low := strings.ToLower(strings.TrimSuffix(d, "."))
+	for _, suf := range internalDomainSuffixes {
+		if strings.HasSuffix(low, suf) {
+			return fmt.Errorf(
+				"domain ends in cluster-internal suffix %q; in-cluster destinations "+
+					"must be reached via a public FQDN behind ingress, not via "+
+					"spec.networkAccess.egress (would defeat chart-wide blocked CIDRs)",
+				suf)
+		}
+	}
+	if !domainSafePattern.MatchString(d) {
+		return fmt.Errorf(
+			"domain %q is not a valid hostname (label LDH grammar; "+
+				"max 63 chars per label; must end with a TLD letter)", d)
+	}
+	return nil
+}
+
 // Handle validates the Workspace resource. Errors are returned as
 // admission.Denied with a human-readable message rather than as 5xx
 // admission errors so kubectl shows the operator the precise reason.
@@ -456,6 +514,24 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 				return admission.Denied(fmt.Sprintf(
 					"spec.packages[%d].requirements[%d] %q: %s",
 					pkgIdx, reqIdx, req, err.Error()))
+			}
+		}
+	}
+
+	// 5b. F1.2.4 — Spec.NetworkAccess.Egress[].Domain validation.
+	//     Pre-fix the controller would resolve any user-declared
+	//     domain (including `kubernetes.default.svc.cluster.local`)
+	//     and emit a /32 NetPol allow that defeats the chart's
+	//     `blockedEgressCIDRs` exclusion via NetPol union semantics.
+	//     Reject cluster-internal suffixes, IP literals, and
+	//     malformed hostnames at admission. The controller-side
+	//     filter (network_policy.go) is defense-in-depth.
+	if ws.Spec.NetworkAccess != nil {
+		for i, rule := range ws.Spec.NetworkAccess.Egress {
+			if err := validateEgressDomain(rule.Domain); err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.networkAccess.egress[%d].domain %q: %s",
+					i, rule.Domain, err.Error()))
 			}
 		}
 	}
