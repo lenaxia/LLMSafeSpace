@@ -1,0 +1,115 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":rebaseStalePrs",
+    "schedule:nonOfficeHours"
+  ],
+  "labels": ["dependencies", "renovate"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "rangeStrategy": "bump",
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Auto-merge low-risk patch updates of dev-only npm packages.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "platformAutomerge": true,
+      "groupName": "frontend dev-dep patches"
+    },
+    {
+      "description": "Group all Go runtime deps into one PR per week. Reduces noise.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "go modules (patch + minor)",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "Major Go updates require explicit review.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "go modules (major)",
+      "labels": ["dependencies", "renovate", "major-version-bump"],
+      "schedule": ["before 6am on monday"],
+      "automerge": false
+    },
+    {
+      "description": "Group all React-related updates so we don't get five PRs in a row.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^react/", "/^@types\\/react/"],
+      "groupName": "react ecosystem"
+    },
+    {
+      "description": "Group Tailwind / Radix / Vite frontend tooling.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@radix-ui\\//", "/^tailwindcss/", "/^@tailwindcss\\//", "/^vite/"],
+      "groupName": "frontend tooling"
+    },
+    {
+      "description": "Group testing tooling (Playwright + Vitest + ESLint).",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@playwright\\//", "/^vitest/", "/^@vitest\\//", "/^eslint/"],
+      "groupName": "frontend testing tooling"
+    },
+    {
+      "description": "Group Kubernetes client-go patches/minors. Cluster fleet must be coordinated for majors (separate rule below).",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": [
+        "k8s.io/client-go",
+        "k8s.io/api",
+        "k8s.io/apimachinery",
+        "k8s.io/apiextensions-apiserver"
+      ],
+      "groupName": "kubernetes client-go",
+      "matchUpdateTypes": ["patch", "minor"]
+    },
+    {
+      "description": "Don't bump major Kubernetes deps without coordinating with the cluster fleet.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": [
+        "k8s.io/client-go",
+        "k8s.io/api",
+        "k8s.io/apimachinery",
+        "k8s.io/apiextensions-apiserver"
+      ],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Security-relevant deps: open PRs immediately, highest priority.",
+      "matchManagers": ["gomod", "npm"],
+      "matchPackageNames": [
+        "/^golang.org\\/x\\//",
+        "/^github.com\\/golang-jwt\\//",
+        "/crypto/",
+        "/bcrypt/"
+      ],
+      "groupName": "security-relevant dependencies",
+      "schedule": ["at any time"],
+      "prPriority": 10
+    },
+    {
+      "description": "Bump Docker base images via patch.",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "docker base images"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security", "vulnerability"],
+    "schedule": ["at any time"],
+    "prPriority": 20
+  },
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/test-results/**",
+    "design/stories/epic-17-security-review/**",
+    "frontend/playwright-report/**"
+  ],
+  "ignoreDeps": []
+}
