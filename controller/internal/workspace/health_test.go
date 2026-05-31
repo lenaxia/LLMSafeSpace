@@ -110,8 +110,14 @@ func setupHealthTest(t *testing.T, statusResp agentd.StatuszResponse) (*Workspac
 	opencode.Register()
 
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
+	agentdAdminPort = 0
 	agentdPort = 0
-	t.Cleanup(func() { agentdPort = origPort })
+	agentdAdminPort = 0
+	t.Cleanup(func() {
+		agentdPort = origPort
+		agentdAdminPort = origAdminPort
+	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -126,6 +132,7 @@ func setupHealthTest(t *testing.T, statusResp agentd.StatuszResponse) (*Workspac
 
 	_, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
 	agentdPort, _ = strconv.Atoi(portStr)
+	agentdAdminPort, _ = strconv.Atoi(portStr)
 
 	scheme := testScheme(t)
 	ws := makeWorkspace("ws-health", "default", v1.WorkspacePhaseActive)
@@ -220,11 +227,15 @@ func TestCheckAgentHealth_ConnectionRefused(t *testing.T) {
 
 	origInterval := healthCheckInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
+	agentdAdminPort = 1
 	agentdPort = 1
+	agentdAdminPort = 1
 	defer func() {
 		healthCheckInterval = origInterval
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	r.checkAgentHealth(context.Background(), ws)
@@ -260,11 +271,14 @@ func TestCheckAgentHealth_ConnectionRefused_RestartsAfterThreshold(t *testing.T)
 
 	origInterval := healthCheckInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
 	agentdPort = 1 // unreachable port
+	agentdAdminPort = 1
 	defer func() {
 		healthCheckInterval = origInterval
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	fc := fake.NewClientBuilder().
@@ -319,11 +333,14 @@ func TestCheckAgentHealth_UnhealthyRepairsPodAfterThreshold(t *testing.T) {
 
 	origInterval := healthCheckInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
 	agentdPort = port
+	agentdAdminPort = port
 	defer func() {
 		healthCheckInterval = origInterval
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	fc := fake.NewClientBuilder().
@@ -368,11 +385,14 @@ func TestCheckAgentHealth_UnhealthyBelowThreshold_NoRepair(t *testing.T) {
 
 	origInterval := healthCheckInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
 	agentdPort = port
+	agentdAdminPort = port
 	defer func() {
 		healthCheckInterval = origInterval
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	fc := fake.NewClientBuilder().
@@ -403,13 +423,16 @@ func TestCheckAgentHealth_StaleFailuresResetOnNewPod(t *testing.T) {
 	origInterval := healthCheckInterval
 	origBackoff := healthCheckBackoffInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
 	healthCheckBackoffInterval = 0
+	agentdAdminPort = 1
 	agentdPort = 1
 	defer func() {
 		healthCheckInterval = origInterval
 		healthCheckBackoffInterval = origBackoff
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	r.checkAgentHealth(context.Background(), ws)
@@ -434,13 +457,16 @@ func TestCheckAgentHealth_NoResetWhenHealthCheckAfterStart(t *testing.T) {
 	origInterval := healthCheckInterval
 	origBackoff := healthCheckBackoffInterval
 	origPort := agentdPort
+	origAdminPort := agentdAdminPort
 	healthCheckInterval = 0
 	healthCheckBackoffInterval = 0
+	agentdAdminPort = 1
 	agentdPort = 1
 	defer func() {
 		healthCheckInterval = origInterval
 		healthCheckBackoffInterval = origBackoff
 		agentdPort = origPort
+		agentdAdminPort = origAdminPort
 	}()
 
 	r.checkAgentHealth(context.Background(), ws)
@@ -475,13 +501,13 @@ func TestBuildPod_HTTPProbes(t *testing.T) {
 	require.NotNil(t, pod.Spec.Containers[0].ReadinessProbe)
 	assert.NotNil(t, pod.Spec.Containers[0].ReadinessProbe.HTTPGet)
 	assert.Equal(t, "/v1/readyz", pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Path)
-	assert.Equal(t, int32(4097), pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal)
+	assert.Equal(t, int32(4098), pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal)
 	assert.Nil(t, pod.Spec.Containers[0].ReadinessProbe.TCPSocket)
 
 	require.NotNil(t, pod.Spec.Containers[0].LivenessProbe)
 	assert.NotNil(t, pod.Spec.Containers[0].LivenessProbe.HTTPGet)
 	assert.Equal(t, "/v1/healthz", pod.Spec.Containers[0].LivenessProbe.HTTPGet.Path)
-	assert.Equal(t, int32(4097), pod.Spec.Containers[0].LivenessProbe.HTTPGet.Port.IntVal)
+	assert.Equal(t, int32(4098), pod.Spec.Containers[0].LivenessProbe.HTTPGet.Port.IntVal)
 	assert.Nil(t, pod.Spec.Containers[0].LivenessProbe.TCPSocket)
 
 	portNames := make(map[string]bool)

@@ -673,6 +673,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: agentd.AgentPort, Name: "opencode", Protocol: corev1.ProtocolTCP},
 			{ContainerPort: agentd.AgentdPort, Name: "agentd", Protocol: corev1.ProtocolTCP},
+			{ContainerPort: agentd.AgentdAdminPort, Name: "agentd-admin", Protocol: corev1.ProtocolTCP},
 		},
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
@@ -682,7 +683,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/v1/readyz",
-					Port: intstr.FromInt(agentd.AgentdPort),
+					Port: intstr.FromInt(agentd.AgentdAdminPort),
 				},
 			},
 			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
@@ -691,7 +692,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/v1/healthz",
-					Port: intstr.FromInt(agentd.AgentdPort),
+					Port: intstr.FromInt(agentd.AgentdAdminPort),
 				},
 			},
 			InitialDelaySeconds: 15, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 6,
@@ -1050,9 +1051,16 @@ var (
 	healthCheckFailureThreshold = int32(3)
 	healthCheckGracePeriod      = 30 * time.Second
 	agentdPort                  = agentd.AgentdPort
+	agentdAdminPort             = agentd.AgentdAdminPort
+	// US-22.5/22.6: Deep-status poll interval. /v1/statusz is expensive
+	// (multiple opencode calls under mutex). Failures of the deep poll do
+	// NOT increment ConsecutiveHealthFailures — they only mark fields stale.
+	deepStatusInterval = 60 * time.Second
 )
 
 var healthHTTPClient = &http.Client{Timeout: 5 * time.Second}
+// US-22.5: Separate client for deep-status with generous timeout (statusz can be slow).
+var deepStatusHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func (r *WorkspaceReconciler) shouldRunHealthCheck(ws *v1.Workspace) bool {
 	if ws.Status.StartTime != nil && time.Since(ws.Status.StartTime.Time) < healthCheckGracePeriod {
@@ -1085,7 +1093,11 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		return
 	}
 
-	endpoint := fmt.Sprintf("http://%s:%d/v1/statusz", ws.Status.PodIP, agentdPort)
+	// US-22.5: Liveness check via /v1/healthz (cheap, process-only, never
+	// calls opencode). This drives ConsecutiveHealthFailures and pod-restart
+	// decisions. Under SSE load, /v1/healthz still responds < 100ms because
+	// it has zero opencode dependency (US-22.1).
+	endpoint := fmt.Sprintf("http://%s:%d/v1/healthz", ws.Status.PodIP, agentdAdminPort)
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return
@@ -1100,12 +1112,6 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		ws.Status.ConsecutiveHealthFailures++
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
 			v1.ReasonHealthCheckFailed, err.Error())
-		// Pod is unreachable (connection refused / DNS failure / timeout).
-		// After threshold, the pod IP is almost certainly stale (e.g. the
-		// pod was deleted out from under us). Trigger a recreate, exactly
-		// as we do for the "agent says it's unhealthy" branch below. This
-		// fixes Bug 12 in worklog 0085, where ConsecutiveHealthFailures
-		// could climb to 36+ without the controller taking any action.
 		if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
 			podN := podName(ws.Name, string(ws.UID))
 			logger.Info("Agent unreachable beyond threshold; restarting pod",
@@ -1115,26 +1121,21 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
 			ws.Status.RestartCount++
-			// Reset the counter so the next pod starts with a clean
-			// slate. Without this reset, the first connection-refused
-			// failure on the freshly-spawned pod immediately re-trips
-			// the threshold and we recreate forever (validator
-			// finding on Bug 12 follow-up).
 			ws.Status.ConsecutiveHealthFailures = 0
 		}
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var status agentd.StatuszResponse
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	var healthResp agentd.HealthzResponse
+	if err := json.NewDecoder(resp.Body).Decode(&healthResp); err != nil {
 		ws.Status.ConsecutiveHealthFailures++
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
-			v1.ReasonHealthCheckFailed, "failed to decode status response")
+			v1.ReasonHealthCheckFailed, "failed to decode healthz response")
 		return
 	}
 
-	if !status.Healthy {
+	if !healthResp.Healthy {
 		ws.Status.ConsecutiveHealthFailures++
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
 			v1.ReasonAgentUnhealthy, "agent process not responding")
@@ -1152,18 +1153,60 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		return
 	}
 
+	// Liveness passed — reset failure counter.
 	ws.Status.ConsecutiveHealthFailures = 0
+	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
+		v1.ReasonAgentHealthy, fmt.Sprintf("agentd alive, uptime=%ds", healthResp.UptimeSeconds))
+
+	// US-22.6: Deep-status enrichment via /v1/statusz on a slower cadence.
+	// Failures here do NOT increment ConsecutiveHealthFailures and do NOT
+	// trigger pod restarts. They only mark metadata fields as stale.
+	r.enrichAgentStatus(ctx, ws)
+}
+
+// enrichAgentStatus polls /v1/statusz for session/disk/provider metadata.
+// It runs on a slower cadence (deepStatusInterval) and its failures are
+// informational only — they never trigger pod restarts.
+func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Workspace) {
+	if ws.Status.PodIP == "" {
+		return
+	}
+
+	endpoint := fmt.Sprintf("http://%s:%d/v1/statusz", ws.Status.PodIP, agentdAdminPort)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return
+	}
+
+	resp, err := deepStatusHTTPClient.Do(req)
+	if err != nil {
+		// Deep-status failure is informational only. Log at debug level.
+		log.FromContext(ctx).V(1).Info("deep-status poll failed (informational only)", "error", err.Error())
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var status agentd.StatuszResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return
+	}
+
+	if !status.Healthy {
+		// Agent reports unhealthy via deep-status. Don't populate metadata
+		// from an unhealthy agent — the data may be stale or corrupt.
+		return
+	}
 
 	if !status.Ready || len(status.Connected) == 0 {
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
 			v1.ReasonAgentDegraded, fmt.Sprintf("no providers connected (configured=%d, connected=%v)",
 				status.ProvidersConfigured, status.Connected))
+		// Degraded: don't populate session/disk metadata — providers aren't
+		// connected so session data is meaningless.
 		return
 	}
 
-	// Populate agent-reported metadata on CRD status. Session count
-	// fits comfortably in int32; OOM kills the pod long before this
-	// overflows.
+	// Populate agent-reported metadata on CRD status.
 	ws.Status.ActiveSessions = int32(status.SessionsActive) //nolint:gosec // G115: int->int32 bounded by pod resource limits
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))

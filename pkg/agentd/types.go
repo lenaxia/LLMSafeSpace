@@ -15,10 +15,12 @@ const (
 
 // Ports and network constants shared between agentd and the controller.
 const (
-	AgentPort    = 4096 // opencode serve listens here
-	AgentdPort   = 4097 // agentd HTTP API listens here
-	AgentdAddr   = "0.0.0.0:4097"
-	AuthUsername = "opencode" // Basic Auth username for opencode
+	AgentPort      = 4096 // opencode serve listens here
+	AgentdPort     = 4097 // agentd user-facing HTTP API (reload-secrets, future proxy)
+	AgentdAddr     = "0.0.0.0:4097"
+	AgentdAdminPort = 4098 // agentd admin HTTP API (healthz, readyz, statusz) — US-22.8
+	AgentdAdminAddr = "0.0.0.0:4098"
+	AuthUsername   = "opencode" // Basic Auth username for opencode
 )
 
 // HealthzResponse is the response for GET /v1/healthz.

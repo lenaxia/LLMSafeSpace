@@ -382,27 +382,60 @@ func main() {
 	sseTracker := newSessionStatusTracker()
 	go sseTracker.subscribe(context.Background(), client)
 
-	mux := http.NewServeMux()
+	// US-22.2: Eager-refresh readiness cache. Background goroutine refreshes
+	// opencode's IsHealthy every 5s; /v1/readyz reads from this cache without
+	// making inline opencode calls.
+	healthCache := newHealthzCache()
+	go refreshIsHealthyLoop(context.Background(), client, healthCache, log)
 
-	mux.HandleFunc("/v1/healthz", healthzHandler(startedAt))
+	// US-22.8: Two separate http.Server instances eliminate listener-layer
+	// head-of-line blocking. Admin port serves health probes (kubelet,
+	// controller) on a dedicated goroutine pool; user port serves
+	// reload-secrets and future proxy endpoints independently.
+	adminMux := http.NewServeMux()
+	userMux := http.NewServeMux()
 
-	mux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
+	// Admin endpoints (healthz, readyz, statusz) — admin port.
+	adminMux.HandleFunc("/v1/healthz", healthzHandler(startedAt))
+
+	adminMux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		snap := healthCache.Snapshot()
+
+		// Ready requires: cache initialized + opencode healthy + at least one provider connected.
+		// Provider info comes from the existing providerCache (cachedState) which is also
+		// used by /v1/statusz. We read it here for the providers_connected field but the
+		// ready decision is driven primarily by the healthzCache's IsHealthy observation.
 		connected, configured, _ := cachedState(r.Context(), client, cache, sseTracker)
-		healthy, version, _ := client.IsHealthy(r.Context())
-		ready := healthy && len(connected) > 0
+		ready := snap.Initialized && snap.Healthy && len(connected) > 0
+
+		status := http.StatusOK
+		if !ready {
+			status = http.StatusServiceUnavailable
+		}
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(agentd.ReadyzResponse{
 			Ready:               ready,
 			ProvidersConnected:  connected,
 			ProvidersConfigured: configured,
-			AgentVersion:        version,
+			AgentVersion:        snap.Version,
 			AgentType:           "opencode",
 		})
 	})
 
-	mux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc))
-
-	mux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
+	// US-22.4: /v1/statusz is the EXPENSIVE deep-introspection endpoint.
+	// It makes multiple synchronous HTTP calls to opencode (IsHealthy,
+	// ConnectedProviders, ConfiguredProviderCount, ListSessions) under a
+	// mutex. Under SSE load, these calls can take seconds to complete.
+	//
+	// Consumers:
+	//   - Controller's deep-status poll (60s interval, drives session-list/disk-usage fields)
+	//   - API service status enrichment (infrequent)
+	//
+	// Performance contract: NO upper bound. Callers must use a generous
+	// timeout (controller uses 30s). Do NOT use this endpoint for liveness
+	// or readiness probes — use /v1/healthz and /v1/readyz respectively.
+	adminMux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
 		connected, configured, sessions := cachedState(r.Context(), client, cache, sseTracker)
@@ -431,17 +464,31 @@ func main() {
 		})
 	})
 
-	log.Info("workspace-agentd starting", zap.String("addr", listenAddr))
-	srv := &http.Server{
-		Addr:    listenAddr,
-		Handler: mux,
-		// Slowloris hardening on the in-pod admin endpoint. Body
-		// timeouts are loose because /reload-secrets accepts arbitrary
-		// payloads bounded only by client patience.
+	// User endpoints (reload-secrets) — user port.
+	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc))
+
+	// Start admin server (health probes) on dedicated port.
+	adminSrv := &http.Server{
+		Addr:              agentd.AgentdAdminAddr,
+		Handler:           adminMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal("workspace-agentd server failed", zap.Error(err))
+	go func() {
+		log.Info("workspace-agentd admin server starting", zap.String("addr", agentd.AgentdAdminAddr))
+		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("workspace-agentd admin server failed", zap.Error(err))
+		}
+	}()
+
+	// Start user server on the original port.
+	log.Info("workspace-agentd user server starting", zap.String("addr", listenAddr))
+	userSrv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           userMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := userSrv.ListenAndServe(); err != nil {
+		log.Fatal("workspace-agentd user server failed", zap.Error(err))
 	}
 }
 

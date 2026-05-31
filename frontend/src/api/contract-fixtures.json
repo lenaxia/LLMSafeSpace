@@ -30,74 +30,12 @@
       "role": "user"
     }
   },
-  "QuestionRequest": {
-    "id": "que_18b28260affeoxXrX1iwPH8wFg",
-    "session_id": "ses_18b28260affeoxXrX1iwPH8wFg",
-    "questions": [
-      {
-        "question": "What programming language do you want to use?",
-        "header": "Choose language",
-        "options": [
-          { "label": "Go", "description": "Fast compiled language" },
-          { "label": "Python", "description": "Easy scripting" }
-        ],
-        "multiple": false
-      }
-    ],
-    "tool": {
-      "message_id": "msg_abc",
-      "call_id": "call_xyz"
-    }
-  },
-  "PermissionRequest": {
-    "id": "per_18b28260affeoxXrX1iwPH8wFg",
-    "session_id": "ses_18b28260affeoxXrX1iwPH8wFg",
-    "permission": "shell",
-    "patterns": ["/workspace/src/main.go"],
-    "metadata": { "command": "go build" },
-    "always": ["/workspace/*"],
-    "tool": {
-      "message_id": "msg_abc",
-      "call_id": "call_xyz"
-    }
-  },
   "SessionListItem": {
     "id": "sess-1",
     "title": "Chat about auth",
     "lastMessageAt": "2026-05-24T12:00:00Z",
     "messageCount": 12,
     "status": "active"
-  },
-  "QuestionRequest": {
-    "id": "que_18b28260affeoxXrX1iwPH8wFg",
-    "session_id": "ses_18b28260affeoxXrX1iwPH8wFg",
-    "questions": [
-      {
-        "question": "What programming language do you want to use?",
-        "header": "Choose language",
-        "options": [
-          { "label": "Go", "description": "Fast compiled language" },
-          { "label": "Python", "description": "Easy scripting" }
-        ],
-        "multiple": false
-      }
-    ],
-    "tool": {
-      "message_id": "msg_abc",
-      "call_id": "call_xyz"
-    }
-  },
-  "PermissionRequest": {
-    "id": "per_18b28260affeoxXrX1iwPH8wFg",
-    "session_id": "ses_18b28260affeoxXrX1iwPH8wFg",
-    "permission": "shell",
-    "patterns": ["/workspace/src/main.go"],
-    "metadata": { "command": "go build" },
-    "always": ["/workspace/*"],
-    "tool": {
-      "message_id": "msg_abc",
-      "call_id": "call_xyz"
-    }
   },
   "WorkspaceListItem": {
     "id": "ws-1",
