@@ -1,0 +1,113 @@
+name: E2E Nightly (kind)
+
+on:
+  schedule:
+    # Run at 06:00 UTC daily (10pm PST)
+    - cron: "0 6 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  CLUSTER_NAME: llmsafespace-ci
+  IMAGE_TAG: ci
+  NS: llmsafespace
+
+jobs:
+  e2e-kind:
+    name: Full system E2E (kind cluster)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.25.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Install helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Create kind cluster
+        run: kind create cluster --config local/kind-cluster.yaml --name $CLUSTER_NAME
+
+      - name: Build and load images
+        run: |
+          docker build --network host -f api/Dockerfile -t llmsafespace/api:$IMAGE_TAG .
+          docker build --network host -f controller/Dockerfile -t llmsafespace/controller:$IMAGE_TAG .
+          docker build --network host -f runtimes/base/Dockerfile -t llmsafespace/runtime-base:$IMAGE_TAG .
+
+          kind load docker-image llmsafespace/api:$IMAGE_TAG --name $CLUSTER_NAME
+          kind load docker-image llmsafespace/controller:$IMAGE_TAG --name $CLUSTER_NAME
+          kind load docker-image llmsafespace/runtime-base:$IMAGE_TAG --name $CLUSTER_NAME
+
+      - name: Install cert-manager
+        run: |
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
+          kubectl -n cert-manager rollout status deployment/cert-manager --timeout=180s
+          kubectl -n cert-manager rollout status deployment/cert-manager-webhook --timeout=180s
+
+      - name: Deploy Postgres + Redis
+        run: |
+          kubectl apply -f local/postgres-redis.yaml
+          kubectl -n $NS rollout status deployment/postgres --timeout=180s
+          kubectl -n $NS rollout status deployment/valkey --timeout=180s
+
+      - name: Helm install LLMSafeSpace
+        run: |
+          helm upgrade --install llmsafespace charts/llmsafespace \
+            -n $NS --create-namespace \
+            --set api.image.repository=llmsafespace/api \
+            --set api.image.tag=$IMAGE_TAG \
+            --set api.image.pullPolicy=IfNotPresent \
+            --set controller.image.repository=llmsafespace/controller \
+            --set controller.image.tag=$IMAGE_TAG \
+            --set controller.image.pullPolicy=IfNotPresent \
+            --set postgresql.host=postgres \
+            --set postgresql.port=5432 \
+            --set postgresql.user=llmsafespace \
+            --set postgresql.database=llmsafespace \
+            --set redis.host=redis-master \
+            --set redis.port=6379 \
+            --set externalSecret.create=true \
+            --set "externalSecret.postgresPassword=changeme" \
+            --set api.config.logging.development=true \
+            --wait --timeout 5m
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n $NS rollout status deployment/llmsafespace-api --timeout=180s
+          kubectl -n $NS rollout status deployment/llmsafespace-controller --timeout=180s
+
+      - name: Run e2e test suite
+        env:
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+          CTX: kind-${{ env.CLUSTER_NAME }}
+          NS: ${{ env.NS }}
+          RUNTIME_IMAGE_REF: llmsafespace/runtime-base:ci
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: bash local/test.sh
+
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          echo "=== Pod status ==="
+          kubectl -n $NS get pods -o wide
+          echo "=== API logs ==="
+          kubectl -n $NS logs deployment/llmsafespace-api --tail=50 || true
+          echo "=== Controller logs ==="
+          kubectl -n $NS logs deployment/llmsafespace-controller --tail=50 || true
+          echo "=== Events ==="
+          kubectl -n $NS get events --sort-by='.lastTimestamp' | tail -30
+
+      - name: Teardown
+        if: always()
+        run: kind delete cluster --name $CLUSTER_NAME

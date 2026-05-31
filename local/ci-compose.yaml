@@ -1,0 +1,51 @@
+# CI-only docker-compose for full-stack e2e tests.
+# Starts: Postgres, Valkey (Redis), API server.
+# Frontend runs on the GHA host via Playwright.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: llmsafespace
+      POSTGRES_USER: llmsafespace
+      POSTGRES_PASSWORD: ci-test-password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "llmsafespace"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--requirepass", "ci-test-redis"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "ci-test-redis", "--no-auth-warning", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://llmsafespace:ci-test-password@postgres:5432/llmsafespace?sslmode=disable"
+      REDIS_URL: "redis://:ci-test-redis@valkey:6379/0"
+      JWT_SECRET: "ci-test-jwt-secret-not-for-production"
+      LOG_LEVEL: "warn"
+      REGISTRATION_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/livez"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
