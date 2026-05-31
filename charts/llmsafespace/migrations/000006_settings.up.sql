@@ -1,13 +1,17 @@
--- Settings tables for Epic 9: Configuration & Settings
+-- Settings tables for Epic 9: Configuration & Settings.
+--
+-- All CREATE statements use IF NOT EXISTS for idempotency: applying
+-- this migration to a database that already ran it must be a no-op.
+-- The migration-safety CI gate (worklog 0102) enforces this.
 
-CREATE TABLE instance_settings (
+CREATE TABLE IF NOT EXISTS instance_settings (
   key TEXT PRIMARY KEY,
   value JSONB NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
-CREATE TABLE user_settings (
+CREATE TABLE IF NOT EXISTS user_settings (
   user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   key TEXT NOT NULL,
   value JSONB NOT NULL,
@@ -16,7 +20,7 @@ CREATE TABLE user_settings (
   PRIMARY KEY (user_id, key)
 );
 
-CREATE TABLE credential_sets (
+CREATE TABLE IF NOT EXISTS credential_sets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
   is_default BOOLEAN NOT NULL DEFAULT false,
@@ -28,10 +32,10 @@ CREATE TABLE credential_sets (
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- Only one default credential set at a time
-CREATE UNIQUE INDEX idx_credential_sets_default ON credential_sets (is_default) WHERE is_default = true;
+-- Only one default credential set at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_sets_default ON credential_sets (is_default) WHERE is_default = true;
 
--- Auto-update updated_at on all settings/credential tables
+-- Auto-update updated_at on all settings/credential tables.
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -40,14 +44,20 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Triggers don't support IF NOT EXISTS in PostgreSQL <= 13; use the
+-- DROP-and-recreate pattern for idempotency. DROP IF EXISTS is safe
+-- if the trigger doesn't exist yet.
+DROP TRIGGER IF EXISTS trg_instance_settings_updated_at ON instance_settings;
 CREATE TRIGGER trg_instance_settings_updated_at
   BEFORE UPDATE ON instance_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_user_settings_updated_at ON user_settings;
 CREATE TRIGGER trg_user_settings_updated_at
   BEFORE UPDATE ON user_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_credential_sets_updated_at ON credential_sets;
 CREATE TRIGGER trg_credential_sets_updated_at
   BEFORE UPDATE ON credential_sets
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

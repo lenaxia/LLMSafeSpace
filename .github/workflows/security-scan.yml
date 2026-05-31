@@ -48,8 +48,15 @@ jobs:
       - name: Scan for secrets
         # --redact: never print actual matched secrets to logs (defense
         # in depth — even a transient leak in a CI log is bad).
-        # -c .gitleaks.toml: documented allowlist for known-safe paths.
-        run: gitleaks detect --redact -c .gitleaks.toml --no-banner
+        # --no-git: scan the working tree only, not the commit graph.
+        # History-walking gitleaks turned up false positives from old
+        # branches whose tips remained reachable on origin (e.g.
+        # rebased feature branches). For PR-time enforcement we want
+        # to flag NEW secrets, which always show up in the working
+        # tree because the PR's HEAD is checked out.
+        # -v: surface findings in the log so they're actionable
+        # (still --redact'd for safety).
+        run: gitleaks detect --redact --no-git -c .gitleaks.toml --no-banner -v
 
   govulncheck:
     name: govulncheck (Go vulns)

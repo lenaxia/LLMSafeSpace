@@ -9,4 +9,4 @@ CREATE TABLE IF NOT EXISTS session_index (
     PRIMARY KEY (workspace_id, session_id)
 );
 
-CREATE INDEX idx_session_index_workspace ON session_index (workspace_id, last_message_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_session_index_workspace ON session_index (workspace_id, last_message_at DESC NULLS LAST);
