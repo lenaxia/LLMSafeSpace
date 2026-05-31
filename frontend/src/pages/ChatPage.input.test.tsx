@@ -229,4 +229,28 @@ describe("ChatPage agent input requests (US-16.11, US-16.12)", () => {
     act(() => { submitBtn.click(); });
     await waitFor(() => expect(screen.queryByText("Pick one")).not.toBeInTheDocument());
   });
+
+  it("session change clears pending prompts", async () => {
+    const qc = makeQueryClient();
+    const { unmount } = renderChat(qc, "/chat/ws-1/ses_1");
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+    sendSSE(questionEvent);
+    expect(screen.getByText("Pick one")).toBeInTheDocument();
+    // Simulate navigation to different session by unmounting and re-rendering
+    unmount();
+    qc.setQueryData(["workspace-status", "ws-1"], { phase: "Active" });
+    qc.setQueryData(["messages", "ws-1", "ses_2"], []);
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/chat/ws-1/ses_2"]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+    // Prompt from ses_1 should not be visible
+    expect(screen.queryByText("Pick one")).not.toBeInTheDocument();
+  });
 });

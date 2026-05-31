@@ -30,7 +30,7 @@ export function ChatPage() {
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const queryClient = useQueryClient();
 
-  useEffect(() => { setLocalMessages([]); }, [sessionId]);
+  useEffect(() => { setLocalMessages([]); setPendingQuestions([]); setPendingPermissions([]); }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
 
@@ -557,16 +557,18 @@ export function ChatPage() {
             onSend={handleSend}
             onAbort={abort}
             prompts={
-              <>
-                {pendingQuestions.map((q) => (
-                  <QuestionPrompt key={q.id} workspaceId={workspaceId!} request={q}
-                    onResolved={() => setPendingQuestions((prev) => prev.filter((x) => x.id !== q.id))} />
-                ))}
-                {pendingPermissions.map((p) => (
-                  <PermissionPrompt key={p.id} workspaceId={workspaceId!} request={p}
-                    onResolved={() => setPendingPermissions((prev) => prev.filter((x) => x.id !== p.id))} />
-                ))}
-              </>
+              (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
+                <>
+                  {pendingQuestions.map((q) => (
+                    <QuestionPrompt key={q.id} workspaceId={workspaceId!} request={q}
+                      onResolved={() => setPendingQuestions((prev) => prev.filter((x) => x.id !== q.id))} />
+                  ))}
+                  {pendingPermissions.map((p) => (
+                    <PermissionPrompt key={p.id} workspaceId={workspaceId!} request={p}
+                      onResolved={() => setPendingPermissions((prev) => prev.filter((x) => x.id !== p.id))} />
+                  ))}
+                </>
+              ) : undefined
             }
           />
         </div>

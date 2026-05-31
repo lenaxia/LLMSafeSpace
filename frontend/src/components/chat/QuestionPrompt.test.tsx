@@ -125,4 +125,22 @@ describe("QuestionPrompt", () => {
     // The component has a dismiss button that's always available
     expect(screen.getByLabelText("Dismiss")).toBeInTheDocument();
   });
+
+  it("custom text combined with selected option in submit payload", async () => {
+    const user = userEvent.setup();
+    render(<QuestionPrompt workspaceId="ws-1" request={singleQuestion} onResolved={onResolved} />);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    const input = screen.getByPlaceholderText("Or type your own...");
+    await user.type(input, "Java");
+    fireEvent.click(screen.getByText("Submit answers"));
+    await waitFor(() => expect(mockReply).toHaveBeenCalledWith("ws-1", "que_1", [["Go", "Java"]]));
+  });
+
+  it("submit disabled when one of multiple questions unanswered", () => {
+    render(<QuestionPrompt workspaceId="ws-1" request={multiQuestion} onResolved={onResolved} />);
+    // Answer only first question
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    // Second question unanswered → submit disabled
+    expect(screen.getByText("Submit answers")).toBeDisabled();
+  });
 });

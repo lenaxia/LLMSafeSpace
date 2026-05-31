@@ -7,6 +7,8 @@ import type {
   ActiveSessionsResponse,
   WorkspaceListItem,
   AuthResponse,
+  QuestionRequest,
+  PermissionRequest,
 } from "./types";
 
 /**
@@ -73,8 +75,34 @@ describe("Go↔TS contract", () => {
     const testedKeys = [
       "AuthConfig", "ActivateWorkspaceResponse", "SessionListItem",
       "ActiveSessionsResponse", "WorkspaceListItem", "AuthResponse",
+      "QuestionRequest", "PermissionRequest",
     ];
     const fixtureKeys = Object.keys(fixtures);
     expect(fixtureKeys.sort()).toEqual(testedKeys.sort());
+  });
+
+  it("QuestionRequest matches Go shape", () => {
+    const data: QuestionRequest = fixtures.QuestionRequest;
+    expect(data.id).toBe("que_18b28260affeoxXrX1iwPH8wFg");
+    expect(data.session_id).toBe("ses_18b28260affeoxXrX1iwPH8wFg");
+    expect(data.questions).toHaveLength(1);
+    const q = data.questions[0]!;
+    expect(q.header).toBe("Choose language");
+    expect(q.options).toHaveLength(2);
+    expect(q.options[0]!.label).toBe("Go");
+    expect(q.multiple).toBe(false);
+    expect(data.tool?.message_id).toBe("msg_abc");
+    expect(data.tool?.call_id).toBe("call_xyz");
+  });
+
+  it("PermissionRequest matches Go shape", () => {
+    const data: PermissionRequest = fixtures.PermissionRequest;
+    expect(data.id).toBe("per_18b28260affeoxXrX1iwPH8wFg");
+    expect(data.session_id).toBe("ses_18b28260affeoxXrX1iwPH8wFg");
+    expect(data.permission).toBe("shell");
+    expect(data.patterns).toEqual(["/workspace/src/main.go"]);
+    expect(data.metadata).toEqual({ command: "go build" });
+    expect(data.always).toEqual(["/workspace/*"]);
+    expect(data.tool?.message_id).toBe("msg_abc");
   });
 });
