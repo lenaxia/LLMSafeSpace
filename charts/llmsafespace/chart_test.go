@@ -675,20 +675,49 @@ func TestG5_DefaultIsNamespaceScope(t *testing.T) {
 }
 
 // TestG5_ClusterScopeOptInRendersClusterRole asserts the cluster
-// scope is preserved as an opt-in.
+// scope is preserved as an opt-in. Read-only watch on pods/secrets
+// IS permitted (controller-runtime informer cache requires it);
+// CRUD verbs are still forbidden cluster-wide.
 func TestG5_ClusterScopeOptInRendersClusterRole(t *testing.T) {
 	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
 	clusterRoles := findResources(docs, "ClusterRole")
 	var sawClusterScope bool
+	mutating := map[string]struct{}{
+		"create": {}, "update": {}, "patch": {}, "delete": {}, "deletecollection": {},
+	}
 	for _, cr := range clusterRoles {
-		if strings.Contains(metaName(cr), "controller-cluster") {
-			sawClusterScope = true
-			// Confirm pods/secrets are NOT in the cluster grant.
-			rv := resourceVerbs(cr)
-			require.NotContains(t, rv, "/pods",
-				"cluster ClusterRole must NOT grant cluster-wide pods (G5 / F1.3.3)")
-			require.NotContains(t, rv, "/secrets",
-				"cluster ClusterRole must NOT grant cluster-wide secrets (G5 / F1.3.3)")
+		if !strings.Contains(metaName(cr), "controller-cluster") {
+			continue
+		}
+		sawClusterScope = true
+		rules, _ := cr["rules"].([]any)
+		for _, r := range rules {
+			rule, _ := r.(map[string]any)
+			groups, _ := rule["apiGroups"].([]any)
+			resources, _ := rule["resources"].([]any)
+			verbs, _ := rule["verbs"].([]any)
+			isCore := false
+			for _, g := range groups {
+				if s, _ := g.(string); s == "" {
+					isCore = true
+				}
+			}
+			if !isCore {
+				continue
+			}
+			for _, res := range resources {
+				resStr, _ := res.(string)
+				if resStr != "secrets" && resStr != "pods" {
+					continue
+				}
+				for _, v := range verbs {
+					vStr, _ := v.(string)
+					_, mut := mutating[vStr]
+					require.False(t, mut,
+						"cluster ClusterRole must NOT grant cluster-wide mutating verb %q on %s (G5 / F1.3.3)",
+						vStr, resStr)
+				}
+			}
 		}
 	}
 	require.True(t, sawClusterScope,
@@ -790,17 +819,52 @@ func TestF137_StorageClassesIsAlwaysClusterRole(t *testing.T) {
 }
 
 // TestF133_ControllerSecretsAreNamespaceScoped asserts that secrets
-// are NEVER granted via ClusterRole, even when rbac.scope=cluster.
+// and pods are NEVER granted CRUD verbs via ClusterRole, even when
+// rbac.scope=cluster. Read-only verbs (get/list/watch) are
+// permitted because the controller-runtime informer cache requires
+// cluster-wide watches; CRUD is the dangerous surface (F1.3.3 / G5).
 func TestF133_ControllerSecretsAreNamespaceScoped(t *testing.T) {
 	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
 	clusterRoles := findResources(docs, "ClusterRole")
+
+	// CRUD verbs that MUST NOT appear cluster-wide on secrets/pods.
+	mutatingVerbs := map[string]struct{}{
+		"create": {}, "update": {}, "patch": {}, "delete": {}, "deletecollection": {},
+	}
+
 	for _, cr := range clusterRoles {
-		rv := resourceVerbs(cr)
-		require.NotContains(t, rv, "/secrets",
-			"ClusterRole %q must NOT grant cluster-wide secrets (F1.3.3 / G5)",
-			metaName(cr))
-		require.NotContains(t, rv, "/pods",
-			"ClusterRole %q must NOT grant cluster-wide pods (F1.3.3 / G5)",
-			metaName(cr))
+		// Walk rules; for any rule that grants secrets or pods, the
+		// verb set must contain only read-only verbs.
+		rules, _ := cr["rules"].([]any)
+		for _, r := range rules {
+			rule, _ := r.(map[string]any)
+			groups, _ := rule["apiGroups"].([]any)
+			resources, _ := rule["resources"].([]any)
+			verbs, _ := rule["verbs"].([]any)
+
+			coreGroup := false
+			for _, g := range groups {
+				if s, ok := g.(string); ok && s == "" {
+					coreGroup = true
+				}
+			}
+			if !coreGroup {
+				continue
+			}
+			for _, res := range resources {
+				resStr, _ := res.(string)
+				if resStr != "secrets" && resStr != "pods" {
+					continue
+				}
+				for _, v := range verbs {
+					verbStr, _ := v.(string)
+					if _, isMutating := mutatingVerbs[verbStr]; isMutating {
+						t.Fatalf(
+							"ClusterRole %q grants cluster-wide %q on %s — must be namespace-scoped (F1.3.3 / G5)",
+							metaName(cr), verbStr, resStr)
+					}
+				}
+			}
+		}
 	}
 }

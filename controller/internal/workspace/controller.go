@@ -1134,9 +1134,40 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// sanitizeLabelValue replaces characters invalid in K8s label values.
+// sanitizeLabelValue maps a runtime image reference to a valid k8s
+// label value. K8s label values must match
+// `(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?` (max 63 chars, no
+// `/`, `:`, `@`, etc.).
+//
+// Pre-fix this only replaced `:`. After image-pull-style runtimes
+// became common (workspaces with `Spec.Runtime: ghcr.io/.../base:latest`
+// — which the G2 webhook now requires), the slashes still in the
+// value caused pod-creation kube-apiserver rejection:
+//
+//	metadata.labels: Invalid value: "ghcr.io/.../base_latest"
+//
+// We now also replace `/` and `@`, then truncate to 63 chars (k8s
+// label-value max) preserving leading + trailing alphanumerics.
 func sanitizeLabelValue(s string) string {
-	return strings.ReplaceAll(s, ":", "_")
+	r := strings.NewReplacer(":", "_", "/", "_", "@", "_")
+	out := r.Replace(s)
+	if len(out) > 63 {
+		out = out[len(out)-63:]
+	}
+	for len(out) > 0 && !isLabelChar(out[0]) {
+		out = out[1:]
+	}
+	for len(out) > 0 && !isLabelChar(out[len(out)-1]) {
+		out = out[:len(out)-1]
+	}
+	if out == "" {
+		out = "unspecified"
+	}
+	return out
+}
+
+func isLabelChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // imageTagFromPod extracts the image tag (portion after the last colon) from

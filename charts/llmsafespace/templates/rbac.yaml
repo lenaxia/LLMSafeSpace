@@ -172,6 +172,19 @@ subjects:
 # OR contains namespaces other than the release namespace. Single-
 # namespace deployments should keep rbac.scope=namespace (the default
 # post-G5) which omits this block entirely.
+#
+# Cache scope correction (post-deploy regression in worklog 0117):
+# controller-runtime's Manager defaults to cluster-wide watches for
+# every typed informer it builds (Pod, Secret, NetworkPolicy, etc.),
+# regardless of the per-resource Role bindings. When the controller
+# starts, the reflectors call `apiserver.list(secrets, all-namespaces)`
+# and the apiserver denies it because secrets/pods aren't in the
+# cluster-scope grant. The reflector enters CrashLoopBackOff. To make
+# the namespace-scoped CRUD Role work AS WELL AS allow the cluster-
+# wide informer watches, the cluster ClusterRole here grants
+# **read-only** (get/list/watch) on pods + secrets + NetworkPolicies,
+# while CRUD is still restricted to the workspace namespace by the
+# per-namespace Role above.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -186,11 +199,16 @@ rules:
       - workspaces/finalizers
       - runtimeenvironments
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Pods/secrets/PVCs are intentionally NOT included here — those
-  # remain namespace-scoped (workspace Role above), and operators
-  # running multi-namespace deployments should grant the workspace
-  # Role in each watched namespace via per-namespace bindings or a
-  # GitOps overlay.
+  # Read-only cluster-wide watches for the controller-runtime
+  # informer cache. CRUD on these resources is restricted to the
+  # workspace namespace via the Role above. Without these the cache
+  # reflector fails to start and the controller crash-loops.
+  - apiGroups: [""]
+    resources: ["pods", "secrets", "persistentvolumeclaims", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
