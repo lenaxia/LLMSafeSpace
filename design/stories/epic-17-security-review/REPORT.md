@@ -170,3 +170,73 @@ All `@pentest.local` users + workspaces deleted at end of each phase. Phase 2 le
 ## Sign-off readiness
 
 The pentest is **complete by plan coverage** — every RT-x.y in the plan got a verdict (PASS / FAIL / INCONCLUSIVE / SKIP with reason). The remediation queue above is what blocks "production-ready" status. None of the open findings make the system catastrophically unsafe for the **current single-tenant home deployment** of the founder's account, but G26 (datastore credentials) is unsuitable for any deployment beyond that.
+
+---
+
+## Phase D — Remediation summary (worklog 0116, 2026-05-31)
+
+After Phase C's remediation sweep, the post-pentest state is:
+
+### Closed at code level (this branch)
+
+| Cluster | Closes | Worklog | Severity |
+|---|---|---|---|
+| G26 (datastore creds) | G26, RT-4.5 | 0095 | Critical |
+| G2 (workspace webhook) | F1.2.1, F1.2.2, F1.2.9, RT-2.18, RT-6.10, RT-6.1 | 0096 | 2C, 1H, 1M |
+| G18 (logout) | G18, RT-4.13, RT-2.13 | 0097 | High |
+| G4 part 1 (resources+packages) | F1.2.3, F1.2.5 | 0105 | 2 High |
+| G4 part 2 (per-workspace egress) | F1.2.4 | 0106 | High |
+| G5 (RBAC) | G5, F1.3.1-F1.3.7, RT-6.2, RT-6.16 | 0107 | 4H, 4M, 1L |
+| G6 (sessionId) | F1.1.2, RT-2.16 | 0109 | High |
+| G7 (agentd auth) | F1.4.2 | 0110 | High |
+| Batch 1 | G11, G12, G22, G23, G24, G27 | 0111 | 4M, 2L |
+| Batch 2 | G8, G13 (partial), RT-2.4, RT-2.5 | 0112 | 4 Medium |
+| Batch 3 | F1.1.1, F1.1.3, F1.1.4, F1.4.3 | 0113 | 3M, 1L |
+| Batch 4 | G19, G30, G31 | 0114 | 3 Medium |
+| Batch 5 | G1, G15, G32 | 0115 | 1H, 1M, 1L |
+| F1.7.5 | F1.7.5 (JWT rotation) | 0116 | High |
+| CRD/runtime | F1.2.6, F1.2.7, F1.2.8, F1.2.10 | 0116 | 4 M/L |
+| Closing | RT-6.14 (TLS default) | 0116 | Low |
+
+**Net:** ~46 distinct findings closed, ~16 commits.
+
+### Owned by other agent (secrets-management subsystem)
+
+These remain open at this branch but are tracked in worklog 0094:
+
+- G3, G6, G15-adjacent, G21, G25, G28, G29, F1.7.1-F1.7.4,
+  F1.7.6-F1.7.9.
+
+### Accepted residual / operator responsibility
+
+- G7 (SSE injection-detection bypass) — accepted; non-blocking
+  detector is by design.
+- G14 (egress request body inspection) — accepted; rely on
+  NetworkPolicy + redaction.
+- G10 (Redis at-rest) — operator responsibility; documented.
+- RT-3.17 (mise install path writability) — accepted; users own
+  their PVC.
+- RT-6.6 / RT-6.13 (preflight Job for etcd encryption / CNI) —
+  operator runbook.
+
+### Inconclusive — follow-up work
+
+- RT-4.9 (redaction DoS) — fuzz test pending.
+- RT-5.4/5/6/9/12/14 (proxy/MCP) — fuzz suite pending.
+- RT-7.9 (XSS bypass corpus) — vitest harness pending.
+- RT-2.7 (first-user-admin race) — atomic SQL fix landed (G8);
+  end-to-end clean-DB integration test pending.
+- RT-2.10 (cookie fixation) — INCONCLUSIVE; needs targeted unit
+  test against cookie + bearer interaction.
+
+### Live re-pentest pending
+
+After CI ships images and operator runs `helm upgrade`:
+
+1. Each phase's run-phaseN.py harness re-executed against the
+   updated cluster.
+2. FAIL → PASS conversions documented in a phase-N-postfix
+   directory (see existing `phase-1-postfix/` for the pattern).
+3. THREAT-MODEL.md revision 1.4 records the closure status of
+   every Gxx and the new accepted-residual list.
+
