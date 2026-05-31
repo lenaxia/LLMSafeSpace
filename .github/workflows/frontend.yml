@@ -1,0 +1,129 @@
+name: Frontend
+
+# Frontend quality gates. Runs on PR and push touching frontend/ or
+# the SDK that the frontend consumes (so a breaking SDK change shows
+# up here before it ships).
+#
+# Five steps, in order of fail-fast cost:
+#
+#   1. typecheck (tsc --noEmit)        — fastest; catches type errors
+#   2. lint (eslint .)                 — style + correctness
+#   3. unit tests (vitest)             — component + hook behavior
+#   4. build (vite build via tsc -b)   — production bundle compiles
+#   5. e2e (Playwright)                — full-app smoke through the
+#                                         dev server
+#
+# Why all five rather than just build: build catches type errors AND
+# bundle issues, but not test failures. Running the steps explicitly
+# means a vitest regression doesn't masquerade as a build failure.
+#
+# Path-filtered: this workflow is only relevant when frontend or
+# SDK code changes. Keeps unrelated PRs cheap.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'sdks/typescript/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'sdks/typescript/**'
+      - '.github/workflows/frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Type, lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Vitest unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Playwright browsers need to be installed once per environment.
+      # GHA runners don't keep them across runs, so we install fresh.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # The Playwright config has webServer.command='npm run dev' with
+      # reuseExistingServer:true. The CLI starts the dev server itself.
+      - name: Run Playwright tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+      - name: Upload Playwright trace + screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-artifacts
+          path: |
+            frontend/test-results
+          retention-days: 7

@@ -36,6 +36,11 @@ spec:
                 runtime:
                   type: string
                   description: "Runtime environment (e.g. python:3.11)"
+                architecture:
+                  type: string
+                  enum: ["amd64", "arm64"]
+                  default: "amd64"
+                  description: "CPU architecture for the workspace pod. Sets a nodeSelector. Changing this triggers pod recreation."
                 securityLevel:
                   type: string
                   enum: ["standard", "high"]
@@ -147,6 +152,10 @@ spec:
                       format: int64
                     seccompProfile:
                       type: string
+                autoApprovePermissions:
+                  type: boolean
+                  default: false
+                  description: "Auto-approve all agent permission requests without user interaction. Default: false."
             status:
               type: object
               properties:
@@ -201,6 +210,9 @@ spec:
                   type: string
                 podIP:
                   type: string
+                imageTag:
+                  type: string
+                  description: "Container image tag observed when the pod started. Set by the controller."
                 endpoint:
                   type: string
                 startTime:
@@ -226,6 +238,28 @@ spec:
                 consecutiveHealthFailures:
                   type: integer
                   format: int32
+                # Agent-reported fields (populated from agentd /v1/statusz scrape).
+                sessions:
+                  type: array
+                  description: "Sessions reported by the agentd /v1/statusz endpoint."
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      title:
+                        type: string
+                      lastActivityAt:
+                        type: string
+                        format: date-time
+                diskUsedBytes:
+                  type: integer
+                  format: int64
+                  description: "Bytes consumed by the workspace PVC, reported by agentd."
+                diskTotalBytes:
+                  type: integer
+                  format: int64
+                  description: "Total bytes available on the workspace PVC, reported by agentd."
       additionalPrinterColumns:
         - name: Phase
           type: string
