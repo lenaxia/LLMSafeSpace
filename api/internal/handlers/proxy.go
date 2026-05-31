@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -176,6 +178,10 @@ func (h *ProxyHandler) ListSessions(c *gin.Context) {
 
 func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
 	wid := c.Param("id")
 	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid)
 	// After the message round-trip completes, persist the opencode-generated
@@ -187,21 +193,37 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 
 func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
 	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid)
 }
 
 func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
 	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid)
 }
 
 func (h *ProxyHandler) GetSession(c *gin.Context) {
 	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
 	h.proxyToWorkspace(c, "/session/"+sid, false, sid)
 }
 
 func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
 }
 
@@ -506,7 +528,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 // forwarded to the browser. WWW-Authenticate triggers a basic-auth dialog;
 // Set-Cookie and Proxy-Authenticate are security-sensitive.
 var blockedResponseHeaders = map[string]bool{
-	"Www-Authenticate":  true,
+	"Www-Authenticate":   true,
 	"Proxy-Authenticate": true,
 	"Set-Cookie":         true,
 }
@@ -1109,4 +1131,37 @@ func isConnectionError(err error) bool {
 		strings.Contains(msg, "i/o timeout") ||
 		strings.Contains(msg, "EOF") ||
 		strings.Contains(msg, "network is unreachable")
+}
+
+// sessionIDPattern is the strict allow-list for the `:sessionId` URL
+// parameter. Closes F1.1.2 (Epic 17 Phase 1) and RT-2.16 (Phase 2):
+// pre-fix the value was concatenated into the upstream URL path without
+// validation, so a user with
+//
+//	sessionId = "../../../v1/admin"
+//
+// could address an arbitrary upstream endpoint. The pattern accepts
+// only alphanumerics, dot, dash, underscore — covers UUIDs, opencode
+// session IDs (sess_*), and any other shape a legitimate client would
+// produce.
+//
+// Length cap 128 is generous: a UUID is 36 chars; opencode session IDs
+// are around 40-60. 128 leaves headroom for a longer scheme without
+// being unbounded.
+var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+func validateSessionID(s string) error {
+	if s == "" {
+		return errors.New("sessionId must not be empty")
+	}
+	if len(s) > 128 {
+		return errors.New("sessionId exceeds the 128-character limit")
+	}
+	if strings.Contains(s, "..") {
+		return errors.New("sessionId contains forbidden '..' (path traversal)")
+	}
+	if !sessionIDPattern.MatchString(s) {
+		return errors.New("sessionId contains characters outside [a-zA-Z0-9._-]")
+	}
+	return nil
 }

@@ -75,7 +75,7 @@ is the list of distinct items.
 | ID | Title | Severity | Class | Notes |
 |---|---|---|---|---|
 | F1.1.1 | `/readyz` leaks driver error strings | Medium | MINE | API readyz handler |
-| F1.1.2 | `:sessionId` path traversal upstream | High | MINE | proxy session-id sanitisation |
+| F1.1.2 | `:sessionId` path traversal upstream | High | MINE — code-fix landed worklog 0109, awaiting live re-pentest | proxy session-id sanitisation |
 | F1.1.3 | `/metrics` unauthenticated | Medium | MINE | metrics middleware |
 | F1.1.4 | `/api/v1/workspaces/:id/stream` group has middleware but no handler | Low | MINE | router cleanup |
 | F1.1.5 | `/api/v1/account/recover` outside `/account` auth group | Medium | MINE | router |
