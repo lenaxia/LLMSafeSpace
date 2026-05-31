@@ -301,7 +301,7 @@ func TestKeyService_PasswordChange_SecretsStillDecryptable(t *testing.T) {
 	})
 
 	// Change password
-	keySvc.ChangePassword(ctx, "user-1", oldPw, newPw)
+	keySvc.ChangePassword(ctx, "user-1", "", oldPw, newPw)
 
 	// Unlock with new password
 	_ = keySvc.UnlockDEK(ctx, "user-1", newPw, "sess-2", time.Hour)

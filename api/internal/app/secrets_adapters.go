@@ -338,6 +338,34 @@ func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ se
 	return result, nil
 }
 
+// workspaceOwnerVerifierAdapter implements secrets.WorkspaceOwnerVerifier
+// against the api-side DatabaseService. Both "workspace not found"
+// and "workspace owned by someone else" collapse to the single
+// secrets.ErrWorkspaceNotOwned sentinel so the response shape does
+// not differentiate between the two — preventing cross-user
+// workspace-existence enumeration via the bindings API (validator
+// pass-3 finding SO-1).
+type workspaceOwnerVerifierAdapter struct {
+	db interfaces.DatabaseService
+}
+
+func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
+	if a.db == nil || userID == "" || workspaceID == "" {
+		return secrets.ErrWorkspaceNotOwned
+	}
+	meta, err := a.db.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		// Treat DB blip as not-owned to keep the response uniform;
+		// the upstream secretsPodIPResolver pattern already does the
+		// same thing for the same reason.
+		return secrets.ErrWorkspaceNotOwned
+	}
+	if meta == nil || meta.UserID != userID {
+		return secrets.ErrWorkspaceNotOwned
+	}
+	return nil
+}
+
 type duplicateErr struct{ name string }
 
 func (e *duplicateErr) Error() string { return "duplicate secret: " + e.name }

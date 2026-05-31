@@ -299,7 +299,7 @@ func TestKeyService_ChangePassword(t *testing.T) {
 	dekBefore, _ := svc.GetDEK(ctx, "session-before")
 
 	// Change password
-	err := svc.ChangePassword(ctx, "user-1", oldPassword, newPassword)
+	err := svc.ChangePassword(ctx, "user-1", "", oldPassword, newPassword)
 	if err != nil {
 		t.Fatalf("ChangePassword failed: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestKeyService_ChangePassword_WrongOldPassword(t *testing.T) {
 
 	_, _ = svc.InitializeUserKeys(ctx, "user-1", []byte("correct"))
 
-	err := svc.ChangePassword(ctx, "user-1", []byte("wrong"), []byte("new"))
+	err := svc.ChangePassword(ctx, "user-1", "", []byte("wrong"), []byte("new"))
 	if err == nil {
 		t.Error("ChangePassword with wrong old password should fail")
 	}

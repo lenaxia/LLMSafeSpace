@@ -48,4 +48,11 @@ var (
 	// Handlers map this to 412 Precondition Failed so the client
 	// knows to re-run InitializeUserKeys (re-login).
 	ErrUserKeysMissing = errors.New("user key material not found")
+
+	// ErrWorkspaceNotOwned is returned by binding operations when
+	// the caller does not own the target workspace. Both
+	// "workspace doesn't exist" and "workspace owned by someone
+	// else" map to this single sentinel so the response shape does
+	// not leak workspace existence cross-user. Handlers map to 404.
+	ErrWorkspaceNotOwned = errors.New("workspace not found or not owned by caller")
 )

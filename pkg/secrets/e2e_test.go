@@ -181,7 +181,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 
 	// === Phase 9: Password change ===
 	newPassword := []byte("new-secure-password-456!")
-	err = keySvc.ChangePassword(ctx, userID, password, newPassword)
+	err = keySvc.ChangePassword(ctx, userID, "", password, newPassword)
 	if err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}

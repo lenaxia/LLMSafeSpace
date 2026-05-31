@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -449,6 +450,65 @@ func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("safe mount_path was rejected: %v", err)
+	}
+}
+
+// fakeWorkspaceOwnerVerifier returns ErrWorkspaceNotOwned for any
+// (userID, workspaceID) pair not in the allowedPairs map. Used to
+// exercise the cross-tenant binding-pollution defence (validator
+// pass-3 finding SO-1).
+type fakeWorkspaceOwnerVerifier struct {
+	allowedPairs map[string]map[string]struct{} // userID -> set of workspaceIDs
+}
+
+func (f *fakeWorkspaceOwnerVerifier) VerifyWorkspaceOwner(_ context.Context, userID, workspaceID string) error {
+	if pairs, ok := f.allowedPairs[userID]; ok {
+		if _, ok := pairs[workspaceID]; ok {
+			return nil
+		}
+	}
+	return ErrWorkspaceNotOwned
+}
+
+// TestSecretService_SetBindings_RejectsForeignWorkspace is the
+// regression test for SO-1: SetBindings/AddBindings must verify the
+// caller owns the workspace, not just the secrets being bound.
+// Pre-fix any user with a leaked workspaceID could pollute another
+// user's binding rows.
+func TestSecretService_SetBindings_RejectsForeignWorkspace(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	verifier := &fakeWorkspaceOwnerVerifier{
+		allowedPairs: map[string]map[string]struct{}{
+			"user-1": {"ws-mine": {}},
+		},
+	}
+	svc.SetWorkspaceOwnerVerifier(verifier)
+
+	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "mine", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Owned workspace: SetBindings succeeds.
+	if err := svc.SetBindings(ctx, "user-1", "ws-mine", []string{created.ID}); err != nil {
+		t.Fatalf("SetBindings on owned workspace: %v", err)
+	}
+
+	// Foreign workspace: must reject with ErrWorkspaceNotOwned.
+	err = svc.SetBindings(ctx, "user-1", "ws-other", []string{created.ID})
+	if !errors.Is(err, ErrWorkspaceNotOwned) {
+		t.Errorf("SO-1: SetBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
+	}
+
+	// AddBindings must also reject.
+	err = svc.AddBindings(ctx, "user-1", "ws-other", []string{created.ID})
+	if !errors.Is(err, ErrWorkspaceNotOwned) {
+		t.Errorf("SO-1: AddBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
 	}
 }
 

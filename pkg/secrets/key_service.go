@@ -183,14 +183,28 @@ func (s *KeyService) DEKAvailable(ctx context.Context, sessionID string) bool {
 }
 
 // ChangePassword re-wraps the DEK with a new password-derived KEK.
-// Requires the old password to unwrap first.
-func (s *KeyService) ChangePassword(ctx context.Context, userID string, oldPassword, newPassword []byte) error {
+// Requires the old password to unwrap first. After the wrap is
+// updated, the cached DEK for sessionID (the caller's current
+// session) is evicted so the next request must re-Unlock with the
+// new password — without this eviction a thief who has the JWT
+// continues to read secrets via the cached DEK even after the user
+// "rotates the password to be safe" (validator pass-3 finding P-1).
+//
+// LIMITATION: this only evicts the caller's session. A user with
+// multiple active sessions on different devices retains those
+// cached DEKs until they expire naturally. We document the
+// limitation in the API rather than rebuild the cache for cross-
+// session enumeration.
+//
+// sessionID may be empty (e.g. tests, internal callers without a
+// session); eviction is then a no-op.
+func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID string, oldPassword, newPassword []byte) error {
 	record, err := s.store.GetUserKey(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user key: %w", err)
 	}
 	if record == nil {
-		return errors.New("no key material found for user")
+		return ErrUserKeysMissing
 	}
 
 	// Unwrap with old password
@@ -201,10 +215,12 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID string, oldPassw
 	defer zeroBytes(oldKEK)
 	dek, err := UnwrapDEK(oldKEK, record.WrappedDEK)
 	if err != nil {
-		// Invalid password: bcrypt-style uniform failure code so the
-		// handler can map to 403 via errors.Is rather than substring
-		// matching on the bcrypt/AEAD error message.
-		return fmt.Errorf("%w: %v", ErrInvalidPassword, err)
+		// Invalid password: uniform failure code so the handler can
+		// map to 403 via errors.Is. We deliberately drop the wrapped
+		// AEAD/bcrypt diagnostic so a future log-formatter that
+		// prints the error verbatim does not leak the underlying
+		// failure mode (validator pass-3 finding NEW-7).
+		return ErrInvalidPassword
 	}
 	defer zeroBytes(dek)
 
@@ -223,7 +239,18 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID string, oldPassw
 		return fmt.Errorf("wrap DEK with new password: %w", err)
 	}
 
-	return s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion)
+	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion); err != nil {
+		return err
+	}
+
+	// Best-effort evict of the caller's cached DEK. Failure here is
+	// not fatal — the password change has already committed; we
+	// don't roll it back over a Redis blip. The cache TTL bounds
+	// the worst case anyway.
+	if sessionID != "" && s.cache != nil {
+		_ = s.cache.EvictDEK(ctx, sessionID)
+	}
+	return nil
 }
 
 // ResetWithRecoveryKey unwraps the DEK using the recovery key and re-wraps with a new password.

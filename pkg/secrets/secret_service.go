@@ -11,8 +11,20 @@ import (
 
 // SecretService provides encrypted secret CRUD operations.
 type SecretService struct {
-	keys  *KeyService
-	store SecretStore
+	keys     *KeyService
+	store    SecretStore
+	wsOwners WorkspaceOwnerVerifier
+}
+
+// WorkspaceOwnerVerifier checks that a workspace is owned by a given
+// user. Used by SetBindings / AddBindings to prevent a caller from
+// pinning their own secrets to another user's workspace (validator
+// pass-3 finding SO-1). The function MUST return ErrWorkspaceNotOwned
+// for any not-found / not-owned case to keep the response shape
+// uniform across both — leaking which is which would re-enable
+// workspace-existence enumeration.
+type WorkspaceOwnerVerifier interface {
+	VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error
 }
 
 // NewSecretService creates a new SecretService.
@@ -26,6 +38,14 @@ func NewSecretService(keys *KeyService, store SecretStore) *SecretService {
 		keys.SetSecretStore(store)
 	}
 	return &SecretService{keys: keys, store: store}
+}
+
+// SetWorkspaceOwnerVerifier installs the workspace-ownership check.
+// If left nil, SetBindings/AddBindings skip ownership verification —
+// this is acceptable for unit tests but MUST be wired in production
+// or any caller can bind their secrets to any workspace.
+func (s *SecretService) SetWorkspaceOwnerVerifier(v WorkspaceOwnerVerifier) {
+	s.wsOwners = v
 }
 
 // CreateSecret encrypts and stores a new secret.
@@ -230,8 +250,17 @@ func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionI
 	return plaintext, nil
 }
 
-// SetBindings sets which secrets are bound to a workspace.
+// SetBindings sets which secrets are bound to a workspace. The caller
+// must own both the workspace and every secret being bound; an
+// unowned workspace produces ErrWorkspaceNotOwned, an unowned secret
+// produces ErrSecretNotFound. Both sentinels are mapped to 404 by
+// the handler so the response shape does not differentiate between
+// "doesn't exist" and "not yours" — preventing cross-user existence
+// enumeration (validator pass-3 finding SO-1).
 func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) error {
+	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
+		return err
+	}
 	// Verify all secrets belong to the user
 	for _, sid := range secretIDs {
 		secret, err := s.store.GetSecret(ctx, userID, sid)
@@ -287,6 +316,9 @@ func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID str
 func (s *SecretService) AddBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) error {
 	if len(secretIDs) == 0 {
 		return nil
+	}
+	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
+		return err
 	}
 	for _, sid := range secretIDs {
 		secret, err := s.store.GetSecret(ctx, userID, sid)
@@ -346,6 +378,19 @@ func (s *SecretService) GetBindingsForSecret(ctx context.Context, userID, secret
 // QueryAudit returns audit log entries for the current user.
 func (s *SecretService) QueryAudit(ctx context.Context, userID string, query AuditQuery) ([]*AuditEntry, error) {
 	return s.store.QueryAudit(ctx, userID, query)
+}
+
+// verifyWorkspaceOwner returns ErrWorkspaceNotOwned if the workspace
+// does not exist or is not owned by userID. Both cases collapse to a
+// single sentinel so the handler returns a uniform 404 — leaking
+// "exists but not yours" via a different status code would re-enable
+// cross-user workspace enumeration. If no verifier has been wired
+// (test-only paths), the check is bypassed.
+func (s *SecretService) verifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
+	if s.wsOwners == nil {
+		return nil
+	}
+	return s.wsOwners.VerifyWorkspaceOwner(ctx, userID, workspaceID)
 }
 
 func (s *SecretService) audit(ctx context.Context, userID, action string, secretID, workspaceID *string, meta map[string]string) {

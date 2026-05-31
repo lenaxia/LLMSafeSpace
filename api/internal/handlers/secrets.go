@@ -641,7 +641,7 @@ func (h *SecretsHandler) GetAuditLog(c *gin.Context) {
 // KeyRotator is the interface needed by the rotation handler.
 type KeyRotator interface {
 	RotateKeyWithPassword(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) (secrets.RotationResult, error)
-	ChangePassword(ctx context.Context, userID string, oldPassword, newPassword []byte) error
+	ChangePassword(ctx context.Context, userID, sessionID string, oldPassword, newPassword []byte) error
 	ResetWithRecoveryKey(ctx context.Context, userID string, recoveryKeyHex string, newPassword []byte) (string, error)
 }
 
@@ -714,7 +714,7 @@ func (h *RotateKeyHandler) RotateKey(c *gin.Context) {
 
 // ChangePassword handles POST /api/v1/account/change-password
 func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
-	userID, _ := extractAuth(c)
+	userID, sessionID := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -729,7 +729,7 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.keySvc.ChangePassword(c.Request.Context(), userID, []byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
+	if err := h.keySvc.ChangePassword(c.Request.Context(), userID, sessionID, []byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
 		if errors.Is(err, secrets.ErrInvalidPassword) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid current password"})
 			return
@@ -808,6 +808,13 @@ func handleSecretError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, secrets.ErrSecretNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "secret not found"})
+	case errors.Is(err, secrets.ErrWorkspaceNotOwned):
+		// Same status as secret-not-found so the response shape does
+		// not differentiate between "the workspace doesn't exist"
+		// and "you don't own it" — leaking that distinction would
+		// re-enable cross-user workspace existence enumeration via
+		// the bindings API (validator pass-3 finding SO-1).
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
 	case errors.Is(err, secrets.ErrDuplicateSecret):
 		c.JSON(http.StatusConflict, gin.H{"error": "secret with this name already exists"})
 	case errors.Is(err, secrets.ErrDEKUnavailable):

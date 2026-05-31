@@ -411,7 +411,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 
 	// Password change
 	newPw := []byte("new-e2e-password")
-	err = keySvc.ChangePassword(ctx, userID, password, newPw)
+	err = keySvc.ChangePassword(ctx, userID, "", password, newPw)
 	if err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}

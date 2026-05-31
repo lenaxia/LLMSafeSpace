@@ -125,7 +125,7 @@ func TestKeyService_ChangePassword_NoKeys(t *testing.T) {
 	cache := newMockDEKCache()
 	svc := NewKeyService(store, cache)
 
-	err := svc.ChangePassword(context.Background(), "nonexistent", []byte("old"), []byte("new"))
+	err := svc.ChangePassword(context.Background(), "nonexistent", "", []byte("old"), []byte("new"))
 	if err == nil {
 		t.Error("ChangePassword for user without keys should fail")
 	}

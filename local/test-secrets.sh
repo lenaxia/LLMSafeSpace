@@ -75,13 +75,16 @@ register_user() {
   local email="$1" password="$2"
   # Username is derived from email-local-part so each test user has a
   # distinct username (the users table has a UNIQUE(username)
-  # constraint in some deployments). Stdout MUST flow back to the
-  # caller — req prints the http_code on stdout and that's what the
-  # caller captures via REG_STATUS=$(register_user ...). A leftover
-  # redirect from a previous version was discarding the code and
-  # making every register-status assertion fail spuriously.
+  # constraint in some deployments). We strip everything except
+  # [a-zA-Z0-9-] so a future test pasting in an email with dots or
+  # plus-signs (gmail-style aliasing) does not blow up the username
+  # validator. Stdout MUST flow back to the caller — req prints the
+  # http_code on stdout and that's what the caller captures via
+  # REG_STATUS=$(register_user ...). A leftover redirect from a
+  # previous version was discarding the code and making every
+  # register-status assertion fail spuriously.
   local username
-  username=$(echo "$email" | cut -d@ -f1)-${SUITE_TS}
+  username=$(echo "$email" | cut -d@ -f1 | tr -cd 'a-zA-Z0-9-')-${SUITE_TS//[^a-zA-Z0-9-]/-}
   req POST /api/v1/auth/register \
     "{\"username\":\"$username\",\"email\":\"$email\",\"password\":\"$password\"}"
 }
