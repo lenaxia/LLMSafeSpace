@@ -493,7 +493,7 @@ func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "first@example.com").Return(nil, nil)
 	// Simulate the SQL CTE returning role="admin" because the users
 	// table was empty at insert time. The mock mutates u.Role to
-	// match the production DB behaviour.
+	// match the production DB behavior.
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "first@example.com"
 	})).Run(func(args mock.Arguments) {

@@ -807,7 +807,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		//
 		// Memory backing is bounded by the pod's memory limit (set
 		// by resourceRequirementsFor); a 100Mi cap on each volume
-		// is generous for the small JSON files we materialise.
+		// is generous for the small JSON files we materialize.
 		// Hitting the cap fails the write loud, which is the desired
 		// behavior (alternatives like silent disk fallback would
 		// re-open G15).
@@ -865,7 +865,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			// regression that locks this in.
 			AutomountServiceAccountToken: &falseVal,
 			// G22 (Epic 17 worklog 0088 RT-3.3): EnableServiceLinks
-			// defaults to true in K8s, which materialises 30+
+			// defaults to true in K8s, which materializes 30+
 			// `<SVC>_SERVICE_HOST/PORT` env vars in the workspace
 			// pod's PID-1 environ. This leaks namespace topology to
 			// any process inside the sandbox (and to anyone who can

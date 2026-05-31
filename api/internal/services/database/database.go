@@ -166,7 +166,7 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 	// is impossible. The CTE counts users `BEFORE` insert; if zero,
 	// the role is forced to 'admin' regardless of the caller-supplied
 	// value. If non-zero, the caller-supplied role wins (typically
-	// 'user'). Postgres serialises the count + insert under the
+	// 'user'). Postgres serializes the count + insert under the
 	// row-level locks of the unique index on (email).
 	query := `
 		WITH existing AS (

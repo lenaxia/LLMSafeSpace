@@ -47,7 +47,7 @@ func (c *healthzCache) Snapshot() healthzCacheSnapshot {
 	return *c.snapshot.Load()
 }
 
-// refreshIsHealthyLoop runs from agentd boot until ctx is cancelled.
+// refreshIsHealthyLoop runs from agentd boot until ctx is canceled.
 // It refreshes the cache every readinessRefreshInterval by calling
 // client.IsHealthy. An immediate refresh fires on boot so /v1/readyz
 // has a meaningful answer within seconds of startup.
