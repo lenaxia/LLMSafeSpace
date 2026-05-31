@@ -1,7 +1,7 @@
 # Epic 23: Controller & API Race Hardening
 
 **Status:** Planning
-**Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 2 — fixed prior-art reference, scoped Story 3 precisely, added Story 4)
+**Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 3 — three-writer LastActivityAt reality, Story 3 before Story 2 sequencing, Option B annotation migration)
 **Priority:** High (Story 1 is a hot-patch for the recurring incident; Story 4 is a hot-patch for browser-visible auth leak)
 **Depends on:** none (Story 1 ships first; Stories 2-4 sequenced below)
 **Related epics:**
@@ -11,8 +11,8 @@
 This epic owns **concurrency correctness** in the controller's reconcile loop and the API's proxy-cache layer. Four classes of bugs:
 
 - **Story 1 — DeletionTimestamp misclassification.** A pod the controller itself deleted is briefly observable in K8s phase=Failed during termination. `handleCreating` mistakes it for a genuine "pod failed during creation" and writes terminal `Failed`. Verified mechanism for the worklog 0100 incident; reproduced live on three workspaces (`c98963e7-…`, `6d36952e-…`, `8e80afc4-…`).
-- **Story 2 — `Status().Update` conflict retry.** The controller and the API service both write `WorkspaceStatus`. Optimistic-concurrency conflicts surface as `"object has been modified"` errors that abort reconciles. Today the controller has no retry-on-conflict; the API service already has the pattern via `retry.RetryOnConflict` (`api/internal/handlers/activity.go:114`, `api/internal/services/workspace/workspace_service.go:1004`). This story propagates the existing pattern to the controller.
-- **Story 3 — Single-writer audit (scope: 2 fields).** Each `WorkspaceStatus` field has exactly one owner. Today, 23 fields are controller-owned and 1 (`LastActivityAt`) is API-owned. Phase has cross-writer behavior — controller writes most transitions, API writes `Suspending`/`Resuming`. Story 3 moves `LastActivityAt` out of Status (annotation or alternative) and migrates Suspend/Resume to a spec-driven pattern.
+- **Story 3 — Single-writer migration.** Each `WorkspaceStatus` field has exactly one owner. `LastActivityAt` has THREE writers today (API ActivityTracker, API Resume, controller handleResuming). `Phase` has cross-writer behavior. Story 3 migrates `LastActivityAt` to a `metadata.annotations` patch (separate optimistic-concurrency lane from `Status().Update`) with the API service as sole writer; migrates Suspend/Resume to `Spec.Suspend bool` so controller is the sole writer of `Phase`.
+- **Story 2 — `Status().Update` conflict retry.** After Story 3 eliminates cross-writer scenarios for the dangerous fields, the remaining conflicts come from controller-runtime informer-cache lag. Today the controller has no retry-on-conflict; the API service already has the pattern via `retry.RetryOnConflict` (`api/internal/handlers/activity.go:117`, `api/internal/services/workspace/workspace_service.go:1007`). This story propagates the existing pattern. **Sequenced AFTER Story 3** so the closure-rerun pattern can't resurrect lost-update state from a now-impossible cross-writer race.
 - **Story 4 — API proxy auth-cache invalidation + response-header sanitization.** The API's `pwCache` is not invalidated when a workspace transitions to `Active` from a non-Active phase, so when `ensurePasswordSecret` regenerates the password (e.g., after Failed→recovery), the API forwards stale credentials to opencode and gets back a 401 with `WWW-Authenticate: Basic`. The proxy then forwards that header to the browser, prompting a basic-auth dialog. Reproduced live for user `mike@kao.family` while iterating on this design.
 
 ---
@@ -23,21 +23,23 @@ This epic owns **concurrency correctness** in the controller's reconcile loop an
 |---|---|---|
 | A1 | The pod that triggered the worklog 0100 terminal-Failed had `pod.DeletionTimestamp` set (the controller had just deleted it via `r.deletePodByName`) | Code-verified, K8s-spec-verified |
 | A2 | controller-runtime's `MaxConcurrentReconciles` defaults to 1 per controller; concurrent reconciles of the same Workspace are impossible | Code-verified |
-| A3 | At least two writers exist for `WorkspaceStatus`: the controller, and the API service (writes `LastActivityAt`, also writes `Phase` for Suspend/Resume) | Code-verified |
-| A4 | `WorkspaceStatus` has exactly 24 fields today (counted in code); the controller writes 23 of them; the API service writes 1 (`LastActivityAt`) plus mutates `Phase` via the Suspend/Resume actions | Code-verified |
-| A5 | An existing `retry.RetryOnConflict` pattern is in use in this repo at `api/internal/handlers/activity.go:114` and `api/internal/services/workspace/workspace_service.go:1004`. Both wrap a Get-then-Update closure | Code-verified |
+| A3 | At least three writers exist for `WorkspaceStatus`: the controller (Phase, 22 other fields, AND `LastActivityAt` via handleResuming), and the API service (`LastActivityAt` via ActivityTracker AND Resume; `Phase` via Suspend/Resume) | Code-verified |
+| A4 | `WorkspaceStatus` has exactly 24 fields today; the controller writes 23 of them; `LastActivityAt` has THREE writers (controller handleResuming + API ActivityTracker + API Resume); `Phase` has cross-writer behavior (controller for most transitions, API for Suspend/Resume) | Code-verified |
+| A5 | An existing `retry.RetryOnConflict` pattern is in use in this repo at `api/internal/handlers/activity.go:117` and `api/internal/services/workspace/workspace_service.go:1007`. Both wrap a Get-then-Update closure | Code-verified |
 | A6 | The controller's `cleanupFailedWorkspaceSecrets` deletes `workspace-pw-<id>` Secret when a workspace enters `Failed` (Bug 12 fix from worklog 0085) | Code-verified |
 | A7 | `ensurePasswordSecret` regenerates a fresh random password whenever the Secret is missing — i.e., on every Failed→Pending transition | Code-verified |
 | A8 | The API proxy caches the password in-memory (`pwCache`) and only invalidates on `Suspending`/`Suspended`/`Terminating`/`Terminated` (NOT on `Failed`, NOT on `Active`-from-non-Active) | Code-verified |
 | A9 | The API proxy's `doProxy` copies all upstream response headers verbatim to the client, including `WWW-Authenticate` | Code-verified |
 | A10 | Browsers honor `WWW-Authenticate: Basic` headers from XHR/fetch responses by displaying a credential prompt unless `credentials: 'omit'` was set on the request | Web-spec-verified |
 | A11 | An existing metrics package at `controller/internal/metrics/metrics.go` uses `prometheus.CounterVec` and `prometheus.HistogramVec` with `llmsafespace_*` naming and `reason` labels | Code-verified |
+| A12 | `metadata.annotations` patches go through a separate optimistic-concurrency lane from `Status().Update`; an annotation Patch and a Status Update on the same object don't generate cross-conflict errors. This is the structural enabler for Story 3's "annotation as single-writer field" pattern | K8s-spec-verified — `Patch` on metadata uses the main resource subresource; `Status().Update` uses the `/status` subresource; resourceVersion is shared but conflicts are evaluated independently per write |
 
 Hypotheses considered and refuted:
 
 - **R1**: "Today the controller has NO retry-on-conflict pattern, so Story 2 must introduce a new utility." Refuted by A5: the existing `retry.RetryOnConflict` pattern in the API service is the prior art. Story 2 propagates it to the controller; it does not invent a new helper.
-- **R2**: "`TransientFailureCount > 0` is the right discriminator for `handleCreating:244`." Refuted by worklog 0100: `ConsecutiveHealthFailures` was reset to 0 at controller.go:1027 *before* `handleCreating` observed the dying pod. The right discriminator is `pod.DeletionTimestamp != nil`.
-- **R3**: "Story 3 needs to migrate ~16 controller-owned fields." Refuted by A4: only 2 fields need migration — `LastActivityAt` (move out of Status) and `Phase` (suspend/resume migrate to spec). The other 22 fields are already controller-only and just need owner annotations in code.
+- **R2**: "`TransientFailureCount > 0` is the right discriminator for `handleCreating:249`." Refuted by worklog 0100: `ConsecutiveHealthFailures` was reset to 0 at controller.go:1030 *before* `handleCreating` observed the dying pod. The right discriminator is `pod.DeletionTimestamp != nil`.
+- **R3**: "Story 3 needs to migrate ~16 controller-owned fields." Refuted by A4: only 2 fields need migration — `LastActivityAt` (move out of Status to annotation, single API writer) and `Phase` (suspend/resume migrate to spec). The other 22 fields are already controller-only and just need owner annotations in code.
+- **R4**: "Story 2 (retry-on-conflict) is safe to ship before Story 3 (single-writer)." Refuted by audit pass 3: a retry-on-conflict closure that re-reads and re-applies the controller's mutation can resurrect a Phase value the API just wrote. Example: controller mid-reconcile is rewriting Phase=Active when API writes Phase=Failed; on conflict, controller's closure re-reads (Failed), re-applies its mutation (Phase=Active), and writes Active — losing the API's Failed. After Story 3, the API doesn't write Phase, so this race is structurally impossible. **Sequence Story 3 before Story 2.**
 
 ---
 
@@ -45,18 +47,18 @@ Hypotheses considered and refuted:
 
 | # | Validates | Fact | How verified |
 |---|---|---|---|
-| F1 | A1 | `handleCreating:244` writes terminal `Failed` when it observes a pod in K8s phase=Failed, with NO check for DeletionTimestamp | `controller.go:243-246`; `grep DeletionTimestamp controller/internal/workspace/` returns 0 hits in pod handling logic |
+| F1 | A1 | `handleCreating:249` writes terminal `Failed` when it observes a pod in K8s phase=Failed, with NO check for DeletionTimestamp | `controller.go:246-249`; `grep DeletionTimestamp controller/internal/workspace/` returns 0 hits in pod handling logic |
 | F2 | A1 | The pod from `6d36952e-…`, `c98963e7-…`, and `8e80afc4-…` had a `Killing` event at the same moment as `checkAgentHealth`'s `Agent unreachable beyond threshold; restarting pod` log | `kubectl get events --field-selector involvedObject.kind=Pod` for each affected pod |
 | F3 | A1 | Verified mechanism: `kubectl get workspace … -o jsonpath='{.status.message}'` returns the exact unique string `"pod entered Failed phase during creation"` for every reproduction | Live verification 3 times this session |
-| F4 | A2 | `MaxConcurrentReconciles` defaults to 1; `SetupWithManager` sets no override | `controller.go:902-906` |
-| F5 | A3, A4 | Two writers exist for `WorkspaceStatus`. Controller writes via 22 distinct `r.Status().Update` call sites; the API service writes `LastActivityAt` at `api/internal/handlers/activity.go:121`; the API service writes `Phase` for Suspend/Resume at `api/internal/services/workspace/workspace_service.go:400, 446` | `grep -rn "Workspaces(.*).UpdateStatus\|.*Status().Update" --include="*.go"` |
-| F6 | A4 | Exact `WorkspaceStatus` fields (24 total): Phase, PVCName, ActiveSessions, LastActivityAt, SuspendedAt, Conditions, Message, ObservedGeneration, PodName, PodNamespace, PodIP, ImageTag, Endpoint, StartTime, RestartCount, TransientFailureCount, LastTransientFailureAt, ObservedRestartGeneration, CredentialSecretHash, LastHealthCheckAt, ConsecutiveHealthFailures, Sessions, DiskUsedBytes, DiskTotalBytes | `pkg/apis/llmsafespace/v1/workspace_types.go:204-231` |
-| F7 | A5 | `retry.RetryOnConflict(retry.DefaultBackoff, ...)` is used in `activity.go:114` (writes LastActivityAt); `retry.RetryOnConflict(retry.DefaultRetry, ...)` is used in `workspace_service.go:1004` (rename) | `grep -rn "retry.RetryOnConflict" --include="*.go"` |
-| F8 | A6 | `cleanupFailedWorkspaceSecrets` is called from the Failed branch of the main reconcile switch at `controller.go:71`; it deletes `workspace-pw-`, `workspace-creds-`, `workspace-secrets-` | `controller.go:65-72, 491-500` |
-| F9 | A7 | `ensurePasswordSecret` returns nil if the Secret already exists; otherwise generates a 32-char random password via `common.GenerateRandomString(32)` | `controller.go:550-565` |
-| F10 | A8 | `pwCache` invalidation in `onPhaseChange`: `controller.go:705-711` covers Suspending/Suspended/Terminating/Terminated; the Active branch at line 712 ONLY invalidates `wsConfig`, not `pwCache`; `Failed` is not handled at all | `proxy.go:680-717` |
-| F11 | A9 | `doProxy` copies upstream headers via `for k, vs := range resp.Header { c.Writer.Header().Add(k, v) }` at lines 451-454 (filtered path) and 462-466 (streamed path); no allow/deny list | `proxy.go:451-466` |
-| F12 | A11 | Existing metric `WorkspaceesFailedTotal` uses `prometheus.CounterVec` with `reason` label; histogram metrics use `prometheus.HistogramVec` with sensible buckets | `controller/internal/metrics/metrics.go:23-49` |
+| F4 | A2 | `MaxConcurrentReconciles` defaults to 1; `SetupWithManager` sets no override | controller.go SetupWithManager — no `WithOptions` clause |
+| F5 | A3, A4 | Three writers exist for `Status.LastActivityAt`: controller `controller.go:403`, API `activity.go:123`, API `workspace_service.go:448`. Two writers exist for `Status.Phase` from outside the controller's main reconcile: API `workspace_service.go:402` (Suspend), API `workspace_service.go:442` (Resume) | `grep -rn "Status\.LastActivityAt\s*=\|Status\.Phase\s*=" --include="*.go"` |
+| F6 | A4 | Exact `WorkspaceStatus` fields (24 total): Phase, PVCName, ActiveSessions, LastActivityAt, SuspendedAt, Conditions, Message, ObservedGeneration, PodName, PodNamespace, PodIP, ImageTag, Endpoint, StartTime, RestartCount, TransientFailureCount, LastTransientFailureAt, ObservedRestartGeneration, CredentialSecretHash, LastHealthCheckAt, ConsecutiveHealthFailures, Sessions, DiskUsedBytes, DiskTotalBytes | `pkg/apis/llmsafespace/v1/workspace_types.go` |
+| F7 | A5 | `retry.RetryOnConflict(retry.DefaultBackoff, ...)` is used in `activity.go:117` (writes LastActivityAt); `retry.RetryOnConflict(retry.DefaultRetry, ...)` is used in `workspace_service.go:1007` (rename) | `grep -rn "retry.RetryOnConflict" --include="*.go"` |
+| F8 | A6 | `cleanupFailedWorkspaceSecrets` is called from the Failed branch of the main reconcile switch at `controller.go:74`; it deletes `workspace-pw-`, `workspace-creds-`, `workspace-secrets-` | `controller.go:68-105` |
+| F9 | A7 | `ensurePasswordSecret` returns nil if the Secret already exists; otherwise generates a random password via `common.GenerateRandomString(32)` | controller.go (ensurePasswordSecret helper) |
+| F10 | A8 | `pwCache` invalidation in `onPhaseChange`: `controller.go:708-712` covers Suspending/Suspended/Terminating/Terminated; the Active branch at line 715-718 ONLY invalidates `wsConfig`, not `pwCache`; `Failed` is not handled at all | `proxy.go:697-720` |
+| F11 | A9 | `doProxy` copies upstream headers via `for k, vs := range resp.Header { c.Writer.Header().Add(k, v) }` at lines 454-458 (filtered path) and 465-469 (streamed path); no allow/deny list | `proxy.go:454-469` |
+| F12 | A11 | Existing controller metrics use `prometheus.CounterVec` and `prometheus.HistogramVec` with `llmsafespace_*` naming and `reason` labels | `controller/internal/metrics/metrics.go` |
 
 ---
 
@@ -85,14 +87,16 @@ Today the controller has NO retry-on-conflict pattern. Every `r.Status().Update`
 
 ### Story 3's structural problem
 
-`WorkspaceStatus` has 24 fields. 23 are controller-owned. 1 (`LastActivityAt`) is API-owned. `Phase` has cross-writer behavior — controller writes most transitions, but the API writes `Suspending`/`Resuming` directly via `UpdateStatus`. Multiple writers per field is exactly the conflict-multiplier the verified incidents demonstrated.
+`WorkspaceStatus` has 24 fields. 23 are controller-only-written. `LastActivityAt` has THREE writers — controller (`handleResuming`), API ActivityTracker (periodic flush), and API Resume flow. `Phase` has cross-writer behavior — controller writes most transitions, API writes `Suspending`/`Resuming` directly via `UpdateStatus`. Multiple writers per field is exactly the conflict-multiplier the verified incidents demonstrated.
+
+The "belt-and-suspenders" comment at `workspace_service.go:443-448` and the matching comment at `controller.go:398-403` are the original authors anticipating the race and writing both sides defensively. That's tech debt — Story 3 eliminates it.
 
 Story 3's structural fix is **scoped narrowly** (refuting R3): two field migrations, not a sweeping refactor.
 
-- `LastActivityAt`: move out of Status (annotation, separate CR, or eliminate). Specific decision deferred to story design — see Story 3 below.
-- `Phase` (write paths from API service): migrate Suspend/Resume to a spec-driven pattern (new `Spec.Suspend bool` field, controller observes and transitions). The API service stops calling `UpdateStatus` for these flows.
+- **`LastActivityAt`** → migrate from `Status.LastActivityAt` to `metadata.annotations["llmsafespace.dev/last-activity-at"]`. Single writer: API service (both ActivityTracker and Resume code paths use the same `Patch` call). Controller stops writing entirely (its `handleResuming` redundant write is removed). Both readers (controller idle-timeout in `handleActive`, API status-enrichment) read from annotation. **Long-term correct because:** activity is a user-observation; the API service is the layer observing user requests; annotations are K8s-idiomatic for non-spec, non-status metadata; annotation patches don't conflict with `Status().Update` per A12.
+- **`Phase` (write paths from API service)** → migrate Suspend/Resume to a spec-driven pattern (new `Spec.Suspend bool`, controller observes and transitions). The API service stops calling `UpdateStatus` for these flows. Controller becomes sole writer of `Phase`.
 
-After Story 3, every `WorkspaceStatus` field has exactly one owner. Cross-owner conflicts are eliminated.
+After Story 3, every `WorkspaceStatus` field has exactly one writer. Cross-owner conflicts are eliminated. Story 2's retry-on-conflict can then ship safely (refuting R4).
 
 ### Story 4's incident (verified, this session)
 
@@ -622,9 +626,9 @@ This is **the** test infrastructure for Epic 23. Setup ~half day. Shared with Ep
 
 **Story 4 ships in parallel with Story 1** — the user-facing basic-auth dialog is a serious UX failure. Story 4 is in the API codebase, Story 1 is in the controller; they don't conflict at the file level. Both are hot-patches.
 
-**Story 2 ships after Story 1** — once Story 1's metrics surface the conflict rate, we'll have data to validate that Story 2 actually reduces it. Hard-coded `retry.RetryOnConflict` is safe even before Story 3.
+**Story 3 ships before Story 2** (re-sequenced in audit pass 3, refuting R4). Story 2's closure-rerun retry-on-conflict has a lost-update risk while two writers of `Phase` exist. Story 3 eliminates that race structurally; only after Story 3 lands is Story 2 safe to apply broadly. Story 3 is a larger surface area than Story 2 but lower risk because each migration is mechanical and the annotation lane (A12) provides clean isolation.
 
-**Story 3 ships last** — biggest design surface area. The spec-vs-status migration for `LastActivityAt` and `Phase` touches API service + controller + frontend status renderers (frontend handled in a separate frontend epic). Should be its own commit cycle with explicit review.
+**Story 2 ships last** — once Story 1 and Story 3 have landed, the remaining conflict source is informer-cache lag (a much narrower failure mode). Story 1's metric `WorkspaceStatusUpdateConflictsTotal` will reveal the residual rate; if it's near zero post-Story-3, Story 2 may be deferred entirely.
 
 ---
 
@@ -640,8 +644,8 @@ This is **the** test infrastructure for Epic 23. Setup ~half day. Shared with Ep
 
 ## Open questions for review
 
-1. **Story 3 `LastActivityAt` decision.** Annotation chosen above. Confirm before story starts? The alternatives (separate CR, spec field) are still on the table if specific consumers don't fit annotation semantics.
+1. **~~Story 3 `LastActivityAt` decision.~~** Resolved (audit pass 3): annotation patch via the API service as sole writer. Controller's `handleResuming` redundant write is removed. The "belt-and-suspenders" race protection is no longer needed because annotation patches and Status updates use independent optimistic-concurrency lanes (A12).
 2. **Story 2 retry attempt limit.** `retry.DefaultBackoff` (5 attempts, ~1s) matches the existing API-service pattern. Acceptable or want longer?
 3. **Story 4 forwarded-header allow-list.** Is the proposed list complete? Specifically: should `Strict-Transport-Security` or similar security headers from upstream be forwarded? Today none of upstream's responses set them, so the list is safe; if upstream adds headers later, the explicit list catches them.
-4. **~~Story 4 prior-phase tracking lifetime.~~** Resolved in the design above: cleanup happens on `Terminated` / `Terminating` (not on `Failed`, because Failed→Active is recoverable via Change A and the Active branch still needs `prior` to be correct).
+4. **~~Story 4 prior-phase tracking lifetime.~~** Resolved: cleanup happens on `Terminated` / `Terminating` (not on `Failed`, because Failed→Active is recoverable via Change A and the Active branch still needs `prior` to be correct).
 5. **Should the DeletionTimestamp check be a `WorkspacePhase` precondition** rather than a per-handler check? Argument for: DRY. Argument against: handlers have different correct responses (handleCreating waits, handleActive transitions to Creating); the predicate is shared but the response isn't.

@@ -1,7 +1,7 @@
 # Epic 22: agentd Health-Endpoint Redesign
 
 **Status:** Planning
-**Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 2 — major rework)
+**Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 3 — citation drift, mux split promoted to scope)
 **Priority:** Medium-High
 **Depends on:** none
 **Related epics:**
@@ -34,14 +34,14 @@ Hypotheses that did NOT survive verification:
 
 | # | Validates | Fact | How verified |
 |---|---|---|---|
-| F1 | A1 | LivenessProbe path is `/v1/healthz`; ReadinessProbe path is `/v1/readyz`; both target `agentd.AgentdPort` | `controller.go:680-694` |
-| F2 | A1 | LivenessProbe: `InitialDelaySeconds=15, PeriodSeconds=30, TimeoutSeconds=5, FailureThreshold=6` → kubelet kills pod after ~3 minutes of failed probes. ReadinessProbe: `InitialDelaySeconds=10, PeriodSeconds=15, TimeoutSeconds=3, FailureThreshold=5` → kubelet stops sending traffic after ~1 minute of failed readiness | `controller.go:685, 694` |
-| F3 | A2 | `checkAgentHealth` builds URL `http://%s:%d/v1/statusz`; `healthCheckInterval=15s`; `healthHTTPClient.Timeout=5s` | `controller.go:992, 952, 959` |
-| F4 | A3 | `/v1/healthz` calls `client.IsHealthy` (which HTTP-GETs `/global/health` on opencode); `/v1/readyz` calls `cachedState` (3 opencode calls) and `client.IsHealthy`; `/v1/statusz` calls `client.IsHealthy` and `cachedState` | `cmd/workspace-agentd/main.go:374, 392-394, 408-409` |
-| F5 | A4 | `cachedState` does `cache.mu.Lock(); defer cache.mu.Unlock()` then makes `client.ConnectedProviders`, `ConfiguredProviderCount`, `ListSessions` calls | `main.go:273-285` |
-| F6 | A5 | `connectedCacheTTL = 15 * time.Second`; cache hit path skips the 3 opencode calls but the IsHealthy call is outside the cache | `main.go:270, 275, 282-284` |
+| F1 | A1 | LivenessProbe path is `/v1/healthz`; ReadinessProbe path is `/v1/readyz`; both target `agentd.AgentdPort` | `controller.go:687-694` |
+| F2 | A1 | LivenessProbe: `InitialDelaySeconds=15, PeriodSeconds=30, TimeoutSeconds=5, FailureThreshold=6` → kubelet kills pod after ~3 minutes of failed probes. ReadinessProbe: `InitialDelaySeconds=10, PeriodSeconds=15, TimeoutSeconds=3, FailureThreshold=5` → kubelet stops sending traffic after ~1 minute of failed readiness | controller.go probe definitions |
+| F3 | A2 | `checkAgentHealth` builds URL `http://%s:%d/v1/statusz`; `healthCheckInterval=15s`; `healthHTTPClient.Timeout=5s` | `controller.go:995, 955, 962` |
+| F4 | A3 | `/v1/healthz` calls `client.IsHealthy` (which HTTP-GETs `/global/health` on opencode); `/v1/readyz` calls `cachedState` (3 opencode calls) and `client.IsHealthy`; `/v1/statusz` calls `client.IsHealthy` and `cachedState` | `cmd/workspace-agentd/main.go:377, 395-396, 411-412` |
+| F5 | A4 | `cachedState` does `cache.mu.Lock(); defer cache.mu.Unlock()` then makes `client.ConnectedProviders`, `ConfiguredProviderCount`, `ListSessions` calls | `main.go:275-287` |
+| F6 | A5 | `connectedCacheTTL = 15 * time.Second`; cache hit path skips the 3 opencode calls but the IsHealthy call is outside the cache | `main.go:273, 278, 285-287` |
 | F7 | A6 | Worklog 0096 documented `/v1/statusz` timing out under SSE load; worklog 0100 documented identical behavior in the 2026-05-31 incident | Worklogs |
-| F8 | A7 | Pod template builder at `controller.go:678` is in-controller (not Helm) | `grep buildPod controller.go` |
+| F8 | A7 | Pod template builder is in-controller (not Helm); `LivenessProbe` and `ReadinessProbe` defined inline | `grep buildPod controller.go`; probe paths at controller.go:687-694 |
 
 ---
 
@@ -80,12 +80,12 @@ Liveness should report "the agentd process itself is responding" — independent
 - Keeping `/v1/statusz` as the deep-introspection endpoint, expensive but correct. Documented as expensive.
 - Updating the controller's `checkAgentHealth` to differentiate "is the pod alive" (cheap, frequent) from "do I need session/provider data" (expensive, infrequent).
 - Updating the K8s pod spec to make sure kubelet probes use the right endpoint with the right semantics.
+- **Splitting agentd's HTTP listener into two `http.Server` instances** — admin port (healthz/readyz/statusz) on one listener, user port (proxy, upgrade, reload-secrets) on another. Eliminates listener-layer head-of-line blocking when a long-running SSE proxy stream saturates the goroutine pool of a shared mux. Promoted from stretch goal to in-scope per audit pass 3.
 
 **This epic does NOT own:**
 
 - opencode's own performance under SSE load. If opencode is genuinely unresponsive for minutes, that's an opencode bug or workload-design issue, not agentd's concern.
 - General agentd refactoring (request handler reorganization, retry helpers, etc.).
-- Replacing the in-process mux with two listeners (separate admin port). Documented as a stretch goal in US-22.8 but only if measured to be necessary.
 
 ---
 
@@ -235,7 +235,7 @@ To avoid race conditions on the atomic-value `IsHealthy` cache, a single gorouti
 | US-22.5 | Add new controller probe path: `checkAgentLiveness` polls `/v1/healthz` (cheap, frequent) | US-22.1 | Controller has two probe types: liveness (15s) drives `ConsecutiveHealthFailures`; deep-status (60s) drives session-list fields |
 | US-22.6 | Refactor controller's `checkAgentHealth` to call deep-status separately and never increment `ConsecutiveHealthFailures` on its failures | US-22.5 | Failures of the deep poll mark fields stale, do NOT trigger pod restart |
 | US-22.7 | Verify kubelet readiness probe interaction with the new cached `/v1/readyz` semantics | US-22.3 | Pod transitions to NotReady within 60-90s of opencode dying (cache flips ready=false after 3 × 5s refresh failures = 15s; kubelet then needs `FailureThreshold=5 × PeriodSeconds=15s` = 75s of consecutive 503s, total ~75-90s wall-clock depending on probe phase alignment); a single slow refresh (one that misses the 4s budget but the next succeeds) MUST NOT flip ready=false |
-| US-22.8 | (stretch) Split mux into two listeners: admin port (healthz/readyz/statusz) + user port (proxy, upgrade) | none | Heavy SSE proxy traffic on user port cannot starve the admin port at the listener layer; ship only if measured to be needed |
+| US-22.8 | Split mux into two `http.Server` listeners: admin port (healthz/readyz/statusz, default `:9091`) + user port (proxy, upgrade, reload-secrets, default `:9090`). Pod spec's probes target the admin port; API service's proxy traffic targets the user port. Both listeners share zero state beyond the in-process cache. | US-22.1, US-22.3 | Two separate `http.Server` goroutines; chaos test: 1000 concurrent SSE streams on user port → admin port p99 < 100ms (would have head-of-line blocked on the single mux). Pod spec probes updated to admin port; API proxy targets user port. |
 
 ---
 
@@ -290,7 +290,7 @@ US-22.5 + US-22.6 (controller side) ship together once US-22.1 lands.
 
 US-22.7 (verify kubelet readiness behavior) verifies the prior stories under realistic conditions.
 
-US-22.8 (mux split) is a stretch goal; only ships if metrics show the single-mux design is still a bottleneck after US-22.1–22.7.
+US-22.8 (mux split) ships after US-22.1 and US-22.3 are stable. Promoted from stretch to in-scope: independently fixes a separate failure mode (Go's `http.Server` with a default mux serializes requests on a per-connection goroutine but mux dispatch is shared; under heavy SSE load, request acceptance latency rises). Two listeners ⇒ two independent goroutine pools.
 
 This epic should land BEFORE Epic 21 because:
 - Epic 21's backoff is meant to absorb the SECOND-order effect of agentd starvation.
@@ -309,8 +309,8 @@ This epic should land BEFORE Epic 21 because:
 
 ## Open questions for review
 
-1. **Cache TTL.** 5s for `/v1/readyz` is a balance of staleness vs load. Acceptable? Shorter (2s) means faster recovery but more load; longer (15s) means more staleness.
+1. **~~Cache TTL.~~** Resolved (audit pass 3): 5s for `/v1/readyz`.
 2. **Refresher goroutine retry on failure.** Today's design: keep refreshing every 5s regardless of failures, flip `ready=false` after 3 consecutive failures. Should the goroutine have its own backoff on persistent failure?
-3. **Mux split (US-22.8).** Worth doing now, or only if measured to be needed? The pod has limited CPU/memory; running two http.Server instances has marginal cost.
+3. **~~Mux split (US-22.8).~~** Resolved (audit pass 3): in-scope, ships after US-22.1 and US-22.3.
 4. **Should `/v1/healthz` also gate on a basic agentd self-check** — e.g. "is the SSE tracker goroutine still alive and consuming events"? Or is "process responds to HTTP" sufficient? Argument for: catches silent deadlocks. Argument against: more complexity, more ways for the check itself to fail.
 5. **Probe timeout values.** Kubelet liveness `TimeoutSeconds=5` is generous for the new `/v1/healthz` (which should be < 100ms). Should we tighten to 1s? Argument for: faster restart on real death. Argument against: marginal benefit.

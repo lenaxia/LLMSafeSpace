@@ -1,7 +1,7 @@
 # Epic 21: Workspace Failure-Mode Robustness — State Machine
 
 **Status:** Planning
-**Created:** 2026-05-30 · **Last revised:** 2026-05-31 (audit pass 2)
+**Created:** 2026-05-30 · **Last revised:** 2026-05-31 (audit pass 3 — citation drift, three-writer LastActivityAt reality, sequencing decisions)
 **Priority:** Medium-High
 **Depends on:** Worklog 0100 (Change A — declarative recovery from `Failed` via `spec.restartGeneration`, shipped); Epic 23 Story 1 (DeletionTimestamp guard) MUST land before any Change B story.
 **Blocks:** none
@@ -23,8 +23,8 @@ The design rests on the following assumptions. Each is verified in the next sect
 | A1 | The controller's reconcile is serialized per-workspace (no concurrent reconciles of the same Workspace) | Code-verified |
 | A2 | Today's `MaxTransientFailures = 3` produces terminal Failed within ~45 seconds of sustained transient failures, given `healthCheckInterval = 15s` and `healthHTTPClient.Timeout = 5s` | Code-verified, computed |
 | A3 | Each workspace pod restart cycle (delete pod → create new pod → reach `PodRunning` + `healthCheckGracePeriod`) costs at least 30 seconds of unavailability before the new pod can be probed | Code-verified |
-| A4 | `WorkspaceStatus` has fields the controller writes; `LastActivityAt` is the only field the API service writes today (besides `Phase` for explicit Suspend/Resume) | Code-verified |
-| A5 | `spec.restartGeneration` is read by `handleActive` (controller.go:258) and `handleFailed` (controller.go:84 — Change A); both transition to a fresh creating cycle | Code-verified |
+| A4 | `WorkspaceStatus.LastActivityAt` has THREE writers: API ActivityTracker (`activity.go:123`), API Resume (`workspace_service.go:448`), AND controller's handleResuming (`controller.go:403`). The two Resume-flow writers are intentional "belt-and-suspenders" race protection per source comments at both sites. `Phase` is also written by API for Suspend/Resume (`workspace_service.go:402, 442`). | Code-verified |
+| A5 | `spec.restartGeneration` is read by `handleActive` (controller.go:261) and `handleFailed` (controller.go:87 — Change A); both transition to a fresh creating cycle | Code-verified |
 | A6 | The five Failed-write sites have semantically distinct causes; no taxonomy field today | Code-verified |
 | A7 | No production users today; CRD field additions are NOT bound by backwards-compatibility constraints. Old fields may be deleted outright; absent migration paths are acceptable | Stated by user, this session |
 | A8 | The cluster runs at most one workspace controller leader (controller-runtime leader election ensures only one leader writes status at a time) | Code-verified — implicit in `ctrl.NewControllerManagedBy(mgr)` defaults |
@@ -39,14 +39,14 @@ Hypotheses considered and refuted:
 
 | # | Validates | Fact | How verified |
 |---|---|---|---|
-| F1 | A1, A8 | `MaxConcurrentReconciles` defaults to 1 in controller-runtime; `SetupWithManager` sets no override | `controller.go:902-906` — no `WithOptions` clause; default applies |
-| F2 | A2 | `healthCheckInterval = 15 * time.Second`, `healthCheckFailureThreshold = int32(3)`, `healthHTTPClient.Timeout = 5 * time.Second` | `controller.go:952, 954, 959` |
+| F1 | A1, A8 | `MaxConcurrentReconciles` defaults to 1 in controller-runtime; `SetupWithManager` sets no override | controller.go: no `WithOptions` clause; default applies |
+| F2 | A2 | `healthCheckInterval = 15 * time.Second`, `healthCheckFailureThreshold = int32(3)`, `healthHTTPClient.Timeout = 5 * time.Second` | `controller.go:955, 957, 962` |
 | F3 | A2 | Three consecutive failures take ≥ 45 seconds (3 × 15s rate-limit between probes) plus up to 5s for the third probe to time out | Computed from F2 |
-| F4 | A3 | `healthCheckGracePeriod = 30 * time.Second` — no health checks fire for the first 30s after pod start | `controller.go:955, 962-963` |
+| F4 | A3 | `healthCheckGracePeriod = 30 * time.Second` — no health checks fire for the first 30s after pod start | `controller.go:958, 965-966` |
 | F5 | A3 | Pod-restart cycle: `r.deletePodByName` (immediate K8s API call) → kubelet termination grace period (default 30s) → `r.Create` new pod → kubelet pulls image / starts container → `PodRunning` → 30s grace before health checks resume. Empirically observed at 30-60s from worklog 0100 incident timeline | Pod events (`kubectl get events`) + code paths in `handleCreating`, `checkAgentHealth` |
-| F6 | A4 | Status writers: controller writes 23 fields; `api/internal/handlers/activity.go:121` writes `Status.LastActivityAt`; `api/internal/services/workspace/workspace_service.go:400, 446` write `Status.Phase` for Suspend/Resume | `grep -rn "Status\." --include="*.go"` in controller and api packages |
-| F7 | A5 | Change A handler at `controller.go:84-99` reads `spec.RestartGeneration > status.ObservedRestartGeneration`; transitions to `Pending` and clears stale fields | Worklog 0100 + current source |
-| F8 | A6 | Five Failed-write sites with distinct messages: controller.go:138, 169, 203, 244, 467 | `grep "Status.Phase = v1.WorkspacePhaseFailed" controller.go` |
+| F6 | A4 | Three writers of `Status.LastActivityAt`: API `activity.go:123` (ActivityTracker.flushOne, periodic), API `workspace_service.go:448` (Resume flow), controller `controller.go:403` (handleResuming "belt-and-suspenders" reset). `Status.Phase` API writers: `workspace_service.go:402, 442`. Controller writes 23 fields total. | `grep -n "Status\.LastActivityAt\s*=" --include="*.go"` |
+| F7 | A5 | Change A handler at `controller.go:87-101` reads `spec.RestartGeneration > status.ObservedRestartGeneration`; transitions to `Pending` and clears stale fields | Worklog 0100 + current source |
+| F8 | A6 | Five Failed-write sites with distinct messages: controller.go:143, 174, 208, 249, 472 | `grep -n "Status\.Phase\s*=\s*v1\.WorkspacePhaseFailed" controller.go` |
 
 ---
 
@@ -62,13 +62,13 @@ Workspaces still enter `Failed` too eagerly. The state machine has five distinct
 
 | # | Site (controller.go:line) | Trigger | Recoverable how? |
 |---|---|---|---|
-| 1 | 138 | PVC could not be created within `pendingPhaseTimeout` (5 min) | Retry once K8s API is healthy. No human intervention typically needed. |
-| 2 | 169 | PVC stuck non-bound for 5 min (immediate-binding storage class) | Storage admin must fix the StorageClass. Auto-retry is wasted budget. |
-| 3 | 203 | `buildPod()` returned an error | Operator must fix the spec (bad runtime image, missing secret). Auto-retry will loop. |
-| 4 | 244 | Pod observed in K8s phase=Failed during `handleCreating` | **Often a controller bug** (Epic 23 Story 1: dying pod misclassified). Otherwise transient — image pull retry, node draining. |
-| 5 | 467 | `recoverFromTransientPodLoss` exhausted `MaxTransientFailures = 3` | Almost always transient — the underlying flake recovered N seconds later. The 3-strike count, combined with a 15s rate-limit, gives a workspace ≥ 45s to demonstrate it's broken before being killed. |
+| 1 | 143 | PVC could not be created within `pendingPhaseTimeout` (5 min) | Retry once K8s API is healthy. No human intervention typically needed. |
+| 2 | 174 | PVC stuck non-bound for 5 min (immediate-binding storage class) | Storage admin must fix the StorageClass. Auto-retry is wasted budget. |
+| 3 | 208 | `buildPod()` returned an error | Operator must fix the spec (bad runtime image, missing secret). Auto-retry will loop. |
+| 4 | 249 | Pod observed in K8s phase=Failed during `handleCreating` | **Often a controller bug** (Epic 23 Story 1: dying pod misclassified). Otherwise transient — image pull retry, node draining. |
+| 5 | 472 | `recoverFromTransientPodLoss` exhausted `MaxTransientFailures = 3` | Almost always transient — the underlying flake recovered N seconds later. The 3-strike count, combined with a 15s rate-limit, gives a workspace ≥ 45s to demonstrate it's broken before being killed. |
 
-The verified incident from worklogs 0099/0100 hit path #4 via path #5's underlying mechanism: agentd `/v1/statusz` timed out 3× under SSE load → controller deleted the pod → the dying pod showed K8s phase=Failed for a moment → `handleCreating:244` interpreted it as a permanent failure. **Two distinct bugs compounded.** Epic 23 Story 1 fixes path #4's misclassification. Epic 21 (this one) fixes path #5's overly-eager give-up.
+The verified incident from worklogs 0099/0100 hit path #4 via path #5's underlying mechanism: agentd `/v1/statusz` timed out 3× under SSE load → controller deleted the pod → the dying pod showed K8s phase=Failed for a moment → `handleCreating:249` interpreted it as a permanent failure. **Two distinct bugs compounded.** Epic 23 Story 1 fixes path #4's misclassification. Epic 21 (this one) fixes path #5's overly-eager give-up.
 
 ### Why this hurts
 
@@ -117,7 +117,7 @@ Epic 21 is done when **all** of the following hold. These are the invariants the
 
 ### What's wrong today (re-stated precisely)
 
-`recoverFromTransientPodLoss` (controller.go:456-477) does:
+`recoverFromTransientPodLoss` (controller.go:459-480) does:
 
 ```
 TransientFailureCount++
@@ -142,7 +142,7 @@ NextRetryAt        *metav1.Time `json:"nextRetryAt,omitempty"`
 LastSuccessAt      *metav1.Time `json:"lastSuccessAt,omitempty"`
 ```
 
-`TransientFailureCount` and `LastTransientFailureAt` are **removed outright** in US-21.1 (per A7, no BC required). All consumers — `recoverFromTransientPodLoss`, `maybeResetTransientCounter`, the Change A handler at controller.go:84-99 (handleFailed branch), and the Active-branch RestartGeneration handler at controller.go:258-266 — switch to the new fields in the same commit cycle.
+`TransientFailureCount` and `LastTransientFailureAt` are **removed outright** in US-21.1 (per A7, no BC required). All consumers — `recoverFromTransientPodLoss`, `maybeResetTransientCounter`, the Change A handler at controller.go:87-101 (handleFailed branch), and the Active-branch RestartGeneration handler at controller.go:261-269 — switch to the new fields in the same commit cycle.
 
 **Backoff schedule (constants in `constants.go`):**
 
@@ -188,7 +188,7 @@ if workspace.Status.LastSuccessAt != nil &&
 }
 ```
 
-This reuses the existing `TransientFailureResetWindow = 5 * 60` constant (controller.go:486-488 today). No new constant. Implementation lives in `maybeResetTransientCounter` (existing function, repurposed to also reset Change B's fields).
+This reuses the existing `TransientFailureResetWindow = 5 * 60` constant (controller.go:489-493 today). No new constant. Implementation lives in `maybeResetTransientCounter` (existing function, repurposed to also reset Change B's fields).
 
 **Reconcile honors `NextRetryAt`:** in `handleCreating` and `handleActive`, before any pod-state-checking work:
 
@@ -209,9 +209,9 @@ The clear-on-elapse means a single reconcile both expires the backoff and procee
 
 **Initial value semantics:** a freshly-created workspace has `ConsecutiveFailures = 0`, `NextRetryAt = nil`, `LastSuccessAt = nil`. All three fields are `omitempty` in JSON. Zero values mean "no failures yet." The controller never explicitly initializes them at creation time.
 
-**Interaction with Change A (`spec.restartGeneration`):** if the operator bumps the gen field while the workspace is mid-backoff (Phase=Creating, NextRetryAt set), the bump must immediately end the backoff. The Change A handler at `controller.go:84-99` (Failed branch) already clears stale fields; extend it (and the Active branch at `controller.go:258-266`) to also clear `ConsecutiveFailures = 0`, `NextRetryAt = nil`, `LastSuccessAt = nil`. Test US-21.5 covers this.
+**Interaction with Change A (`spec.restartGeneration`):** if the operator bumps the gen field while the workspace is mid-backoff (Phase=Creating, NextRetryAt set), the bump must immediately end the backoff. The Change A handler at `controller.go:87-101` (Failed branch) already clears stale fields; extend it (and the Active branch at `controller.go:261-269`) to also clear `ConsecutiveFailures = 0`, `NextRetryAt = nil`, `LastSuccessAt = nil`. Test US-21.5 covers this.
 
-**Interaction with Change C:** when the cap is reached, `recoverFromTransientPodLoss` at line 467 (refactored to call Change C's `markFailed` helper) sets `FailureReason = TooManyFailures`. Today's free-form `"pod lost N times; marking failed"` becomes a structured field plus a human message.
+**Interaction with Change C:** when the cap is reached, `recoverFromTransientPodLoss` at line 470 (refactored to call Change C's `markFailed` helper) sets `FailureReason = TooManyFailures`. Today's free-form `"pod lost N times; marking failed"` becomes a structured field plus a human message.
 
 ### Files modified
 
@@ -225,7 +225,7 @@ The clear-on-elapse means a single reconcile both expires the backoff and procee
 
 - **Controller restart mid-backoff.** `NextRetryAt` is in the CRD. Replacement controller picks up the schedule deterministically. Test: kill controller pod, observe workspace, restart controller, assert NextRetryAt honored. (envtest scenario.)
 - **Clock skew between controller pods.** Per A8, only the leader writes; controller-runtime ensures single-writer via leader election. `metav1.Now()` is the leader's local clock; clock drift across leader transitions could cause one extra requeue but no correctness issue.
-- **Backoff exceeds `spec.timeout`.** `spec.timeout` is enforced in `handleActive` at controller.go:311-318 only when the workspace is Active and `StartTime` is set. During backoff the workspace is in `Creating` with no live `StartTime` (cleared on transition). So `spec.timeout` does NOT terminate a backing-off workspace. **Documented behavior:** Change B may keep a workspace alive past its `spec.timeout` boundary if it's stuck retrying. This is intentional — `spec.timeout` is a per-Active-session deadline, not a workspace-lifetime deadline.
+- **Backoff exceeds `spec.timeout`.** `spec.timeout` is enforced in `handleActive` at controller.go:314-321 only when the workspace is Active and `StartTime` is set. During backoff the workspace is in `Creating` with no live `StartTime` (cleared on transition). So `spec.timeout` does NOT terminate a backing-off workspace. **Documented behavior:** Change B may keep a workspace alive past its `spec.timeout` boundary if it's stuck retrying. This is intentional — `spec.timeout` is a per-Active-session deadline, not a workspace-lifetime deadline.
 - **Pre-existing CRD with no Change B fields (per A7+#8):** zero values cause the controller to treat the workspace as "no failures yet, no backoff active." First failure goes through the new path normally.
 
 ### Story breakdown — Change B
@@ -297,15 +297,15 @@ Each site provides the appropriate reason. Free-form `Message` text becomes a hu
 
 | Today's site | Reason after Change C |
 |---|---|
-| controller.go:138 ("workspace timed out in Pending phase") | `FailureReasonPendingTimeout` |
-| controller.go:169 ("PVC not bound after timeout") | `FailureReasonPVCBindTimeout` |
-| controller.go:203 ("pod build failed: ...") | `FailureReasonPodBuildFailed` |
-| controller.go:244 ("pod entered Failed phase during creation") | `FailureReasonPodFailedDuringCreation` (after Epic 23 Story 1 has eliminated the dying-pod misclassification) |
-| controller.go:467 ("pod lost N times; marking failed") | `FailureReasonTooManyFailures` |
+| controller.go:143 ("workspace timed out in Pending phase") | `FailureReasonPendingTimeout` |
+| controller.go:174 ("PVC not bound after timeout") | `FailureReasonPVCBindTimeout` |
+| controller.go:208 ("pod build failed: ...") | `FailureReasonPodBuildFailed` |
+| controller.go:249 ("pod entered Failed phase during creation") | `FailureReasonPodFailedDuringCreation` (after Epic 23 Story 1 has eliminated the dying-pod misclassification) |
+| controller.go:472 ("pod lost N times; marking failed") | `FailureReasonTooManyFailures` |
 
 ### API surface
 
-`GET /api/v1/workspaces/:id/status` (existing endpoint at `workspace_service.go:455-…`) extends `WorkspaceStatusResult` with `FailureReason` field. Frontend receives both `phase` and `failureReason`.
+`GET /api/v1/workspaces/:id/status` (existing endpoint at `workspace_service.go`) extends `WorkspaceStatusResult` with `FailureReason` field. Frontend receives both `phase` and `failureReason`.
 
 ### Frontend implications (separate epic, not Epic 21)
 
