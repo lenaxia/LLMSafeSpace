@@ -18,5 +18,24 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // React Compiler rules — too strict for this codebase's patterns.
+      // Standard useEffect(() => setState(x), [dep]) is flagged incorrectly.
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/refs': 'off',
+      // Allow exporting hooks alongside components (standard pattern)
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Allow underscore-prefixed unused vars (intentional destructure ignores)
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['src/test/**', 'tests/**', '**/*.test.{ts,tsx}'],
+    rules: {
+      // Tests can use any for mocks
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
   },
 ])

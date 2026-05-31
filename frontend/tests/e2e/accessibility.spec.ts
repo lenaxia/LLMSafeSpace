@@ -31,7 +31,6 @@ test.describe("Accessibility", () => {
     await page.goto("/login");
     // The skip link is sr-only but present in DOM
     // It becomes visible on focus (keyboard users)
-    const skipLink = page.locator("a[href='#main-content']");
     // Login page uses AuthCard layout, not AppShell — skip link is only in AppShell
     // Verify login page is keyboard-navigable by checking form inputs are focusable
     const username = page.getByPlaceholder("Username");

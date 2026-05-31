@@ -52,8 +52,8 @@ export function SecretsTab() {
         } catch { bindings[s.id] = []; }
       }));
       setSecretBindings(bindings);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -74,8 +74,8 @@ export function SecretsTab() {
     try {
       await secretsApi.delete(id);
       setSecrets((s) => s.filter((x) => x.id !== id));
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -85,8 +85,8 @@ export function SecretsTab() {
       const res = await secretsApi.reveal(id, revealPassword);
       setRevealedValue(res.value);
       setRevealPassword("");
-    } catch (e: any) {
-      setError(e.message === "encryption key not available; re-authenticate" ? "Session expired. Please log in again." : e.message);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : String(e)) === "encryption key not available; re-authenticate" ? "Session expired. Please log in again." : (e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -273,14 +273,14 @@ function generateRandomSecret(length = 32): string {
 
 async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: string }> {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "Ed25519" } as any,
+    { name: "Ed25519" } as EcKeyGenParams,
     true,
     ["sign", "verify"],
   ).catch(() => null);
 
   if (keyPair) {
-    const privPkcs8 = await crypto.subtle.exportKey("pkcs8", (keyPair as any).privateKey);
-    const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", (keyPair as any).publicKey));
+    const privPkcs8 = await crypto.subtle.exportKey("pkcs8", (keyPair as CryptoKeyPair).privateKey);
+    const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", (keyPair as CryptoKeyPair).publicKey));
 
     // Build OpenSSH public key wire format: [len][algorithm][len][key]
     const algo = new TextEncoder().encode("ssh-ed25519");
@@ -408,10 +408,11 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
         metadata: Object.keys(submitMetadata).length > 0 ? submitMetadata : undefined,
       });
       setCreatedValue(value);
-    } catch (err: any) {
-      onError(err.message === "encryption key not available; re-authenticate"
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onError(msg === "encryption key not available; re-authenticate"
         ? "Session expired. Please log out and log back in to manage secrets."
-        : err.message);
+        : msg);
     } finally {
       setSubmitting(false);
     }

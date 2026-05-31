@@ -8,7 +8,7 @@ const STORAGE_KEY = "llmsafespace_user_settings";
 type Listener = () => void;
 
 let cache: Record<string, unknown> = loadFromStorage();
-let listeners: Set<Listener> = new Set();
+const listeners: Set<Listener> = new Set();
 
 function loadFromStorage(): Record<string, unknown> {
   try {

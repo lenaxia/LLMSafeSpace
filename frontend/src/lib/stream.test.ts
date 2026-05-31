@@ -115,7 +115,7 @@ describe("extractStreamText", () => {
   // --- Edge cases ---
 
   it("handles text with escaped quotes", () => {
-    const json = '{"info":{},"parts":[{"type":"text","text":"she said \\\"hello\\\""}]}';
+    const json = '{"info":{},"parts":[{"type":"text","text":"she said \\"hello\\""}]}';
     const result = extractStreamText(json);
     expect(result.displayText).toBe('she said "hello"');
   });
