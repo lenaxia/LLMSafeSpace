@@ -21,7 +21,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | # | Assumption | Validation |
 |---|-----------|------------|
 | A1 | Workspace CRD supports `ReadWriteMany` access mode | ✅ `WorkspaceStorageConfig.AccessMode` enum includes `ReadWriteMany` (`pkg/apis/llmsafespace/v1/workspace_types.go:19`) |
-| A2 | `buildPVC()` handles RWX | ✅ `controller.go:552`: `if workspace.Spec.Storage.AccessMode == "ReadWriteMany"` |
+| A2 | `buildPVC()` handles RWX | ✅ `controller.go:583`: `if workspace.Spec.Storage.AccessMode == "ReadWriteMany"` |
 | A3 | Proxy resolves backend via `workspace.Status.PodIP` per-request | ✅ `proxy.go:293` fetches workspace CRD; line 361 reads `Status.PodIP`; retries with fresh IP on connection error (line 371) |
 | A4 | Workspace reconciler sets PodIP during `handleCreating` only; `handleActive` does NOT re-set it | ✅ `controller.go:206` sets PodIP in handleCreating; handleActive only checks pod existence |
 | A5 | Agentd tracks session state in memory via `sessionStatusTracker` | ✅ `cmd/workspace-agentd/main.go` — `statuses map[string]string` |
@@ -147,6 +147,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 - [ ] Write-ahead: phase persisted to status BEFORE executing next step
 - [ ] One active Migration per workspace — reject if another in-progress
 - [ ] Timeouts: CreatingTarget=60s, WaitingReady=120s, TransferringState=10s, CuttingOver=5s
+- [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
 - [ ] Failed → rollback: delete target pod, leave source running
 - [ ] Target pod created via shared `pkg/workspace/pod.BuildPod()` with name `{workspace}-{uid[:8]}-mig` and nodeAffinity for target node
 - [ ] Target pod has OwnerReference → workspace (for GC if workspace deleted during migration)
