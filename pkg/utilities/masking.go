@@ -1,7 +1,5 @@
 package utilities
 
-import ()
-
 // MaskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names
 func MaskSensitiveFieldsWithList(data map[string]interface{}, sensitiveFields []string) {
 	for _, key := range sensitiveFields {

@@ -49,6 +49,11 @@ sdks/python/__pycache__/
 sdks/python/*.egg-info/
 sdks/go/live-test
 
+# Frontend build / dev artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+
 # Epic 17 Phase 0 artefacts: contain JWTs, audit logs, baseline snapshots.
 # These are reproducible from the scripts; never commit.
 design/stories/epic-17-security-review/phase-0/phase-0-artefacts/

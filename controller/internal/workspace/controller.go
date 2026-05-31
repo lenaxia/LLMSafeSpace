@@ -43,7 +43,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	if !workspace.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !workspace.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, workspace)
 	}
 
@@ -1028,7 +1028,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		}
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var status agentd.StatuszResponse
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
@@ -1065,8 +1065,10 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		return
 	}
 
-	// Populate agent-reported metadata on CRD status.
-	ws.Status.ActiveSessions = int32(status.SessionsActive)
+	// Populate agent-reported metadata on CRD status. Session count
+	// fits comfortably in int32; OOM kills the pod long before this
+	// overflows.
+	ws.Status.ActiveSessions = int32(status.SessionsActive) //nolint:gosec // G115: int->int32 bounded by pod resource limits
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
 		for i, s := range status.Sessions {

@@ -233,14 +233,14 @@ func TestG2_EnvSecretShellInjection_PlaintextWithSingleQuote(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Results, 1)
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome,
-		"materialization must succeed; injection is neutralised, not skipped")
+		"materialization must succeed; injection is neutralized, not skipped")
 
 	envFile := string(fs.contents["/tmp/secrets-env"])
 	requireBashSourceProducesValue(t, envFile, "MY_TOKEN", payload)
 }
 
 // TestG2_EnvSecretShellInjection_Corpus exhaustively covers shell-meaningful
-// payloads. Each must be neutralised AND, when the produced env-file is
+// payloads. Each must be neutralized AND, when the produced env-file is
 // sourced by bash, MY_TOKEN must equal the original payload exactly. We
 // shell out to bash because the bash sourcer is the actual consumer; pure
 // Go round-trip tests miss attacks that exploit shell parsing differences.

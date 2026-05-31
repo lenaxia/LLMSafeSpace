@@ -670,7 +670,7 @@ func (v *stubPasswordVerifier) VerifyPassword(_ context.Context, _ string, passw
 }
 
 // TestHandler_RevealSecret_RequiresPasswordVerification is the
-// regression test for the validator's "RevealSecret is theatre"
+// regression test for the validator's "RevealSecret is theater"
 // finding. Pre-fix, the handler accepted any password (the field was
 // declared but never checked). Post-fix:
 //   - Without a configured verifier, reveal returns 503.

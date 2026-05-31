@@ -161,7 +161,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			secretsHandler.SetSecretsManifestWriter(wsSvc)
 		}
 		// Wire the password verifier so RevealSecret enforces a real
-		// re-authentication gate. Without this the field is theatre
+		// re-authentication gate. Without this the field is theater
 		// (validator finding on RevealSecret in worklog 0094 audit).
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			secretsHandler.SetPasswordVerifier(authSvc)
@@ -185,7 +185,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 				Metadata:  []byte(`{}`),
 				Timestamp: time.Now(),
 			}
-			auditStore.LogAudit(context.Background(), entry)
+			_ = auditStore.LogAudit(context.Background(), entry)
 		})
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
@@ -253,6 +253,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: router,
+		// Slowloris hardening: cap header read time. Body read +
+		// response write are bounded by per-handler logic; the API has
+		// long-lived SSE endpoints so we deliberately do NOT set
+		// ReadTimeout/WriteTimeout at the server level.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	return &App{
@@ -294,20 +299,20 @@ func (a *App) Run() error {
 	}
 
 	if err := a.k8sClient.Start(); err != nil {
-		a.services.Stop()
+		_ = a.services.Stop()
 		return fmt.Errorf("failed to start Kubernetes client: %w", err)
 	}
 
 	if err := a.proxyHandler.Start(); err != nil {
 		a.k8sClient.Stop()
-		a.services.Stop()
+		_ = a.services.Stop()
 		return fmt.Errorf("failed to start proxy handler: %w", err)
 	}
 
 	if err := a.sessionIndexSvc.Start(); err != nil {
-		a.proxyHandler.Stop()
+		_ = a.proxyHandler.Stop()
 		a.k8sClient.Stop()
-		a.services.Stop()
+		_ = a.services.Stop()
 		return fmt.Errorf("failed to start session index: %w", err)
 	}
 

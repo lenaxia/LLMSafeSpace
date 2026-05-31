@@ -836,7 +836,7 @@ func TestMarkWorkspaceDeleted_PurgesBindings(t *testing.T) {
 // TestMarkWorkspaceDeleted_BindingDeleteFailureRollsBack verifies that
 // when the bindings DELETE fails the entire transaction rolls back —
 // neither the soft-delete nor the bindings purge land. This is
-// stronger than the original behaviour (which committed the soft-delete
+// stronger than the original behavior (which committed the soft-delete
 // even if bindings failed) but ensures a clean atomic semantic.
 // Operators can retry MarkWorkspaceDeleted on the next reconcile.
 func TestMarkWorkspaceDeleted_BindingDeleteFailureRollsBack(t *testing.T) {

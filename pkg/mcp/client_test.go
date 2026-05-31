@@ -199,7 +199,7 @@ func TestHTTPClient_SendMessage_Timeout(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/api/v1/workspaces/ws-1/events", func(w http.ResponseWriter, r *http.Request) {
-		// Block until context cancelled (simulates timeout)
+		// Block until context canceled (simulates timeout)
 		w.Header().Set("Content-Type", "text/event-stream")
 		<-r.Context().Done()
 	})
@@ -219,7 +219,7 @@ func TestHTTPClient_SendMessage_Timeout(t *testing.T) {
 
 func TestHTTPClient_ContextCancelled(t *testing.T) {
 	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second) // will be cancelled
+		time.Sleep(5 * time.Second) // will be canceled
 	}))
 	defer ts.Close()
 

@@ -27,7 +27,7 @@ import (
 //     NOT yet apply status-subresource semantics, so a malicious user
 //     can stamp `status.podIP` / `status.podName` / `status.endpoint`
 //     and the API proxy will route requests to the attacker-supplied
-//     pod-IP. Defence in depth: also reject status mutations on UPDATE
+//     pod-IP. Defense in depth: also reject status mutations on UPDATE
 //     through the spec endpoint (the kube-apiserver subresource split
 //     normally enforces this, but failure-modes during CRD upgrades
 //     have surfaced it as a real risk).
@@ -242,7 +242,7 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 			"spec.status fields must not be set on CREATE; the controller writes status via the status subresource")
 	}
 
-	// 7. F1.2.2 (defence in depth) — On UPDATE, refuse to mutate Status
+	// 7. F1.2.2 (defense in depth) — On UPDATE, refuse to mutate Status
 	//    via the spec endpoint. The kube-apiserver normally enforces
 	//    this via the subresource split (writes to /workspaces ignore
 	//    Status), but a CRD-upgrade race or a misconfigured aggregator

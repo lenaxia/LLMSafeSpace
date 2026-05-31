@@ -9,10 +9,11 @@ BINARY_NAME=llmsafespace
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Build targets
-.PHONY: all build clean test cover lint fmt vet generate deepcopy \
-        helm-lint helm-template helm-template-debug helm-install-dry-run helm-package \
+.PHONY: all build clean test cover lint fmt fmt-check imports imports-check vet generate deepcopy \
+        helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
         openapi-validate \
-        repolint chart-sync-migrations install-hooks
+        repolint chart-sync-migrations install-hooks \
+        check tools-install
 
 all: test build
 
@@ -36,6 +37,36 @@ lint:
 
 fmt:
 	$(GOCMD) fmt ./...
+
+# fmt-check: verify gofmt has been run. Used by pre-commit and CI to
+# block PRs that contain unformatted Go. Lists offending files and
+# exits non-zero. To fix locally: `make fmt`.
+fmt-check:
+	@unformatted=$$(gofmt -l . | grep -v '/node_modules/' || true); \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt: the following files are not formatted:"; \
+		echo "$$unformatted"; \
+		echo ""; \
+		echo "Run 'make fmt' to fix."; \
+		exit 1; \
+	fi
+
+imports:
+	@which goimports >/dev/null 2>&1 || $(GOCMD) install golang.org/x/tools/cmd/goimports@latest
+	goimports -w $$(find . -name '*.go' -not -path './frontend/node_modules/*' -not -path './sdks/*/node_modules/*')
+
+# imports-check: verify goimports has been run (import grouping +
+# unused-import removal). Same enforcement model as fmt-check.
+imports-check:
+	@which goimports >/dev/null 2>&1 || $(GOCMD) install golang.org/x/tools/cmd/goimports@latest
+	@bad=$$(goimports -l . | grep -v '/node_modules/' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "goimports: the following files have wrong imports:"; \
+		echo "$$bad"; \
+		echo ""; \
+		echo "Run 'make imports' to fix."; \
+		exit 1; \
+	fi
 
 vet:
 	$(GOCMD) vet ./...
@@ -84,6 +115,18 @@ helm-install-dry-run:
 helm-package:
 	$(HELM) package $(CHART_DIR) -d dist/
 
+# helm-render: lint + template the chart against the bundled defaults
+# (values.yaml). Catches:
+#   - syntax errors / missing template files
+#   - undefined values referenced by templates
+#   - invalid Helm chart structure (missing Chart.yaml, etc.)
+# Output is discarded; we only care about the exit code. Pre-commit
+# and CI use this; for debugging use helm-template or
+# helm-template-debug to see the rendered manifests.
+helm-render:
+	$(HELM) lint $(CHART_DIR)
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) >/dev/null
+
 # ---------------------------------------------------------------------------
 # OpenAPI validation
 # ---------------------------------------------------------------------------
@@ -120,3 +163,28 @@ install-hooks:
 	chmod +x .githooks/pre-commit
 	@echo "Installed: git core.hooksPath = .githooks"
 	@echo "Pre-commit hook will now run repolint on every commit."
+
+# ---------------------------------------------------------------------------
+# Quality gates (Epic 19: pre-merge automation)
+# ---------------------------------------------------------------------------
+# tools-install: install the developer tools the gates rely on. Run once
+# per fresh clone, or after a Go-toolchain upgrade. Idempotent.
+tools-install:
+	$(GOCMD) install golang.org/x/tools/cmd/goimports@latest
+	@which golangci-lint >/dev/null 2>&1 || \
+		$(GOCMD) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	@echo "Tools installed: goimports, golangci-lint"
+	@echo "Other tools (helm, gitleaks, govulncheck, trivy) are checked"
+	@echo "by the relevant gates and installed on demand."
+
+# check: run all the pre-merge quality gates locally. Mirrors what CI
+# will block on. Use this before pushing to avoid CI round-trips.
+#   - fmt-check     : gofmt is clean
+#   - imports-check : goimports is clean
+#   - vet           : go vet finds nothing
+#   - lint          : golangci-lint finds nothing
+#   - helm-render   : chart lints and renders
+#   - repolint      : migration/worklog/chart-drift sequence checks
+check: fmt-check imports-check vet lint helm-render repolint
+	@echo ""
+	@echo "All quality gates passed."

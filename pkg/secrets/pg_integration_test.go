@@ -551,7 +551,7 @@ func TestPgE2E_RotateKey_AtomicReEncryption(t *testing.T) {
 // regression for the AddBindings primitive. It must:
 //   - INSERT ... ON CONFLICT DO NOTHING (idempotent re-add)
 //   - take pg_try_advisory_xact_lock so concurrent SetBindings +
-//     AddBindings calls on the same workspace serialise
+//     AddBindings calls on the same workspace serialize
 //   - never lose updates under contention
 func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 	pool := getTestPool(t)
@@ -609,7 +609,7 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 	}
 
 	// SetBindings + concurrent AddBindings: SetBindings is "replace",
-	// AddBindings is "merge". The advisory lock serialises them so
+	// AddBindings is "merge". The advisory lock serializes them so
 	// the final state is well-defined: whichever ran last wins
 	// the union.
 	wsID2 := fmt.Sprintf("ws-addb2-%d", time.Now().UnixNano())
@@ -624,7 +624,7 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 		t.Errorf("expected 3 bindings (Set 2 + Add 1), got %d", len(bindings2))
 	}
 
-	t.Log("PostgreSQL: AddBindings idempotent + advisory-lock serialisation passed")
+	t.Log("PostgreSQL: AddBindings idempotent + advisory-lock serialization passed")
 }
 
 // TestPgE2E_AsyncAuditLogger_Lifecycle covers the lifecycle hardening

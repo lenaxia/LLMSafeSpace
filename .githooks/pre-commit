@@ -1,37 +1,72 @@
 #!/usr/bin/env bash
 # .githooks/pre-commit
 #
-# Repository-layout lint runs before every commit. Catches:
-#   - duplicate / non-sequential migration version numbers
-#   - duplicate worklog numbers (>= 0097)
-#   - drift between api/migrations/ and charts/llmsafespace/migrations/
+# Pre-commit quality gates. Catches the failure modes that have caused
+# production incidents or that lint can mechanically flag:
 #
-# Wired up by `make install-hooks`. This runs `make repolint` which
-# rebuilds and runs cmd/repolint. Build is incremental so this typically
-# finishes in <1s after the first run.
+#   - duplicate / non-sequential migration version numbers (repolint)
+#   - duplicate worklog numbers (>= 0097) (repolint)
+#   - drift between api/migrations/ and charts/llmsafespace/migrations/ (repolint)
+#   - un-gofmt'd Go source                              (fmt-check)
+#   - missing/wrong Go imports (goimports)              (imports-check)
+#   - golangci-lint findings (errcheck, bodyclose, …)   (lint)
+#   - broken Helm templates / undefined values          (helm-render)
 #
-# To skip in an emergency: `git commit --no-verify`. Don't make a habit of it.
+# Wired up by `make install-hooks`. Each gate runs from a Make target so the
+# enforcement logic has one source of truth (Makefile).
+#
+# Performance: the heaviest gate is golangci-lint at ~30s on a cold cache,
+# ~5s warm. Skip via `git commit --no-verify` only as a true emergency
+# escape hatch — CI runs the same gates and will reject the PR.
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-echo "== pre-commit: repolint =="
-if ! make -s repolint; then
-    cat >&2 <<'EOF'
+# Run a Make target with a clear banner. On failure, echo the recovery
+# hint and exit; we don't want to surface raw Make errors to the user.
+run_gate() {
+    local name="$1"
+    local target="$2"
+    local hint="$3"
+    echo "== pre-commit: ${name} =="
+    if ! make -s "${target}"; then
+        cat >&2 <<EOF
 
-Pre-commit blocked: repolint reported failures (see above).
+Pre-commit blocked: ${name} failed (see above).
 
-Common fixes:
-  - duplicate migration version: rename to the next available 6-digit number
-                                 (use `ls api/migrations/` to find max)
-  - chart migrations drift:      run `make chart-sync-migrations` and stage
-                                 the resulting changes
-  - duplicate worklog number:    pick the next available 4-digit number
-                                 (use `ls worklogs/` to find max)
+Fix:
+  ${hint}
 
 To bypass in an emergency: git commit --no-verify
 EOF
-    exit 1
-fi
+        exit 1
+    fi
+}
+
+# Cheap gates first, fail fast.
+run_gate "repolint" "repolint" \
+    "duplicate migration: rename to next 6-digit number (ls api/migrations/).
+  chart migrations drift: run 'make chart-sync-migrations' and stage the result.
+  duplicate worklog: pick the next 4-digit number (ls worklogs/)."
+
+run_gate "gofmt" "fmt-check" \
+    "Run 'make fmt' to format Go files."
+
+run_gate "goimports" "imports-check" \
+    "Run 'make imports' to fix Go import grouping."
+
+# Slower gates last.
+run_gate "golangci-lint" "lint" \
+    "Read the lint output above. Most common fixes:
+    - errcheck:    discard with '_ =' or check the error
+    - bodyclose:   add 'defer func() { _ = resp.Body.Close() }()'
+    - sqlclosecheck: add 'defer func() { _ = rows.Close() }()'
+    - gosec/G117:  if false positive, suppress with //nolint:gosec // explanation"
+
+run_gate "helm-render" "helm-render" \
+    "helm template failed. Check the chart for:
+    - undefined values referenced via .Values.X
+    - syntax errors in templates/*.yaml
+    - missing required fields in Chart.yaml"

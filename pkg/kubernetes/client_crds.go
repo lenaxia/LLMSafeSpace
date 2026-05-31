@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -61,7 +61,7 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	// with eventCount=0). Watch responses have their own server-side
 	// timeoutSeconds; the client-side Timeout should be 0 (no timeout)
 	config.Timeout = 0
-	config.ContentConfig.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
+	config.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
 	config.APIPath = "/apis"
 	// WithoutConversion() is required for CRD types that don't define a
 	// separate internal hub version. Without it, the rest client's watch

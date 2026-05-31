@@ -161,7 +161,7 @@ func TestRouterConfig_SecretsHandler(t *testing.T) {
 //
 // We test the wiring helper directly rather than constructing the full
 // App because app.New requires PostgreSQL/Redis; the helper is the unit
-// of behaviour we actually care about.
+// of behavior we actually care about.
 func TestSecretsHandler_PodIPResolverWired(t *testing.T) {
 	keyStore := &dbKeyStoreAdapter{}
 	dekCache := &memDEKCache{store: make(map[string][]byte)}
@@ -189,7 +189,7 @@ func TestSecretsHandler_PodIPResolverWired(t *testing.T) {
 
 // fakeAppCRDGetter / fakeAppDBLookup are placeholders used only to
 // confirm the resolver constructor accepts compatible adapter types.
-// Behavioural tests live in secrets_podip_resolver_test.go.
+// Behavioral tests live in secrets_podip_resolver_test.go.
 type fakeAppCRDGetter struct{}
 
 func (f *fakeAppCRDGetter) GetWorkspace(string) (*v1.Workspace, error) { return nil, nil }

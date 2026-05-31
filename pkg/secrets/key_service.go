@@ -513,7 +513,7 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 // compiler does not elide it (the slice escapes via the caller), and
 // the runtime.KeepAlive call below explicitly defeats any future
 // elimination by extending b's lifetime past the loop. This is
-// best-effort defence-in-depth, not a confidentiality boundary —
+// best-effort defense-in-depth, not a confidentiality boundary —
 // callers must not rely on this for timing-channel resistance, and
 // the underlying memory may have been swapped to disk before the wipe
 // runs anyway.

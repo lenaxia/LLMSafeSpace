@@ -29,7 +29,6 @@ import (
 // map atomically under the lock.
 type dbKeyStoreAdapter struct {
 	mu      sync.Mutex
-	db      interfaces.DatabaseService
 	memKeys map[string]*secrets.UserKeyRecord
 }
 
@@ -99,7 +98,6 @@ func (a *dbKeyStoreAdapter) UpdateWrappedDEKRecovery(_ context.Context, userID s
 // run does not grow without bound.
 type dbSecretStoreAdapter struct {
 	mu       sync.Mutex
-	db       interfaces.DatabaseService
 	secrets  map[string]*secrets.UserSecret
 	bindings map[string][]string
 	audit    []*secrets.AuditEntry
@@ -111,7 +109,7 @@ type dbSecretStoreAdapter struct {
 // without bound.
 const maxAdapterAuditEntries = 4096
 
-// init lazy-initialises maps. Caller must already hold a.mu.
+// init lazy-initializes maps. Caller must already hold a.mu.
 func (a *dbSecretStoreAdapter) init() {
 	if a.secrets == nil {
 		a.secrets = make(map[string]*secrets.UserSecret)

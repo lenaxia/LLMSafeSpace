@@ -62,7 +62,7 @@ func (c materializeConfig) toPaths() secrets.Paths {
 	}
 }
 
-// loadMaterializeConfig resolves filesystem paths. It honours the same
+// loadMaterializeConfig resolves filesystem paths. It honors the same
 // LLMSAFESPACE_* env-var overrides used by the test suite; in production
 // no overrides are set and defaults match the runtime pod layout.
 func loadMaterializeConfig() materializeConfig {
@@ -115,7 +115,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 			// Missing file is a no-op, not a failure.
 			return 0
 		}
-		fmt.Fprintf(stderr, "materialize: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
 		return 2
 	}
 
@@ -124,7 +124,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	reportResult(stderr, result)
 
 	if err != nil && !errors.Is(err, secrets.ErrPartialFailure) {
-		fmt.Fprintf(stderr, "materialize: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
 		return 3
 	}
 	if result != nil && result.HasFailures() {
@@ -144,12 +144,12 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 		return
 	}
 	mat, skip, fail := r.Counts()
-	fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failed\n", mat, skip, fail)
+	_, _ = fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failedn", mat, skip, fail)
 	for _, sr := range r.Results {
 		if sr.Outcome == secrets.OutcomeMaterialized {
 			continue
 		}
-		fmt.Fprintf(w, "  - %s/%s: %s — %s\n", sr.Type, sr.Name, sr.Outcome, sr.Reason)
+		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %sn", sr.Type, sr.Name, sr.Outcome, sr.Reason)
 	}
 }
 
@@ -194,6 +194,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 		restarted := false
 		if proc != nil && shouldRestart(batch) {
 			log.Info("env/llm secrets changed, restarting opencode")
+			//nolint:contextcheck // restart() spawns its own health-check goroutine with a fresh context; see managedProcess.restart
 			proc.restart()
 			restarted = true
 		}
@@ -258,6 +259,11 @@ func buildEnvFrom(path string) []string {
 	// `set -a` causes every assignment in the sourced file to be exported,
 	// even if the file omits the `export` keyword. `env -0` writes
 	// NUL-delimited records so values containing newlines survive.
+	// G204: bash + script body are constant; only `path` varies and it
+	// is bound to $1 (positional argument), so even a path containing
+	// shell metachars cannot escape the script body. noctx: this runs
+	// at boot before context.Context is meaningful.
+	//nolint:gosec,noctx // G204/noctx: positional bind, boot-time call
 	out, err := exec.Command("bash", "-c",
 		`set -a; source "$1"; env -0`,
 		"_", path,

@@ -81,6 +81,10 @@ func (t *SSETracker) EnsureWatching(workspaceID string) {
 		return
 	}
 
+	// cancel is stored in t.subscriptions and invoked by StopWatching;
+	// gosec's G118 cannot see across the map indirection so it flags
+	// this as a leak. Suppressed because the lifecycle is correct.
+	//nolint:gosec // G118 false positive; cancel stored in subscriptions map
 	ctx, cancel := context.WithCancel(context.Background())
 	t.subscriptions[workspaceID] = cancel
 
@@ -179,7 +183,7 @@ func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) err
 	if err != nil {
 		return fmt.Errorf("SSE connection: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("SSE endpoint returned status %d", resp.StatusCode)

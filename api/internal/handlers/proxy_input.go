@@ -128,7 +128,7 @@ func (h *ProxyHandler) fetchFromPod(ctx context.Context, podIP, password, path s
 		h.logger.Warn("Failed to fetch pending input requests", "error", err, "path", path)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, err

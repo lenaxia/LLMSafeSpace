@@ -128,12 +128,12 @@ func (h *ProxyHandler) Start() error {
 
 		watcher, err := NewWorkspaceWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
 		if err != nil {
-			h.activityTracker.Stop()
+			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("creating CRD watcher: %w", err)
 			return
 		}
 		if err := watcher.Start(); err != nil {
-			h.activityTracker.Stop()
+			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
 			return
 		}
@@ -151,7 +151,7 @@ func (h *ProxyHandler) Stop() error {
 			h.watcher.Stop()
 		}
 		if h.activityTracker != nil {
-			h.activityTracker.Stop()
+			_ = h.activityTracker.Stop()
 		}
 	})
 	return nil
@@ -265,7 +265,7 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	}
@@ -350,7 +350,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	var bodyBytes []byte
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		bodyBytes, err = io.ReadAll(c.Request.Body)
-		c.Request.Body.Close()
+		_ = c.Request.Body.Close()
 		if err != nil {
 			h.logger.Error("Failed to read request body", err, "workspaceID", workspaceID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
@@ -429,7 +429,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	if err != nil {
 		return fmt.Errorf("proxy request to workspace: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Determine whether to filter the response. Filtering only applies when
 	// the caller asked, the response is JSON, and the upstream succeeded.
@@ -455,7 +455,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 		}
 		c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(filtered)))
 		c.Writer.WriteHeader(resp.StatusCode)
-		c.Writer.Write(filtered)
+		_, _ = c.Writer.Write(filtered)
 		return nil
 	}
 
@@ -472,7 +472,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			c.Writer.Write(buf[:n])
+			_, _ = c.Writer.Write(buf[:n])
 			if canFlush {
 				flusher.Flush()
 			}
@@ -611,47 +611,6 @@ func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (str
 	h.pwCacheMu.Unlock()
 
 	return pw, nil
-}
-
-func (h *ProxyHandler) getMaxSessions(ctx context.Context, workspaceID, workspaceRef string) (workspaceConfig, error) {
-	h.wsConfigMu.RLock()
-	if cfg, ok := h.wsConfig[workspaceID]; ok {
-		h.wsConfigMu.RUnlock()
-		return cfg, nil
-	}
-	h.wsConfigMu.RUnlock()
-
-	if workspaceRef == "" {
-		return workspaceConfig{
-			workspaceID:       "",
-			maxActiveSessions: defaultMaxActiveSessions,
-		}, nil
-	}
-
-	ws, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceRef, metav1.GetOptions{})
-	if err != nil {
-		h.logger.Warn("Failed to get workspace CRD, using defaults", "workspaceRef", workspaceRef)
-		return workspaceConfig{
-			workspaceID:       workspaceRef,
-			maxActiveSessions: defaultMaxActiveSessions,
-		}, nil
-	}
-
-	maxSessions := defaultMaxActiveSessions
-	if ws.Spec.MaxActiveSessions > 0 {
-		maxSessions = int(ws.Spec.MaxActiveSessions)
-	}
-
-	cfg := workspaceConfig{
-		workspaceID:       workspaceRef,
-		maxActiveSessions: maxSessions,
-	}
-
-	h.wsConfigMu.Lock()
-	h.wsConfig[workspaceID] = cfg
-	h.wsConfigMu.Unlock()
-
-	return cfg, nil
 }
 
 func (h *ProxyHandler) checkAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool {
@@ -817,7 +776,7 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var session struct {
 		Title string `json:"title"`
@@ -872,7 +831,7 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 		return
 	}
 	var parsed interface{}
-	json.Unmarshal([]byte(rawData), &parsed)
+	_ = json.Unmarshal([]byte(rawData), &parsed)
 	h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 		Type:      "opencode.event",
 		EventType: eventType,
@@ -923,7 +882,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
 		}
-		json.Unmarshal(properties, &resolution)
+		_ = json.Unmarshal(properties, &resolution)
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type: "agent.question.resolved",
 			Data: map[string]string{
@@ -954,7 +913,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			SessionID string `json:"sessionID"`
 			Reply     string `json:"reply"`
 		}
-		json.Unmarshal(properties, &resolution)
+		_ = json.Unmarshal(properties, &resolution)
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type: "agent.permission.resolved",
 			Data: map[string]string{
@@ -1026,7 +985,7 @@ func (h *ProxyHandler) autoApprovePermission(workspaceID, requestID string) {
 			"workspaceID", workspaceID, "requestID", requestID)
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	h.logger.Info("Auto-approved permission",
 		"workspaceID", workspaceID, "requestID", requestID)
@@ -1049,7 +1008,7 @@ func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 		} `json:"properties"`
 	}
 	if json.Unmarshal([]byte(rawData), &evt) == nil && evt.Properties.Info.ID != "" && evt.Properties.Info.Title != "" {
-		h.sessionIndex.UpsertTitle(context.Background(), workspaceID, evt.Properties.Info.ID, evt.Properties.Info.Title)
+		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, evt.Properties.Info.ID, evt.Properties.Info.Title)
 	}
 }
 

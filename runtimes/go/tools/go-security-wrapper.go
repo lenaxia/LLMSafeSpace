@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +21,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading restricted packages: %v\n", err)
 		os.Exit(1)
 	}
-	defer configFile.Close()
+	defer func() { _ = configFile.Close() }()
 
 	var restricted RestrictedPackages
 	if err := json.NewDecoder(configFile).Decode(&restricted); err != nil {
@@ -39,8 +38,12 @@ func main() {
 
 	sourceFile := os.Args[1]
 
-	// Read and analyze the source code
-	source, err := ioutil.ReadFile(sourceFile)
+	// Read and analyze the source code. G703: this binary runs INSIDE
+	// a sandboxed pod whose filesystem is the sandbox boundary; reading
+	// a caller-provided path is the entire purpose of the wrapper. The
+	// outer Kubernetes sandbox is the security boundary, not this read.
+	//nolint:gosec // G703: by design; sandbox boundary is enforced by K8s, not this binary
+	source, err := os.ReadFile(sourceFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading source file: %v\n", err)
 		os.Exit(1)
@@ -66,14 +69,19 @@ func main() {
 	}
 
 	// Compile and run the code
-	tempDir, err := ioutil.TempDir("", "llmsafespace-go-*")
+	tempDir, err := os.MkdirTemp("", "llmsafespace-go-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating temp directory: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	outputBinary := filepath.Join(tempDir, "program")
+	// G204: argv contains user-supplied sourceFile; same sandbox-
+	// boundary argument as G703 above. The wrapper runs inside a
+	// pod with a read-only root, dropped capabilities, and seccomp
+	// filters; subprocess invocation is intentional.
+	//nolint:gosec,noctx // G204/noctx: by design; sandbox enforced by K8s
 	buildCmd := exec.Command("go", "build", "-o", outputBinary, sourceFile)
 	buildCmd.Env = append(os.Environ(),
 		"GOGC=50",
@@ -86,7 +94,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Execute the compiled program
+	// Execute the compiled program. outputBinary is in our temp dir
+	// and was just built by us; not user-controlled at this point.
+	//nolint:gosec,noctx // G204/noctx: outputBinary is internally generated
 	cmd := exec.Command(outputBinary)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

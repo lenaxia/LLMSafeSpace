@@ -16,7 +16,7 @@ env:
 
 jobs:
   lint:
-    name: Lint (repo layout)
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,39 @@ jobs:
       # duplicate worklog numbers. See worklog 0098.
       - name: Repository layout lint
         run: make repolint
+
+      # gofmt: blocks PRs containing un-formatted Go. The Makefile target
+      # writes the offending files to stdout and exits non-zero.
+      - name: gofmt
+        run: make fmt-check
+
+      # goimports: blocks PRs with incorrect import grouping or unused
+      # imports. Same enforcement model as gofmt.
+      - name: goimports
+        run: make imports-check
+
+      # go vet runs as part of golangci-lint (`govet` linter), but is
+      # cheap enough to keep here as an explicit fast-fail too.
+      - name: go vet
+        run: go vet ./...
+
+      # golangci-lint with the curated ruleset in .golangci.yml. Catches
+      # the audit-cycle bugs that pre-merge automation could have caught
+      # mechanically (errcheck, bodyclose, sqlclosecheck, contextcheck,
+      # gosec, staticcheck, etc.). See worklog 0101 for the rationale.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      # Helm chart sanity: chart lints and `helm template` succeeds with
+      # the bundled values. Catches undefined-value references and
+      # template syntax errors before they break a deploy.
+      - name: helm-render
+        run: |
+          curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          make helm-render
 
   test:
     name: Test

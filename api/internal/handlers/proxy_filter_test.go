@@ -181,7 +181,7 @@ func TestProxy_VerboseFlag_FalseKeepsPatchParts(t *testing.T) {
 
 // TestProxy_StripDoesNotApplyToSessionList verifies that creating/listing
 // sessions never has patch parts stripped — those endpoints don't return
-// parts arrays anyway, but we want to confirm pass-through behaviour.
+// parts arrays anyway, but we want to confirm pass-through behavior.
 func TestProxy_StripDoesNotApplyToSessionList(t *testing.T) {
 	body := `[{"id":"ses_1","slug":"x"}]`
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {

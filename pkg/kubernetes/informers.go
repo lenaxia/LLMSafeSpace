@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 

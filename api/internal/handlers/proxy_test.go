@@ -148,12 +148,6 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	}
 }
 
-func (e *testEnv) setupWorkspaceMulti(workspaceID string, crds ...*v1.Workspace) {
-	for _, crd := range crds {
-		e.wsMock.On("Get", workspaceID, metav1.GetOptions{}).Return(crd, nil).Once()
-	}
-}
-
 func (e *testEnv) setupPasswordWithT(t *testing.T, workspaceID, password string) {
 	secret := makePasswordSecret(workspaceID, password)
 	_, err := e.clientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
@@ -272,7 +266,7 @@ func TestProxy_StreamEvents_NilBrokerReturns503(t *testing.T) {
 
 // TestProxy_SSEStreamPassthrough previously tested transparent proxy forwarding
 // to the pod's /event endpoint. StreamEvents is now broker-based and no longer
-// proxies to the pod; passthrough behaviour is covered by stream_events_test.go.
+// proxies to the pod; passthrough behavior is covered by stream_events_test.go.
 
 func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -411,7 +405,7 @@ func TestProxy_PasswordCachedAfterFirstRead(t *testing.T) {
 
 	// Track how many times the k8s secret is read
 	var secretReadCount int32
-	env.clientset.Fake.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+	env.clientset.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		atomic.AddInt32(&secretReadCount, 1)
 		return false, nil, nil // fall through to default handler
 	})

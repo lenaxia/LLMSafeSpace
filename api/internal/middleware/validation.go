@@ -47,9 +47,9 @@ func DefaultValidationConfig() ValidationConfig {
 
 func init() {
 	// Register custom validation functions
-	validate.RegisterValidation("nohtml", validateNoHTML)
-	validate.RegisterValidation("alphanum_space", validateAlphanumSpace)
-	validate.RegisterValidation("iso8601", validateISO8601)
+	_ = validate.RegisterValidation("nohtml", validateNoHTML)
+	_ = validate.RegisterValidation("alphanum_space", validateAlphanumSpace)
+	_ = validate.RegisterValidation("iso8601", validateISO8601)
 
 	// Register custom tag name function
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -71,7 +71,7 @@ func ValidationMiddleware(log interfaces.LoggerInterface, config ...ValidationCo
 
 	// Register custom validators
 	for tag, fn := range cfg.CustomValidators {
-		validate.RegisterValidation(tag, fn)
+		_ = validate.RegisterValidation(tag, fn)
 	}
 
 	return func(c *gin.Context) {

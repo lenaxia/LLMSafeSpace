@@ -122,7 +122,7 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body any, 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Limit response body reads to prevent OOM
 	limited := io.LimitReader(resp.Body, maxResponseBody)
@@ -227,7 +227,7 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 		// SSE failed or timed out — fall back to polling history
 		return c.fallbackHistory(ctx, workspaceID, sessionID)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineSize)
@@ -279,7 +279,7 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 						SessionID string `json:"session_id"`
 					}
 					if json.Unmarshal(event.Data, &pData) == nil && pData.SessionID == sessionID {
-						go c.PermissionReply(ctx, workspaceID, pData.ID, "always", "")
+						go func() { _ = c.PermissionReply(ctx, workspaceID, pData.ID, "always", "") }()
 					}
 				}
 

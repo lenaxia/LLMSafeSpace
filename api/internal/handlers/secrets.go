@@ -58,7 +58,7 @@ func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 // SetPasswordVerifier installs the verifier used to confirm the
 // caller's password on RevealSecret. If left nil the reveal handler
 // rejects every request with 503; this is intentional because shipping
-// without password verification is exactly the security theatre we
+// without password verification is exactly the security theater we
 // fixed (validator finding on RevealSecret in worklog 0094 audit).
 func (h *SecretsHandler) SetPasswordVerifier(v PasswordVerifier) {
 	h.passwordVerifier = v
@@ -196,7 +196,7 @@ func (h *SecretsHandler) DeleteSecret(c *gin.Context) {
 // Requires password reconfirmation: a stolen JWT alone must not be
 // sufficient to extract every secret. Without a configured
 // PasswordVerifier the handler returns 503 — shipping without
-// verification is exactly the security theatre the validator audit
+// verification is exactly the security theater the validator audit
 // flagged. The bcrypt.CompareHashAndPassword call inside the verifier
 // is constant-time, so failed-password timing does not differentiate
 // from missing-DEK timing in practice.
@@ -323,10 +323,10 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 
 	result, err := h.doReload(c.Request.Context(), userID, workspaceID, secretsJSON)
 	if err != nil {
-		switch {
-		case err == errPodIPResolverNotConfigured:
+		switch err {
+		case errPodIPResolverNotConfigured:
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "secret reload not configured"})
-		case err == errNoRunningPod:
+		case errNoRunningPod:
 			c.JSON(http.StatusConflict, gin.H{"error": "workspace has no running pod"})
 		default:
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -452,13 +452,13 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach workspace agent: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		var agentErr struct {
 			Error string `json:"error"`
 		}
-		json.NewDecoder(resp.Body).Decode(&agentErr)
+		_ = json.NewDecoder(resp.Body).Decode(&agentErr)
 		msg := "agent reload failed"
 		if agentErr.Error != "" {
 			msg = agentErr.Error
@@ -467,7 +467,7 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 	}
 
 	var result reloadResult
-	json.NewDecoder(resp.Body).Decode(&result)
+	_ = json.NewDecoder(resp.Body).Decode(&result)
 	return &result, nil
 }
 
@@ -478,7 +478,7 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 // — that's what DeleteWorkspaceEnv is for), so we can use the
 // store's AddBindings primitive which holds a workspace-scoped
 // advisory lock for the duration of the binding write. Two
-// concurrent SetWorkspaceEnv calls on the same workspace serialise
+// concurrent SetWorkspaceEnv calls on the same workspace serialize
 // at the AddBindings step and neither's secrets are lost.
 //
 // Error handling: every UpdateSecret/CreateSecret/AddBindings
@@ -542,7 +542,7 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 	// to the workspace's binding set under a workspace-scoped
 	// advisory lock without touching any existing bindings. Two
 	// concurrent SetWorkspaceEnv calls on the same workspace
-	// serialise at this step rather than racing on a Get-then-Set
+	// serialize at this step rather than racing on a Get-then-Set
 	// snapshot (worklog 0094 pass-2 finding O1).
 	if err := h.svc.AddBindings(ctx, userID, workspaceID, newBindings); err != nil {
 		h.warn("SetWorkspaceEnv: AddBindings failed",
@@ -820,7 +820,7 @@ func handleSecretError(c *gin.Context, err error) {
 	case errors.Is(err, secrets.ErrDEKUnavailable):
 		c.JSON(http.StatusForbidden, gin.H{"error": "encryption key not available; re-authenticate"})
 	case errors.Is(err, secrets.ErrUserKeysMissing):
-		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "user key material not initialised; please re-login"})
+		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "user key material not initialized; please re-login"})
 	case errors.Is(err, secrets.ErrInvalidSecretType), errors.Is(err, secrets.ErrInvalidMetadata):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:

@@ -37,7 +37,7 @@ type SecretStore interface {
 	// AddBindings atomically adds secretIDs to a workspace's binding
 	// set without removing any existing bindings. Implementations
 	// MUST take the same workspace-scoped advisory lock as
-	// SetBindings so concurrent Add+Set callers serialise. Existing
+	// SetBindings so concurrent Add+Set callers serialize. Existing
 	// bindings to the same secret are silently ignored
 	// (INSERT ... ON CONFLICT DO NOTHING semantics).
 	//

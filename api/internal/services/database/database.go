@@ -217,7 +217,9 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 		return nil
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d", i+1)
+	// Same pattern as credential_sets: WHERE clause is a literal
+	// "WHERE id = $N"; user values bind via placeholders.
+	query += fmt.Sprintf(" WHERE id = $%d", i+1) //nolint:gosec // G202: literal with placeholder bind
 	args = append(args, userID)
 
 	_, err := s.DB.ExecContext(ctx, query, args...)
@@ -283,6 +285,11 @@ func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string
 		return false, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}
 
+	// QueryRow without context is intentional here: this method is called
+	// from CheckResourceAccess which currently does not propagate context.
+	// Plumbing ctx through CheckResourceAccess + the AuthService interface
+	// is a larger refactor tracked separately.
+	//nolint:noctx // see comment above
 	err := s.DB.QueryRow(query, resourceID, userID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check resource ownership: %w", err)
@@ -302,6 +309,9 @@ func (s *Service) CheckPermission(userID, resourceType, resourceID, action strin
 		AND (action = $4 OR action = '*')
 	`
 
+	// QueryRow without context: same caller-side limitation as
+	// CheckResourceOwnership above. See note there.
+	//nolint:noctx // see CheckResourceOwnership for context
 	err := s.DB.QueryRow(query, userID, resourceType, resourceID, action).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check permission: %w", err)
@@ -382,7 +392,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID string, updat
 	if i == 0 {
 		return nil
 	}
-	query += fmt.Sprintf(" WHERE id = $%d", i+1)
+	query += fmt.Sprintf(" WHERE id = $%d", i+1) //nolint:gosec // G202: literal with placeholder bind
 	args = append(args, workspaceID)
 	_, err := s.DB.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -504,7 +514,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list workspaces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	workspaces := make([]*types.WorkspaceMetadata, 0)
 	for rows.Next() {
 		var ws types.WorkspaceMetadata
@@ -559,7 +569,7 @@ func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIK
 	if err != nil {
 		return nil, fmt.Errorf("failed to list api keys: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	keys := make([]*types.APIKey, 0)
 	for rows.Next() {
@@ -624,7 +634,7 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]types.SessionListItem, 0)
 	for rows.Next() {

@@ -1,0 +1,151 @@
+# golangci-lint v2 configuration for LLMSafeSpace.
+#
+# Ruleset rationale: catch the audit-cycle bugs that pre-merge automation
+# could have caught mechanically (see worklogs 0094, 0099) instead of
+# requiring six manual passes.
+#
+#   errcheck    - dozens of "_ = err" / unchecked return values found
+#                 during pkg/secrets and api/internal/services audits.
+#   bodyclose   - HTTP response body leaks; controller and webhook code
+#                 in particular has had instances.
+#   sqlclosecheck - sql.Rows / sql.Stmt not Close()d.
+#   contextcheck - context.Background() inside a function that has a
+#                  ctx parameter (cancels propagate, deadlines lost).
+#   noctx       - HTTP requests built without context.
+#   staticcheck - dead code, redundant conversions, deprecated APIs,
+#                 plus simplification suggestions and stylistic checks
+#                 (S1xxx, ST1xxx). All in one umbrella in v2.
+#   gosec       - well-known security issues (G401 weak crypto, G601
+#                 implicit memory aliasing, etc).
+#   bidichk     - unicode bidi attacks in source.
+#   misspell    - catches typos in user-facing strings + comments.
+#
+# Deliberately NOT enabled (would add noise without dedicated cleanup):
+#   - revive (style preferences vary, lots of noise)
+#   - lll (line length nag)
+#   - funlen / gocyclo (subjective, lots of false positives)
+#   - tagliatelle (struct tag style)
+#   - exportloopref (removed in v2; loopvar fix in Go 1.22+)
+#
+# To run locally:           make lint
+# To run with auto-fix:     golangci-lint run --fix
+# To suppress a finding:    //nolint:lintername // reason
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  build-tags:
+    - integration
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - sqlclosecheck
+    - contextcheck
+    - noctx
+    - bidichk
+    - misspell
+    - gosec
+  exclusions:
+    # Don't apply default excludes — they hide real bugs (especially
+    # errcheck on os.Setenv, db.Close, etc.).
+    generated: lax
+    paths:
+      # Vendored Go inside frontend's node_modules (e.g. flatted/golang)
+      # is third-party and not ours to lint. .gitignore also excludes
+      # frontend/node_modules; this guards CI runs that npm install.
+      - frontend/node_modules
+      - sdks/typescript/node_modules
+      - sdks/vscode-llmsafespace/node_modules
+    rules:
+      # Tests routinely ignore Close() errors for brevity. Don't fight
+      # this in test files; production code still has to handle them.
+      # noctx in tests is fine: httptest.NewRequest is the standard
+      # pattern even though it doesn't take a context, and forcing
+      # NewRequestWithContext(t.Context(), ...) buys nothing.
+      # bodyclose in tests: assertion-driven tests routinely don't
+      # close response bodies because the request happens through
+      # httptest.NewRecorder which has no real connection.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+          - bodyclose
+      # Generated code is allowed to be uglier than handwritten.
+      - path: zz_generated.*\.go
+        linters:
+          - gosec
+          - staticcheck
+          - unused
+          - errcheck
+      # Mocks and fakes can swallow errors.
+      - path: mocks/
+        linters:
+          - errcheck
+          - gosec
+      # SDK examples sometimes elide error checks for readability.
+      - path: sdks/.*/examples/
+        linters:
+          - errcheck
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    gosec:
+      excludes:
+        # G104 (audit errors not checked) duplicates errcheck.
+        - G104
+        # G304 (file include via variable): too many false positives in
+        # config-loading paths. Re-enable after a real incident.
+        - G304
+        # G101 (hardcoded credentials) fires on constant *names* matching
+        # "Credential", "Password", "Token", etc. — e.g.
+        # `ReasonCredentialInvalid = "CredentialInvalid"` in CRD types,
+        # `SecretsBasePath = "/home/sandbox/.secrets"`. None of these are
+        # actual credentials; they are identifier strings the linter
+        # cannot distinguish. Suppressed globally; real hardcoded
+        # secrets are caught by gitleaks (PR B).
+        - G101
+    govet:
+      enable-all: true
+      disable:
+        # fieldalignment is a micro-optimization that produces hundreds
+        # of cosmetic findings without measurable benefit.
+        - fieldalignment
+        # shadow is too aggressive on our codebase (lots of `err`
+        # shadows in if-blocks that are intentional and idiomatic).
+        - shadow
+        # inline (suggesting `reflect.Ptr` literal vs constant) is a
+        # cosmetic preference, not a correctness issue.
+        - inline
+        # unusedwrite fires on test helper struct literals where we
+        # populate fields for clarity even if the test doesn't read
+        # them later. Low signal.
+        - unusedwrite
+    staticcheck:
+      checks:
+        - all
+        # ST1000 requires every package to have a doc comment. Worth
+        # adding eventually but not on day 1.
+        - "-ST1000"
+        # ST1003 (initialism casing: mockDb vs mockDB) is stylistic and
+        # produces dozens of false positives in test code where naming
+        # follows the production type names. Re-enable once the codebase
+        # has been swept once.
+        - "-ST1003"
+    misspell:
+      locale: US
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -183,7 +183,7 @@ func (s *PgSecretStore) runReEncryptTx(
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Plain SELECT (no FOR UPDATE) — SERIALIZABLE / SSI uses predicate
 	// locks and detects conflicting writes via 40001 abort. Adding
@@ -262,7 +262,7 @@ func (s *PgSecretStore) DeleteSecret(ctx context.Context, userID, secretID strin
 //
 // Concurrency: takes a transaction-scoped advisory lock keyed on the
 // workspace ID's hash so two concurrent SetBindings calls for the
-// same workspace serialise. We use pg_try_advisory_xact_lock with a
+// same workspace serialize. We use pg_try_advisory_xact_lock with a
 // short retry loop rather than pg_advisory_xact_lock (which would
 // block holding a pool connection indefinitely): under a thundering
 // herd of concurrent SetBindings on the same workspace, blocking
@@ -278,7 +278,7 @@ func (s *PgSecretStore) SetBindings(ctx context.Context, workspaceID string, sec
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// pg_try_advisory_xact_lock takes a 64-bit signed bigint;
 	// hashtext returns int4 which we cast. Try up to N times with a
@@ -349,7 +349,7 @@ func (s *PgSecretStore) AddBindings(ctx context.Context, workspaceID string, sec
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := s.acquireWorkspaceLock(ctx, tx, workspaceID); err != nil {
 		return err
@@ -603,7 +603,7 @@ func (l *AsyncAuditLogger) LogAudit(_ context.Context, entry *AuditEntry) (retEr
 // any concurrent LogAudit invocations see closed=true and take the
 // drop path rather than panicking on a send-to-closed-channel.
 //
-// stopCtx is cancelled AFTER the worker drains so a stuck-on-DB
+// stopCtx is canceled AFTER the worker drains so a stuck-on-DB
 // LogAudit eventually returns. There is still a small window between
 // the closed-flag check and the channel send where a concurrent Stop
 // could close the channel out from under a sender; the deferred

@@ -184,8 +184,8 @@ func TestSecretService_EncryptionIsolation(t *testing.T) {
 
 	// User 2 should not be able to get user 1's secret
 	resp, err := svc.GetSecret(ctx, "user-2", created.ID)
-	if resp != nil {
-		t.Error("User 2 should not be able to access user 1's secret")
+	if resp != nil || err == nil {
+		t.Errorf("User 2 should not be able to access user 1's secret (resp=%v, err=%v)", resp, err)
 	}
 
 	// User 2 should not be able to decrypt user 1's secret

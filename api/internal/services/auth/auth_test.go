@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -238,18 +237,13 @@ func TestRevokeToken(t *testing.T) {
 
 	// Generate a valid token
 	token, err := service.GenerateToken("user123")
+	assert.NoError(t, err)
 
-	// Parse the token to get the jti claim
+	// Parse the token to get its claims (for the expiration check below).
 	parsedToken, _ := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		return service.jwtSecret, nil
 	})
 	claims := parsedToken.Claims.(jwt.MapClaims)
-
-	// Get token ID (jti) or use subject as fallback
-	jti, _ := claims["jti"].(string)
-	if jti == "" {
-		jti = fmt.Sprintf("%v", claims["sub"])
-	}
 
 	// Get and validate expiration time
 	expClaim, ok := claims["exp"]
@@ -697,8 +691,8 @@ func TestRegister_UnlocksDEKAndReturnsRecoveryKey(t *testing.T) {
 }
 
 // TestRegister_KeyInitFailureFailsClosed verifies that a failure to
-// initialise encryption keys aborts registration. Returning a JWT against
-// a half-initialised user produces the same Bug 5 symptom (403 on every
+// initialize encryption keys aborts registration. Returning a JWT against
+// a half-initialized user produces the same Bug 5 symptom (403 on every
 // secret operation), so the failure is fatal.
 func TestRegister_KeyInitFailureFailsClosed(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)

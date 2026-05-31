@@ -8,7 +8,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 type KubernetesClient interface {

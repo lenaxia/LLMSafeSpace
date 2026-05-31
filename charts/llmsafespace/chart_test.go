@@ -89,9 +89,7 @@ func splitYAMLDocs(b []byte) [][]byte {
 	// helm template separates docs with `\n---\n` lines.
 	parts := bytes.Split(b, []byte("\n---\n"))
 	out := make([][]byte, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, p)
-	}
+	out = append(out, parts...)
 	return out
 }
 
@@ -176,7 +174,7 @@ func TestG16_DefaultRender_HasDefaultDenyIngress(t *testing.T) {
 		var foundAgentdPort bool
 		for _, p := range ports {
 			pm := p.(map[string]any)
-			if port, _ := pm["port"]; port == float64(4097) || port == 4097 {
+			if port := pm["port"]; port == float64(4097) || port == 4097 {
 				foundAgentdPort = true
 			}
 		}
@@ -289,21 +287,6 @@ func TestG16_PoliciesScopeToWorkspaceNamespace(t *testing.T) {
 // Each test deliberately reverses to FAIL if the contract drifts (mutation-
 // validated: revert the fix in values.yaml or the new template; the test
 // must turn red).
-
-// secretByName returns the Opaque Secret with stringData/data keys for the
-// given chart-internal secret name. The test passes empty extra-values
-// to exercise the "operator did not provide a password" code path.
-func secretByName(docs []map[string]any, name string) map[string]any {
-	for _, d := range docs {
-		if d["kind"] != "Secret" {
-			continue
-		}
-		if metaName(d) == name {
-			return d
-		}
-	}
-	return nil
-}
 
 func secretValue(t *testing.T, sec map[string]any, key string) string {
 	t.Helper()

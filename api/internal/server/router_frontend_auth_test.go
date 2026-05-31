@@ -241,7 +241,7 @@ func TestMe_DBError_Returns500(t *testing.T) {
 //     via session logout.
 //   * RevokeToken errors do NOT prevent the cookie from being cleared
 //     and 204 from being returned. Logout must always succeed from the
-//     user's perspective; the revocation is best-effort defence-in-depth.
+//     user's perspective; the revocation is best-effort defense-in-depth.
 
 func TestG18Logout_RevokesCookieToken(t *testing.T) {
 	router, svc := newAuthFixture(t)

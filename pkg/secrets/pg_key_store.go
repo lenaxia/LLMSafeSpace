@@ -67,7 +67,7 @@ func (s *PgKeyStore) UpdateWrappedDEK(ctx context.Context, userID string, wrappe
 }
 
 // UpdateWrappedDEKRecovery updates the recovery-key wrap. Like
-// UpdateWrappedDEK, the implementation honours an active *pgx.Tx
+// UpdateWrappedDEK, the implementation honors an active *pgx.Tx
 // threaded through the context (via withTx) so future callers that
 // want to bundle a recovery-key rotation into the same atomic unit as
 // the password-key rotation can do so. No current caller does, but

@@ -234,7 +234,6 @@ func isAssignedToUser(assignedTo json.RawMessage, userID string) bool {
 	return false
 }
 
-// RotateEncryptionKey re-encrypts all credential sets with the active key.
 // GetDecryptedProviders retrieves and decrypts the provider config for a credential set.
 func (s *Service) GetDecryptedProviders(ctx context.Context, id string) (ProviderConfig, error) {
 	row, err := s.store.GetCredentialSet(ctx, id)
@@ -311,7 +310,7 @@ func rowToCredentialSet(row *CredentialSetRow, keySet *EncryptionKeySet) *Creden
 	}
 
 	var assignedTo any
-	json.Unmarshal(row.AssignedTo, &assignedTo)
+	_ = json.Unmarshal(row.AssignedTo, &assignedTo)
 
 	return &CredentialSet{
 		ID:             row.ID,

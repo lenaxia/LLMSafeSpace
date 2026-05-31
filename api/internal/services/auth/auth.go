@@ -2,8 +2,8 @@ package auth
 
 import (
 	"context"
-	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,8 +25,13 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
+// hashToken derives a stable Redis cache key from a JWT/API key without
+// storing the raw secret in Redis. SHA-256 is the standard choice; MD5
+// was used historically (see worklog 0028 / M2) but flagged by gosec
+// G401/G501. The output length doesn't matter — Redis happily accepts
+// 64-char keys.
 func hashToken(token string) string {
-	h := md5.Sum([]byte(token))
+	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
 
@@ -446,7 +451,7 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 
 	// Initialize encryption keys for secret management (Epic 10).
 	//
-	// Key initialisation MUST succeed: a half-initialised user (row exists,
+	// Key initialisation MUST succeed: a half-initialized user (row exists,
 	// no DEK) cannot perform any secret operation and login itself cannot
 	// recover from this state without re-deriving the KEK from the
 	// password (which requires `user_keys` to exist). We therefore fail
@@ -599,7 +604,7 @@ func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
 	countStr, _ := s.cacheService.Get(ctx, lockoutKey)
 	count := 0
 	if countStr != "" {
-		fmt.Sscanf(countStr, "%d", &count)
+		_, _ = fmt.Sscanf(countStr, "%d", &count)
 	}
 	count++
 	if duration == 0 {

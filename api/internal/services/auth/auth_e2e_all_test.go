@@ -271,10 +271,10 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 		}
 		// Capture recovery key for test
 		tc.testUserID = resp.User.ID
-		if r, _ := keyStore.GetUserKey(c.Request.Context(), resp.User.ID); r != nil {
-			// Recovery key was already returned during InitializeUserKeys in Register
-			// We need to capture it differently — store it from the key service
-		}
+		// Note: recovery key is returned during InitializeUserKeys in
+		// Register; tests that need it should subscribe to that path
+		// directly. See keyStore.GetUserKey above for the row-existence
+		// check that previously lived here.
 		c.JSON(201, resp)
 	})
 	router.POST("/api/v1/auth/login", func(c *gin.Context) {

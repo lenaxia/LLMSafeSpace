@@ -12,7 +12,7 @@ func (s *Service) GetAllInstanceSettings(ctx context.Context) (map[string]json.R
 	if err != nil {
 		return nil, fmt.Errorf("query instance_settings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]json.RawMessage)
 	for rows.Next() {
@@ -64,7 +64,7 @@ func (s *Service) GetAllUserSettings(ctx context.Context, userID string) (map[st
 	if err != nil {
 		return nil, fmt.Errorf("query user_settings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]json.RawMessage)
 	for rows.Next() {

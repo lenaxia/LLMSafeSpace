@@ -131,7 +131,7 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 				})
 				return
 			}
-			c.AbortWithError(http.StatusInternalServerError, err)
+			_ = c.AbortWithError(http.StatusInternalServerError, err)
 			return
 		}
 

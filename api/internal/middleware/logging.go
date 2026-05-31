@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,14 +16,6 @@ import (
 const (
 	logRequestIDLength = 8
 	maxBodyLogSize     = 1024 // 1KB
-)
-
-var (
-	bodyLogPool = sync.Pool{
-		New: func() interface{} {
-			return new(bytes.Buffer)
-		},
-	}
 )
 
 // LoggingConfig defines configuration for the logging middleware
@@ -180,7 +171,7 @@ func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.Request.Body.Close()
+	_ = c.Request.Body.Close()
 
 	// Replace body with a new reader
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -191,14 +182,10 @@ func generateRequestID() string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, logRequestIDLength)
 	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
+		// Request IDs are tracing aids, not security tokens.
+		// math/rand is sufficient and avoids the crypto/rand syscall
+		// on the request hot path.
+		b[i] = chars[rand.Intn(len(chars))] //nolint:gosec // G404: tracing ID, not a secret
 	}
 	return string(b)
-}
-
-func truncateString(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }

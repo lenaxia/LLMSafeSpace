@@ -4,7 +4,7 @@ package main
 //
 // These tests are written TDD-style: they were authored before the
 // implementation and exercise the contract that the implementation must
-// satisfy. Each test corresponds to a concrete behavioural promise:
+// satisfy. Each test corresponds to a concrete behavioral promise:
 //
 //   - The materialize subcommand reads /sandbox-cfg/secrets.json (or the
 //     path given by --from) and applies it via pkg/agentd/secrets.

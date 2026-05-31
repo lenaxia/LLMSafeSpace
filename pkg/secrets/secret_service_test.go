@@ -414,7 +414,7 @@ func TestSecretService_CreateSecret_InvalidMetadata_NamesField(t *testing.T) {
 }
 
 // TestSecretService_CreateSecret_RejectsAdversarialMountPath is the
-// regression test for Bug 13 in worklog 0085: API-layer defence-in-depth
+// regression test for Bug 13 in worklog 0085: API-layer defense-in-depth
 // against path-traversal in secret-file mount_path. The materializer's
 // resolveMountPath catches these too, but accepting them at the API
 // layer means adversarial input lives in the database long enough for a
@@ -455,7 +455,7 @@ func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
 
 // fakeWorkspaceOwnerVerifier returns ErrWorkspaceNotOwned for any
 // (userID, workspaceID) pair not in the allowedPairs map. Used to
-// exercise the cross-tenant binding-pollution defence (validator
+// exercise the cross-tenant binding-pollution defense (validator
 // pass-3 finding SO-1).
 type fakeWorkspaceOwnerVerifier struct {
 	allowedPairs map[string]map[string]struct{} // userID -> set of workspaceIDs

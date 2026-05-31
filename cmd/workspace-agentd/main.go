@@ -44,7 +44,7 @@ func (c *OpenCodeClient) IsHealthy(ctx context.Context) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var result struct {
 		Healthy bool   `json:"healthy"`
 		Version string `json:"version"`
@@ -60,7 +60,7 @@ func (c *OpenCodeClient) ConnectedProviders(ctx context.Context) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var result struct {
 		Connected []string `json:"connected"`
 	}
@@ -75,7 +75,7 @@ func (c *OpenCodeClient) ConfiguredProviderCount(ctx context.Context) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var result struct {
 		Providers []struct{} `json:"providers"`
 	}
@@ -90,7 +90,7 @@ func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var sessions []struct {
 		ID string `json:"id"`
 	}
@@ -113,11 +113,11 @@ func (c *OpenCodeClient) fetchSessionTitle(ctx context.Context, sessionID string
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var s struct {
 		Title string `json:"title"`
 	}
-	json.NewDecoder(resp.Body).Decode(&s)
+	_ = json.NewDecoder(resp.Body).Decode(&s)
 	return s.Title
 }
 
@@ -209,7 +209,7 @@ func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenC
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("SSE returned status %d", resp.StatusCode)
@@ -315,8 +315,10 @@ func getDiskUsage() *agentd.DiskUsage {
 	if err := syscall.Statfs(workspacePath, &stat); err != nil {
 		return nil
 	}
-	total := int64(stat.Blocks) * int64(stat.Bsize)
-	free := int64(stat.Bfree) * int64(stat.Bsize)
+	// Statfs returns uint64 block counts; a disk large enough to overflow
+	// int64 (>9 EiB) is implausible. Cast is safe in practice.
+	total := int64(stat.Blocks) * int64(stat.Bsize) //nolint:gosec // G115: bounded by physical disk size
+	free := int64(stat.Bfree) * int64(stat.Bsize)   //nolint:gosec // G115: same as above
 	return &agentd.DiskUsage{
 		UsedBytes:  total - free,
 		TotalBytes: total,
@@ -329,7 +331,7 @@ func main() {
 	if err != nil {
 		log = zap.NewNop()
 	}
-	defer log.Sync()
+	defer func() { _ = log.Sync() }()
 
 	// Subcommand dispatch. The materialize subcommand reads
 	// /sandbox-cfg/secrets.json and applies it via pkg/agentd/secrets, then
@@ -373,12 +375,12 @@ func main() {
 		if err != nil {
 			log.Warn("healthz: agent health check failed", zap.Error(err))
 			w.WriteHeader(http.StatusBadGateway)
-			json.NewEncoder(w).Encode(agentd.HealthzResponse{
+			_ = json.NewEncoder(w).Encode(agentd.HealthzResponse{
 				Healthy: false, Version: "", UptimeSeconds: 0,
 			})
 			return
 		}
-		json.NewEncoder(w).Encode(agentd.HealthzResponse{
+		_ = json.NewEncoder(w).Encode(agentd.HealthzResponse{
 			Healthy:       healthy,
 			Version:       version,
 			UptimeSeconds: int(time.Since(startedAt).Seconds()),
@@ -390,7 +392,7 @@ func main() {
 		connected, configured, _ := cachedState(r.Context(), client, cache, sseTracker)
 		healthy, version, _ := client.IsHealthy(r.Context())
 		ready := healthy && len(connected) > 0
-		json.NewEncoder(w).Encode(agentd.ReadyzResponse{
+		_ = json.NewEncoder(w).Encode(agentd.ReadyzResponse{
 			Ready:               ready,
 			ProvidersConnected:  connected,
 			ProvidersConfigured: configured,
@@ -414,7 +416,7 @@ func main() {
 			}
 		}
 
-		json.NewEncoder(w).Encode(agentd.StatuszResponse{
+		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
 			Healthy:             healthy,
 			Ready:               ready,
 			Connected:           connected,
@@ -431,7 +433,15 @@ func main() {
 	})
 
 	log.Info("workspace-agentd starting", zap.String("addr", listenAddr))
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	srv := &http.Server{
+		Addr:    listenAddr,
+		Handler: mux,
+		// Slowloris hardening on the in-pod admin endpoint. Body
+		// timeouts are loose because /reload-secrets accepts arbitrary
+		// payloads bounded only by client patience.
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal("workspace-agentd server failed", zap.Error(err))
 	}
 }
@@ -454,6 +464,11 @@ func (p *managedProcess) start() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopping = false
+	// G204: argument list is fixed at compile time; agentd.AgentPort is
+	// a typed int constant. The only "variable" here is fmt.Sprintf
+	// converting that constant to a string. noctx: opencode is a
+	// long-running daemon, no per-call deadline applies.
+	//nolint:gosec,noctx // G204/noctx: fixed argv, daemon process
 	p.cmd = exec.Command("opencode", "serve", "--hostname", "0.0.0.0", "--port", fmt.Sprintf("%d", agentd.AgentPort))
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr
@@ -500,13 +515,13 @@ func (p *managedProcess) restart() {
 
 	if cmd != nil && cmd.Process != nil {
 		log.Info("stopping opencode for restart", zap.Int("pid", cmd.Process.Pid))
-		cmd.Process.Signal(os.Interrupt)
+		_ = cmd.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
-		go func() { cmd.Wait(); close(done) }()
+		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 			<-done
 		}
 	}
@@ -514,18 +529,31 @@ func (p *managedProcess) restart() {
 	p.restartCount = 0
 	p.start()
 
-	// Verify opencode came back up (health check with timeout)
+	// Verify opencode came back up (health check with timeout). The
+	// goroutine deliberately uses a fresh context: restart() is invoked
+	// from a Gin handler whose ctx may already be canceled before the
+	// child process is up, and we want the health probe to outlive the
+	// triggering request.
+	//nolint:contextcheck // intentional fresh context; see comment above
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		client := &http.Client{Timeout: 2 * time.Second}
 		for i := 0; i < 10; i++ {
 			time.Sleep(time.Second)
-			resp, err := http.Get(healthCheckURL)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthCheckURL, nil)
+			if err != nil {
+				log.Warn("health check request build failed", zap.Error(err))
+				return
+			}
+			resp, err := client.Do(req)
 			if err == nil && resp.StatusCode == 200 {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				log.Info("opencode healthy after restart")
 				return
 			}
 			if resp != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 		}
 		log.Warn("opencode did not become healthy within 10s after restart")

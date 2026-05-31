@@ -16,7 +16,6 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -36,7 +35,7 @@ const (
 // parameterScheme is used to encode PodExecOptions for the exec request.
 var parameterScheme = func() *runtime.Scheme {
 	s := runtime.NewScheme()
-	corev1.AddToScheme(s)
+	_ = corev1.AddToScheme(s)
 	return s
 }()
 
@@ -74,15 +73,11 @@ type WorkspaceGetter interface {
 	GetWorkspace(id string) (*v1.Workspace, error)
 }
 
-// k8sWorkspaceGetter adapts the K8s client to WorkspaceGetter.
-type k8sWorkspaceGetter struct {
-	client    pkginterfaces.KubernetesClient
-	namespace string
-}
-
-func (g *k8sWorkspaceGetter) GetWorkspace(id string) (*v1.Workspace, error) {
-	return g.client.LlmsafespaceV1().Workspaces(g.namespace).Get(id, metav1.GetOptions{})
-}
+// k8sWorkspaceGetter once lived here as a local adapter from the K8s
+// client to WorkspaceGetter; it has been superseded by
+// k8sWorkspaceGetterAdapter in internal/app/secrets_adapters.go which
+// is the single wiring point for all handlers. Removed to avoid two
+// adapters drifting independently.
 
 // TerminalHandler handles WebSocket terminal connections to workspace pods.
 type TerminalHandler struct {
@@ -200,7 +195,7 @@ func (h *TerminalHandler) HandleTerminal(c *gin.Context) {
 		return
 	}
 	// Delete immediately (single-use)
-	h.cache.Delete(ctx, key)
+	_ = h.cache.Delete(ctx, key)
 
 	var td ticketData
 	if err := json.Unmarshal([]byte(raw), &td); err != nil {
@@ -236,13 +231,13 @@ func (h *TerminalHandler) HandleTerminal(c *gin.Context) {
 		}
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// If no exec config (test mode), just close
 	if h.restConfig == nil || h.clientset == nil {
 		msg := TerminalMessage{Type: "error", Message: "exec not configured"}
 		data, _ := json.Marshal(msg)
-		conn.WriteMessage(websocket.TextMessage, data)
+		_ = conn.WriteMessage(websocket.TextMessage, data)
 		return
 	}
 
@@ -272,13 +267,13 @@ func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, podName, podNamespace
 	if err != nil {
 		msg := TerminalMessage{Type: "error", Message: "exec setup failed"}
 		data, _ := json.Marshal(msg)
-		conn.WriteMessage(websocket.TextMessage, data)
+		_ = conn.WriteMessage(websocket.TextMessage, data)
 		return
 	}
 
 	// Create pipes for stdin
 	stdinR, stdinW := io.Pipe()
-	defer stdinW.Close()
+	defer func() { _ = stdinW.Close() }()
 
 	// Terminal size channel
 	sizeCh := make(chan remotecommand.TerminalSize, 1)
@@ -289,7 +284,7 @@ func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, podName, podNamespace
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer stdinW.Close()
+		defer func() { _ = stdinW.Close() }()
 		for {
 			_, raw, err := conn.ReadMessage()
 			if err != nil {
@@ -301,7 +296,7 @@ func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, podName, podNamespace
 			}
 			switch msg.Type {
 			case "input":
-				stdinW.Write([]byte(msg.Data))
+				_, _ = stdinW.Write([]byte(msg.Data))
 			case "resize":
 				select {
 				case sizeCh <- remotecommand.TerminalSize{Width: msg.Cols, Height: msg.Rows}:
@@ -330,7 +325,7 @@ func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, podName, podNamespace
 
 	exitMsg := TerminalMessage{Type: "exit", Code: exitCode}
 	data, _ := json.Marshal(exitMsg)
-	conn.WriteMessage(websocket.TextMessage, data)
+	_ = conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // acquireConnection attempts to acquire a terminal connection slot.

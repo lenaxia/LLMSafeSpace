@@ -259,7 +259,7 @@ func validateProtocol(s string) error {
 // resolveMountPath resolves a user-supplied mount_path against the secrets
 // base directory using filepath.Clean and a strict prefix check.
 //
-// Behaviour:
+// Behavior:
 //   - If mountPath is absolute and already under base, accept as-is.
 //   - If mountPath is absolute but outside base, reject.
 //   - If mountPath is relative, join under base.

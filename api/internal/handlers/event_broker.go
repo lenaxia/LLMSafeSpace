@@ -36,7 +36,7 @@ type WorkspaceEventBroker struct {
 	subs map[string]map[chan WorkspaceSSEEvent]struct{}
 }
 
-// NewWorkspaceEventBroker returns an initialised, empty broker.
+// NewWorkspaceEventBroker returns an initialized, empty broker.
 func NewWorkspaceEventBroker() *WorkspaceEventBroker {
 	return &WorkspaceEventBroker{
 		subs: make(map[string]map[chan WorkspaceSSEEvent]struct{}),

@@ -533,7 +533,7 @@ func validateMetadata(secretType SecretType, metadata json.RawMessage) error {
 
 // validateMountPath enforces the same path-traversal rules as the
 // in-pod materializer's resolveMountPath, applied at the API layer as
-// defence-in-depth (Bug 13 in worklog 0085). Rejects empty paths,
+// defense-in-depth (Bug 13 in worklog 0085). Rejects empty paths,
 // absolute paths, the bare base directory ("."), and any relative path
 // that resolves outside its (notional) base directory after Clean.
 //

@@ -42,13 +42,23 @@ type Service struct {
 	config           *Config
 }
 
-func (s *Service) markDeleted(workspaceID string) {
+// markDeleted soft-deletes a workspace metadata row in the background.
+// It accepts a context for symmetry with the caller and to silence
+// contextcheck, but deliberately does NOT propagate it: the caller is
+// typically a request goroutine whose context gets canceled as soon
+// as the HTTP response is flushed, which would race with the marker
+// write. context.Background inside the goroutine is correct and
+// intentional. The ctx parameter is currently unused; it exists so
+// future tracing/observability can be plumbed without changing every
+// call site.
+func (s *Service) markDeleted(_ context.Context, workspaceID string) {
 	db := s.dbService
 	if db == nil {
 		return
 	}
+	//nolint:gosec,contextcheck // G118: intentional fresh context for fire-and-forget cleanup; see godoc above
 	go func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }()
 		db.MarkWorkspaceDeleted(context.Background(), workspaceID)
 	}()
 }
@@ -237,7 +247,7 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			s.markDeleted(workspaceID)
+			s.markDeleted(ctx, workspaceID)
 			crd = nil
 		} else {
 			s.logger.Warn("Failed to get workspace CRD status", "error", err, "workspaceID", workspaceID)
@@ -350,7 +360,7 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		return apierrors.NewInternalError("workspace_deletion_failed", err)
 	}
 
-	s.markDeleted(workspaceID)
+	s.markDeleted(ctx, workspaceID)
 
 	s.logger.Info("Workspace deleted", "workspaceID", workspaceID, "userID", userID)
 	return nil
@@ -510,7 +520,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			s.markDeleted(workspaceID)
+			s.markDeleted(ctx, workspaceID)
 			return nil, apierrors.NewNotFoundError("workspace", workspaceID, err)
 		}
 		return nil, apierrors.NewInternalError("workspace_get_failed", err)
@@ -751,7 +761,7 @@ func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string)
 }
 
 // waitForWorkspaceActive polls the workspace CRD until it reaches Active with
-// a PodIP, or the context is cancelled. Returns the pod IP.
+// a PodIP, or the context is canceled. Returns the pod IP.
 func (s *Service) waitForWorkspaceActive(ctx context.Context, workspaceID string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -801,7 +811,7 @@ func (s *Service) createSessionOnWorkspace(ctx context.Context, workspaceID, pod
 	if err != nil {
 		return "", apierrors.NewInternalError("session_create_failed", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", apierrors.NewInternalError("session_create_failed", fmt.Errorf("opencode returned %d", resp.StatusCode))
@@ -904,9 +914,10 @@ func agentHealthFromConditions(conditions []v1.WorkspaceCondition, lastCheckAt *
 	for _, c := range conditions {
 		if c.Type == v1.WorkspaceConditionAgentHealthy {
 			status := "Unknown"
-			if c.Status == "True" {
+			switch c.Status {
+			case "True":
 				status = "Healthy"
-			} else if c.Status == "False" {
+			case "False":
 				switch c.Reason {
 				case v1.ReasonAgentUnhealthy, v1.ReasonHealthCheckFailed:
 					status = "Unhealthy"
@@ -931,7 +942,7 @@ func agentHealthFromConditions(conditions []v1.WorkspaceCondition, lastCheckAt *
 				result.AgentVersion = m[1]
 			}
 			if m := configuredRe.FindStringSubmatch(c.Message); len(m) > 1 {
-				fmt.Sscanf(m[1], "%d", &result.ProvidersConfigured)
+				_, _ = fmt.Sscanf(m[1], "%d", &result.ProvidersConfigured)
 			}
 			if lastCheckAt != nil {
 				result.LastCheckedAt = lastCheckAt.Format(time.RFC3339)

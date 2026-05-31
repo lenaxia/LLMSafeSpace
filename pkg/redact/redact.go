@@ -44,16 +44,6 @@ var defaultPatterns = []Pattern{
 	{`[A-Za-z0-9+/]{40,}={0,2}`, `[REDACTED-BASE64]`},
 }
 
-var defaultRedactor = mustNewRedactorFromPatterns(defaultPatterns)
-
-func mustNewRedactorFromPatterns(patterns []Pattern) *Redactor {
-	r, err := newRedactorFromPatterns(patterns)
-	if err != nil {
-		panic(fmt.Sprintf("redact: failed to compile built-in patterns: %v", err))
-	}
-	return r
-}
-
 func newRedactorFromPatterns(patterns []Pattern) (*Redactor, error) {
 	compiled := make([]compiledPattern, 0, len(patterns))
 	for _, p := range patterns {

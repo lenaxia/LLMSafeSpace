@@ -3,13 +3,14 @@ package middleware
 import (
 	"context"
 
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	"strings"
 )
 
 // AuthConfig defines configuration for the authentication middleware

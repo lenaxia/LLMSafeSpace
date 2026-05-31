@@ -49,7 +49,7 @@ func (s *Service) ListCredentialSets(ctx context.Context) ([]*credentials.Creden
 	if err != nil {
 		return nil, fmt.Errorf("list credential_sets: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []*credentials.CredentialSetRow
 	for rows.Next() {
@@ -103,6 +103,11 @@ func (s *Service) UpdateCredentialSet(ctx context.Context, id string, updates cr
 		return nil
 	}
 
+	// String-concatenation here builds the SET clause skeleton from a
+	// fixed allow-list of column names; user-supplied values bind via
+	// $N placeholders (see args). gosec G202 cannot prove this; the
+	// concatenated text contains only literal column-name SQL, never
+	// caller input.
 	query := "UPDATE credential_sets SET "
 	for i, clause := range setClauses {
 		if i > 0 {
@@ -110,7 +115,7 @@ func (s *Service) UpdateCredentialSet(ctx context.Context, id string, updates cr
 		}
 		query += clause
 	}
-	query += fmt.Sprintf(" WHERE id = $%d", argIdx)
+	query += fmt.Sprintf(" WHERE id = $%d", argIdx) //nolint:gosec // G202: literal "WHERE id = $N" with placeholder bind
 	args = append(args, id)
 
 	result, err := s.DB.ExecContext(ctx, query, args...)
@@ -137,7 +142,7 @@ func (s *Service) SetDefault(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Clear existing default
 	if _, err := tx.ExecContext(ctx, `UPDATE credential_sets SET is_default = false WHERE is_default = true`); err != nil {
@@ -179,7 +184,7 @@ func (s *Service) ListByKeyVersionBelow(ctx context.Context, version int) ([]*cr
 	if err != nil {
 		return nil, fmt.Errorf("list credential_sets by key version: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []*credentials.CredentialSetRow
 	for rows.Next() {

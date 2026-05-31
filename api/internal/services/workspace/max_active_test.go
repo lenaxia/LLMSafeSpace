@@ -28,15 +28,6 @@ func (m *mockSettingsStore) SetInstanceSetting(_ context.Context, key string, va
 	return nil
 }
 
-type mockMaxActiveDB struct {
-	workspaces []*types.WorkspaceMetadata
-	suspended  []string
-}
-
-func (m *mockMaxActiveDB) ListWorkspaces(_ context.Context, _ string, _, _ int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
-	return m.workspaces, nil, nil
-}
-
 type testLogger struct{}
 
 func (l *testLogger) Debug(msg string, keysAndValues ...interface{})            {}

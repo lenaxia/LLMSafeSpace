@@ -34,7 +34,7 @@ import (
 //   2. Rejects runtimes containing path-traversal / NUL / backslash.
 //   3. Rejects storage.size above an operator-supplied maximum.
 //   4. Rejects a non-empty Status block on CREATE.
-//   5. Rejects a Spec change to status fields on UPDATE (defence in depth;
+//   5. Rejects a Spec change to status fields on UPDATE (defense in depth;
 //      kube-apiserver's status subresource also enforces this).
 //
 // All tests use the same admission.Decoder helper from webhooks_test.go.
@@ -321,7 +321,7 @@ func TestG2Workspace_AllowsSpecOnlyUpdate(t *testing.T) {
 		"spec-only update must pass: %v", resp.Result)
 }
 
-// --- Defence in depth: nil-decoder doesn't panic ---
+// --- Defense in depth: nil-decoder doesn't panic ---
 
 func TestG2Workspace_NilDecoderDoesNotPanic(t *testing.T) {
 	v := &WorkspaceValidator{Decoder: nil}

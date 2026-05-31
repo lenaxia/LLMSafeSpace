@@ -74,7 +74,10 @@ func Encrypt(keySet *EncryptionKeySet, plaintext []byte, aad []byte) ([]byte, in
 
 	// Output: [version_byte][nonce][ciphertext]
 	out := make([]byte, 0, 1+len(nonce)+len(ciphertext))
-	out = append(out, byte(active.Version))
+	// Version is a small integer (0..255 in practice; we never roll past
+	// a single-byte version field). G115 cannot prove this without value
+	// tracking — explicit nolint with the invariant documented.
+	out = append(out, byte(active.Version)) //nolint:gosec // G115: Version is bounded to byte range
 	out = append(out, nonce...)
 	out = append(out, ciphertext...)
 
@@ -126,15 +129,20 @@ func Decrypt(keySet *EncryptionKeySet, encrypted []byte, aad []byte) ([]byte, er
 // ProviderConfig represents the decrypted provider credentials.
 type ProviderConfig map[string]ProviderEntry
 
-// ProviderEntry holds credentials for a single provider.
+// ProviderEntry holds credentials for a single provider. The APIKey
+// field is the entire reason this struct exists; gosec G117 flags any
+// JSON-serialized field whose name matches /api.?key/i and we can't
+// rename it without breaking the wire format.
 type ProviderEntry struct {
-	APIKey  string `json:"apiKey"`
+	APIKey  string `json:"apiKey"` //nolint:gosec // G117: this is the secret we are encrypting
 	BaseURL string `json:"baseUrl,omitempty"`
 }
 
 // MarshalProviders serializes provider config to JSON for encryption.
+// The output is immediately AES-GCM-sealed by the caller; the JSON
+// itself never leaves the encryption boundary.
 func MarshalProviders(config ProviderConfig) ([]byte, error) {
-	return json.Marshal(config)
+	return json.Marshal(config) //nolint:gosec // G117: output is encrypted before any persistence
 }
 
 // UnmarshalProviders deserializes provider config from decrypted JSON.
