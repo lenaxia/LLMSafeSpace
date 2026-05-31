@@ -38,8 +38,8 @@ the row.
 | G8 | First-user-admin auto-promotion race | Medium | MINE | `api/internal/services/auth/auth.go:386-394` |
 | G9 | No image signature verification | Medium | MINE | `runtimes/base/Dockerfile:67-78` |
 | G10 | Redis session cache not encrypted at rest | Low | OPERATOR + chart docs | `charts/llmsafespace/values.yaml` |
-| G11 | No PSA enforcement | Medium | MINE | `charts/llmsafespace/templates/namespace.yaml` |
-| G12 | Proxy ResponseHeaderTimeout 300s | Low | MINE | `api/internal/handlers/proxy.go:95` |
+| G11 | No PSA enforcement | Medium | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `charts/llmsafespace/templates/namespace.yaml` |
+| G12 | Proxy ResponseHeaderTimeout 300s | Low | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `api/internal/handlers/proxy.go:95` |
 | G13 | Account lockout DoS | Medium | MINE (auth, not secrets) | `api/internal/services/auth/auth.go:440-512` |
 | G14 | No egress request body inspection | High | MINE (proxy) | accepted residual; doc only |
 | G15 | Sandbox emptyDir disk-backed | High | OTHER (secrets-mgmt) | `controller/internal/workspace/controller.go:630-632` |
@@ -49,12 +49,12 @@ the row.
 | G19 | mise no checksum verification | Medium | MINE | `runtimes/base/Dockerfile:119-130` |
 | G20 | Credential files written without atomic mode 0600 | Medium | DONE | worklog 0078 |
 | G21 | `/sandbox-cfg/password` mode 0644 (init `cp` preserves source) | Medium | OTHER (secrets-mgmt) | `controller/internal/workspace/controller.go:733-738` |
-| G22 | `enableServiceLinks: true` leaks service env vars | Low | MINE | `controller/internal/workspace/controller.go` pod template |
-| G23 | `/workspace` PVC mount lacks nosuid | Medium | MINE | StorageClass mountOptions |
-| G24 | No seccompProfile | Low | MINE | `controller/internal/workspace/controller.go` PodSecurityContext |
+| G22 | `enableServiceLinks: true` leaks service env vars | Low | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `controller/internal/workspace/controller.go` pod template |
+| G23 | `/workspace` PVC mount lacks nosuid | Medium | MINE — code-fix landed worklog 0111, awaiting live re-pentest | StorageClass mountOptions |
+| G24 | No seccompProfile | Low | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `controller/internal/workspace/controller.go` PodSecurityContext |
 | G25 | Secret `value` field logged unredacted | High | OTHER (secrets-mgmt logging path) | `api/internal/middleware/logging.go:54` |
 | G26 | Postgres `changeme` + Valkey empty `requirepass` | Critical | MINE — code-fix landed worklog 0095, awaiting live re-pentest | Helm chart secret + NetPols |
-| G27 | Login response timing reveals registered emails | Medium | MINE | `api/internal/services/auth/auth.go` |
+| G27 | Login response timing reveals registered emails | Medium | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `api/internal/services/auth/auth.go` |
 | G28 | Bind handler no-op for first-time secret delivery | High | OTHER (secrets-mgmt) | `api/internal/handlers/secrets.go:307-356` |
 | G29 | Path-traversal mount_path accepted by API | Medium | OTHER (secrets-mgmt) | `pkg/secrets/secret_service.go` validateMountPath |
 | G30 | Egress NetPol allows external DNS resolvers | Medium | MINE | `charts/llmsafespace/templates/workspace-network-policy.yaml` |

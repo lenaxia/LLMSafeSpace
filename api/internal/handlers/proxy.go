@@ -98,11 +98,19 @@ func NewProxyHandler(
 		namespace = "default"
 	}
 	if httpClient == nil {
+		// G12 (Epic 17): the default client now uses a 60s response-
+		// header timeout instead of the prior 300s. 300s was an SSE-
+		// holdover that bled into ALL request paths including
+		// short-lived JSON message round-trips. 60s is a generous
+		// upper bound for opencode message processing. Streaming
+		// endpoints (StreamEvents, SSE) bypass this client via
+		// http.Hijacker / direct conn handling and are not bounded
+		// by ResponseHeaderTimeout.
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 300 * time.Second,
+				ResponseHeaderTimeout: 60 * time.Second,
 			},
 		}
 	}

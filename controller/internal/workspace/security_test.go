@@ -421,3 +421,34 @@ func TestG4_F124_EmptyEgressProducesNoExtraPolicy(t *testing.T) {
 	require.Nil(t, np,
 		"empty Egress must produce no per-workspace NetPol")
 }
+
+// =============================================================================
+// G22 (F1.4.2-adjacent) — EnableServiceLinks: false
+// =============================================================================
+
+func TestG22_PodHasEnableServiceLinksFalse(t *testing.T) {
+	ws := newWorkspaceForSecurity(t)
+	r := reconcilerFor(t)
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	require.NotNil(t, pod.Spec.EnableServiceLinks,
+		"EnableServiceLinks must be explicitly set, not left to the default true (G22)")
+	require.False(t, *pod.Spec.EnableServiceLinks,
+		"EnableServiceLinks must be false to prevent service-discovery env-var leak")
+}
+
+// =============================================================================
+// G24 — seccompProfile: RuntimeDefault
+// =============================================================================
+
+func TestG24_PodHasRuntimeDefaultSeccompProfile(t *testing.T) {
+	ws := newWorkspaceForSecurity(t)
+	r := reconcilerFor(t)
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	require.NotNil(t, pod.Spec.SecurityContext)
+	require.NotNil(t, pod.Spec.SecurityContext.SeccompProfile,
+		"PodSecurityContext.SeccompProfile must be set (G24)")
+	require.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, pod.Spec.SecurityContext.SeccompProfile.Type,
+		"SeccompProfile.Type must be RuntimeDefault")
+}

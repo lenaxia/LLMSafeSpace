@@ -145,3 +145,29 @@ DATASTORE NETWORK POLICY:
   --set datastore.networkPolicy.enabled=false (e.g. when using a
   managed Postgres/Redis outside the cluster).
 {{- end }}
+
+WORKSPACE PVC HARDENING (G23)
+=============================
+
+The chart does not ship a StorageClass — workspaces use whatever the
+operator's cluster default provides. For tightest defense-in-depth
+the operator should configure the StorageClass with mount options
+that disable suid/dev:
+
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: llmsafespace-workspace
+    mountOptions:
+      - nosuid
+      - nodev
+    # ...rest of StorageClass
+
+Then set Spec.Storage.StorageClassName=llmsafespace-workspace on
+workspaces (or set the cluster default).
+
+Defense-in-depth justification: workspaces already run with
+runAsNonRoot=true + AllowPrivilegeEscalation=false + cap-drop ALL +
+RuntimeDefault seccomp. nosuid/nodev are belt-and-braces against
+kernel CVEs that bypass capability checks via setuid binaries on
+the PVC.

@@ -553,10 +553,17 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	user, err := s.dbService.GetUserByEmail(ctx, email)
 	if err != nil {
 		s.logger.Error("Login: db error", err)
+		// G27 (Epic 17 worklog 0089 RT-4.10): run a dummy bcrypt
+		// compare so a DB error path takes the same observable time
+		// as a successful user lookup with wrong password.
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		return nil, errors.New("invalid email or password")
 	}
 	if user == nil {
 		s.recordFailedAttempt(ctx, email)
+		// G27: same as VerifyPassword — burn the bcrypt cycles so
+		// no-such-user takes ~226ms instead of ~16ms.
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		return nil, errors.New("invalid email or password")
 	}
 

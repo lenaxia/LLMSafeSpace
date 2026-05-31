@@ -12,6 +12,12 @@ namespace:
   # If create: true, the chart will create the release namespace.
   # If you install with --namespace and --create-namespace, set this to false.
   create: false
+  # G11 (Epic 17): if non-empty, the chart applies Pod Security
+  # Admission labels to the namespace at all three levels (enforce,
+  # audit, warn). All chart-shipped pods comply with the `restricted`
+  # profile. Operators can opt out by setting this to "" (empty).
+  podSecurityEnforce: "restricted"
+  podSecurityVersion: "latest"
 
 # ----------------------------------------------------------------------------
 # API service

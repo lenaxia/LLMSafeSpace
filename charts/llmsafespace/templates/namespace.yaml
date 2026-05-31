@@ -5,4 +5,23 @@ metadata:
   name: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespace.labels" . | nindent 4 }}
+    {{- if .Values.namespace.podSecurityEnforce }}
+    # G11 (Epic 17 worklog 0091 RT-6.11): Pod Security Admission
+    # labels enforce that every pod in this namespace meets the
+    # configured profile (default `restricted`). The chart's own pod
+    # specs (controller, API, frontend, MCP, migration job) all
+    # comply: runAsNonRoot, NoNewPrivs, capabilities=drop ALL,
+    # seccompProfile=RuntimeDefault. Workspace pods comply via the
+    # controller's pod-spec generator.
+    #
+    # Operators who run additional non-compliant pods in this
+    # namespace must override this label or move those workloads
+    # elsewhere.
+    pod-security.kubernetes.io/enforce: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/enforce-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
+    pod-security.kubernetes.io/audit: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/audit-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
+    pod-security.kubernetes.io/warn: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/warn-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
+    {{- end }}
 {{- end }}

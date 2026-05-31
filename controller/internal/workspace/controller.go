@@ -843,7 +843,14 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			// `controller/internal/workspace/security_test.go` for the
 			// regression that locks this in.
 			AutomountServiceAccountToken: &falseVal,
-			SecurityContext:              buildPodSecurityContext(workspace),
+			// G22 (Epic 17 worklog 0088 RT-3.3): EnableServiceLinks
+			// defaults to true in K8s, which materialises 30+
+			// `<SVC>_SERVICE_HOST/PORT` env vars in the workspace
+			// pod's PID-1 environ. This leaks namespace topology to
+			// any process inside the sandbox (and to anyone who can
+			// read /proc/PID/environ). Disable explicitly.
+			EnableServiceLinks: &falseVal,
+			SecurityContext:    buildPodSecurityContext(workspace),
 		},
 	}
 	return pod, nil
@@ -919,6 +926,14 @@ func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext
 		RunAsUser:  &runAsUser,
 		RunAsGroup: &runAsGroup,
 		FSGroup:    &runAsGroup,
+		// G24 (Epic 17 worklog 0088 RT-3.7): RuntimeDefault seccomp
+		// profile blocks dangerous syscalls (unshare/clone/keyctl/
+		// ptrace/etc.) at the kernel level. Defense-in-depth — cap-
+		// drop ALL + NoNewPrivs:1 already EPERM these, but
+		// RuntimeDefault hardens the boundary further at zero cost.
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		},
 	}
 }
 
