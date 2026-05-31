@@ -230,6 +230,17 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	}
 
 	// Pod exists — check if running.
+
+	// US-23.1: A pod with DeletionTimestamp set is being terminated (e.g.,
+	// the controller itself just deleted it via checkAgentHealth). Its
+	// Status.Phase is unreliable during this window — a SIGKILLed container
+	// makes the pod briefly observable as Failed. Wait for it to finish
+	// terminating rather than misclassifying it as a genuine failure.
+	if isPodTerminating(existingPod) {
+		logger.V(1).Info("Pod is terminating; waiting for reaping", "pod", existingPod.Name)
+		return ctrl.Result{RequeueAfter: requeueCreating}, nil
+	}
+
 	if existingPod.Status.Phase == corev1.PodRunning && existingPod.Status.PodIP != "" {
 		now := metav1.Now()
 		workspace.Status.Phase = v1.WorkspacePhaseActive
@@ -278,6 +289,18 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		}
 		// Pod missing — transient recovery.
 		return r.recoverFromTransientPodLoss(ctx, workspace)
+	}
+
+	// US-23.1: A pod with DeletionTimestamp set is being terminated by the
+	// controller itself (e.g., checkAgentHealth deleted it). Transition to
+	// Creating so a new pod is built once the old one is reaped. Do NOT
+	// count this as a transient failure — the controller initiated the delete.
+	if isPodTerminating(pod) {
+		logger.V(1).Info("Pod is terminating in Active phase; transitioning to Creating", "pod", pod.Name)
+		workspace.Status.Phase = v1.WorkspacePhaseCreating
+		workspace.Status.PodIP = ""
+		workspace.Status.Endpoint = ""
+		return ctrl.Result{RequeueAfter: requeueCreating}, r.Status().Update(ctx, workspace)
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
