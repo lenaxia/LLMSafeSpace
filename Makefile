@@ -15,7 +15,8 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         repolint chart-sync-migrations install-hooks \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
-        migration-roundtrip migration-fk-cascade migration-idempotent migration-safety
+        migration-roundtrip migration-fk-cascade migration-idempotent migration-safety \
+        test-full cover-floor mutation
 
 all: test build
 
@@ -280,3 +281,41 @@ migration-idempotent:
 migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade
 	@echo ""
 	@echo "All migration safety checks passed."
+
+# ---------------------------------------------------------------------------
+# Test rigor (Epic 19, PR D)
+# ---------------------------------------------------------------------------
+
+# test-full: full test suite (no -short) with race detector. Mirrors
+# the `test-full` job in ci.yml. Use this before pushing if you've
+# touched anything performance-sensitive.
+test-full:
+	$(GOTEST) -timeout 600s -race -count=1 ./...
+
+# cover-floor: run the coverage-instrumented test suite and assert the
+# total coverage is at or above the floor (50%). Mirrors the gate in
+# the CI `test` job — run locally to verify before pushing.
+cover-floor:
+	$(GOTEST) -timeout 300s -race -short \
+		-coverprofile=coverage.out \
+		-covermode=atomic \
+		-coverpkg=./... \
+		./...
+	@total=$$($(GOCMD) tool cover -func=coverage.out | awk '/^total:/ {print $$3}' | tr -d '%'); \
+	if awk -v t="$$total" 'BEGIN { exit !(t < 50) }'; then \
+		echo "FAIL: total coverage $${total}% is below the 50.0% floor."; \
+		exit 1; \
+	fi; \
+	echo "OK: total coverage $${total}% (floor 50.0%)"
+
+# mutation: run gremlins mutation testing against the security-critical
+# packages. Slow (~5-15 min per package on a laptop). Mirrors the
+# nightly mutation.yml workflow. Set TARGET=path/to/pkg to scope.
+mutation:
+	@which gremlins >/dev/null 2>&1 || { \
+		echo "gremlins not installed; install with"; \
+		echo "  GOSUMDB=off GOTOOLCHAIN=local go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"; \
+		exit 1; }
+	@target=$${TARGET:-pkg/secrets}; \
+	echo "Running gremlins on ./$${target} ..."; \
+	gremlins unleash ./$${target} --workers 2

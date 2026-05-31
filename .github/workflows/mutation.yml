@@ -1,0 +1,160 @@
+name: Mutation testing
+
+# Mutation testing for security-critical packages. Mutates code (e.g.
+# flips `>` to `>=`, swaps `&&`/`||`) and re-runs tests; if the test
+# suite still passes, that mutation is "alive" — meaning the test
+# suite doesn't actually catch that bug class.
+#
+# Why scoped: mutation testing is O(N × test_runtime). Running it on
+# the whole tree daily would take hours. We focus on the packages
+# whose correctness we care most about (audited heavily; security
+# implications):
+#
+#   pkg/secrets/                       — encrypted secret store +
+#                                        zero-knowledge crypto
+#   pkg/agentd/secrets/                — pod-side secret materialization
+#   pkg/credentials/                   — provider-credential encryption
+#   api/internal/services/auth/        — JWT, API-key, password handling
+#
+# Schedule: nightly at 04:00 UTC. Mutation runs that catch a regression
+# fail the workflow but don't block PR merges (PR-time would be too
+# slow). Manual workflow_dispatch is available for ad-hoc runs.
+#
+# When a finding lands: read the gremlins report (uploaded as artifact),
+# add a regression test for the live mutant, and re-run.
+
+on:
+  schedule:
+    # 04:00 UTC daily. Spreads load across the day relative to the
+    # 06:00 security scan and the per-PR jobs.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Override: comma-separated package list to mutate"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  gremlins:
+    name: gremlins (mutation tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per scoped package. Failing one doesn't cancel the
+        # others — we want the full picture per night.
+        target:
+          - pkg/secrets
+          - pkg/agentd/secrets
+          - pkg/credentials
+          - api/internal/services/auth
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install gremlins
+        env:
+          GOSUMDB: off
+          GOTOOLCHAIN: local
+        run: |
+          go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+          gremlins --version
+
+      # Gremlins copies the repo to its work directories per worker
+      # (one per CPU). We delete frontend/node_modules and the SDK
+      # node_modules first to keep the per-worker copy small; gremlins
+      # otherwise blows out disk on default GHA runners.
+      - name: Prune large vendored dirs (work-dir size optimization)
+        run: |
+          rm -rf frontend/node_modules \
+                 sdks/typescript/node_modules \
+                 sdks/vscode-llmsafespace/node_modules
+
+      # Custom output choice: gremlins's JSON output is structured.
+      # Workers default to NumCPU; on standard GHA runners that's 4
+      # which is fine for memory but blows out disk for huge trees.
+      # Cap to 2 to be safe.
+      - name: Run gremlins on ${{ matrix.target }}
+        run: |
+          gremlins unleash ./${{ matrix.target }} \
+            --workers 2 \
+            --output gremlins-report.json \
+            --output-format json
+        # gremlins exits non-zero when a live mutant exists; we want
+        # that to surface but the artifact upload below to still run.
+        continue-on-error: true
+        id: run
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gremlins-report-${{ matrix.target }}
+          path: gremlins-report.json
+          retention-days: 30
+
+      # Print a human-readable summary in the GHA log so you don't
+      # have to download the artifact for the routine "is this still
+      # green" check.
+      - name: Summarize report
+        if: always()
+        run: |
+          if [ -f gremlins-report.json ]; then
+            python3 - <<'EOF'
+          import json
+          with open('gremlins-report.json') as f:
+              data = json.load(f)
+          # gremlins schema: { "files": [...], "results": [...], "stats": {...} }
+          stats = data.get('stats', {})
+          print(f"Mutation score: {stats.get('mutationScore', 'N/A')}")
+          print(f"  killed:    {stats.get('killed', 0)}")
+          print(f"  lived:     {stats.get('lived', 0)}")
+          print(f"  not-viable:{stats.get('notViable', 0)}")
+          print(f"  timed-out: {stats.get('timedOut', 0)}")
+          print(f"  errored:   {stats.get('errored', 0)}")
+          live = [r for r in data.get('results', []) if r.get('status') == 'lived']
+          if live:
+              print(f"\nLive mutants ({len(live)}):")
+              for m in live[:20]:
+                  loc = f"{m.get('mutantPath','?')}:{m.get('startLine','?')}"
+                  mut = m.get('mutationType','?')
+                  print(f"  {loc} [{mut}]")
+              if len(live) > 20:
+                  print(f"  ... and {len(live) - 20} more — see artifact")
+          EOF
+          else
+            echo "No report file generated."
+          fi
+
+      # Fail the matrix entry if mutation score below 80%. Tunable.
+      # Ratio chosen to be tight enough to catch real coverage gaps
+      # but loose enough that single-mutant flakes don't fail the
+      # nightly. Adjust as the security-test coverage matures.
+      - name: Fail if mutation score below threshold
+        if: always()
+        run: |
+          if [ ! -f gremlins-report.json ]; then
+            echo "FAIL: no gremlins report"
+            exit 1
+          fi
+          python3 - <<'EOF'
+          import json, sys
+          with open('gremlins-report.json') as f:
+              data = json.load(f)
+          score = data.get('stats', {}).get('mutationScore', 0.0)
+          # gremlins reports score on 0..1 scale
+          if score < 0.80:
+              print(f"FAIL: mutation score {score:.2%} below 80.00% threshold")
+              sys.exit(1)
+          print(f"OK: mutation score {score:.2%} >= 80.00% threshold")
+          EOF

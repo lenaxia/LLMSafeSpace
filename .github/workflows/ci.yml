@@ -67,7 +67,155 @@ jobs:
           make helm-render
 
   test:
-    name: Test
+    name: Test (-short, with coverage)
+    runs-on: ubuntu-latest
+    needs: [lint]
+    permissions:
+      contents: read
+      pull-requests: write    # for posting coverage delta as a comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch base ref so the coverage-delta comparison can resolve
+          # `git merge-base origin/main HEAD`. Default depth=1 doesn't
+          # include the base commit, breaking the comparison.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # Coverage-instrumented test run. -coverpkg=./... means we count
+      # coverage for ALL packages, even those without their own _test.go
+      # (so a function in pkg/utilities that's exercised by an
+      # api/internal/handlers test is properly attributed).
+      - name: Run tests with coverage
+        run: |
+          go test -timeout 300s -race -short \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -coverpkg=./... \
+            ./...
+
+      - name: Show coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1
+
+      # Hard floor: 50% (current is 51.5% as of worklog 0101). The floor
+      # is INTENTIONALLY a hair below current to absorb noise from
+      # generated mocks; raise it deliberately as coverage grows.
+      - name: Enforce coverage floor (50%)
+        run: |
+          set -euo pipefail
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          # Use awk for floating-point comparison (bash can't do < for floats)
+          if awk -v t="$total" 'BEGIN { exit !(t < 50) }'; then
+            echo "FAIL: total coverage ${total}% is below the 50.0% floor."
+            echo "If you removed tests, please revisit. If you added uncovered"
+            echo "code, write tests. The floor lives in .github/workflows/ci.yml"
+            echo "and exists to make coverage regressions visible."
+            exit 1
+          fi
+          echo "OK: total coverage ${total}% (floor 50.0%)"
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: coverage.out
+          retention-days: 7
+
+      # Post a coverage delta comment on PRs. Requires the base branch's
+      # coverage; we generate it freshly rather than caching to keep the
+      # comparison apples-to-apples.
+      - name: Compare coverage against base
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base_sha=$(git merge-base origin/main HEAD)
+          echo "Base: $base_sha"
+
+          # Generate base coverage in a worktree so we don't disturb HEAD.
+          git worktree add /tmp/base-tree "$base_sha"
+          (cd /tmp/base-tree && \
+            go test -timeout 300s -race -short \
+              -coverprofile=coverage-base.out \
+              -covermode=atomic \
+              -coverpkg=./... \
+              ./... 2>/dev/null) || true
+          base_total=$(go tool cover -func=/tmp/base-tree/coverage-base.out | awk '/^total:/ {print $3}' | tr -d '%')
+          new_total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          delta=$(awk -v b="$base_total" -v n="$new_total" 'BEGIN { printf "%.2f", n - b }')
+          echo "base=${base_total}%  new=${new_total}%  delta=${delta}%"
+          {
+            echo "COVERAGE_BASE=$base_total"
+            echo "COVERAGE_NEW=$new_total"
+            echo "COVERAGE_DELTA=$delta"
+          } >> "$GITHUB_ENV"
+
+      - name: Post coverage comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const base = process.env.COVERAGE_BASE;
+            const newC = process.env.COVERAGE_NEW;
+            const delta = parseFloat(process.env.COVERAGE_DELTA);
+            const sign = delta >= 0 ? '+' : '';
+            const emoji = delta >= 0 ? ':white_check_mark:' : ':warning:';
+            const body = `## ${emoji} Coverage report\n\n` +
+              `| | Coverage |\n` +
+              `|---|---|\n` +
+              `| base | ${base}% |\n` +
+              `| this PR | ${newC}% |\n` +
+              `| delta | ${sign}${delta}% |\n\n` +
+              `_Floor: 50% (enforced). See .github/workflows/ci.yml._`;
+
+            // Find any existing coverage comment and update it instead
+            // of posting a new one each push.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.startsWith('## :white_check_mark: Coverage report') ||
+              c.user.type === 'Bot' && c.body.startsWith('## :warning: Coverage report')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Validate OpenAPI spec
+        run: make openapi-validate
+
+  # Full-suite test (no -short). The fast `test` job above is sufficient
+  # for most PR feedback; this job runs the long tests too, with the race
+  # detector. Lives in a separate job so it doesn't gate the fast path
+  # but still blocks merge.
+  #
+  # Why split: today the codebase doesn't actually have any
+  # -short-skipped tests, but the gate exists so future contributors
+  # can add expensive tests behind `if testing.Short()` without losing
+  # CI coverage on them.
+  test-full:
+    name: Test (full suite, race detector)
     runs-on: ubuntu-latest
     needs: [lint]
     steps:
@@ -78,19 +226,14 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      - name: Run tests
-        run: go test -timeout 300s -race -short ./...
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Validate OpenAPI spec
-        run: make openapi-validate
+      - name: Run full test suite with race detector
+        run: |
+          go test -timeout 600s -race -count=1 ./...
 
   sdk-contract:
     name: SDK Contract Tests
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, test-full]
     steps:
       - uses: actions/checkout@v4
 
@@ -151,7 +294,7 @@ jobs:
 
   build-api:
     name: Build API (${{ matrix.platform }})
-    needs: [test, prepare]
+    needs: [test, test-full, prepare]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -254,7 +397,7 @@ jobs:
 
   build-controller:
     name: Build Controller (${{ matrix.platform }})
-    needs: [test, prepare]
+    needs: [test, test-full, prepare]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -357,7 +500,7 @@ jobs:
 
   build-runtime:
     name: Build Runtime Base (${{ matrix.platform }})
-    needs: [test, prepare]
+    needs: [test, test-full, prepare]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
