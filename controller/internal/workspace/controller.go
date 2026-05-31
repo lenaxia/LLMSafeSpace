@@ -369,8 +369,11 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 
 	// Reset transient failure counter if stable long enough.
 	r.maybeResetTransientCounter(workspace)
-	// Check agent health (HTTP to daemon — rate-limited).
+	// Check agent liveness (HTTP to /v1/healthz — rate-limited, cheap).
 	r.checkAgentHealth(ctx, workspace)
+	// US-22.6: Deep-status enrichment on a slower cadence (60s).
+	// Failures do NOT trigger pod restarts.
+	r.maybeEnrichAgentStatus(ctx, workspace)
 
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		return ctrl.Result{}, err
@@ -1180,10 +1183,30 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 	ws.Status.ConsecutiveHealthFailures = 0
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
 		v1.ReasonAgentHealthy, fmt.Sprintf("agentd alive, uptime=%ds", healthResp.UptimeSeconds))
+}
 
-	// US-22.6: Deep-status enrichment via /v1/statusz on a slower cadence.
-	// Failures here do NOT increment ConsecutiveHealthFailures and do NOT
-	// trigger pod restarts. They only mark metadata fields as stale.
+// maybeEnrichAgentStatus calls enrichAgentStatus at most once per
+// deepStatusInterval (60s). Uses LastHealthCheckAt as a proxy for timing
+// since the deep-status poll piggybacks on the reconcile loop.
+func (r *WorkspaceReconciler) maybeEnrichAgentStatus(ctx context.Context, ws *v1.Workspace) {
+	// Rate-limit: only run if the workspace has been Active long enough
+	// and we haven't polled recently. We use a simple heuristic: poll on
+	// every 4th reconcile (requeueActive=15s × 4 = 60s).
+	if ws.Status.StartTime == nil {
+		return
+	}
+	uptime := time.Since(ws.Status.StartTime.Time)
+	// Only poll deep-status after the grace period and at ~60s intervals.
+	// The reconcile loop fires every 15s; we poll statusz every 4th cycle.
+	if uptime < healthCheckGracePeriod {
+		return
+	}
+	// Use seconds-since-start modulo deepStatusInterval to approximate cadence.
+	// This avoids adding a new status field just for timing.
+	secondsSinceStart := int64(uptime.Seconds())
+	if secondsSinceStart%(int64(deepStatusInterval.Seconds())) > int64(requeueActive.Seconds()) {
+		return
+	}
 	r.enrichAgentStatus(ctx, ws)
 }
 

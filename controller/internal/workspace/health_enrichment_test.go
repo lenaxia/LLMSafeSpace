@@ -28,7 +28,7 @@ func TestCheckAgentHealth_PopulatesSessions(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Len(t, ws.Status.Sessions, 2)
 	assert.Equal(t, "ses_1", ws.Status.Sessions[0].ID)
@@ -50,7 +50,7 @@ func TestCheckAgentHealth_EmptySessions_ClearsStatus(t *testing.T) {
 	// Pre-populate sessions to verify they get cleared
 	ws.Status.Sessions = []v1.AgentSessionStatus{{ID: "old", Title: "stale", Status: "idle"}}
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Nil(t, ws.Status.Sessions)
 }
@@ -65,7 +65,7 @@ func TestCheckAgentHealth_NilSessions_ClearsStatus(t *testing.T) {
 
 	ws.Status.Sessions = []v1.AgentSessionStatus{{ID: "old"}}
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Nil(t, ws.Status.Sessions)
 }
@@ -80,7 +80,7 @@ func TestCheckAgentHealth_PopulatesDiskUsage(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Equal(t, int64(500_000_000), ws.Status.DiskUsedBytes)
 	assert.Equal(t, int64(10_000_000_000), ws.Status.DiskTotalBytes)
@@ -98,7 +98,7 @@ func TestCheckAgentHealth_NilDisk_ZeroesFields(t *testing.T) {
 	ws.Status.DiskUsedBytes = 123
 	ws.Status.DiskTotalBytes = 456
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	// Nil disk means agentd couldn't read it — preserve previous values
 	assert.Equal(t, int64(123), ws.Status.DiskUsedBytes)
@@ -115,7 +115,7 @@ func TestCheckAgentHealth_Unhealthy_DoesNotPopulateSessions(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	// Unhealthy path returns before populating metadata
 	assert.Nil(t, ws.Status.Sessions)
@@ -133,7 +133,7 @@ func TestCheckAgentHealth_Degraded_DoesNotPopulateSessions(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	// Degraded path returns before populating metadata
 	assert.Nil(t, ws.Status.Sessions)
@@ -152,7 +152,7 @@ func TestCheckAgentHealth_SessionsWithoutTitles(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Len(t, ws.Status.Sessions, 1)
 	assert.Equal(t, "ses_new", ws.Status.Sessions[0].ID)
@@ -173,7 +173,7 @@ func TestCheckAgentHealth_SetsActiveSessions(t *testing.T) {
 	})
 	defer server.Close()
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	assert.Equal(t, int32(2), ws.Status.ActiveSessions)
 }
@@ -190,7 +190,7 @@ func TestSuspending_ClearsSessionsAndActiveSessions(t *testing.T) {
 	})
 
 	// Simulate active workspace with populated fields
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 	assert.Len(t, ws.Status.Sessions, 1)
 	assert.Equal(t, int32(1), ws.Status.ActiveSessions)
 	assert.Equal(t, int64(500), ws.Status.DiskUsedBytes)
@@ -221,7 +221,7 @@ func TestTerminating_ClearsAllAgentFields(t *testing.T) {
 		Disk:           &agentd.DiskUsage{UsedBytes: 999, TotalBytes: 2000},
 	})
 
-	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 	assert.Equal(t, int64(999), ws.Status.DiskUsedBytes)
 
 	// Simulate terminate (clears everything including disk since PVC is deleted)

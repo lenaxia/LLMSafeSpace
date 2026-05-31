@@ -184,7 +184,10 @@ func TestCheckAgentHealth_Degraded(t *testing.T) {
 	})
 	defer server.Close()
 
+	// US-22.5/22.6: Liveness check passes (agentd alive), then deep-status
+	// detects the degraded state (no providers connected).
 	r.checkAgentHealth(context.Background(), ws)
+	r.enrichAgentStatus(context.Background(), ws)
 
 	found := false
 	for _, c := range ws.Status.Conditions {

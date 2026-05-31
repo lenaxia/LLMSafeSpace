@@ -12,6 +12,9 @@
 #     4097 and opencode port 4096. The selector is configurable via
 #     .networkPolicy.apiPodLabelSelector to support deployments where
 #     the API server runs in a different namespace.
+#   - Kubelet probes and the controller target the agentd admin port
+#     4098 (US-22.8 mux split). This port is also allowed from the API
+#     server selector since the controller runs in the same namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -39,6 +42,8 @@ spec:
           port: 4096
         - protocol: TCP
           port: 4097
+        - protocol: TCP
+          port: 4098
 ---
 # Epic 17 G16: Workspace egress allow-list.
 #
