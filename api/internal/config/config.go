@@ -47,7 +47,20 @@ type Config struct {
 	} `mapstructure:"redis"`
 
 	Auth struct {
-		JWTSecret           string        `mapstructure:"jwtSecret"`
+		JWTSecret string `mapstructure:"jwtSecret"`
+		// JWTPreviousSecrets is the list of previous JWT signing keys
+		// retained for VALIDATION ONLY. Tokens signed with any entry
+		// here are still accepted; new tokens are always signed with
+		// JWTSecret. Operators rotate by:
+		//   1. Move current JWTSecret to head of JWTPreviousSecrets.
+		//   2. Set JWTSecret to a fresh random string.
+		//   3. Restart API; old sessions stay valid until they
+		//      expire (TokenDuration), at which point the entry can
+		//      be removed.
+		// Closes F1.7.5 (Epic 17). Set via env
+		// LLMSAFESPACE_AUTH_JWTPREVIOUSSECRETS as a comma-separated
+		// list, OR via the YAML key `jwtPreviousSecrets: [...]`.
+		JWTPreviousSecrets  []string      `mapstructure:"jwtPreviousSecrets"`
 		TokenDuration       time.Duration `mapstructure:"tokenDuration"`
 		APIKeyPrefix        string        `mapstructure:"apiKeyPrefix"`
 		CookieName          string        `mapstructure:"cookieName"`
@@ -120,6 +133,21 @@ func Load(path string) (*Config, error) {
 
 	if envJWTSecret := os.Getenv("LLMSAFESPACE_AUTH_JWTSECRET"); envJWTSecret != "" {
 		config.Auth.JWTSecret = envJWTSecret
+	}
+
+	// F1.7.5: comma-separated list of previous JWT secrets for
+	// rotation-during-grace-period validation.
+	if envPrev := os.Getenv("LLMSAFESPACE_AUTH_JWTPREVIOUSSECRETS"); envPrev != "" {
+		var out []string
+		for _, p := range strings.Split(envPrev, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		if len(out) > 0 {
+			config.Auth.JWTPreviousSecrets = out
+		}
 	}
 
 	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTENABLED"); v == "true" {

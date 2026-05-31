@@ -79,14 +79,22 @@ func (s *Service) lockoutConfig(ctx context.Context) (enabled bool, attempts int
 
 // Service handles authentication and authorization
 type Service struct {
-	logger           *logger.Logger
-	config           *config.Config
-	dbService        interfaces.DatabaseService
-	cacheService     interfaces.CacheService
-	jwtSecret        []byte
-	tokenDuration    time.Duration
-	keyService       KeyServiceInterface
-	instanceSettings *settings.InstanceService
+	logger       *logger.Logger
+	config       *config.Config
+	dbService    interfaces.DatabaseService
+	cacheService interfaces.CacheService
+	// jwtSecret is the active signing key. New tokens are always
+	// signed with this key.
+	jwtSecret []byte
+	// jwtPreviousSecrets are previous signing keys retained for
+	// validation only. Tokens signed with any of these are still
+	// accepted (so existing sessions don't get logged out at the
+	// moment of key rotation), but only `jwtSecret` is used for
+	// new tokens. F1.7.5 (Epic 17): operator-driven key rotation.
+	jwtPreviousSecrets [][]byte
+	tokenDuration      time.Duration
+	keyService         KeyServiceInterface
+	instanceSettings   *settings.InstanceService
 }
 
 // Start initializes the auth service
@@ -141,13 +149,21 @@ func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseSe
 		return nil, errors.New("JWT secret is required")
 	}
 
+	prev := make([][]byte, 0, len(cfg.Auth.JWTPreviousSecrets))
+	for _, p := range cfg.Auth.JWTPreviousSecrets {
+		if p != "" {
+			prev = append(prev, []byte(p))
+		}
+	}
+
 	return &Service{
-		logger:        log,
-		config:        cfg,
-		dbService:     dbService,
-		cacheService:  cacheService,
-		jwtSecret:     []byte(cfg.Auth.JWTSecret),
-		tokenDuration: cfg.Auth.TokenDuration,
+		logger:             log,
+		config:             cfg,
+		dbService:          dbService,
+		cacheService:       cacheService,
+		jwtSecret:          []byte(cfg.Auth.JWTSecret),
+		jwtPreviousSecrets: prev,
+		tokenDuration:      cfg.Auth.TokenDuration,
 	}, nil
 }
 
@@ -165,14 +181,8 @@ func (s *Service) RevokeToken(token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Parse token
-	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return s.jwtSecret, nil
-	})
+	// Parse token (accepts active key or any previous key for F1.7.5)
+	parsedToken, err := s.parseTokenAcceptingRotatedKeys(token)
 
 	if err != nil {
 		return fmt.Errorf("failed to parse token: %w", err)
@@ -303,14 +313,8 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 		return cachedUserID, nil
 	}
 
-	// Parse token
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return s.jwtSecret, nil
-	})
+	// Parse token (accepts active key or any previous key for F1.7.5)
+	token, err := s.parseTokenAcceptingRotatedKeys(tokenString)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to parse token: %w", err)
@@ -719,4 +723,55 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// parseTokenAcceptingRotatedKeys parses a JWT, accepting either the
+// current jwtSecret or any of jwtPreviousSecrets as a valid signature
+// key. Closes F1.7.5 (Epic 17): operators rotate by adding the
+// previous key to JWTPreviousSecrets, setting a new JWTSecret, and
+// restarting. Existing sessions stay valid until they expire.
+//
+// The keyFunc closure is shared between ValidateToken and
+// RevokeToken so both surfaces honor the rotated-key list.
+func (s *Service) parseTokenAcceptingRotatedKeys(token string) (*jwt.Token, error) {
+	keyFunc := func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		// jwt.Parse calls keyFunc once per parse attempt; we return
+		// a slice of candidate keys via a custom multi-key strategy
+		// not natively supported by jwt-go. Instead we parse
+		// repeatedly: first with the active key, then with each
+		// previous key. The first non-error parse wins.
+		return s.jwtSecret, nil
+	}
+	parsed, err := jwt.Parse(token, keyFunc)
+	if err == nil && parsed.Valid {
+		return parsed, nil
+	}
+	// Fall through: try each previous key. We re-parse with a
+	// fresh keyFunc that returns the candidate.
+	var lastErr error
+	for _, prev := range s.jwtPreviousSecrets {
+		altKeyFunc := func(prevKey []byte) jwt.Keyfunc {
+			return func(t *jwt.Token) (interface{}, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				}
+				return prevKey, nil
+			}
+		}(prev)
+		alt, altErr := jwt.Parse(token, altKeyFunc)
+		if altErr == nil && alt.Valid {
+			return alt, nil
+		}
+		lastErr = altErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("token signature does not verify against any active or previous key")
 }

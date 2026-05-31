@@ -1079,3 +1079,78 @@ func TestExtractToken(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// F1.7.5 — JWT signing-key rotation
+// =============================================================================
+//
+// Operators rotate by:
+//   1. Move current JWTSecret to JWTPreviousSecrets[0].
+//   2. Set JWTSecret to a fresh random string.
+//   3. Restart API. Old sessions stay valid until they expire.
+//
+// The rotation contract: ValidateToken accepts tokens signed with the
+// current key OR any previous key. New tokens are always signed with
+// the current key.
+
+func TestF175_TokenSignedWithPreviousKeyValidates(t *testing.T) {
+	// Old secret created the token; current secret is different;
+	// validate must succeed because old secret is in JWTPreviousSecrets.
+	svc, _, mockCache := newTestService(t)
+	oldSecret := []byte("old-secret-was-rotated")
+	svc.jwtSecret = []byte("new-current-secret")
+	svc.jwtPreviousSecrets = [][]byte{oldSecret}
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "user-id-123",
+		"jti": "jti-abc",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+	})
+	signed, err := tok.SignedString(oldSecret)
+	require.NoError(t, err)
+
+	userID, err := svc.ValidateToken(signed)
+	require.NoError(t, err, "token signed with previous key must validate")
+	assert.Equal(t, "user-id-123", userID)
+}
+
+func TestF175_TokenSignedWithUnknownKeyRejected(t *testing.T) {
+	svc, _, mockCache := newTestService(t)
+	svc.jwtSecret = []byte("current-secret")
+	svc.jwtPreviousSecrets = [][]byte{[]byte("old-secret-1"), []byte("old-secret-2")}
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "user-id-evil",
+		"exp": time.Now().Add(1 * time.Hour).Unix(),
+	})
+	signed, err := tok.SignedString([]byte("attacker-supplied-secret"))
+	require.NoError(t, err)
+
+	_, err = svc.ValidateToken(signed)
+	require.Error(t, err, "token signed with unknown key must be rejected")
+}
+
+func TestF175_NewTokensSignedWithCurrentKeyOnly(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	svc.jwtSecret = []byte("current-secret")
+	svc.jwtPreviousSecrets = [][]byte{[]byte("old-secret")}
+
+	signed, err := svc.GenerateToken("user-x")
+	require.NoError(t, err)
+
+	// Decode unverified to inspect; assert signature verifies with
+	// current secret but NOT old secret.
+	_, errCurrent := jwt.Parse(signed, func(t *jwt.Token) (interface{}, error) {
+		return []byte("current-secret"), nil
+	})
+	require.NoError(t, errCurrent, "newly-issued token must verify against current secret")
+
+	_, errOld := jwt.Parse(signed, func(t *jwt.Token) (interface{}, error) {
+		return []byte("old-secret"), nil
+	})
+	require.Error(t, errOld, "newly-issued token must NOT verify against rotated-out secret")
+}
