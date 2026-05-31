@@ -30,6 +30,8 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    # API server pod → workspace pod (4096/4097/4098). The API
+    # proxies user requests to opencode (4096) and agentd (4097).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -42,6 +44,23 @@ spec:
           port: 4096
         - protocol: TCP
           port: 4097
+        - protocol: TCP
+          port: 4098
+    # Controller pod → workspace pod admin port (4098 only). The
+    # controller polls /v1/healthz on a 15s interval to drive its
+    # ConsecutiveHealthFailures pod-restart decision (Epic 22 US-22.5)
+    # and /v1/statusz on a 60s deep-status cadence (US-22.6). Without
+    # this rule the controller's probes time out, threshold trips, the
+    # controller kills the pod, recreates it, and the cycle repeats —
+    # the workspace never reaches Active for long.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.controllerPodLabelSelector | nindent 14 }}
+      ports:
         - protocol: TCP
           port: 4098
 ---

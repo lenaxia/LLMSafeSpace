@@ -169,31 +169,62 @@ func TestG16_DefaultRender_HasDefaultDenyIngress(t *testing.T) {
 			"default-deny policy %q must declare policyTypes: [Ingress, ...]", name)
 
 		ingress, _ := spec["ingress"].([]any)
-		require.Len(t, ingress, 1,
-			"default-deny policy %q must have exactly one allow rule (the API proxy)", name)
+		// Two ingress rules expected:
+		//   1. API server pods → 4096/4097/4098 (proxy + agentd traffic).
+		//   2. Controller pods → 4098 (Epic 22 health-endpoint polling).
+		// Without rule 2 the controller's /v1/healthz probe times out,
+		// trips the 3-strike threshold, and kills the workspace pod in
+		// an infinite loop.
+		require.Len(t, ingress, 2,
+			"default-deny policy %q must have two allow rules (API and controller)", name)
 
-		// Verify the allow rule targets the API server pods on agentd ports.
-		rule := ingress[0].(map[string]any)
-		ports, _ := rule["ports"].([]any)
+		// Locate and verify the API proxy rule (allows 4097 from component=api).
+		var apiRule, controllerRule map[string]any
+		for _, r := range ingress {
+			rm, _ := r.(map[string]any)
+			from, _ := rm["from"].([]any)
+			if len(from) == 0 {
+				continue
+			}
+			fromMap, _ := from[0].(map[string]any)
+			podSel, _ := fromMap["podSelector"].(map[string]any)
+			matchLabels, _ := podSel["matchLabels"].(map[string]any)
+			switch matchLabels["app.kubernetes.io/component"] {
+			case "api":
+				apiRule = rm
+			case "controller":
+				controllerRule = rm
+			}
+		}
+
+		require.NotNil(t, apiRule,
+			"default-deny policy %q must include an ingress rule for the API server", name)
+		require.NotNil(t, controllerRule,
+			"default-deny policy %q must include an ingress rule for the controller (Epic 22 health polling)", name)
+
+		// API rule: must allow 4097.
+		apiPorts, _ := apiRule["ports"].([]any)
 		var foundAgentdPort bool
-		for _, p := range ports {
+		for _, p := range apiPorts {
 			pm := p.(map[string]any)
 			if port := pm["port"]; port == float64(4097) || port == 4097 {
 				foundAgentdPort = true
 			}
 		}
 		require.True(t, foundAgentdPort,
-			"default-deny policy %q must allow API proxy on agentd port 4097", name)
+			"API ingress rule must allow agentd port 4097")
 
-		from, _ := rule["from"].([]any)
-		require.NotEmpty(t, from, "ingress rule must restrict the source via from selector")
-
-		// The selector should reference the API component label.
-		fromMap := from[0].(map[string]any)
-		podSel, _ := fromMap["podSelector"].(map[string]any)
-		matchLabels, _ := podSel["matchLabels"].(map[string]any)
-		require.Equal(t, "api", matchLabels["app.kubernetes.io/component"],
-			"ingress source must select the API server pods only")
+		// Controller rule: must allow at least 4098 (health probes).
+		controllerPorts, _ := controllerRule["ports"].([]any)
+		var foundAdminPort bool
+		for _, p := range controllerPorts {
+			pm := p.(map[string]any)
+			if port := pm["port"]; port == float64(4098) || port == 4098 {
+				foundAdminPort = true
+			}
+		}
+		require.True(t, foundAdminPort,
+			"Controller ingress rule must allow admin port 4098 (Epic 22)")
 
 		found = true
 		break

@@ -370,6 +370,17 @@ networkPolicy:
     app.kubernetes.io/name: llmsafespace
     app.kubernetes.io/component: api
 
+  # Controller pod selector — used by workspace ingress allow rule so
+  # the controller's /v1/healthz + /v1/statusz polls (Epic 22 health-
+  # endpoint redesign) can reach sandbox pods on the agentd admin port
+  # 4098. Without this rule the controller's probes time out, the
+  # 3-strike threshold trips, the controller kills the pod, recreates
+  # it, and the cycle repeats indefinitely (worklog: live-fix after
+  # G16 enablement broke Epic 22's health polling).
+  controllerPodLabelSelector:
+    app.kubernetes.io/name: llmsafespace
+    app.kubernetes.io/component: controller
+
   # DNS policy: where to send port-53 traffic. Default targets the
   # kube-system/kube-dns service which works on most clusters
   # (kube-dns, CoreDNS). Override on clusters with non-standard DNS.
