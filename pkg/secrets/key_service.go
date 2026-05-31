@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"runtime"
 	"time"
+
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 // UserKeyRecord represents a row in the user_keys table.
@@ -41,11 +43,19 @@ type KeyService struct {
 	store       KeyStore
 	cache       DEKCache
 	secretStore SecretStore
+	logger      pkginterfaces.LoggerInterface
 }
 
 // NewKeyService creates a new KeyService.
 func NewKeyService(store KeyStore, cache DEKCache) *KeyService {
 	return &KeyService{store: store, cache: cache}
+}
+
+// SetLogger installs the logger used to surface non-fatal failures
+// (e.g. cache-evict errors during password change). Optional; if
+// nil, those events are silent. Validator pass-5 finding N-3.
+func (s *KeyService) SetLogger(l pkginterfaces.LoggerInterface) {
+	s.logger = l
 }
 
 // SetSecretStore wires the SecretStore used by RotateKeyWithPassword to
@@ -247,8 +257,16 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 	// the worst case is the user has to re-Unlock with their OLD
 	// password — which still works because user_keys.wrapped_dek
 	// hasn't changed yet.
+	//
+	// Cache-evict errors are non-fatal but observable: a Redis
+	// outage that silently leaves the cached DEK in place re-opens
+	// the race window the reorder closed. Log Warn so operators see
+	// the degradation (validator pass-5 finding N-3).
 	if sessionID != "" && s.cache != nil {
-		_ = s.cache.EvictDEK(ctx, sessionID)
+		if err := s.cache.EvictDEK(ctx, sessionID); err != nil && s.logger != nil {
+			s.logger.Warn("ChangePassword: DEK evict failed; cached DEK may be stale until TTL",
+				"userID", userID, "sessionID", sessionID, "error", err.Error())
+		}
 	}
 
 	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion); err != nil {

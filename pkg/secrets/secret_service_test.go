@@ -512,6 +512,63 @@ func TestSecretService_SetBindings_RejectsForeignWorkspace(t *testing.T) {
 	}
 }
 
+// TestSecretService_RequireOwnerVerification_FailsClosed is the
+// regression test for NEW-1 + N-4: when RequireOwnerVerification has
+// been called but no verifier is wired (e.g. a future wiring
+// regression in app.New), every binding/read operation that touches
+// a workspace must return ErrWorkspaceNotOwned. Pre-flag the same
+// configuration silently bypassed the check, which would re-enable
+// cross-tenant binding pollution and enumeration.
+func TestSecretService_RequireOwnerVerification_FailsClosed(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "mine", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Default service: no verifier wired, requireWsVerifier=false.
+	// SetBindings should succeed (test ergonomics).
+	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
+		t.Fatalf("default SecretService: SetBindings should succeed without verifier: %v", err)
+	}
+
+	// Flip into fail-closed mode WITHOUT wiring a verifier.
+	svc.RequireOwnerVerification()
+
+	// Every workspace-touching method must now refuse.
+	cases := []struct {
+		name string
+		fn   func() error
+	}{
+		{"SetBindings", func() error {
+			return svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
+		}},
+		{"AddBindings", func() error {
+			return svc.AddBindings(ctx, "user-1", "ws-1", []string{created.ID})
+		}},
+		{"GetBindings", func() error {
+			_, err := svc.GetBindings(ctx, "user-1", "ws-1")
+			return err
+		}},
+		{"PrepareSecretsForInjection", func() error {
+			_, err := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
+			return err
+		}},
+	}
+	for _, c := range cases {
+		err := c.fn()
+		if !errors.Is(err, ErrWorkspaceNotOwned) {
+			t.Errorf("NEW-1/N-4: %s must return ErrWorkspaceNotOwned when verifier is required but missing, got %v",
+				c.name, err)
+		}
+	}
+}
+
 func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()

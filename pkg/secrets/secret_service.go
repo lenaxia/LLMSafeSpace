@@ -436,6 +436,16 @@ func (s *SecretService) verifyWorkspaceOwner(ctx context.Context, userID, worksp
 	return nil
 }
 
+// auditWorkspaceIDMaxLen matches the secret_audit_log.workspace_id
+// column width (VARCHAR(36)). Adversarial input — e.g. a forged
+// workspaceID 200 characters long — must be truncated before the
+// audit row reaches Postgres or the INSERT fails with "value too
+// long" and the security event is silently dropped (validator pass-5
+// finding N-1). Truncation is preferable to outright rejection: the
+// failed-auth event itself is the signal we care about; a slightly
+// truncated workspaceID is still useful forensically.
+const auditWorkspaceIDMaxLen = 36
+
 func (s *SecretService) audit(ctx context.Context, userID, action string, secretID, workspaceID *string, meta map[string]string) {
 	metaJSON, _ := json.Marshal(meta)
 	entry := &AuditEntry{
@@ -448,7 +458,24 @@ func (s *SecretService) audit(ctx context.Context, userID, action string, secret
 		entry.SecretID = secretID
 	}
 	if workspaceID != nil {
-		entry.WorkspaceID = workspaceID
+		// Truncate to schema width so an adversarial caller posting
+		// a 200-char workspaceID does not silently DoS the audit
+		// pipeline (N-1 + N-2). The metadata blob preserves the
+		// original by length only; we don't preserve the raw bytes
+		// because they're attacker-controlled and may include
+		// log-injection payloads.
+		ws := *workspaceID
+		if len(ws) > auditWorkspaceIDMaxLen {
+			ws = ws[:auditWorkspaceIDMaxLen]
+			if entry.Metadata != nil {
+				if meta == nil {
+					meta = map[string]string{}
+				}
+				meta["workspaceID_truncated"] = "true"
+				entry.Metadata, _ = json.Marshal(meta)
+			}
+		}
+		entry.WorkspaceID = &ws
 	}
 	// Fire-and-forget audit logging (async in production, sync in tests)
 	_ = s.store.LogAudit(ctx, entry)

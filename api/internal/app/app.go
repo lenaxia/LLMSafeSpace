@@ -138,6 +138,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// counts via Stats() and Warn-level logs.
 		asyncAudit = secrets.NewAsyncAuditLogger(pgStore, 4096, log)
 		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
+		keyService.SetLogger(log)
 		secretService = secrets.NewSecretService(keyService, asyncAudit)
 		auditStore = asyncAudit
 
