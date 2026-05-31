@@ -87,10 +87,12 @@
 | U3.1 | `AGENTD_SUPERVISE=false` → agentd starts, `/v1/healthz` returns 200, `/v1/readyz` returns `ready: false` | Happy | Supervise-false mode |
 | U3.2 | `POST /v1/migrate/start-opencode` → opencode starts → `/v1/readyz` becomes true | Happy | Start lifecycle |
 | U3.3 | `POST /v1/migrate/stop-opencode` → opencode stops → `/v1/readyz` becomes false | Happy | Stop lifecycle |
-| U3.4 | `stop-opencode` closes agentd-managed SSE connections with `retry: 1000` before SIGTERM | Happy | Clients reconnect fast |
-| U3.5 | `stop-opencode` sends SIGTERM → waits up to 10s for exit → SIGKILL if stuck | Happy | Graceful then forced |
-| U3.6 | After `stop-opencode`, port 4096 returns connection refused (opencode dead) | Happy | Proxy detects dead backend |
-| U3.6a | `stop-opencode` when opencode exits within 1s (fast shutdown) → returns 200 quickly | Edge | No unnecessary wait |
+| U3.4 | Agentd reverse-proxies HTTP request to opencode:4096 and returns response | Happy | Proxy pass-through |
+| U3.5 | Agentd reverse-proxies SSE stream (chunked transfer) without buffering | Happy | Streaming pass-through |
+| U3.6 | In-flight request counter: increments on forward, decrements on response complete | Happy | Tracking accuracy |
+| U3.6a | `stop-opencode` waits for in-flight count to reach 0 (drain) before SIGTERM | Happy | Drain works |
+| U3.6b | `stop-opencode` drain timeout (30s) exceeded with stuck request → SIGTERM anyway | Unhappy | Drain doesn't block forever |
+| U3.6c | `stop-opencode` with no in-flight requests → immediate SIGTERM (no 30s wait) | Edge | Fast path |
 | U3.7 | After `stop-opencode`, all active SSE connections closed with `retry: 1000` | Happy | SSE cleanup |
 | U3.8 | After `stop-opencode`, new proxied requests get `503 Retry-After: 5` | Happy | Request rejection |
 | U3.9 | `GET /v1/migrate/snapshot` returns session statuses + provider cache | Happy | Snapshot content |
@@ -119,18 +121,18 @@
 
 | ID | Test | Type | What It Validates |
 |----|------|------|-------------------|
-| U4.1 | Proxy routes to new podIP immediately after workspace.status.podIP changes (no stale cache) | Happy | Cutover is instant from proxy perspective |
-| U4.2 | Connection error + active Migration CR → `Retry-After: 1` (not 10) | Happy | Fast retry during migration |
-| U4.3 | Connection error + no Migration CR → `Retry-After: 10` (default) | Happy | Normal behavior preserved |
-| U4.4 | Proxy retries with fresh podIP on connection error → routes to new pod | Happy | Existing retry handles cutover |
+| U4.1 | API proxy connects to agentd:4097 (not opencode:4096) | Happy | Routing change applied |
+| U4.2 | During drain: in-flight request completes normally (agentd forwards to opencode) | Happy | Drain preserves active requests |
+| U4.3 | During drain: new request gets `503 Retry-After: 5` from agentd | Happy | New requests rejected |
+| U4.4 | After cutover: proxy reads fresh `Status.PodIP` → routes to target agentd:4097 | Happy | Cutover works |
 
 ### Integration Tests
 
 | ID | Test | Type | What It Validates |
 |----|------|------|-------------------|
-| I4.1 | During migration handoff gap: client sends request → gets 503 → retries → succeeds after cutover | Happy | Full handoff flow |
-| I4.2 | SSE stream during migration: stream closes → client reconnects → new stream from target pod | Happy | SSE continuity |
-| I4.3 | 10 concurrent HTTP requests during cutover → all eventually succeed (none dropped) | Robustness | No request loss |
+| I4.1 | During migration: start LLM streaming request → trigger stop-opencode → streaming response completes normally (drain) → new request gets 503 → cutover → retry succeeds | Happy | Full drain + handoff |
+| I4.2 | SSE stream during migration: agentd closes SSE after drain → client reconnects → routed to target after cutover | Happy | SSE continuity |
+| I4.3 | 10 concurrent requests during drain: all in-flight complete, all new get 503, all retry after cutover | Robustness | No request loss |
 
 ---
 
