@@ -184,8 +184,66 @@ export interface OpenCodeEvent {
   data: unknown;
 }
 
+// --- Agent input request types (Epic 16) ---
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+}
+
+export interface QuestionRequest {
+  id: string;
+  session_id: string;
+  questions: QuestionInfo[];
+  tool?: { message_id: string; call_id: string };
+}
+
+export interface PermissionRequest {
+  id: string;
+  session_id: string;
+  permission: string;
+  patterns: string[];
+  metadata?: Record<string, unknown>;
+  always?: string[];
+  tool?: { message_id: string; call_id: string };
+}
+
+export interface AgentQuestionEvent {
+  type: "agent.question";
+  data: QuestionRequest;
+}
+
+export interface AgentQuestionResolvedEvent {
+  type: "agent.question.resolved";
+  data: { request_id: string; session_id: string };
+}
+
+export interface AgentPermissionEvent {
+  type: "agent.permission";
+  data: PermissionRequest;
+}
+
+export interface AgentPermissionResolvedEvent {
+  type: "agent.permission.resolved";
+  data: { request_id: string; session_id: string; reply: string };
+}
+
 /**
  * Discriminated union of all event types delivered over the workspace SSE stream.
  * Narrow on `type` to access type-specific fields.
  */
-export type WorkspaceStreamEvent = WorkspacePhaseEvent | SessionStatusEvent | OpenCodeEvent;
+export type WorkspaceStreamEvent =
+  | WorkspacePhaseEvent
+  | SessionStatusEvent
+  | OpenCodeEvent
+  | AgentQuestionEvent
+  | AgentQuestionResolvedEvent
+  | AgentPermissionEvent
+  | AgentPermissionResolvedEvent;

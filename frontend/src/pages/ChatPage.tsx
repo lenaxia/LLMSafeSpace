@@ -17,7 +17,9 @@ import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
 import { sessionsApi } from "../api/sessions";
-import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent } from "../api/types";
+import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
+import { QuestionPrompt } from "../components/chat/QuestionPrompt";
+import { PermissionPrompt } from "../components/chat/PermissionPrompt";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -68,6 +70,10 @@ export function ChatPage() {
   const [serverBusy, setServerBusy] = useState(false);
   // Track whether SSE has taken over serverBusy (to avoid status poll overriding SSE)
   const sseHasDrivenBusy = useRef(false);
+
+  // US-16.11: Pending input requests from the agent
+  const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
+  const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
 
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
@@ -333,6 +339,9 @@ export function ChatPage() {
           notifySessionIdle(event.session_id);
           setServerBusy(false);
           reconcileOnIdle();
+          // US-16.12: Clear stale prompts on session idle
+          setPendingQuestions([]);
+          setPendingPermissions([]);
         } else if (event.status === "busy") {
           sseHasDrivenBusy.current = true;
           setServerBusy(true);
@@ -367,12 +376,32 @@ export function ChatPage() {
             role: "assistant",
             parts: [{ type: "error" as const, text: `⚠️ ${message}` }],
           }]);
+          // US-16.12: Clear stale prompts on session error
+          setPendingQuestions([]);
+          setPendingPermissions([]);
         }
       }
       // Route streaming events to the active session parser
       if (sessionId) {
         parseStreamEvent(oe, sessionId);
       }
+    } else if (event.type === "agent.question") {
+      // US-16.11: Agent question event
+      const req = event.data as QuestionRequest;
+      if (req.session_id === sessionId) {
+        setPendingQuestions((prev) => prev.some((q) => q.id === req.id) ? prev : [...prev, req]);
+      }
+    } else if (event.type === "agent.question.resolved") {
+      const { request_id } = event.data as { request_id: string };
+      setPendingQuestions((prev) => prev.filter((q) => q.id !== request_id));
+    } else if (event.type === "agent.permission") {
+      const req = event.data as PermissionRequest;
+      if (req.session_id === sessionId) {
+        setPendingPermissions((prev) => prev.some((p) => p.id === req.id) ? prev : [...prev, req]);
+      }
+    } else if (event.type === "agent.permission.resolved") {
+      const { request_id } = event.data as { request_id: string };
+      setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
     }
   }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle]);
 
@@ -527,6 +556,18 @@ export function ChatPage() {
             disabled={!workspaceId || !sessionId || isSuspended}
             onSend={handleSend}
             onAbort={abort}
+            prompts={
+              <>
+                {pendingQuestions.map((q) => (
+                  <QuestionPrompt key={q.id} workspaceId={workspaceId!} request={q}
+                    onResolved={() => setPendingQuestions((prev) => prev.filter((x) => x.id !== q.id))} />
+                ))}
+                {pendingPermissions.map((p) => (
+                  <PermissionPrompt key={p.id} workspaceId={workspaceId!} request={p}
+                    onResolved={() => setPendingPermissions((prev) => prev.filter((x) => x.id !== p.id))} />
+                ))}
+              </>
+            }
           />
         </div>
       )}

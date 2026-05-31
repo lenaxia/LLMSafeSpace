@@ -21,9 +21,10 @@ interface Props {
   disabled: boolean;
   onSend: (text: string) => void;
   onAbort: () => void;
+  prompts?: React.ReactNode;
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -57,6 +58,8 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
           <AbortSessionButton onAbort={onAbort} />
         </div>
       )}
+
+      {prompts && <div className="px-4">{prompts}</div>}
 
       <Composer onSend={onSend} disabled={disabled || streaming} />
     </div>
