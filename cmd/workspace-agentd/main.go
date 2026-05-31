@@ -395,10 +395,20 @@ func main() {
 	adminMux := http.NewServeMux()
 	userMux := http.NewServeMux()
 
+	// F1.4.2 (Epic 17): the admin endpoints used to be unauthenticated.
+	// /v1/statusz and /v1/readyz can leak session metadata and
+	// provider-config to any pod that can route to the workspace's
+	// admin port (4098). When AGENTD_ADMIN_TOKEN is set in the env
+	// (controller-supplied via the workspace's password Secret), those
+	// two endpoints require `Authorization: Bearer <token>`.
+	// /v1/healthz remains open: it only emits `{ok, started_at}` and
+	// the kubelet liveness probe targets it without configured headers.
+	adminToken := os.Getenv("AGENTD_ADMIN_TOKEN")
+
 	// Admin endpoints (healthz, readyz, statusz) — admin port.
 	adminMux.HandleFunc("/v1/healthz", healthzHandler(startedAt))
 
-	adminMux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
+	readyzHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		snap := healthCache.Snapshot()
 
@@ -422,6 +432,7 @@ func main() {
 			AgentType:           "opencode",
 		})
 	})
+	adminMux.Handle("/v1/readyz", requireBearerToken(adminToken, readyzHandler))
 
 	// US-22.4: /v1/statusz is the EXPENSIVE deep-introspection endpoint.
 	// It makes multiple synchronous HTTP calls to opencode (IsHealthy,
@@ -435,7 +446,7 @@ func main() {
 	// Performance contract: NO upper bound. Callers must use a generous
 	// timeout (controller uses 30s). Do NOT use this endpoint for liveness
 	// or readiness probes — use /v1/healthz and /v1/readyz respectively.
-	adminMux.HandleFunc("/v1/statusz", func(w http.ResponseWriter, r *http.Request) {
+	statuszHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		healthy, version, _ := client.IsHealthy(r.Context())
 		connected, configured, sessions := cachedState(r.Context(), client, cache, sseTracker)
@@ -463,6 +474,7 @@ func main() {
 			Disk:                getDiskUsage(),
 		})
 	})
+	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
 
 	// User endpoints (reload-secrets) — user port.
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc))
@@ -611,4 +623,32 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// requireBearerToken wraps an http.Handler so that requests must carry
+// `Authorization: Bearer <token>` matching the configured token. When
+// the token is empty (env unset), the handler runs unprotected — this
+// lets development / kind clusters skip the wiring while production
+// gets defense-in-depth.
+//
+// Closes F1.4.2 (Epic 17 Phase 1): pre-fix /v1/statusz, /v1/readyz,
+// and /v1/healthz on the agentd admin port were reachable from any
+// pod in the workspace namespace that could route to the workspace
+// pod IP. The chart's NetPol (G16) blocks workspace-to-workspace
+// ingress, but a misconfigured cluster (NetPol disabled, CNI bug,
+// operator opted out) would let any tenant probe another's session
+// list. Token auth is the application-layer defense.
+func requireBearerToken(token string, h http.Handler) http.Handler {
+	if token == "" {
+		return h
+	}
+	expected := "Bearer " + token
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != expected {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="agentd"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

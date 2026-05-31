@@ -694,6 +694,22 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		return nil, fmt.Errorf("resolving runtime image: %w", err)
 	}
 
+	// F1.4.2 (Epic 17): Read the per-workspace admin token from the
+	// password Secret. Used as the `Authorization: Bearer <token>`
+	// header for the readiness probe so kubelet can hit the
+	// authenticated /v1/readyz endpoint. ensurePasswordSecret() runs
+	// in handlePending before buildPod is reached, so the Secret
+	// is guaranteed to exist; if Get fails we fall back to omitting
+	// the header (probe will fail closed and the pod won't be ready
+	// — observable + safe).
+	adminToken := ""
+	pwSec := &corev1.Secret{}
+	if pwErr := r.Get(ctx, types.NamespacedName{Name: passwordSecretName(workspace.Name), Namespace: workspace.Namespace}, pwSec); pwErr == nil {
+		if v, ok := pwSec.Data["password"]; ok {
+			adminToken = string(v)
+		}
+	}
+
 	labels := map[string]string{
 		LabelApp:       AppName,
 		LabelComponent: ComponentWorkspace,
@@ -723,12 +739,34 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
 			{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
+			// F1.4.2 (Epic 17): Bearer token for agentd's /v1/readyz
+			// and /v1/statusz endpoints. Sourced from the same per-
+			// workspace password Secret the controller already
+			// generates. The controller sends this token when polling
+			// /v1/statusz; the kubelet's readiness probe must also
+			// carry it via httpHeaders (set on the probe spec below).
+			{Name: "AGENTD_ADMIN_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: passwordSecretName(workspace.Name),
+					},
+					Key: "password",
+				},
+			}},
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/v1/readyz",
 					Port: intstr.FromInt(agentd.AgentdAdminPort),
+					HTTPHeaders: func() []corev1.HTTPHeader {
+						if adminToken == "" {
+							return nil
+						}
+						return []corev1.HTTPHeader{
+							{Name: "Authorization", Value: "Bearer " + adminToken},
+						}
+					}(),
 				},
 			},
 			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
@@ -1104,6 +1142,7 @@ var (
 )
 
 var healthHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
 // US-22.5: Separate client for deep-status with generous timeout (statusz can be slow).
 var deepStatusHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -1241,6 +1280,17 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return
+	}
+
+	// F1.4.2 (Epic 17): /v1/statusz now requires a Bearer token sourced
+	// from the per-workspace password Secret. Read it best-effort —
+	// missing Secret means failed auth on the request, which is logged
+	// at V(1) like any other deep-status failure (informational only).
+	pwSec := &corev1.Secret{}
+	if pwErr := r.Get(ctx, types.NamespacedName{Name: passwordSecretName(ws.Name), Namespace: ws.Namespace}, pwSec); pwErr == nil {
+		if v, ok := pwSec.Data["password"]; ok {
+			req.Header.Set("Authorization", "Bearer "+string(v))
+		}
 	}
 
 	resp, err := deepStatusHTTPClient.Do(req)

@@ -99,7 +99,7 @@ is the list of distinct items.
 | F1.3.6 | `pods/exec` in workspace ns extends to non-sandbox pods | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml resourceNames or label selector |
 | F1.3.7 | `storageclasses` grant degrades silently in namespace mode | Low | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
 | F1.4.1 | Zero L3/L4 isolation between tenants | High | DONE | G16 closed; verified post-fix RT-1.4 |
-| F1.4.2 | agentd `/v1/statusz` and `/v1/healthz` unauthenticated | High | MINE | `pkg/agentd/...` health endpoints |
+| F1.4.2 | agentd `/v1/statusz` and `/v1/healthz` unauthenticated | High | MINE — code-fix landed worklog 0110, awaiting live re-pentest | `pkg/agentd/...` health endpoints |
 | F1.4.3 | Controller `/metrics` unauthenticated | Medium | MINE | controller metrics server |
 | F1.4.4 | Workspace egress allow-list is wide | Medium | duplicate of G30 | merged |
 | F1.7.1 | Decrypted user secrets transmitted over plain HTTP | Critical | duplicate of G4 (mTLS) | merged |
