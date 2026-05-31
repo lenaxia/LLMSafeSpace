@@ -842,3 +842,200 @@ func TestSecretService_DeleteSecret_CascadesBindings(t *testing.T) {
 		t.Errorf("Expected 0 bindings after delete, got %d", len(bindings))
 	}
 }
+
+// TestSecretService_AddBindings_HappyPath_AppendsAndAudits is the
+// regression test for the AddBindings primitive added during pass-2.
+// SetWorkspaceEnv depends on AddBindings to merge new env-secrets
+// into a workspace's binding set without clobbering pre-existing
+// bindings; without coverage of the happy path, a regression that
+// turns AddBindings into "no-op" or "replace-all" would silently
+// break SetWorkspaceEnv for any workspace that already has bindings.
+func TestSecretService_AddBindings_HappyPath_AppendsAndAudits(t *testing.T) {
+	svc, secretStore, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	verifier := &fakeWorkspaceOwnerVerifier{
+		allowedPairs: map[string]map[string]struct{}{
+			"user-1": {"ws-1": {}},
+		},
+	}
+	svc.SetWorkspaceOwnerVerifier(verifier)
+
+	pre, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "pre", Type: SecretTypeEnvSecret, Value: "p",
+		Metadata: json.RawMessage(`{"var_name":"PRE"}`),
+	})
+	if err != nil {
+		t.Fatalf("create pre: %v", err)
+	}
+	add1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "add1", Type: SecretTypeEnvSecret, Value: "a",
+		Metadata: json.RawMessage(`{"var_name":"A"}`),
+	})
+	add2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "add2", Type: SecretTypeEnvSecret, Value: "b",
+		Metadata: json.RawMessage(`{"var_name":"B"}`),
+	})
+
+	// Pre-existing binding (e.g. from an earlier SetBindings call).
+	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{pre.ID}); err != nil {
+		t.Fatalf("setbindings pre: %v", err)
+	}
+
+	// AddBindings must merge add1+add2 with the pre-existing binding.
+	if err := svc.AddBindings(ctx, "user-1", "ws-1", []string{add1.ID, add2.ID}); err != nil {
+		t.Fatalf("AddBindings: %v", err)
+	}
+
+	bindings, err := secretStore.GetBindings(ctx, "ws-1")
+	if err != nil {
+		t.Fatalf("GetBindings: %v", err)
+	}
+	gotIDs := map[string]bool{}
+	for _, b := range bindings {
+		gotIDs[b.ID] = true
+	}
+	for _, want := range []string{pre.ID, add1.ID, add2.ID} {
+		if !gotIDs[want] {
+			t.Errorf("AddBindings dropped expected secret %s; got %v", want, gotIDs)
+		}
+	}
+
+	// Audit must record one "bind" entry per secret added (not for
+	// the pre-existing one).
+	q := AuditQuery{}
+	auditEntries, err := svc.QueryAudit(ctx, "user-1", q)
+	if err != nil {
+		t.Fatalf("QueryAudit: %v", err)
+	}
+	bindCount := 0
+	for _, e := range auditEntries {
+		if e.Action == "bind" {
+			bindCount++
+		}
+	}
+	// 1 bind from SetBindings(pre) + 2 binds from AddBindings = 3.
+	if bindCount != 3 {
+		t.Errorf("expected 3 'bind' audit entries (1 pre + 2 add), got %d", bindCount)
+	}
+}
+
+// TestSecretService_AddBindings_Idempotent verifies that re-adding
+// already-bound secrets is a no-op rather than an error or duplicate
+// binding row. The pg store relies on ON CONFLICT DO NOTHING; the
+// in-memory mock relies on a 'seen' set. This test guards against a
+// future regression in either.
+func TestSecretService_AddBindings_Idempotent(t *testing.T) {
+	svc, secretStore, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	verifier := &fakeWorkspaceOwnerVerifier{
+		allowedPairs: map[string]map[string]struct{}{
+			"user-1": {"ws-1": {}},
+		},
+	}
+	svc.SetWorkspaceOwnerVerifier(verifier)
+
+	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "s", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"S"}`),
+	})
+	for i := 0; i < 3; i++ {
+		if err := svc.AddBindings(ctx, "user-1", "ws-1", []string{s.ID}); err != nil {
+			t.Fatalf("AddBindings call %d: %v", i, err)
+		}
+	}
+	bindings, _ := secretStore.GetBindings(ctx, "ws-1")
+	if len(bindings) != 1 {
+		t.Errorf("expected 1 binding after 3 idempotent AddBindings, got %d", len(bindings))
+	}
+}
+
+// TestSecretService_GetSecretByName_OwnerAndCrossUser verifies the
+// service-layer name lookup used by SetWorkspaceEnv. Both
+// "name doesn't exist" and "name exists but owned by another user"
+// must collapse to (nil, nil) — the response shape (404 in the
+// handler) is the same, but a distinguishing leak would let an
+// attacker enumerate names cross-tenant.
+func TestSecretService_GetSecretByName_OwnerAndCrossUser(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "shared-name", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Owner: returns the secret.
+	got, err := svc.GetSecretByName(ctx, "user-1", "shared-name")
+	if err != nil {
+		t.Fatalf("GetSecretByName(owner): %v", err)
+	}
+	if got == nil || got.ID != created.ID {
+		t.Errorf("owner: expected %s, got %v", created.ID, got)
+	}
+
+	// Cross-user: returns nil, nil (no leak).
+	got, err = svc.GetSecretByName(ctx, "user-other", "shared-name")
+	if err != nil {
+		t.Errorf("cross-user: unexpected error %v (must be nil)", err)
+	}
+	if got != nil {
+		t.Errorf("cross-user: must return nil; got %+v (cross-tenant name enumeration!)", got)
+	}
+
+	// Non-existent name: returns nil, nil.
+	got, err = svc.GetSecretByName(ctx, "user-1", "no-such-name")
+	if err != nil {
+		t.Errorf("nonexistent: unexpected error %v", err)
+	}
+	if got != nil {
+		t.Errorf("nonexistent: must return nil; got %+v", got)
+	}
+}
+
+// TestSecretService_GetBindingsForSecret_OwnershipEnforced verifies
+// that the secret-binding-reverse-lookup respects ownership. Pre-fix
+// any DB error was conflated with "no such secret"; post-fix system
+// errors propagate. Cross-user lookup must collapse to (nil, nil)
+// without exposing the binding set.
+func TestSecretService_GetBindingsForSecret_OwnershipEnforced(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	verifier := &fakeWorkspaceOwnerVerifier{
+		allowedPairs: map[string]map[string]struct{}{
+			"user-1": {"ws-1": {}},
+		},
+	}
+	svc.SetWorkspaceOwnerVerifier(verifier)
+
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name: "lookup-me", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"X"}`),
+	})
+	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
+		t.Fatalf("SetBindings: %v", err)
+	}
+
+	// Owner sees the workspace.
+	wsIDs, err := svc.GetBindingsForSecret(ctx, "user-1", created.ID)
+	if err != nil {
+		t.Fatalf("GetBindingsForSecret(owner): %v", err)
+	}
+	if len(wsIDs) != 1 || wsIDs[0] != "ws-1" {
+		t.Errorf("owner: expected [ws-1], got %v", wsIDs)
+	}
+
+	// Cross-user: nil, nil — no leak of the binding set.
+	wsIDs, err = svc.GetBindingsForSecret(ctx, "user-other", created.ID)
+	if err != nil {
+		t.Errorf("cross-user: unexpected error %v", err)
+	}
+	if wsIDs != nil {
+		t.Errorf("cross-user: must return nil; got %v", wsIDs)
+	}
+}
