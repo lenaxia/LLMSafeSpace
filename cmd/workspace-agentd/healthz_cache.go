@@ -98,12 +98,12 @@ func refreshOnce(ctx context.Context, client *OpenCodeClient, cache *healthzCach
 	healthy, version, err := client.IsHealthy(refreshCtx)
 
 	next := healthzCacheSnapshot{
-		Initialized:     true,
-		LastRefreshedAt: time.Now(),
-		Version:         prev.Version,
-		Healthy:         prev.Healthy,
+		Initialized:         true,
+		LastRefreshedAt:     time.Now(),
+		Version:             prev.Version,
+		Healthy:             prev.Healthy,
 		ConsecutiveFailures: prev.ConsecutiveFailures,
-		LastError:       prev.LastError,
+		LastError:           prev.LastError,
 	}
 
 	if err != nil {
