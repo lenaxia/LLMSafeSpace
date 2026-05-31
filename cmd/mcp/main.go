@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Command mcp runs the LLMSafeSpace MCP server.
 // It supports stdio transport (default) and SSE transport (--sse flag).
 package main

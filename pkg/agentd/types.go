@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package agentd
 
 // Well-known paths shared between entrypoint scripts and agentd.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Package types contains API DTOs (data transfer objects) used by the API
 // service to receive requests and return responses to clients.
 //

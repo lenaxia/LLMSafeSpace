@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Package secrets materializes user-supplied secrets onto the sandbox pod
 // filesystem with strict validation and TOCTOU-safe permissions.
 //

@@ -6,8 +6,8 @@ info:
     Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace.
   version: "1.0.0"
   license:
-    name: Apache 2.0
-    url: https://www.apache.org/licenses/LICENSE-2.0
+    name: AGPL-3.0-or-later
+    url: https://www.gnu.org/licenses/agpl-3.0.html
 servers:
   - url: /api/v1
     description: API v1 base path

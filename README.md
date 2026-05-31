@@ -375,4 +375,21 @@ See `design/0027_2026-05-24_security-policy-v21.md` and `design/0021_2026-05-21_
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+LLMSafeSpace is licensed under the **GNU Affero General Public License v3.0
+or later** (AGPL-3.0-or-later). See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+The AGPL requires that anyone who runs a modified version of this software
+as a network service make the corresponding source code available to its
+users. If you self-host LLMSafeSpace for your own internal use, this is
+unlikely to affect you.
+
+### Commercial license
+
+A commercial license is available for organizations that cannot or do not
+wish to comply with the AGPL — for example, those who wish to incorporate
+LLMSafeSpace into a proprietary product, or offer it as a hosted service
+without releasing the corresponding source.
+
+Commercial licensing inquiries: **safespace@47north.lat**
+
+Copyright (C) 2026 Michael Kao.

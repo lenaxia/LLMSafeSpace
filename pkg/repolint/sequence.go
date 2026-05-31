@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Package repolint contains lint checks that operate on the repository
 // layout itself rather than on Go source code: migration version
 // numbering, worklog numbering, and sync between canonical and

@@ -204,7 +204,8 @@ llmsafespace/
 ├── go.mod                                 # Root module: github.com/lenaxia/llmsafespace
 ├── go.sum
 ├── Makefile                               # Root build/test/lint targets
-├── LICENSE                                # Apache 2.0
+├── LICENSE                                # AGPL-3.0-or-later
+├── NOTICE                                 # Copyright + commercial license offer
 │
 ├── cmd/                                   # Top-level binaries
 │   ├── redact/

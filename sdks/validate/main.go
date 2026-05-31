@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Package main provides a standalone OpenAPI spec validator.
 // It parses the YAML spec and validates it has the required structure:
 // - Valid OpenAPI version

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package docs
 
 import (
@@ -13,8 +16,8 @@ import (
 // @contact.url https://llmsafespace.dev/support
 // @contact.email support@llmsafespace.dev
 
-// @license.name Apache 2.0
-// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
+// @license.name AGPL-3.0-or-later
+// @license.url https://www.gnu.org/licenses/agpl-3.0.html
 
 // @host api.llmsafespace.dev
 // @BasePath /api/v1
@@ -70,8 +73,8 @@ const docTemplate = `{
             "email": "support@llmsafespace.dev"
         },
         "license": {
-            "name": "Apache 2.0",
-            "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+            "name": "AGPL-3.0-or-later",
+            "url": "https://www.gnu.org/licenses/agpl-3.0.html"
         },
         "version": "{{.Version}}"
     },

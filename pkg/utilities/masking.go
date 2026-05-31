@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package utilities
 
 // MaskSensitiveFieldsWithList masks sensitive fields in a map based on a provided list of field names

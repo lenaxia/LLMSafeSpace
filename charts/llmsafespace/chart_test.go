@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package chart_test
 
 // Helm chart rendering tests for Epic 17 G16 remediation.

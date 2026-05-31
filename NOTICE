@@ -1,7 +1,5 @@
-/*
+LLMSafeSpace
 Copyright (C) 2026 Michael Kao
-
-SPDX-License-Identifier: AGPL-3.0-or-later
 
 This program is free software: you can redistribute it and/or modify it
 under the terms of the GNU Affero General Public License as published by
@@ -15,4 +13,15 @@ License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
-*/
+
+----------------------------------------------------------------------
+
+Commercial Licensing
+
+LLMSafeSpace is also available under a separate commercial license for
+organizations that cannot or do not wish to comply with the terms of the
+AGPL-3.0-or-later (for example, those who wish to incorporate this
+software into a proprietary product, or to offer it as a hosted service
+without releasing the corresponding source).
+
+For commercial licensing inquiries, contact: safespace@47north.lat

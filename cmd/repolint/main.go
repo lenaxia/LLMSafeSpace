@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Command repolint runs the repository-layout lint checks defined in
 // pkg/repolint against the canonical paths of this repo. It is invoked
 // by .githooks/pre-commit and the Lint job in .github/workflows/ci.yml.

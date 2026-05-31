@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Comprehensive live integration test for the Go SDK.
 // Run: API_URL=http://localhost:18080 API_KEY=lsp_... go run ./cmd/live-test/
 package main
