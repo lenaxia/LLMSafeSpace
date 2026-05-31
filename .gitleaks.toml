@@ -49,6 +49,11 @@ paths = [
   # Build artifact (minified JS); generated, never committed by hand.
   # Already in .gitignore but kept here as defense in depth.
   '''frontend/dist/.*''',
+  # SecretsTab generates SSH keypairs client-side using WebCrypto.
+  # The PEM header/footer strings ("-----BEGIN OPENSSH PRIVATE KEY-----")
+  # are format templates, not actual secrets. No real key material is
+  # stored in this file.
+  '''frontend/src/components/settings/SecretsTab\.tsx''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
