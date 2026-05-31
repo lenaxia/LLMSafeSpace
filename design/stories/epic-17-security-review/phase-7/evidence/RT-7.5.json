@@ -1,0 +1,10 @@
+{
+  "id": "RT-7.5",
+  "title": "No injection detector implemented (N/A)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "If injection detection exists, it should not have trivial bypass",
+  "observed": "no detector code found",
+  "evidence": [],
+  "notes": "LLMSafeSpace doesn't try to detect prompt injection on user inputs; this is fine for a single-tenant agent."
+}

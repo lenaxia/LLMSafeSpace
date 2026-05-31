@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.6",
+  "title": "Activity tracking is controller-only (no user-controllable input path)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Activity timestamp updates MUST come only from authenticated API",
+  "observed": "static check: timestamp set in controller reconcile; no API endpoint accepts user-supplied activity",
+  "evidence": [
+    "/home/mikekao/personal/LLMSafeSpace/controller/internal/workspace/controller.go:304:\t\tif workspace.Status.LastActivityAt != nil {\n/home/mikekao/personal/LLMSafeSpace/controller/internal/workspace/controller.go:305:\t\t\tidle := time.Since(workspace.Status.LastActivityAt.Time)\n/home/mikekao/personal/LLMSafeSpace/controller/internal/workspace/controller.go:308:\t\t\t\t\t\"lastActivity\", workspace.Status.LastActivityAt, \"idle\", idle, \"timeout\", time.Duration(timeout)*time.Second)\n/home/mikekao/personal/LLMSafeSpace/controller/internal/workspace/controller.go:368:\t// would compare LastActivityAt (pre-suspe"
+  ],
+  "notes": ""
+}

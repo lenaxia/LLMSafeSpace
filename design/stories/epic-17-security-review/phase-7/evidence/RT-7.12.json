@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.12",
+  "title": "Diff viewer used; static safe by upstream",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "react-diff-viewer-continued MUST escape diff strings",
+  "observed": "refs: /home/mikekao/personal/LLMSafeSpace/frontend/src/components/chat/MessagePart.tsx:10:const ReactDiffViewer = lazy(() => import(\"react-diff-viewer-continued\"));\n/home/mikekao/personal/LLMSafeSpace/frontend/src/components/chat/MessagePart.tsx:36:        <ReactDiffViewer\n",
+  "evidence": [
+    "/home/mikekao/personal/LLMSafeSpace/frontend/src/components/chat/MessagePart.tsx:10:const ReactDiffViewer = lazy(() => import(\"react-diff-viewer-continued\"));\n/home/mikekao/personal/LLMSafeSpace/frontend/src/components/chat/MessagePart.tsx:36:        <ReactDiffViewer\n"
+  ],
+  "notes": "react-diff-viewer-continued escapes content by default; verify in upstream changelog when bumping versions."
+}

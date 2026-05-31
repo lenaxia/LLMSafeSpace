@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.13",
+  "title": "Frontend ingress lacks CSP and X-Frame-Options",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Frontend ingress SHOULD set Content-Security-Policy and X-Frame-Options: DENY",
+  "observed": "status=200 CSP=absent XFO=None",
+  "evidence": [
+    "{'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', 'Content-Length': '750', 'Content-Type': 'text/html', 'Date': 'Sat, 30 May 2026 19:28:44 GMT', 'Etag': '\"6a1a7bd0-2ee\"', 'Expires': 'Sat, 30 May 2026 19:28:43 GMT', 'Last-Modified': 'Sat, 30 May 2026 05:55:28 GMT', 'Server': 'nginx/1.27.5', 'Connection': 'close'}"
+  ],
+  "notes": "API has them (Phase 4 logs showed CSP); frontend ingress is separate. Add to Traefik IngressRoute or chart."
+}

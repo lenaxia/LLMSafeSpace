@@ -1,0 +1,10 @@
+{
+  "id": "RT-5.14",
+  "title": "stripPatchParts unexpected-shape handling (deferred)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Filter must fail-safe (return original body) on unexpected shapes",
+  "observed": "Cannot trigger black-box without controlling opencode's response.",
+  "evidence": [],
+  "notes": "Add unit test: stripPatchParts with `parts` nested under unexpected keys, non-array `parts`, `type` not a string."
+}

@@ -1,0 +1,13 @@
+[
+  "<img src=x onerror=alert(1)>",
+  "<svg onload=alert(1)>",
+  "<a href=\"javascript:alert(1)\">click</a>",
+  "<iframe src=\"javascript:alert(1)\">",
+  "<math><foreignObject><img src=x onerror=alert(1)></foreignObject></math>",
+  "<style>body{background:url('javascript:alert(1)')}</style>",
+  "<details ontoggle=alert(1) open></details>",
+  "<form><button formaction=javascript:alert(1)>x</button></form>",
+  "<a href='data:text/html,<script>alert(1)</script>'>x</a>",
+  "<iframe srcdoc='<script>alert(1)</script>'>",
+  "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\">"
+]

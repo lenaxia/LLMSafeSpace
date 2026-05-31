@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.5",
+  "title": "Helm values injection blocked",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Helm templates MUST quote/escape all user-controllable values",
+  "observed": "injected payload appears as a string value, not as YAML structure; rc=1",
+  "evidence": [
+    "Error: YAML parse error on llmsafespace/templates/workspace-network-policy.yaml: error converting YAML to JSON: yaml: line 48: did not find expected key\n\nUse --debug flag to render out invalid YAML\n"
+  ],
+  "notes": ""
+}

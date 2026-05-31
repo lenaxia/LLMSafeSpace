@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.1",
+  "title": "Webhook accepted malicious Workspace spec",
+  "result": "FAIL",
+  "severity": "high",
+  "expected": "ValidatingWebhookConfiguration MUST reject malicious Workspace specs",
+  "observed": "creation succeeded: workspace.llmsafespace.dev/p6-rt-6-1 created\n",
+  "evidence": [
+    "workspace.llmsafespace.dev/p6-rt-6-1 created\n"
+  ],
+  "notes": ""
+}

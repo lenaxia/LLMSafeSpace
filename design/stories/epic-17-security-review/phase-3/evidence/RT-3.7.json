@@ -1,0 +1,15 @@
+{
+  "id": "RT-3.7",
+  "title": "No seccomp profile attached to sandbox pod",
+  "risk_class": "\ud83d\udfe1",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Without seccomp, only cap-drop limits syscalls; some dangerous calls remain reachable. Document attack surface.",
+  "observed": "no seccompProfile in pod or container spec; any_dangerous_syscall_succeeded=False; syscall probes: ---UNSHARE---\nunshare: unshare failed: Operation not permitted\nRC=1\n---SYSCALLS---\nclone rc=-1 errno=Operation not permitted\nptrace rc=-1 errno=Operation not permitted\nadd_key rc=-1 errno=Operation not permitted\nrequest_key rc=-1 errno=Operation not permitted\nRC=0\n",
+  "evidence": [
+    "",
+    "",
+    "---UNSHARE---\nunshare: unshare failed: Operation not permitted\nRC=1\n---SYSCALLS---\nclone rc=-1 errno=Operation not permitted\nptrace rc=-1 errno=Operation not permitted\nadd_key rc=-1 errno=Operation not permitted\nrequest_key rc=-1 errno=Operation not permitted\nRC=0\n"
+  ],
+  "notes": "Recommend RuntimeDefault profile at pod level. Currently, cap-drop ALL + NoNewPrivs:1 already EPERM the probed syscalls, so severity is LOW (defence-in-depth) unless a subsequent finding restores any caps."
+}

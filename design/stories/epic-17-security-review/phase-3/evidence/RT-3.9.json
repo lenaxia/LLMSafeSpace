@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.9",
+  "title": "Cross-sandbox connectivity denied (G16 holds)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Sandbox A \u2192 Sandbox B agentd MUST fail (default-deny ingress)",
+  "observed": "connect failed: RC=124",
+  "evidence": [
+    "RC=124\n"
+  ],
+  "notes": ""
+}

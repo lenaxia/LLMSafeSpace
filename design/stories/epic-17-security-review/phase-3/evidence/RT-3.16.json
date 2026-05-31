@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.16",
+  "title": "/sandbox-cfg files have wrong mode",
+  "risk_class": "\ud83d\udfe2",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "All files under /sandbox-cfg MUST be mode 600, owner uid 1000",
+  "observed": "violations: 644 1000 /sandbox-cfg/password",
+  "evidence": [
+    "644 1000 /sandbox-cfg/password\n"
+  ],
+  "notes": ""
+}

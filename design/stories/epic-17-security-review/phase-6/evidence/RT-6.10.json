@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.10",
+  "title": "Webhook accepts arbitrary registry in Spec.Runtime",
+  "result": "FAIL",
+  "severity": "critical",
+  "expected": "API/webhook MUST reject untrusted registry references in runtime field",
+  "observed": "creation succeeded: workspace.llmsafespace.dev/p6-rt-6-10 created\n",
+  "evidence": [
+    "workspace.llmsafespace.dev/p6-rt-6-10 created\n"
+  ],
+  "notes": "Confirms Phase 2 RT-2.18 critical finding: arbitrary image pull is admission-allowed."
+}

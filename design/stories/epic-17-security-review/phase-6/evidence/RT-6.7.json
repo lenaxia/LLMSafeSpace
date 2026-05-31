@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.7",
+  "title": "PVC cross-mount (static analysis)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "PVC ownership / RWO mode MUST prevent cross-workspace mount",
+  "observed": "controller sets ownerReferences on PVCs; cross-mount requires direct kubectl as user with namespace pod-create privs",
+  "evidence": [
+    "547:\tif len(pvc.OwnerReferences) > 0 {\n548:\t\tfor _, owner := range pvc.OwnerReferences {\n"
+  ],
+  "notes": "Live exploit needs a user with kubectl access to the workspace namespace; that's outside our threat model (sandbox attacker has no kubectl). For a fully unauthenticated attack, the API would need to accept a custom claimName \u2014 it doesn't (controller computes deterministic name)."
+}

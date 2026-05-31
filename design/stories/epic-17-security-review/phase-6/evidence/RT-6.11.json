@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.11",
+  "title": "Default namespace lacks PSA enforce label (G11 confirmed)",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Workspace namespace SHOULD have pod-security.kubernetes.io/enforce: restricted",
+  "observed": "namespace labels: {\"kubernetes.io/metadata.name\":\"default\"}",
+  "evidence": [
+    "{\"kubernetes.io/metadata.name\":\"default\"}"
+  ],
+  "notes": "Without `pod-security.kubernetes.io/enforce: restricted`, k8s admission permits privileged/hostPath/SYS_ADMIN pods if RBAC permits creating pods. Defence-in-depth gap. Add `enforce: restricted` and `audit: restricted` to the namespace template."
+}

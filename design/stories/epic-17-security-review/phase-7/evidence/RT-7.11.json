@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.11",
+  "title": "Tool input rendered via JSON.stringify (safe)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "JSON.stringify + <pre> MUST not interpret HTML",
+  "observed": "React auto-escapes children of <pre>",
+  "evidence": [
+    "import { lazy, Suspense } from \"react\";\nimport ReactMarkdown from \"react-markdown\";\nimport remarkGfm from \"remark-gfm\";\nimport rehypeSanitize from \"rehype-sanitize\";\nimport { Brain, Wrench, Server } from \"lucide-react\";\nimport { cn } from \"../../lib/utils\";\nimport { useUserSetting } from \"../../hook"
+  ],
+  "notes": ""
+}

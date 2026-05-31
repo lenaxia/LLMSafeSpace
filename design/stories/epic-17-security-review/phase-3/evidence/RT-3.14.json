@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.14",
+  "title": "Sensitive /dev entries blocked",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Sensitive device files MUST be absent or unreadable from the sandbox",
+  "observed": "all probes blocked; /dev listing: /dev/sda---\nls: cannot access '/dev/sda': No such file or directory\nhead: cannot open '/dev/sda' for reading: No such file or directory\nBLOCKED\n---/dev/disk---\nls: cannot access '/dev/disk': No such file or directory\nhead: cannot open '/dev/disk' for reading: No such file or directory\nBLOCKED\n---listing---\nfd\nfull\nmqueue\nnull\nptmx\npts\nrandom\nshm\nstderr\nstdin\nstdout\ntermination-log\ntty\nurandom\nzero",
+  "evidence": [
+    "---/dev/kmsg---\nls: cannot access '/dev/kmsg': No such file or directory\nhead: cannot open '/dev/kmsg' for reading: No such file or directory\nBLOCKED\n---/dev/mem---\nls: cannot access '/dev/mem': No such file or directory\nhead: cannot open '/dev/mem' for reading: No such file or directory\nBLOCKED\n---/dev/sda---\nls: cannot access '/dev/sda': No such file or directory\nhead: cannot open '/dev/sda' for reading: No such file or directory\nBLOCKED\n---/dev/disk---\nls: cannot access '/dev/disk': No such file or directory\nhead: cannot open '/dev/disk' for reading: No such file or directory\nBLOCKED\n---listing---\nfd\nfull\nmqueue\nnull\nptmx\npts\nrandom\nshm\nstderr\nstdin\nstdout\ntermination-log\ntty\nurandom\nzero\n"
+  ],
+  "notes": ""
+}

@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.8",
+  "title": "kube-apiserver unreachable (G16 holds)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "kube-apiserver MUST be unreachable from sandbox",
+  "observed": "IP=10.96.0.1\nRC=124\n",
+  "evidence": [
+    "IP=10.96.0.1\nRC=124\n"
+  ],
+  "notes": ""
+}

@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.13",
+  "title": "/etc/shadow not readable from sandbox",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "/etc/shadow either non-existent (distroless), or readable but empty/useless (sandbox uid 1000 has no shadow entry)",
+  "observed": "cat: /workspace/.shadowlink: Permission denied\nRC=1",
+  "evidence": [
+    "cat: /workspace/.shadowlink: Permission denied\nRC=1\n"
+  ],
+  "notes": ""
+}

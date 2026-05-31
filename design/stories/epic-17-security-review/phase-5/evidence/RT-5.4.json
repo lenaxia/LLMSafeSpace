@@ -1,0 +1,10 @@
+{
+  "id": "RT-5.4",
+  "title": "SSE injection (deferred \u2014 needs in-pod opencode response shaping)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "SSE stream parser MUST not allow injected events",
+  "observed": "Requires modifying opencode's response stream; outside black-box scope.",
+  "evidence": [],
+  "notes": "Recommend a unit test in the proxy that fuzzes raw SSE bytes through stripPatchParts."
+}

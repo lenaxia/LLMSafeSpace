@@ -1,0 +1,13 @@
+{
+  "id": "RT-6.15",
+  "title": "Database services are ClusterIP",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Postgres/Redis services SHOULD be ClusterIP only",
+  "observed": "postgres='ClusterIP' valkey='ClusterIP'",
+  "evidence": [
+    "ClusterIP",
+    "ClusterIP"
+  ],
+  "notes": "Reminder G26: postgres has default password and valkey has empty requirepass \u2014 see Phase 4. ClusterIP doesn't help if anything in the namespace is compromised."
+}

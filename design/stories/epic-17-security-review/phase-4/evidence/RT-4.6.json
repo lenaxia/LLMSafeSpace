@@ -1,0 +1,13 @@
+{
+  "id": "RT-4.6",
+  "title": "Static DEK structure inspection",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Wrapped DEK MUST be in DB but unusable without password-derived KEK; no plaintext key alongside the wrapped DEK.",
+  "observed": "user_secrets columns: id\nuser_id\nname\ntype\nciphertext\nkey_version\nmetadata\ncreated_at\nupdated_at",
+  "evidence": [
+    "id|uuid||not null|gen_random_uuid()\nuser_id|character varying(36)||not null|\nname|character varying(255)||not null|\ntype|character varying(50)||not null|\nciphertext|bytea||not null|\nkey_version|integer||not null|\nmetadata|jsonb||not null|'{}'::jsonb\ncreated_at|timestamp with time zone||not null|now()\nupdated_at|timestamp with time zone||not null|now()",
+    "id\nuser_id\nname\ntype\nciphertext\nkey_version\nmetadata\ncreated_at\nupdated_at"
+  ],
+  "notes": "Static check only \u2014 full offline-attack simulation needs the wrapped DEK + the user's KEK derivation parameters extracted from the DB. Treat as documented: wrapped_dek alone cannot be decrypted without the user's password (HKDF-derived KEK)."
+}

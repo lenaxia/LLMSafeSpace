@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.14",
+  "title": "JWT in HttpOnly+Secure cookie; no localStorage tokens",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "JWT MUST be in HttpOnly+Secure cookie, not localStorage/sessionStorage",
+  "observed": "Set-Cookie attrs: lsp_session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODAyNTU3MjUsImlhdCI6MTc4MDE2OTMyNSwianRpIjoiNjUyMTlmZDQtMTdlMy00ZWNiLTk4NjktNTAxNWQ4ZjUxYmExIiwic3ViIjoiMzMwZjA5MzYtNDFhYi00MWJlLTg2MzUtZDI; api/ tree: no localStorage refs",
+  "evidence": [
+    "lsp_session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODAyNTU3MjUsImlhdCI6MTc4MDE2OTMyNSwianRpIjoiNjUyMTlmZDQtMTdlMy00ZWNiLTk4NjktNTAxNWQ4ZjUxYmExIiwic3ViIjoiMzMwZjA5MzYtNDFhYi00MWJlLTg2MzUtZDI2ODg3NDlmMTE5In0.ZrKAEgtWZTjO5FvQG0CNSbAtC9PCJqQmCSyHIo4zg_w; Path=/; Max-Age=86400; HttpOnly; Secure"
+  ],
+  "notes": ""
+}

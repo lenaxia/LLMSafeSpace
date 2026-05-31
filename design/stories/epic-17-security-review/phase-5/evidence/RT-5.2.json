@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.2",
+  "title": "Proxy port hardcoded (static confirm)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Proxy target port MUST be hardcoded to opencodePort",
+  "observed": "proxy.go:29 const opencodePort = agentd.AgentPort (4096)",
+  "evidence": [
+    "static analysis only"
+  ],
+  "notes": "No user-controlled port in routes; verified by code grep."
+}

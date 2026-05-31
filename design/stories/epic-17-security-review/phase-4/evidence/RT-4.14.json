@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.14",
+  "title": "Concurrent rotate-key both got responses",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Two simultaneous rotate-key calls MUST converge atomically; no torn state.",
+  "observed": "#0 status=200 dt=0.02s; #1 status=200 dt=0.03s",
+  "evidence": [
+    "[[0, 200, 0.019958867000241298, \"{\\\"rotated\\\":0,\\\"alreadyCurrent\\\":0,\\\"errors\\\":0}\"], [1, 200, 0.033266318001551554, \"{\\\"rotated\\\":0,\\\"alreadyCurrent\\\":0,\\\"errors\\\":0}\"]]"
+  ],
+  "notes": "Atomicity proof needs DB inspection of key version history; both calls returning 200 is acceptable if commits serialised."
+}

@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.7",
+  "title": "JWT key sourced from K8s Secret",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "JWT signing key MUST come from a K8s Secret (secretKeyRef), not plaintext env or configmap",
+  "observed": "secretKeyRef present for LLMSAFESPACE_AUTH_JWTSECRET",
+  "evidence": [
+    "[{\"name\":\"CONFIG_PATH\",\"value\":\"/etc/llmsafespace/config.yaml\"},{\"name\":\"LLMSAFESPACE_DATABASE_PASSWORD\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"postgres-password\",\"name\":\"llmsafespace-credentials\"}}},{\"name\":\"LLMSAFESPACE_REDIS_PASSWORD\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"redis-password\",\"name\":\"llmsafespace-credentials\",\"optional\":true}}},{\"name\":\"LLMSAFESPACE_AUTH_JWTSECRET\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"jwt-secret\",\"name\":\"llmsafespace-credentials\"}}},{\"name\":\"LLMSAFESPACE_KUBERNETES_PODNAME\",\"valueFrom\":{\"fieldRef\":{\"apiVersion\":\"v1\",\"fieldPath\":\"metadata.name\"}}}]"
+  ],
+  "notes": ""
+}

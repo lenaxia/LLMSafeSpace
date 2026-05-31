@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.9",
+  "title": "Payload size acceptance + latency",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Redactor MUST handle large inputs without exponential blowup; if there's a bypass threshold, document it.",
+  "observed": "size=1024 status=201 dt=0.032s body0={\"id\":\"8ed8cd3f-f232-4c0f-a744-af189a7372ed\",\"name\":\"p4-dos-1024\",\"type\":\"env-secret\",\"metadata\":{\"var_name\":\"P4_DOS_102 | size=65536 status=201 dt=0.042s body0={\"id\":\"6cf66303-82dd-4108-8212-2590f0cf3c3c\",\"name\":\"p4-dos-65536\",\"type\":\"env-secret\",\"metadata\":{\"var_name\":\"P4_DOS_65 | size=262144 status=201 dt=0.076s body0={\"id\":\"b4de4fe4-f6a4-4cc9-a676-04e7889f96cb\",\"name\":\"p4-dos-262144\",\"type\":\"env-secret\",\"metadata\":{\"var_name\":\"P4_DOS_2 | size=1048576 status=201 dt=0.238s body0={\"id\":\"be2f4077-8c4e-4a16-8bf6-28568327a492\",\"name\":\"p4-dos-1048576\",\"type\":\"env-secret\",\"metadata\":{\"var_name\":\"P4_DOS_",
+  "evidence": [
+    "[\n  \"size=1024 status=201 dt=0.032s body0={\\\"id\\\":\\\"8ed8cd3f-f232-4c0f-a744-af189a7372ed\\\",\\\"name\\\":\\\"p4-dos-1024\\\",\\\"type\\\":\\\"env-secret\\\",\\\"metadata\\\":{\\\"var_name\\\":\\\"P4_DOS_102\",\n  \"size=65536 status=201 dt=0.042s body0={\\\"id\\\":\\\"6cf66303-82dd-4108-8212-2590f0cf3c3c\\\",\\\"name\\\":\\\"p4-dos-65536\\\",\\\"type\\\":\\\"env-secret\\\",\\\"metadata\\\":{\\\"var_name\\\":\\\"P4_DOS_65\",\n  \"size=262144 status=201 dt=0.076s body0={\\\"id\\\":\\\"b4de4fe4-f6a4-4cc9-a676-04e7889f96cb\\\",\\\"name\\\":\\\"p4-dos-262144\\\",\\\"type\\\":\\\"env-secret\\\",\\\"metadata\\\":{\\\"var_name\\\":\\\"P4_DOS_2\",\n  \"size=1048576 status=201 dt=0.238s body0={\\\"id\\\":\\\"be2f4077-8c4e-4a16-8bf6-28568327a492\\\",\\\"name\\\":\\\"p4-dos-1048576\\\",\\\"type\\\":\\\"env-secret\\\",\\\"metadata\\\":{\\\"var_name\\\":\\\"P4_DOS_\"\n]"
+  ],
+  "notes": "Live test of API value-size limits + redactor latency. True DoS exploitation needs to hit a logging code path; complement with pkg/redact unit benchmarks."
+}

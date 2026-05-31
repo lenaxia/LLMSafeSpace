@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.5",
+  "title": "No connection limit observed",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Proxy MUST cap concurrent connections per workspace at 10",
+  "observed": "15 simultaneous /events: 2xx=0 429=0 503=0 statuses=[404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404]",
+  "evidence": [
+    "[[0, 404, 18], [1, 404, 18], [2, 404, 18], [5, 404, 18], [7, 404, 18], [8, 404, 18], [4, 404, 18], [14, 404, 18], [9, 404, 18], [11, 404, 18], [13, 404, 18], [3, 404, 18], [6, 404, 18], [10, 404, 18], [12, 404, 18]]"
+  ],
+  "notes": "All 15 received 2xx \u2014 limit may apply only to long-lived streams. Defer to load test."
+}

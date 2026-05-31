@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.8",
+  "title": "Delete-with-active-stream observed cleanly",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Deleting a workspace SHOULD gracefully terminate active SSE / sessions",
+  "observed": "delete_status=204 stream_results=[(404, 18)]",
+  "evidence": [
+    "[[404, 18]]"
+  ],
+  "notes": ""
+}

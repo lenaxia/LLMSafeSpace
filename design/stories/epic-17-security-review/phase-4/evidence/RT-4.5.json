@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.5",
+  "title": "Redis has NO auth configured",
+  "result": "FAIL",
+  "severity": "critical",
+  "expected": "Redis/Valkey MUST require auth; API connection MUST use the same auth",
+  "observed": "requirepass empty: 'requirepass\\n\\n'",
+  "evidence": [
+    "requirepass\n\n"
+  ],
+  "notes": ""
+}

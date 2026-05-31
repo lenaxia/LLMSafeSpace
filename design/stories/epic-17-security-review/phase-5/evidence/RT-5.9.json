@@ -1,0 +1,10 @@
+{
+  "id": "RT-5.9",
+  "title": "MCP transport injection (deferred \u2014 needs MCP transport probe)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "MCP server must reject malformed messages",
+  "observed": "Out of scope for this sweep; recommend dedicated MCP fuzz test.",
+  "evidence": [],
+  "notes": ""
+}

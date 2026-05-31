@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.5",
+  "title": "/workspace mount missing nosuid",
+  "risk_class": "\ud83d\udfe1",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "PVC mount SHOULD include nosuid; SUID bit may set on disk but kernel must ignore it on exec",
+  "observed": "no nosuid in mount line; raw: -rwsr-xr-x. 1 sandbox sandbox 125640 May 30 18:31 /workspace/.suid_test\n-rwsr-xr-x\n/dev/longhorn/pvc-4a76aa5c-f185-4599-89d7-3fe6ab7bbc62 /workspace ext4 rw,seclabel,relatime 0 0",
+  "evidence": [
+    "-rwsr-xr-x. 1 sandbox sandbox 125640 May 30 18:31 /workspace/.suid_test\n-rwsr-xr-x\n/dev/longhorn/pvc-4a76aa5c-f185-4599-89d7-3fe6ab7bbc62 /workspace ext4 rw,seclabel,relatime 0 0\n"
+  ],
+  "notes": "readOnlyRootFilesystem + cap-drop ALL still mitigate, but defence-in-depth weakened."
+}

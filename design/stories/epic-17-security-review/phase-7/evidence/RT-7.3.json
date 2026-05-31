@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.3",
+  "title": "Concurrent secret update converged",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Concurrent credential updates SHOULD converge atomically",
+  "observed": "5 PUTs: [(0, 204), (1, 204), (2, 204), (3, 204), (4, 204)]; final get: status=200",
+  "evidence": [
+    "[[0, 204], [1, 204], [2, 204], [3, 204], [4, 204]]"
+  ],
+  "notes": ""
+}

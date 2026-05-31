@@ -1,0 +1,10 @@
+{
+  "id": "RT-7.15",
+  "title": "Workspace delete + DEK race (combined with RT-4.12, deferred)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "DEK cleanup on workspace delete must be atomic",
+  "observed": "Deferred \u2014 needs session-correlation probe; combine with RT-4.12 follow-up.",
+  "evidence": [],
+  "notes": ""
+}

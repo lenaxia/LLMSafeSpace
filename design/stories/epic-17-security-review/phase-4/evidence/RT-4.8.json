@@ -1,0 +1,10 @@
+{
+  "id": "RT-4.8",
+  "title": "Secret values redacted from API responses",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Secret value MUST NOT come back in any list/get response; redactor exists for log paths.",
+  "observed": "canary absent from create/get/list responses",
+  "evidence": [],
+  "notes": "Redaction rule mutation-testing belongs to pkg/redact unit suite; live black-box check passes."
+}

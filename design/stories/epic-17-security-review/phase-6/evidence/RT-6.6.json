@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.6",
+  "title": "etcd encryption is operator responsibility (no preflight)",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Chart should warn or block install if etcd encryption is unconfigured",
+  "observed": "NOTES.txt mentions etcd? False; preflight job? False",
+  "evidence": [
+    "Thanks for installing {{ .Chart.Name }}, version {{ .Chart.Version }}.\n\nThe release is named: {{ .Release.Name }}\nInstalled in namespace: {{ .Release.Namespace }}\n\nNEXT STEPS\n==========\n\n1. Verify the controller and API are running:\n\n     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}\n\n2. Check that the database migration Job completed successfully:\n\n     kubectl -n {{ .Release.Namespace }} get jobs {{ include \"llmsafespace.fullname\" . }}-migrate\n     kubectl -n {{ .Release.Namespace }} logs job/{{ include \"llmsafespace.fullname\" . }}-migrate\n\n  "
+  ],
+  "notes": "Chart has no preflight Job to verify EncryptionConfig on the kube-apiserver. Operators must verify out-of-band. Recommend adding a Helm pre-install hook that errors on `kubectl get --raw=/api/v1/namespaces/kube-system/secrets` returning unencrypted data."
+}

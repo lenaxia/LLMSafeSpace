@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.8",
+  "title": "Cloud metadata IP unreachable (G16 holds)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "169.254.169.254:80 MUST be unreachable (G16 blockedEgressCIDRs)",
+  "observed": "connect failed as expected: RC=124",
+  "evidence": [
+    "RC=124\n"
+  ],
+  "notes": "On Talos this is also blocked at L3 by the node firewall, so this test does not isolate the NetworkPolicy. Re-run on cloud K8s to fully validate."
+}

@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.14",
+  "title": "Ingress TLS default not enabled",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Helm values default SHOULD enable TLS",
+  "observed": "ingress block: ",
+  "evidence": [
+    ""
+  ],
+  "notes": "Live deployment uses Traefik with cert-manager-issued certs at ingress; Helm chart default still SHOULD enable TLS for out-of-the-box deployments."
+}

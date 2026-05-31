@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.7",
+  "title": "DNS to external resolver permitted (NetPol bypass)",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "DNS allow-list narrowed to kube-dns; egress NetPol denies in-cluster CIDRs",
+  "observed": "sandbox can reach 8.8.8.8:53 over both TCP and UDP; raw DNS query succeeded: TCP=0\n61 bytes\n",
+  "evidence": [
+    "TCP=0\n61 bytes\n"
+  ],
+  "notes": "G16 narrowed DNS allow-list to kube-dns, but the egress allow-all 0.0.0.0/0 (minus RFC1918) lets the sandbox use ANY external resolver, including raw UDP/53 to 8.8.8.8. Mitigation: add explicit port restriction (53 only to kube-dns IPs) OR use Cilium FQDN policy."
+}

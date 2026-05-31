@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.12",
+  "title": "NetPols present (G16 holds)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Workspace NetworkPolicies present and enforced",
+  "observed": "netpols: ['networkpolicy.networking.k8s.io/llmsafespace-workspace-default-deny-ingress', 'networkpolicy.networking.k8s.io/llmsafespace-workspace-egress']",
+  "evidence": [
+    "networkpolicy.networking.k8s.io/llmsafespace-workspace-default-deny-ingress\nnetworkpolicy.networking.k8s.io/llmsafespace-workspace-egress\n"
+  ],
+  "notes": ""
+}

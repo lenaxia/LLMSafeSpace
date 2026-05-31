@@ -1,0 +1,14 @@
+{
+  "id": "RT-3.2",
+  "title": "SA token absent (G17 fix holds)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "/var/run/secrets/kubernetes.io/ MUST NOT exist (automountServiceAccountToken: false)",
+  "observed": "directory missing AND spec.automountServiceAccountToken='false'",
+  "evidence": [
+    "ls: cannot access '/var/run/secrets/kubernetes.io/': No such file or directory\nRC=2\n",
+    "false"
+  ],
+  "notes": ""
+}

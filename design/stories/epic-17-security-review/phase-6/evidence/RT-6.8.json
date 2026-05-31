@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.8",
+  "title": "Cross-namespace permission check",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Workspace pod's SA MUST NOT have permissions in other namespaces",
+  "observed": "api SA can-i get secrets in kube-system: no",
+  "evidence": [
+    "no\n"
+  ],
+  "notes": "Sandbox pods have no SA token mounted (G17). API SA is namespace-scoped."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "RT-5.1",
+  "title": "Proxy target not influenceable by headers/path",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Proxy MUST NOT be redirectable to attacker-controlled IPs via headers or path params",
+  "observed": "host_header_inject_status=404 traversal_status=404",
+  "evidence": [
+    "404 page not found",
+    "404 page not found"
+  ],
+  "notes": ""
+}

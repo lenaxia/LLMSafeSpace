@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.6",
+  "title": "All capabilities denied (CapEff=0, NoNewPrivs=1)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "CapEff/CapBnd MUST be 0; CAP_NET_RAW, CAP_CHOWN, CAP_MKNOD ops MUST fail. Low-port bind is governed by sysctl, not caps, in K8s>=1.22.",
+  "observed": "raw probes blocked, caps zero; raw: ---CAPS---\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t0000000000000000\nCapAmb:\t0000000000000000\nNoNewPrivs:\t1\n---UNPRIV_PORT_START---\n0\n---RAW---\nRAW_FAIL:Protocol not supported at -e line 1.\n---CHOWN---\nchown: changing ownership of '/tmp': Operation not permitted\nRC=1\n---MKNOD---\nmknod: /tmp/devnull: Operation not permitted\nRC=1\n",
+  "evidence": [
+    "---CAPS---\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t0000000000000000\nCapAmb:\t0000000000000000\nNoNewPrivs:\t1\n---UNPRIV_PORT_START---\n0\n---RAW---\nRAW_FAIL:Protocol not supported at -e line 1.\n---CHOWN---\nchown: changing ownership of '/tmp': Operation not permitted\nRC=1\n---MKNOD---\nmknod: /tmp/devnull: Operation not permitted\nRC=1\n"
+  ],
+  "notes": "Note: pod can bind to ports <1024 because K8s default sysctl ip_unprivileged_port_start=0. Default-deny ingress makes this moot for cross-tenant attacks; document as accepted."
+}

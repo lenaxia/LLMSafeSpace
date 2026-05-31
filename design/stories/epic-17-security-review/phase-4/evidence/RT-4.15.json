@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.15",
+  "title": "Mise binary downloaded without integrity verification (G19)",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Mise binary download MUST verify integrity (sha256, signify, Sigstore, or GitHub attestations).",
+  "observed": "sha256_check=False attestations_enabled=False attestations_disabled=True",
+  "evidence": [
+    "ARG TARGETARCH=amd64\n\nFROM golang:1.25-bookworm AS redact-builder\n\nARG TARGETARCH\n\nWORKDIR /src\n\nARG GOPROXY=https://proxy.golang.org,direct\nENV GOPROXY=${GOPROXY}\n\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY cmd/ ./cmd/\nCOPY pkg/ ./pkg/\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \\\n    go build -trimpath -o /out/redact ./cmd/redact\n\nFROM golang:1.25-bookworm AS agentd-builder\n\nARG TARGETARCH\n\nWORKDIR /src\n\nARG GOPROXY=https://proxy.golang.org,direct\nENV GOPROXY=${GOPROXY}\n\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY cmd/ ./cmd/\nCOPY pkg/ ./pkg/\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \\\n    go build -trimpath -o /out/workspace-agentd ./cmd/workspace-agentd\n\nFROM debian:bookworm-slim\n\nARG TARGETARCH\n\n# Override to use a different release: --build-arg OPENCODE_VERSION=<version>\n# Pinned to 1.15.12 (May 2026) \u2014 validated against the proxy code in\n# api/internal/handlers/proxy.go and session_tracker.go. See worklog 0070\n# for the full v1.2.27\u2192v1.15.12 impact analysis (15 items, all non-breaking).\n# Key changes: Effect HttpApi replaces Hono, events gain \"id\" field, responses\n# may be gzip-compressed (proxy streams transparently).\nARG OPENCODE_VERSION=1.15.12\n\nARG MISE_VERSION=2026.5.15\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    bash ca-certificates curl git jq unzip xz-utils \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install opencode from upstream releases.\n#\n# Source: https://github.com/anomalyco/"
+  ],
+  "notes": "Confirmed G19 from threat model. Recommend pinning a sha256 of the mise tarball at build time."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "RT-5.12",
+  "title": "stripPatchParts DoS (cannot trigger black-box)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "stripPatchParts MUST handle deeply nested / huge JSON without OOM or hang",
+  "observed": "stripPatchParts is invoked on opencode responses, not user requests; needs unit-level fuzz.",
+  "evidence": [],
+  "notes": "Static: proxy.go:519 uses encoding/json.Unmarshal which has no depth limit. Add unit test: stripPatchParts with 10000-deep nested arrays + 100MB string. Verify it errors gracefully (returning original body per fail-safe contract)."
+}

@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.10",
+  "title": "Non-WS endpoint did not upgrade",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Non-WS endpoints MUST reject Upgrade: websocket",
+  "observed": "status=404 hdr.connection=close hdr.upgrade=-",
+  "evidence": [
+    "404 page not found"
+  ],
+  "notes": ""
+}

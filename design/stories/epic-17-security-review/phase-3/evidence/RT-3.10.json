@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.10",
+  "title": "Public DNS resolution permitted (accepted)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Public DNS resolution succeeds (accepted risk: sandbox needs DNS for package installs); document audit-log expectation",
+  "observed": "resolved example.com: 2606:4700:10::ac42:93f3 example.com\n2606:4700:10::6814:179a example.com\nRC=0",
+  "evidence": [
+    "2606:4700:10::ac42:93f3 example.com\n2606:4700:10::6814:179a example.com\nRC=0\n"
+  ],
+  "notes": "Risk: arbitrary DNS exfil possible via in-cluster CoreDNS forwarder. Mitigation options: (a) restrict egress to a named DNS allow-list via Cilium FQDN policy; (b) run a logging resolver. Currently neither."
+}

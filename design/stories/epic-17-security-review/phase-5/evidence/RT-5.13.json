@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.13",
+  "title": "ResponseHeaderTimeout=300s on the proxy (G12)",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "ResponseHeaderTimeout SHOULD be \u226430s; 300s allows slow-loris-style worker exhaustion",
+  "observed": "Static: proxy.go:95 ResponseHeaderTimeout: 300 * time.Second",
+  "evidence": [
+    "static analysis only"
+  ],
+  "notes": "Live exploitation: open many connections that the upstream (opencode) replies-headers slowly to. With 300s timeout * maxConnectionsPerWorkspace=10 * many workspaces, an attacker can tie up many goroutines. Mitigations: lower to 30s; add Gin concurrency cap. Severity bumps to medium with multi-tenant deployment."
+}

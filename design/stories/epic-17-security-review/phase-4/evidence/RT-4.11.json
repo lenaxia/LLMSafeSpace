@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.11",
+  "title": "Recovery-key entropy (static)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Recovery key MUST be \u2265128 bits with no rate-limit bypass.",
+  "observed": "static reference grep \u2014 see evidence",
+  "evidence": [
+    "/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_e2e_all_test.go:145:\trecoveryKey := svc.testRecoveryKey\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_e2e_all_test.go:158:\t\tRecoveryKey string `json:\"recoveryKey\"`\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_e2e_all_test.go:162:\tif recoverResp.RecoveryKey == \"\" {\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_e2e_all_test.go:232:\ttestRecoveryKey string\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_e2e_all_test.go:387:\t\tc.tc.testRecoveryKey = recoveryKey\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:658:// TestRegister_UnlocksDEKAndReturnsRecoveryKey is the regression test for\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:662:func TestRegister_UnlocksDEKAndReturnsRecoveryKey(t *testing.T) {\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:695:\tassert.Equal(t, \"feedfacecafebabe1234567890abcdef\", resp.RecoveryKey,\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:725:// TestLogin_OmitsRecoveryKey ensures the RecoveryKey field is never set on\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:729:func TestLogin_OmitsRecoveryKey(t *testing.T) {\n/home/mikekao/personal/LLMSafeSpace/api/internal/services/auth/auth_test.go:745:\tassert.Empty(t, resp.RecoveryKey, \"login response must never include"
+  ],
+  "notes": "Per Phase 2 RT-2.17 we already established the recovery endpoint is unrate-limited; brute-forcing 2^128 is infeasible regardless. Real risk is recovery-token storage / forwarding, not entropy."
+}

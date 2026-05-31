@@ -1,0 +1,10 @@
+{
+  "id": "RT-7.7",
+  "title": "Per-user name namespace works",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Workspace names SHOULD be per-user scoped (alice and bob can both have 'foo')",
+  "observed": "alice ws=647be864-59af-4a7f-a771-d1d7a18c2333, bob ws=4d655bff-d18c-4e21-a1d3-aceebd0cc240, distinct ids",
+  "evidence": [],
+  "notes": ""
+}

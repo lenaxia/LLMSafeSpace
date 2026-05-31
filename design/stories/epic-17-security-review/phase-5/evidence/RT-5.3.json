@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.3",
+  "title": "CL-TE conflict handled correctly (pipelining, not smuggling)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Gin/net.http MUST reject CL-TE / TE-CL conflicts",
+  "observed": "two responses with two distinct request_ids \u2014 net/http honoured TE-chunked over CL=5 per RFC; pipelined trailing bytes as new request",
+  "evidence": [
+    "HTTP/1.1 404 Not Found\r\nContent-Security-Policy: default-src 'self'; connect-src 'self' wss:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; block-all-mixed-content\r\nContent-Type: text/plain\r\nPermissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nX-Content-Type-Options: nosniff\r\nX-Download-Options: noopen\r\nX-Frame-Options: DENY\r\nX-Permitted-Cross-Domain-Policies: none\r\nX-Ratelimit-Limit: 100\r\nX-Ratelimit-Remaining: 19\r\nX-Request-Id: 5e26f247-b7fa-4ecb-a01d-5c3673038732\r\nX-Xss-Protection: 1; mode=block\r\nDate: Sat, 30 May 2026 19:19:25 GMT\r\nContent-Length: 18\r\n\r\n404 page not foundHTTP/1.1 404 Not Found\r\nContent-Security-Policy: default-src 'self'; connect-src 'self' wss:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; block-all-mixed-content\r\nContent-Type: text/plain\r\nPermissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nX-Content-Type-Options: nosniff\r\nX-Download-Options: noopen\r\nX-Frame-Options: DENY\r\nX-Permitted-Cross-Domain-Policies: none\r\nX-Ratelimit-Limit: 100\r\nX-Ratelimit-Remaining: 19\r\nX-Request-Id: 1eb45370-7bc0-4bfb-babe-5132cfddd561\r\nX-Xss-Protection: 1; mode=block\r\nDate: Sat, 30 May 2026 19:19:25 GMT"
+  ],
+  "notes": "True smuggling needs an intermediate proxy disagreeing with origin. Direct pentest against Go net/http is not exploitable. If a CDN/proxy is added in front, retest."
+}

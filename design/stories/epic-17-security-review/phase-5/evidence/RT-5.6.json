@@ -1,0 +1,10 @@
+{
+  "id": "RT-5.6",
+  "title": "Stale pod IP exploitation (deferred)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Proxy must verify pod ownership before connecting",
+  "observed": "Static check: proxy.go:373 has retry-with-fresh-IP logic. Live exploit requires racing pod restart.",
+  "evidence": [],
+  "notes": "Defer to integration test that kills a pod mid-request and races with a new pod claim."
+}

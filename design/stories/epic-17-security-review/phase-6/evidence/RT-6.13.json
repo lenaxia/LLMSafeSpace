@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.13",
+  "title": "No Helm preflight job",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Chart SHOULD have a pre-install Job that validates CNI / etcd encryption",
+  "observed": "templates/: ['NOTES.txt', '_helpers.tpl', 'api-deployment.yaml', 'api-ingress.yaml', 'api-service.yaml', 'configmap-api.yaml', 'controller-deployment.yaml', 'controller-service.yaml', 'frontend-deployment.yaml', 'frontend-ingress.yaml', 'frontend-service.yaml', 'mcp-deployment.yaml', 'mcp-service.yaml', 'migration-job.yaml', 'migrations-configmap.yaml', 'namespace.yaml', 'rbac.yaml', 'runtimeenvironment-base.yaml', 'secret.yaml', 'serviceaccount.yaml', 'validating-webhook.yaml', 'webhook-cert.yaml', 'workspace-network-policy.yaml']",
+  "evidence": [
+    "NOTES.txt\n_helpers.tpl\napi-deployment.yaml\napi-ingress.yaml\napi-service.yaml\nconfigmap-api.yaml\ncontroller-deployment.yaml\ncontroller-service.yaml\nfrontend-deployment.yaml\nfrontend-ingress.yaml\nfrontend-service.yaml\nmcp-deployment.yaml\nmcp-service.yaml\nmigration-job.yaml\nmigrations-configmap.yaml\nnamespace.yaml\nrbac.yaml\nruntimeenvironment-base.yaml\nsecret.yaml\nserviceaccount.yaml\nvalidating-webhook.yaml\nwebhook-cert.yaml\nworkspace-network-policy.yaml\n"
+  ],
+  "notes": ""
+}

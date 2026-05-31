@@ -1,0 +1,14 @@
+{
+  "id": "RT-4.13",
+  "title": "Token still valid after logout",
+  "result": "FAIL",
+  "severity": "high",
+  "expected": "After /logout (revoke), the same token MUST fail subsequent /auth/me with 401",
+  "observed": "pre_me=200 logout=204 post_me=200 body={\"id\":\"acf5e4da-01af-4e4c-b601-f2b7391d206d\",\"username\":\"phase4-bob\",\"email\":\"phase4-bob@pentest.local\",\"createdAt\":\"2026-05-30T18:53:15.807948Z\",\"updatedAt\":\"2026-05-30T18:53:15.807948Z\",\"active\":tru",
+  "evidence": [
+    "{\"id\":\"acf5e4da-01af-4e4c-b601-f2b7391d206d\",\"username\":\"phase4-bob\",\"email\":\"phase4-bob@pentest.local\",\"createdAt\":\"2026-05-30T18:53:15.807948Z\",\"updatedAt\":\"2026-05-30T18:53:15.807948Z\",\"active\":tru",
+    "",
+    "{\"id\":\"acf5e4da-01af-4e4c-b601-f2b7391d206d\",\"username\":\"phase4-bob\",\"email\":\"phase4-bob@pentest.local\",\"createdAt\":\"2026-05-30T18:53:15.807948Z\",\"updatedAt\":\"2026-05-30T18:53:15.807948Z\",\"active\":tru"
+  ],
+  "notes": ""
+}

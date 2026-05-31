@@ -1,0 +1,14 @@
+{
+  "id": "RT-4.12",
+  "title": "DEK lifecycle (workspace delete)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Workspace deletion SHOULD evict any DEKs scoped to that workspace's session, OR the DEK MUST be ephemeral with TTL.",
+  "observed": "pre_keys='dek:b689ded5-7255-4b0b-b342-80b270a97599\\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c' mid_keys='dek:b689ded5-7255-4b0b-b342-80b270a97599\\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c' post_keys='dek:b689ded5-7255-4b0b-b342-80b270a97599\\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c'",
+  "evidence": [
+    "dek:b689ded5-7255-4b0b-b342-80b270a97599\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c\n",
+    "dek:b689ded5-7255-4b0b-b342-80b270a97599\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c\n",
+    "dek:b689ded5-7255-4b0b-b342-80b270a97599\ndek:5f77fd41-27d8-443c-8d2e-4fd50e38b60c\ndek:b9821c3a-7ec3-4644-b9a8-a6ab415aff2c\n"
+  ],
+  "notes": "Live DEK tracking inconclusive without instrumented session ID. Audit `pkg/secrets/key_service.go` EvictDEK call sites \u2014 current story per plan: only logout/expiry."
+}

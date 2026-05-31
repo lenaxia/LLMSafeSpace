@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.4",
+  "title": "Path-traversal mountPath accepted by API",
+  "result": "FAIL",
+  "severity": "high",
+  "expected": "All traversal payloads MUST be sanitised or rejected",
+  "observed": "'../../etc/passwd' \u2192 201 {\"id\":\"6d4c4786-ed78-496e-8f57-934dcc3293d2\",\"name\":\"p4-trav-3754d6cb\",\"type\":\"secret-file\",\"metadata\":{\"mount_path\":\"..; '/etc/passwd' \u2192 201 {\"id\":\"9fbdf03e-57fb-4449-af0e-c861e2616f10\",\"name\":\"p4-trav-74acf318\",\"type\":\"secret-file\",\"metadata\":{\"mount_path\":\"/e; '..%2F..%2Fetc%2Fpasswd' \u2192 201 {\"id\":\"5d39463f-6ab6-457b-8dbd-c72bba06924f\",\"name\":\"p4-trav-e2171174\",\"type\":\"secret-file\",\"metadata\":{\"mount_path\":\"..; '/sandbox-cfg/../../../../etc/passwd' \u2192 201 {\"id\":\"01454816-52bc-46a9-bd4f-d24921283edd\",\"name\":\"p4-trav-119723ca\",\"type\":\"secret-file\",\"metadata\":{\"mount_path\":\"/s; 'subdir/../../../etc/passwd' \u2192 201 {\"id\":\"9bb48758-c567-43d8-935f-d752afc09a5d\",\"name\":\"p4-trav-a49b6fa5\",\"type\":\"secret-file\",\"metadata\":{\"mount_path\":\"su",
+  "evidence": [
+    "[\n  \"'../../etc/passwd' \\u2192 201 {\\\"id\\\":\\\"6d4c4786-ed78-496e-8f57-934dcc3293d2\\\",\\\"name\\\":\\\"p4-trav-3754d6cb\\\",\\\"type\\\":\\\"secret-file\\\",\\\"metadata\\\":{\\\"mount_path\\\":\\\"..\",\n  \"'/etc/passwd' \\u2192 201 {\\\"id\\\":\\\"9fbdf03e-57fb-4449-af0e-c861e2616f10\\\",\\\"name\\\":\\\"p4-trav-74acf318\\\",\\\"type\\\":\\\"secret-file\\\",\\\"metadata\\\":{\\\"mount_path\\\":\\\"/e\",\n  \"'..%2F..%2Fetc%2Fpasswd' \\u2192 201 {\\\"id\\\":\\\"5d39463f-6ab6-457b-8dbd-c72bba06924f\\\",\\\"name\\\":\\\"p4-trav-e2171174\\\",\\\"type\\\":\\\"secret-file\\\",\\\"metadata\\\":{\\\"mount_path\\\":\\\"..\",\n  \"'/sandbox-cfg/../../../../etc/passwd' \\u2192 201 {\\\"id\\\":\\\"01454816-52bc-46a9-bd4f-d24921283edd\\\",\\\"name\\\":\\\"p4-trav-119723ca\\\",\\\"type\\\":\\\"secret-file\\\",\\\"metadata\\\":{\\\"mount_path\\\":\\\"/s\",\n  \"'subdir/../../../etc/passwd' \\u2192 201 {\\\"id\\\":\\\"9bb48758-c567-43d8-935f-d752afc09a5d\\\",\\\"name\\\":\\\"p4-trav-a49b6fa5\\\",\\\"type\\\":\\\"secret-file\\\",\\\"metadata\\\":{\\\"mount_path\\\":\\\"su\"\n]"
+  ],
+  "notes": ""
+}

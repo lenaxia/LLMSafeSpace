@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.9",
+  "title": "Lease integrity (static)",
+  "result": "INCONCLUSIVE",
+  "severity": "info",
+  "expected": "Lease objects MUST require controller SA permissions",
+  "observed": "current leases in default: lease.coordination.k8s.io/llmsafespace-api-leader\nlease.coordination.k8s.io/llmsafespace-controller-leader-election\n",
+  "evidence": [
+    "lease.coordination.k8s.io/llmsafespace-api-leader\nlease.coordination.k8s.io/llmsafespace-controller-leader-election\n"
+  ],
+  "notes": "Live exploit requires forging a Lease with the controller's identity; outside black-box scope."
+}

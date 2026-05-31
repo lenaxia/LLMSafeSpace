@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.1",
+  "title": "No quota enforcement on workspace create",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "API SHOULD enforce a per-user workspace quota",
+  "observed": "created=8/8 quota_blocked=0 statuses=[201, 201, 201, 201, 201, 201, 201, 201]",
+  "evidence": [
+    "[201, 201, 201, 201, 201, 201, 201, 201]"
+  ],
+  "notes": "No per-user workspace cap. For a single-tenant deployment this is intentional; for SaaS, add quota."
+}

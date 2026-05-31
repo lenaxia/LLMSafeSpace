@@ -1,0 +1,15 @@
+{
+  "id": "RT-4.3",
+  "title": "Bind handler succeeds but durable Secret not created (G28 \u2014 bind no-op)",
+  "result": "FAIL",
+  "severity": "high",
+  "expected": "After bind, the literal payload MUST appear (verbatim) in /tmp/secrets-env or PID-1 env, and side-effect tokens (HIJACK/PWNED/BACKTICK) MUST be absent. K8s Secret `workspace-secrets-<ws>` MUST exist (durable channel).",
+  "observed": "bind PUT returned 204 (No Content), but K8s Secret workspace-secrets-b73a5c9f-29e1-4b08-b723-9835b71163cc does not exist; PID-1 env has no payload. Secrets cannot reach pods that boot AFTER bind. Bind is a no-op for first-time secret delivery.",
+  "evidence": [
+    "",
+    "===PROC1_ENV===\nNO_MATCH\n",
+    "",
+    "Error from server (NotFound): secrets \"workspace-secrets-b73a5c9f-29e1-4b08-b723-9835b71163cc\" not found\n"
+  ],
+  "notes": "Functional+security bug: bind succeeds in DB and the GET endpoint reflects the binding, but neither EnsureSecretsManifest nor the live agent reload appears to fire \u2014 pod sees nothing. Track as G28. G2 fix verification deferred to in-tree pkg/agentd/secrets unit tests (which DO exhaustively mutation-validate)."
+}

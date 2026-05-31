@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.10",
+  "title": "Code blocks rendered safely (React text-mode)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "<pre><code> blocks MUST be text-only (React auto-escape)",
+  "observed": "dangerouslySetInnerHTML in MessagePart? False",
+  "evidence": [
+    "import { lazy, Suspense } from \"react\";\nimport ReactMarkdown from \"react-markdown\";\nimport remarkGfm from \"remark-gfm\";\nimport rehypeSanitize from \"rehype-sanitize\";\nimport { Brain, Wrench, Server } from \"lucide-react\";\nimport { cn } from \"../../lib/utils\";\nimport { useUserSetting } from \"../../hooks/useUserSettings\";\nimport type { MessagePart as MessagePartType } from \"../../api/types\";\n\nconst ReactDiffViewer = lazy(() => import(\"react-diff-viewer-continued\"));\n\nfunction ToolInput({ input }: { input: unknown }) {\n  if (!input || typeof input !== \"object\") {\n    return <pre className=\"text-xs "
+  ],
+  "notes": ""
+}

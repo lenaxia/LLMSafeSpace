@@ -1,0 +1,10 @@
+{
+  "id": "RT-6.4",
+  "title": "Webhook bypass requires cluster-admin (accepted)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Deleting ValidatingWebhookConfiguration requires cluster-scoped admin",
+  "observed": "out-of-scope: pentest scope is default+pentest-* namespaces; cluster-admin attacks are accepted residual.",
+  "evidence": [],
+  "notes": "Cluster-admin compromise puts everything at risk; standard deployment assumes operator trust."
+}

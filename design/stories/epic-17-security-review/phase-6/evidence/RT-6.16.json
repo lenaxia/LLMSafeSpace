@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.16",
+  "title": "Helm default rbac.scope=cluster (G5)",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Default rbac.scope SHOULD be namespace, not cluster",
+  "observed": "line: '  scope: \"cluster\"'",
+  "evidence": [
+    "# Default values for llmsafespace.\n# This is a YAML-formatted file.\n\n# nameOverride / fullnameOverride follow standard Helm conventions.\nnameOverride: \"\"\nfullnameOverride: \"\"\n\n# Namespace where the platform's own components run.\n# Workspaces are created in the same namespace by default; controller can be\n# configured to watch additional namespaces via .controller.watchNamespaces.\nnamespace:\n  # If create: true, the chart will create the release namespace.\n  # If you install with --namespace and --create-namespace, set this to false.\n  create: false\n\n# ------------------------------------------"
+  ],
+  "notes": "Recommend default 'namespace'; require operators to opt-in to cluster scope."
+}

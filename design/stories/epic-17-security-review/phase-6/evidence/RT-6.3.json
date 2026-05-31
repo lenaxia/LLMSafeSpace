@@ -1,0 +1,12 @@
+{
+  "id": "RT-6.3",
+  "title": "API SA scoped to namespace",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "API SA SHOULD be namespace-scoped",
+  "observed": "namespace bindings: ['rolebinding.rbac.authorization.k8s.io/llmsafespace-api', 'rolebinding.rbac.authorization.k8s.io/llmsafespace-api-leader-election']",
+  "evidence": [
+    "rolebinding.rbac.authorization.k8s.io/llmsafespace-api\nrolebinding.rbac.authorization.k8s.io/llmsafespace-api-leader-election\nrolebinding.rbac.authorization.k8s.io/mechanic-agent\nrolebinding.rbac.authorization.k8s.io/mechanic-watcher\nrolebinding.rbac.authorization.k8s.io/mechanic-watcher-dryrun\nrolebinding.rbac.authorization.k8s.io/subgen-orchestrator\nrolebinding.rbac.authorization.k8s.io/subgen-orchestrator-rolebinding\n"
+  ],
+  "notes": ""
+}

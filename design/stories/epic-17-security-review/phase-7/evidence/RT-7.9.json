@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.9",
+  "title": "MessagePart uses rehypeSanitize default schema",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "rehype-sanitize default schema MUST block XSS payloads",
+  "observed": "no innerHTML pattern found; rehypeSanitize plugin present. XSS corpus emitted to evidence/RT-7.9-xss-corpus.json for unit-test mounting.",
+  "evidence": [
+    "import { lazy, Suspense } from \"react\";\nimport ReactMarkdown from \"react-markdown\";\nimport remarkGfm from \"remark-gfm\";\nimport rehypeSanitize from \"rehype-sanitize\";\nimport { Brain, Wrench, Server } from \"lucide-react\";\nimport { cn } from \"../../lib/utils\";\nimport { useUserSetting } from \"../../hooks/useUserSettings\";\nimport type { MessagePart as MessagePartType } from \"../../api/types\";\n\nconst ReactDiffViewer = lazy(() => import(\"react-diff-viewer-continued\"));\n\nfunction ToolInput({ input }: { input: unknown }) {\n  if (!input || typeof input !== \"object\") {\n    return <pre className=\"text-xs "
+  ],
+  "notes": "Mutation-validation: write a frontend test that mounts each corpus payload via ReactMarkdown + rehypeSanitize and asserts the rendered DOM has no <script>/onerror/javascript:."
+}

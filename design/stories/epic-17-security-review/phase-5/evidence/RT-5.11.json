@@ -1,0 +1,12 @@
+{
+  "id": "RT-5.11",
+  "title": "Proxy uses plain HTTP to in-cluster opencode (G4)",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Defence-in-depth: proxy SHOULD use HTTPS or run behind a service mesh",
+  "observed": "Static: proxy.go:405 fmt.Sprintf(\"http://%s:%d%s\", podIP, opencodePort, targetPath)",
+  "evidence": [
+    "static analysis only"
+  ],
+  "notes": "Mitigated by NetworkPolicy (only API can reach workspace pod port 4096) and by Basic Auth password between API and opencode. Residual risk: cluster-network attacker who breaks NetPol can sniff traffic. Recommend service mesh (Linkerd/Istio mTLS) when cluster size grows."
+}

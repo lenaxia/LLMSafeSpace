@@ -1,0 +1,14 @@
+{
+  "id": "RT-3.4",
+  "title": "Sandbox /tmp is writable AND exec-allowed",
+  "risk_class": "\ud83d\udfe2",
+  "result": "FAIL",
+  "severity": "high",
+  "expected": "Writable+exec /tmp confirmed (G1 \u2014 emptyDir lacks medium:Memory and noexec)",
+  "observed": "executed copy of /bin/sh from /tmp: PWNED-FROM-TMP\n-rwxr-xr-x. 1 sandbox sandbox 125640 May 30 18:31 /tmp/x_pentest\n-rwxr-xr-x 1000 1000",
+  "evidence": [
+    "PWNED-FROM-TMP\n-rwxr-xr-x. 1 sandbox sandbox 125640 May 30 18:31 /tmp/x_pentest\n-rwxr-xr-x 1000 1000\n",
+    ""
+  ],
+  "notes": "Confirms G1. Remediation: emptyDir with medium:Memory and a RuntimeClass that mounts /tmp noexec. Trade-off: docs note that Python pip wheels and some toolchains rely on exec from /tmp."
+}

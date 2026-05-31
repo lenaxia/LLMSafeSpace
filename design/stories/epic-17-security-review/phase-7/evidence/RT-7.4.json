@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.4",
+  "title": "Workspace transfer not implemented (N/A)",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "If transfer is supported, active sessions MUST be invalidated",
+  "observed": "no transfer endpoint surfaced; bound to creator user_id at creation",
+  "evidence": [
+    "{\"items\":[],\"pagination\":{\"total\":0,\"start\":0,\"end\":0,\"limit\":20,\"offset\":0}}"
+  ],
+  "notes": ""
+}

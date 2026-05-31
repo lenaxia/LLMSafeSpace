@@ -1,0 +1,10 @@
+{
+  "id": "RT-4.1",
+  "title": "IDOR blocked across users",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Bob MUST NOT be able to GET, UPDATE, DELETE, or REVEAL alice's secret",
+  "observed": "GET /api/v1/secrets/ab0533f1-fccc-425a-acd8-0e68940ac2eb \u2192 404; PUT /api/v1/secrets/ab0533f1-fccc-425a-acd8-0e68940ac2eb \u2192 404; DELETE /api/v1/secrets/ab0533f1-fccc-425a-acd8-0e68940ac2eb \u2192 404; POST /api/v1/secrets/ab0533f1-fccc-425a-acd8-0e68940ac2eb/reveal \u2192 400",
+  "evidence": [],
+  "notes": "All four cross-user calls returned 4xx."
+}

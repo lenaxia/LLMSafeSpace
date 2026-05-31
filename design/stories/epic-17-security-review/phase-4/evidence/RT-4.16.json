@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.16",
+  "title": "Opencode integrity check present",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Opencode binary download MUST verify integrity (sha256, sig, attestation).",
+  "observed": "# Source: https://github.com/anomalyco/opencode/releases; # Track upstream: https://github.com/anomalyco/opencode/issues/?q=cosign; \"https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${OC_ARCH}.tar.gz\" \\; COPY --chmod=755 runtimes/base/tools/entrypoints/entrypoint-opencode.sh /usr/local/bin/entrypoint-opencode.sh",
+  "evidence": [
+    "ARG TARGETARCH=amd64\n\nFROM golang:1.25-bookworm AS redact-builder\n\nARG TARGETARCH\n\nWORKDIR /src\n\nARG GOPROXY=https://proxy.golang.org,direct\nENV GOPROXY=${GOPROXY}\n\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY cmd/ ./cmd/\nCOPY pkg/ ./pkg/\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \\\n    go build -trimpath -o /out/redact ./cmd/redact\n\nFROM golang:1.25-bookworm AS agentd-builder\n\nARG TARGETARCH\n\nWORKDIR /src\n\nARG GOPROXY=https://proxy.golang.org,direct\nENV GOPROXY=${GOPROXY}\n\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY cmd/ ./cmd/\nCOPY pkg/ ./pkg/\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \\\n    go build -trimpath -o /out/workspace-agentd ./cmd/workspace-agentd\n\nFROM debian:bookworm-slim\n\nARG TARGETARCH\n\n# Override to use a different release: --build-arg OPENCODE_VERSION=<version>\n# Pinned to 1.15.12 (May 2026) \u2014 validated against the proxy code in\n# api/internal/handlers/proxy.go and session_tracker.go. See worklog 0070\n# for the full v1.2.27\u2192v1.15.12 impact analysis "
+  ],
+  "notes": ""
+}

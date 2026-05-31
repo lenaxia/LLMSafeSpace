@@ -1,0 +1,14 @@
+{
+  "id": "RT-3.1",
+  "title": "K8s API unreachable from sandbox (DNS resolves, TCP blocked)",
+  "risk_class": "\ud83d\udfe2",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "TCP connect to K8s API IP MUST fail (egress NetPol denies in-cluster CIDRs)",
+  "observed": "resolved but no connect: RESOLVED=10.96.0.1\nRC=124",
+  "evidence": [
+    "RESOLVED=10.96.0.1\nRC=124\n",
+    ""
+  ],
+  "notes": "G16 NetworkPolicy blocking 10.0.0.0/8 prevents the connect."
+}

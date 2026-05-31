@@ -1,0 +1,13 @@
+{
+  "id": "RT-6.2",
+  "title": "Controller SA bound cluster-wide (G5)",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Controller SA scope SHOULD be namespace-only by default",
+  "observed": "ClusterRoleBinding `llmsafespace-controller` exists; Helm value `rbac.scope=cluster`. Stolen controller SA = cluster-wide blast radius (any namespace's pods/secrets/PVCs).",
+  "evidence": [
+    "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: llmsafespace\n    meta.helm.sh/release-namespace: default\n  creationTimestamp: \"2026-05-25T05:33:28Z\"\n  labels:\n    app.kubernetes.io/component: controller\n    app.kubernetes.io/instance: llmsafespace\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: llmsafespac",
+    "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: llmsafespace\n    meta.helm.sh/release-namespace: default\n  creationTimestamp: \"2026-05-25T05:33:28Z\"\n  labels:\n    app.kubernetes.io/component: controller\n    app.kubernetes.io/instance: llmsafespace\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: llmsafespace\n    app.kubernetes.io/version: 0.1.0\n    helm.sh/chart: llmsafespace-0.1.0\n  name: llmsafespace-controller\n  resourceVersion: \"585319752\"\n  uid: 53647fa6-fd7e-45e5-87d0-ec80de7d2826\nrules:\n- apiGroups:\n  -"
+  ],
+  "notes": "Recommend default `rbac.scope: namespace` and require operators to opt-in to cluster scope (multi-namespace deployments)."
+}

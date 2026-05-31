@@ -1,0 +1,13 @@
+{
+  "id": "RT-3.17",
+  "title": "Mise install path writable from sandbox",
+  "risk_class": "\ud83d\udfe1",
+  "result": "FAIL",
+  "severity": "medium",
+  "expected": "Mise install dir writable by sandbox user; tampered binary would survive pod restarts via PVC. Document as accepted (mise design) or recommend integrity check.",
+  "observed": "successfully wrote tampered marker: ls: cannot access '/workspace/.local/share/mise/installs': No such file or directory\nNO_MISE_DIR\ntotal 4\n-rw-r--r--. 1 sandbox sandbox 9 May 30 18:31 marker",
+  "evidence": [
+    "ls: cannot access '/workspace/.local/share/mise/installs': No such file or directory\nNO_MISE_DIR\ntotal 4\n-rw-r--r--. 1 sandbox sandbox 9 May 30 18:31 marker\n"
+  ],
+  "notes": "By design (user installs runtimes), but documented attack: supply-chain pivot if a runtime binary is tampered after first install. Recommend optional `mise verify` on resume."
+}

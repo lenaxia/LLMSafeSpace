@@ -1,0 +1,12 @@
+{
+  "id": "RT-4.10",
+  "title": "Login timing leak: valid email significantly slower",
+  "result": "FAIL",
+  "severity": "low",
+  "expected": "Login response time MUST NOT systematically differ between valid and invalid emails.",
+  "observed": "valid_median=244.8ms invalid_median=26.3ms delta=218.5ms (89.3%)",
+  "evidence": [
+    "{\n  \"valid_ms\": [\n    241.30875999981072,\n    244.78602199815214,\n    245.84191900066799\n  ],\n  \"invalid_ms\": [\n    26.30135099752806,\n    23.914908997539897,\n    34.57852699648356\n  ]\n}"
+  ],
+  "notes": "Mitigation: dummy bcrypt verify on no-such-user path."
+}

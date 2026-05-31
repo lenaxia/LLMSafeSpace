@@ -1,0 +1,12 @@
+{
+  "id": "RT-7.2",
+  "title": "Rapid suspend/resume returned non-error statuses",
+  "result": "PASS",
+  "severity": "info",
+  "expected": "Workspace controller MUST be idempotent on rapid suspend/resume",
+  "observed": "all results: [('suspend', 409), ('resume', 409), ('suspend', 409), ('resume', 409), ('suspend', 409), ('resume', 409)]",
+  "evidence": [
+    "[[\"suspend\", 409], [\"resume\", 409], [\"suspend\", 409], [\"resume\", 409], [\"suspend\", 409], [\"resume\", 409]]"
+  ],
+  "notes": "Black-box check only; doesn't prove race-free internal state, just no observable 5xx."
+}
