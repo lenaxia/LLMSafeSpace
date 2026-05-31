@@ -1,7 +1,20 @@
 import { test, expect } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
+
+const API_PREFIX = "**/api/v1";
+
+async function mockAuthConfig(page: Page) {
+  await page.route(`${API_PREFIX}/auth/config`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ registrationEnabled: true, oidcEnabled: false, instanceName: "test" }) });
+  });
+  await page.route(`${API_PREFIX}/auth/me`, async (route: Route) => {
+    await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "unauthorized" }) });
+  });
+}
 
 test.describe("Accessibility", () => {
   test("login page has no accessibility violations in structure", async ({ page }) => {
+    await mockAuthConfig(page);
     await page.goto("/login");
 
     // Verify key a11y attributes
@@ -22,12 +35,14 @@ test.describe("Accessibility", () => {
   });
 
   test("404 page has proper heading hierarchy", async ({ page }) => {
+    await mockAuthConfig(page);
     await page.goto("/nonexistent");
     const heading = page.getByRole("heading");
     await expect(heading).toBeVisible();
   });
 
   test("skip to content link exists in DOM", async ({ page }) => {
+    await mockAuthConfig(page);
     await page.goto("/login");
     // The skip link is sr-only but present in DOM
     // It becomes visible on focus (keyboard users)

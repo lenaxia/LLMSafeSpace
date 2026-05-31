@@ -148,7 +148,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
     await expect(page.getByText("Dismiss me")).toBeVisible({ timeout: 10_000 });
-    await page.getByText("Dismiss").click();
+    await page.getByRole("button", { name: "Dismiss" }).click();
     await expect(page.getByText("Dismiss me")).not.toBeVisible({ timeout: 5_000 });
     expect(rejectCalled).toBe(true);
   });
