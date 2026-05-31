@@ -447,35 +447,41 @@ func (s *SecretService) verifyWorkspaceOwner(ctx context.Context, userID, worksp
 const auditWorkspaceIDMaxLen = 36
 
 func (s *SecretService) audit(ctx context.Context, userID, action string, secretID, workspaceID *string, meta map[string]string) {
-	metaJSON, _ := json.Marshal(meta)
 	entry := &AuditEntry{
 		UserID:    userID,
 		Action:    action,
-		Metadata:  metaJSON,
 		Timestamp: time.Now(),
 	}
 	if secretID != nil {
 		entry.SecretID = secretID
 	}
+	// Local copy of meta so we never mutate the caller's map. Even
+	// though every current caller passes nil or a fresh literal,
+	// the contract should not silently mutate caller state
+	// (validator pass-6 finding NEW-2). Cheap: most maps are <=3
+	// entries.
+	auditMeta := make(map[string]string, len(meta)+1)
+	for k, v := range meta {
+		auditMeta[k] = v
+	}
 	if workspaceID != nil {
 		// Truncate to schema width so an adversarial caller posting
 		// a 200-char workspaceID does not silently DoS the audit
-		// pipeline (N-1 + N-2). The metadata blob preserves the
-		// original by length only; we don't preserve the raw bytes
-		// because they're attacker-controlled and may include
-		// log-injection payloads.
+		// pipeline. We rune-slice (not byte-slice) so a multibyte
+		// boundary cannot produce invalid UTF-8 that Postgres
+		// would reject as 'invalid byte sequence for encoding
+		// "UTF8"' — that would silently drop the audit row, which
+		// is the exact failure mode this truncation is meant to
+		// prevent (validator pass-6 finding NEW-1).
 		ws := *workspaceID
-		if len(ws) > auditWorkspaceIDMaxLen {
-			ws = ws[:auditWorkspaceIDMaxLen]
-			if entry.Metadata != nil {
-				if meta == nil {
-					meta = map[string]string{}
-				}
-				meta["workspaceID_truncated"] = "true"
-				entry.Metadata, _ = json.Marshal(meta)
-			}
+		if rs := []rune(ws); len(rs) > auditWorkspaceIDMaxLen {
+			ws = string(rs[:auditWorkspaceIDMaxLen])
+			auditMeta["workspaceID_truncated"] = "true"
 		}
 		entry.WorkspaceID = &ws
+	}
+	if len(auditMeta) > 0 {
+		entry.Metadata, _ = json.Marshal(auditMeta)
 	}
 	// Fire-and-forget audit logging (async in production, sync in tests)
 	_ = s.store.LogAudit(ctx, entry)

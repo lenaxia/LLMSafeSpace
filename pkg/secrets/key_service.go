@@ -54,6 +54,13 @@ func NewKeyService(store KeyStore, cache DEKCache) *KeyService {
 // SetLogger installs the logger used to surface non-fatal failures
 // (e.g. cache-evict errors during password change). Optional; if
 // nil, those events are silent. Validator pass-5 finding N-3.
+//
+// Note: ChangePassword's evict-failure log includes the sessionID
+// (JWT jti). The jti is sensitive — an attacker with log read
+// access can correlate user activity across requests, though it
+// does NOT enable token replay (the JWT signature is never logged).
+// Volume is bounded to Redis-outage events. If the log retention
+// crosses a tenant boundary, hash sessionID before logging.
 func (s *KeyService) SetLogger(l pkginterfaces.LoggerInterface) {
 	s.logger = l
 }
