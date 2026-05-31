@@ -87,9 +87,10 @@
 | U3.1 | `AGENTD_SUPERVISE=false` → agentd starts, `/v1/healthz` returns 200, `/v1/readyz` returns `ready: false` | Happy | Supervise-false mode |
 | U3.2 | `POST /v1/migrate/start-opencode` → opencode starts → `/v1/readyz` becomes true | Happy | Start lifecycle |
 | U3.3 | `POST /v1/migrate/stop-opencode` → opencode stops → `/v1/readyz` becomes false | Happy | Stop lifecycle |
-| U3.4 | `stop-opencode` drains in-flight requests (waits up to 10s) before SIGTERM | Happy | Drain period |
-| U3.5 | `stop-opencode` with no in-flight requests → immediate SIGTERM (no 10s wait) | Edge | Drain skipped when empty |
-| U3.6 | `stop-opencode` with stuck request (>10s) → SIGKILL after timeout | Unhappy | Force kill on drain timeout |
+| U3.4 | `stop-opencode` closes agentd-managed SSE connections with `retry: 1000` before SIGTERM | Happy | Clients reconnect fast |
+| U3.5 | `stop-opencode` sends SIGTERM → waits up to 10s for exit → SIGKILL if stuck | Happy | Graceful then forced |
+| U3.6 | After `stop-opencode`, port 4096 returns connection refused (opencode dead) | Happy | Proxy detects dead backend |
+| U3.6a | `stop-opencode` when opencode exits within 1s (fast shutdown) → returns 200 quickly | Edge | No unnecessary wait |
 | U3.7 | After `stop-opencode`, all active SSE connections closed with `retry: 1000` | Happy | SSE cleanup |
 | U3.8 | After `stop-opencode`, new proxied requests get `503 Retry-After: 5` | Happy | Request rejection |
 | U3.9 | `GET /v1/migrate/snapshot` returns session statuses + provider cache | Happy | Snapshot content |
@@ -248,6 +249,11 @@
 | E2E.16 | **Migration CR deleted mid-flight:** Migration at StartingTarget → delete Migration CR → finalizer triggers cleanup → target pod deleted → source opencode restarted → workspace serving | Edge | Admin intervention safety |
 | E2E.17 | **Status update race:** Force workspace reconciler to reconcile during CuttingOver → verify migration controller's podIP/podName update wins (optimistic concurrency retry) | Robustness | Controller coexistence |
 | E2E.18 | **Migration during init script:** Workspace with slow init script (writing files to /workspace) → trigger migration → init killed with source pod → target pod re-runs init → workspace functional | Edge | Init interaction |
+| E2E.19 | **Close-to-open consistency baseline:** Process A on node-1 writes 1MB file → closes → process B on node-2 opens → reads → content matches byte-for-byte. Run on actual RWX backend (EFS or Longhorn). | Robustness | Storage prerequisite validation |
+| E2E.20 | **Migration on just-resumed workspace:** Resume workspace → immediately trigger migration (pod still in init containers) → migration waits or fails gracefully (doesn't snapshot non-ready agentd) | Edge | Race with resume |
+| E2E.21 | **Finalizer stuck:** Migration at StoppingSource → source pod already deleted (node died) → finalizer can't reach source → finalizer times out → CR deleted after 60s | Edge | Finalizer doesn't block forever |
+| E2E.22 | **Migration CR for Failed workspace:** Workspace in Failed phase → create Migration CR → immediately rejected (Failed) | Edge | Invalid trigger prevention |
+| E2E.23 | **Idempotent CreatingTarget:** Controller crashes after creating target pod but before status update → restarts → finds existing target pod (AlreadyExists) → proceeds to WaitingAgentd | Robustness | Phase idempotency |
 
 ---
 

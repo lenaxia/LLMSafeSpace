@@ -39,6 +39,8 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | A17 | Opencode uses SQLite (WAL mode) for session/conversation storage | ✅ `opencode-upstream/packages/opencode/src/storage/db.ts:104`: `PRAGMA journal_mode = WAL`; DB at `$XDG_DATA_HOME/opencode/opencode.db` |
 | A18 | SQLite + WAL over NFS = corruption if two processes open same DB | ✅ SQLite docs: WAL requires shared memory (`-shm` file via mmap); mmap not coherent across NFS clients. Two writers = guaranteed corruption |
 | A19 | Agentd can run without opencode (`--supervise=false` mode) | ⚠️ NOT YET IMPLEMENTED — agentd currently always starts opencode. S18.3 must add this mode |
+| A20 | Proxy routes directly to opencode (port 4096), NOT through agentd (port 4097) | ✅ `proxy.go:405`: `targetURL = http://{podIP}:4096/{path}`. Agentd cannot intercept or drain proxy→opencode traffic. |
+| A21 | SIGKILL on NFS: kernel closes fd → NFS COMMIT flushes data to server (node still alive) | ✅ NFS protocol: close() triggers COMMIT. Only unsafe if node itself dies (kernel panic). Our migration keeps source node alive. |
 
 ---
 
@@ -90,7 +92,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 1. **CreatingTarget:** Create target pod with `--supervise=false` (agentd starts, opencode does NOT start). Same PVC, labels, password Secret, nodeAffinity, OwnerReference → workspace.
 2. **WaitingAgentd:** Wait for target agentd healthy (`/v1/healthz` returns 200). Opencode is not running yet — no SQLite contention.
 3. **Snapshotting:** `GET /v1/migrate/snapshot` on source agentd (captures session routing state).
-4. **StoppingSource:** `POST /v1/migrate/stop-opencode` on source agentd → agentd stops accepting new requests (503) → drains in-flight requests (up to 10s) → closes SSE connections → SIGTERM to opencode → wait for exit (WAL checkpoint, lock release).
+4. **StoppingSource:** `POST /v1/migrate/stop-opencode` on source agentd → closes SSE connections (clients reconnect) → SIGTERM to opencode → wait for exit (WAL flushed via kernel fd close). In-flight proxy→opencode requests interrupted (client retries). Source agentd remains alive, returns connection-refused on port 4096.
 5. **StartingTarget:** `POST /v1/migrate/start-opencode` on target agentd → starts opencode process → waits for healthy + providers connected. SQLite DB is now exclusively owned by target.
 6. **Restoring:** `POST /v1/migrate/restore` on target agentd (restores session routing state).
 7. **CuttingOver:** Patch `workspace.status.{podName, podIP, endpoint}` to target pod values. Proxy routes new requests to target.
@@ -104,11 +106,11 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 
 **User-visible disruption:**
 - Steps 1-3: zero (source still serving normally)
-- Step 4 drain: 0-10s (in-flight requests complete; SSE connections closed — clients reconnect immediately)
-- Steps 4-5: **5-15s of `503 Retry-After: 5`** (opencode handoff gap — dominated by provider connection time on target). SDK auto-retries.
-- Steps 6-8: zero (target serving, proxy cuts over)
-- Total: **5-15s of retried requests** (vs 22s hard downtime with RWO volume migration)
-- Worst case (cold provider, rate-limited): up to 30s. Mitigated by future optimization: pre-warm provider connections on target agentd before stopping source (not in scope for this epic).
+- Step 4: in-flight LLM streaming responses interrupted (client sees stream close, retries). SSE connections closed (clients reconnect within 1s).
+- Steps 4-5: **5-15s where port 4096 is unreachable** on source pod. Proxy gets connection refused → fetches fresh podIP → still empty/old → returns 503 with `Retry-After: 1`. SDK retries.
+- Steps 6-8: zero (target serving, proxy cuts over instantly)
+- Total: **5-15s of retried requests + one interrupted streaming response** (vs 22s hard downtime with RWO)
+- Worst case (cold provider): up to 30s of retries.
 
 **After step 7:** proxy routes new requests to target pod. Workspace reconciler finds target pod via `Status.PodName`.
 
@@ -166,7 +168,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 - [ ] Reconciler implements 8-step sequence with idempotent phase transitions
 - [ ] Write-ahead: phase persisted to status BEFORE executing next step
 - [ ] One active Migration per workspace — reject if another in-progress
-- [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=25s, StartingTarget=120s, CuttingOver=5s
+- [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=15s, StartingTarget=120s, CuttingOver=5s
 - [ ] Spot-triggered migrations use tighter timeouts (see S18.5): total budget 75s. Migration spec carries `timeoutBudgetSeconds` field; reconciler uses min(phase default, remaining budget).
 - [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
 - [ ] Failed → rollback: (1) stop target opencode via `POST /v1/migrate/stop-opencode` on target (best-effort), (2) if target unreachable, delete target pod (SIGKILL), (3) only after target confirmed dead, restart source opencode via `POST /v1/migrate/start-opencode` on source. This ordering prevents two opencode processes running simultaneously.
@@ -218,9 +220,8 @@ status:
 
 **Acceptance Criteria:**
 - [ ] `--supervise=false` flag (or `AGENTD_SUPERVISE=false` env): agentd starts without launching opencode. `/v1/healthz` returns healthy, `/v1/readyz` returns `ready: false` (no opencode).
-- [ ] `POST /v1/migrate/stop-opencode`: sends SIGTERM to managed opencode process, waits for exit (max 10s, then SIGKILL). Returns 200 when opencode is fully stopped. After stop, agentd returns `503 Retry-After: 5` for all proxied requests.
-- [ ] Before SIGTERM: agentd stops accepting new requests (503), waits up to 10s for in-flight LLM requests to complete (drain period), then SIGTERMs opencode
-- [ ] After stop: agentd closes all active SSE connections by sending an SSE comment `retry: 1000` followed by closing the HTTP response. Clients reconnect within 1s and get routed to target after cutover.
+- [ ] `POST /v1/migrate/stop-opencode`: (1) closes all agentd-managed SSE connections (sends `retry: 1000` close event — clients reconnect within 1s), (2) sends SIGTERM to opencode, (3) waits for exit (max 10s, then SIGKILL). Returns 200 when opencode is fully stopped. In-flight proxy→opencode requests (port 4096) are interrupted — clients see connection close and retry.
+- [ ] After stop: `/v1/readyz` returns false. Note: proxy connects directly to opencode (port 4096), not through agentd. Agentd cannot intercept or drain proxy traffic. In-flight LLM streaming responses are lost on SIGTERM — this is acceptable (equivalent to network blip; client retries).
 - [ ] `POST /v1/migrate/start-opencode`: starts opencode process (same as `--supervise` mode). Returns 200 when opencode is healthy + providers connected. `/v1/readyz` becomes true.
 - [ ] `GET /v1/migrate/snapshot`: returns JSON of agentd in-memory state (session statuses, provider cache)
 - [ ] `POST /v1/migrate/restore`: accepts snapshot, reconstructs state
