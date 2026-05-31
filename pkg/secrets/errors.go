@@ -54,5 +54,11 @@ var (
 	// "workspace doesn't exist" and "workspace owned by someone
 	// else" map to this single sentinel so the response shape does
 	// not leak workspace existence cross-user. Handlers map to 404.
-	ErrWorkspaceNotOwned = errors.New("workspace not found or not owned by caller")
+	//
+	// The string says only "workspace not found" — NOT "or not
+	// owned by caller" — because a future caller that logs
+	// err.Error() would otherwise leak the same distinction the
+	// type system was designed to hide. Callers that need to
+	// classify the failure mode use errors.Is.
+	ErrWorkspaceNotOwned = errors.New("workspace not found")
 )

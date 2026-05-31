@@ -239,16 +239,20 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 		return fmt.Errorf("wrap DEK with new password: %w", err)
 	}
 
-	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion); err != nil {
-		return err
-	}
-
-	// Best-effort evict of the caller's cached DEK. Failure here is
-	// not fatal — the password change has already committed; we
-	// don't roll it back over a Redis blip. The cache TTL bounds
-	// the worst case anyway.
+	// Evict the cached DEK BEFORE the wrap update commits. Order
+	// matters: if we evicted after the commit, a concurrent request
+	// from the same JWT landing between the commit and the evict
+	// would still get a cache hit and run with the discarded DEK
+	// (validator pass-4 finding NEW-4). Pre-commit eviction means
+	// the worst case is the user has to re-Unlock with their OLD
+	// password — which still works because user_keys.wrapped_dek
+	// hasn't changed yet.
 	if sessionID != "" && s.cache != nil {
 		_ = s.cache.EvictDEK(ctx, sessionID)
+	}
+
+	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion); err != nil {
+		return err
 	}
 	return nil
 }
@@ -261,7 +265,7 @@ func (s *KeyService) ResetWithRecoveryKey(ctx context.Context, userID string, re
 		return "", fmt.Errorf("get user key: %w", err)
 	}
 	if record == nil {
-		return "", errors.New("no key material found for user")
+		return "", ErrUserKeysMissing
 	}
 	if record.WrappedDEKRecovery == nil || record.RecoverySalt == nil {
 		return "", errors.New("no recovery key configured for this user")
@@ -386,7 +390,7 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 		return RotationResult{}, fmt.Errorf("get user key: %w", err)
 	}
 	if record == nil {
-		return RotationResult{}, errors.New("no key material found for user")
+		return RotationResult{}, ErrUserKeysMissing
 	}
 
 	kek, err := DeriveKEK(password, record.Salt, kekInfo)

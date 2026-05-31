@@ -345,8 +345,14 @@ func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ se
 // not differentiate between the two — preventing cross-user
 // workspace-existence enumeration via the bindings API (validator
 // pass-3 finding SO-1).
+//
+// DB-error events surface at Warn (validator pass-4 finding NEW-2)
+// — without operator visibility, a Postgres outage would silently
+// turn every binding op across the fleet into uniform 404s with
+// zero log signal. Matches the precedent set by secretsPodIPResolver.
 type workspaceOwnerVerifierAdapter struct {
-	db interfaces.DatabaseService
+	db     interfaces.DatabaseService
+	logger pkginterfaces.LoggerInterface
 }
 
 func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
@@ -355,9 +361,13 @@ func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context
 	}
 	meta, err := a.db.GetWorkspace(ctx, workspaceID)
 	if err != nil {
-		// Treat DB blip as not-owned to keep the response uniform;
-		// the upstream secretsPodIPResolver pattern already does the
-		// same thing for the same reason.
+		// Treat DB blip as not-owned to keep the response uniform.
+		// Log at Warn so a real Postgres outage is operator-visible
+		// rather than silently turning every binding op into a 404.
+		if a.logger != nil {
+			a.logger.Warn("workspaceOwnerVerifier: DB lookup failed; downgrading to not-owned",
+				"workspaceID", workspaceID, "userID", userID, "error", err.Error())
+		}
 		return secrets.ErrWorkspaceNotOwned
 	}
 	if meta == nil || meta.UserID != userID {

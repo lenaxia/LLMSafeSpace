@@ -16,9 +16,17 @@ type InjectedSecret struct {
 }
 
 // PrepareSecretsForInjection decrypts all secrets bound to a workspace
-// and returns the JSON payload for the ephemeral K8s Secret.
-// This is called during workspace activation.
+// and returns the JSON payload for the ephemeral K8s Secret. Called
+// during workspace activation and by the bind-time auto-push.
+//
+// Verifies the caller owns the workspace before reading the binding
+// set; without this check, a foreign-workspace request would still
+// reach the store query and the empty-injected-payload response time
+// could leak workspace existence (validator pass-4 finding PARTIAL-1).
 func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
+	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
 	// Get bound secrets
 	boundSecrets, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {

@@ -166,11 +166,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			secretsHandler.SetPasswordVerifier(authSvc)
 		}
 		// Wire workspace-ownership verification into the secret
-		// service so SetBindings/AddBindings refuse to bind a
-		// secret to another user's workspace (validator pass-3
-		// finding SO-1). Without this any user with a leaked
-		// workspaceID could pollute another user's binding rows.
-		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc})
+		// service so SetBindings/AddBindings/GetBindings/
+		// PrepareSecretsForInjection refuse to operate on another
+		// user's workspace (validator pass-3+4 findings SO-1 and
+		// PARTIAL-1). RequireOwnerVerification flips the service
+		// into fail-closed mode so a future wiring regression
+		// produces a uniform 404 rather than silently re-enabling
+		// cross-tenant pollution (NEW-1).
+		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log})
+		secretService.RequireOwnerVerification()
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {

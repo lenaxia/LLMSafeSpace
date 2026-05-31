@@ -11,18 +11,21 @@ import (
 
 // SecretService provides encrypted secret CRUD operations.
 type SecretService struct {
-	keys     *KeyService
-	store    SecretStore
-	wsOwners WorkspaceOwnerVerifier
+	keys              *KeyService
+	store             SecretStore
+	wsOwners          WorkspaceOwnerVerifier
+	requireWsVerifier bool
 }
 
 // WorkspaceOwnerVerifier checks that a workspace is owned by a given
-// user. Used by SetBindings / AddBindings to prevent a caller from
-// pinning their own secrets to another user's workspace (validator
-// pass-3 finding SO-1). The function MUST return ErrWorkspaceNotOwned
-// for any not-found / not-owned case to keep the response shape
-// uniform across both — leaking which is which would re-enable
-// workspace-existence enumeration.
+// user. Used by SetBindings / AddBindings / GetBindings /
+// PrepareSecretsForInjection to prevent a caller from binding,
+// reading, or injecting their own secrets to/from another user's
+// workspace (validator pass-3+4 findings SO-1 + PARTIAL-1).
+//
+// Implementations MUST return ErrWorkspaceNotOwned for any not-found
+// or not-owned case to keep the response shape uniform — leaking
+// which is which would re-enable workspace-existence enumeration.
 type WorkspaceOwnerVerifier interface {
 	VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error
 }
@@ -41,11 +44,23 @@ func NewSecretService(keys *KeyService, store SecretStore) *SecretService {
 }
 
 // SetWorkspaceOwnerVerifier installs the workspace-ownership check.
-// If left nil, SetBindings/AddBindings skip ownership verification —
-// this is acceptable for unit tests but MUST be wired in production
-// or any caller can bind their secrets to any workspace.
+// Production wiring MUST also call RequireOwnerVerification so the
+// service refuses to operate when the verifier is missing — without
+// the require-flag, a wiring regression would silently re-enable
+// cross-tenant binding pollution (validator pass-4 finding NEW-1).
 func (s *SecretService) SetWorkspaceOwnerVerifier(v WorkspaceOwnerVerifier) {
 	s.wsOwners = v
+}
+
+// RequireOwnerVerification flips the service into "fail-closed" mode:
+// every binding/read operation that touches a workspace returns
+// ErrWorkspaceNotOwned if no verifier has been wired. Tests can
+// continue to construct a bare SecretService (verification bypassed);
+// production paths MUST call this method after SetWorkspaceOwnerVerifier
+// so a wiring regression turns into a uniform 404 rather than a
+// silent cross-tenant enumeration.
+func (s *SecretService) RequireOwnerVerification() {
+	s.requireWsVerifier = true
 }
 
 // CreateSecret encrypts and stores a new secret.
@@ -339,8 +354,14 @@ func (s *SecretService) AddBindings(ctx context.Context, userID, workspaceID str
 	return nil
 }
 
-// GetBindings returns secrets bound to a workspace.
+// GetBindings returns secrets bound to a workspace. Verifies the
+// caller owns the workspace; without this check any authenticated
+// user with a leaked workspaceID could enumerate secret names + types
+// bound to it (validator pass-4 finding PARTIAL-1).
 func (s *SecretService) GetBindings(ctx context.Context, userID, workspaceID string) (*BindingsResponse, error) {
+	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
 	secrets, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -384,13 +405,35 @@ func (s *SecretService) QueryAudit(ctx context.Context, userID string, query Aud
 // does not exist or is not owned by userID. Both cases collapse to a
 // single sentinel so the handler returns a uniform 404 — leaking
 // "exists but not yours" via a different status code would re-enable
-// cross-user workspace enumeration. If no verifier has been wired
-// (test-only paths), the check is bypassed.
+// cross-user workspace enumeration.
+//
+// Rejections are recorded in the audit log as "workspace_access_denied"
+// with the rejected workspaceID — this is exactly the security event
+// the audit log exists to capture (validator pass-4 finding PARTIAL-2).
+//
+// If no verifier has been wired:
+//   - With requireWsVerifier=true (production): returns
+//     ErrWorkspaceNotOwned. This makes a wiring regression fail
+//     closed rather than silently re-enabling cross-tenant pollution
+//     (validator pass-4 finding NEW-1).
+//   - With requireWsVerifier=false (tests): the check is bypassed.
+//     Tests that exercise the verification path must explicitly call
+//     SetWorkspaceOwnerVerifier with a fake.
 func (s *SecretService) verifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
 	if s.wsOwners == nil {
+		if s.requireWsVerifier {
+			s.audit(ctx, userID, "workspace_access_denied", nil, &workspaceID,
+				map[string]string{"reason": "no_verifier_wired"})
+			return ErrWorkspaceNotOwned
+		}
 		return nil
 	}
-	return s.wsOwners.VerifyWorkspaceOwner(ctx, userID, workspaceID)
+	if err := s.wsOwners.VerifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
+		s.audit(ctx, userID, "workspace_access_denied", nil, &workspaceID,
+			map[string]string{"reason": "not_owned"})
+		return err
+	}
+	return nil
 }
 
 func (s *SecretService) audit(ctx context.Context, userID, action string, secretID, workspaceID *string, meta map[string]string) {
