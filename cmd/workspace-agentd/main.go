@@ -28,6 +28,18 @@ var (
 
 var log *zap.Logger
 
+// buildVersion is the workspace-agentd build identifier surfaced via
+// /v1/healthz. Default value is "dev" for development builds; production
+// builds should override via -ldflags "-X main.buildVersion=$VERSION".
+//
+// This is the agentd build version, NOT opencode's version. See
+// HealthzResponse.Version: pre-US-22.1, this field carried opencode's
+// /global/health version (which conflated agentd liveness with opencode
+// availability — see worklog 0096). Post-US-22.1, the field reports the
+// agentd build identifier, which is meaningful for the kubelet probe's
+// purpose: "is this agentd binary alive and serving HTTP?".
+var buildVersion = "dev"
+
 type OpenCodeClient struct {
 	password string
 	client   *http.Client
@@ -372,23 +384,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/v1/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		healthy, version, err := client.IsHealthy(r.Context())
-		if err != nil {
-			log.Warn("healthz: agent health check failed", zap.Error(err))
-			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(agentd.HealthzResponse{
-				Healthy: false, Version: "", UptimeSeconds: 0,
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(agentd.HealthzResponse{
-			Healthy:       healthy,
-			Version:       version,
-			UptimeSeconds: int(time.Since(startedAt).Seconds()),
-		})
-	})
+	mux.HandleFunc("/v1/healthz", healthzHandler(startedAt))
 
 	mux.HandleFunc("/v1/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
