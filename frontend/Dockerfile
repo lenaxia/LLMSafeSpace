@@ -10,11 +10,19 @@ RUN npm run build
 # matches the security posture of the controller pods. The chart
 # deployment templates already expose port 8080 internally; the
 # Service maps 80 -> 8080.
+#
+# We chown /usr/share/nginx/html to the nginx user so the runtime
+# entrypoint (40-envsubst-env-json.sh) can write env.json into the
+# document root. Without the chown, the entrypoint fails with
+# "Permission denied" because root copied the dist files in but
+# nginx (UID 101) needs to overwrite env.json on every container
+# start.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+USER root
+COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.d/40-envsubst-env-json.sh
-USER root
-RUN chmod +x /docker-entrypoint.d/40-envsubst-env-json.sh
+RUN chmod +x /docker-entrypoint.d/40-envsubst-env-json.sh \
+    && chown -R nginx:nginx /usr/share/nginx/html
 USER nginx
 EXPOSE 8080
