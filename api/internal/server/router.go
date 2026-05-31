@@ -504,6 +504,25 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
+
+		// G32 (Epic 17): per-user workspace quota. When the env var
+		// LLMSAFESPACE_MAX_WORKSPACES_PER_USER is set to a positive
+		// integer, count the user's existing non-deleted workspaces
+		// and reject CreateWorkspace if at or above the limit.
+		// Default unset = unbounded (single-tenant deployments).
+		if maxWS := os.Getenv("LLMSAFESPACE_MAX_WORKSPACES_PER_USER"); maxWS != "" {
+			if cap, parseErr := strconv.Atoi(maxWS); parseErr == nil && cap > 0 {
+				_, page, err := services.GetDatabase().ListWorkspaces(c.Request.Context(), userID, 1, 0)
+				if err == nil && page != nil && page.Total >= cap {
+					c.JSON(http.StatusTooManyRequests, gin.H{
+						"error": "workspace quota exceeded",
+						"limit": cap,
+					})
+					return
+				}
+			}
+		}
+
 		var req types.CreateWorkspaceRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

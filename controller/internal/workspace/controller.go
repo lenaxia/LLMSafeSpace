@@ -799,9 +799,30 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workspace.Status.PVCName},
 		}},
-		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "sandbox-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		// G15 (Epic 17): emptyDir volumes are backed by node disk
+		// by default. Plaintext secrets in /sandbox-cfg/secrets.json
+		// would survive on the node's filesystem until kubelet
+		// reclaims it. Set Medium: Memory so all three volumes are
+		// tmpfs-backed — the bytes never touch disk.
+		//
+		// Memory backing is bounded by the pod's memory limit (set
+		// by resourceRequirementsFor); a 100Mi cap on each volume
+		// is generous for the small JSON files we materialise.
+		// Hitting the cap fails the write loud, which is the desired
+		// behavior (alternatives like silent disk fallback would
+		// re-open G15).
+		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptrQuantity("4Mi"),
+		}}},
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptrQuantity("64Mi"),
+		}}},
+		{Name: "sandbox-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptrQuantity("16Mi"),
+		}}},
 	}
 
 	var initContainers []corev1.Container
@@ -1355,4 +1376,14 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
 		v1.ReasonAgentHealthy, fmt.Sprintf("connected=%v sessions=%d version=%s",
 			status.Connected, status.SessionsActive, status.AgentVersion))
+}
+
+// ptrQuantity is a small helper that parses a Kubernetes quantity
+// string into a *resource.Quantity for use in EmptyDirVolumeSource
+// SizeLimit and similar pointer-only fields. Panics on parse error
+// (caller bugs); callers pass only literal constants from this
+// package.
+func ptrQuantity(s string) *resource.Quantity {
+	q := resource.MustParse(s)
+	return &q
 }
