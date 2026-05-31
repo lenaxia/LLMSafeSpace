@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
@@ -38,6 +39,12 @@ type WorkspaceReconciler struct {
 	// reconcile time. Tests inject a stub; production uses
 	// defaultHostResolver (net.DefaultResolver) when nil.
 	HostResolver HostResolver
+
+	// lastDeepStatus tracks the last time enrichAgentStatus was called per
+	// workspace. In-memory only — lost on controller restart (acceptable;
+	// the next reconcile will just call it immediately).
+	lastDeepStatus   map[string]time.Time
+	lastDeepStatusMu sync.Mutex
 }
 
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -476,6 +483,11 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 	}
 
 	workspace.Status.Phase = v1.WorkspacePhaseTerminated
+
+	// Clean up in-memory state for this workspace.
+	r.lastDeepStatusMu.Lock()
+	delete(r.lastDeepStatus, workspace.Name)
+	r.lastDeepStatusMu.Unlock()
 	workspace.Status.PodName = ""
 	workspace.Status.PodIP = ""
 	workspace.Status.Endpoint = ""
@@ -1280,27 +1292,27 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 }
 
 // maybeEnrichAgentStatus calls enrichAgentStatus at most once per
-// deepStatusInterval (60s). Uses LastHealthCheckAt as a proxy for timing
-// since the deep-status poll piggybacks on the reconcile loop.
+// deepStatusInterval (60s). Tracks last-call time in-memory per workspace.
 func (r *WorkspaceReconciler) maybeEnrichAgentStatus(ctx context.Context, ws *v1.Workspace) {
-	// Rate-limit: only run if the workspace has been Active long enough
-	// and we haven't polled recently. We use a simple heuristic: poll on
-	// every 4th reconcile (requeueActive=15s × 4 = 60s).
-	if ws.Status.StartTime == nil {
+	if ws.Status.StartTime == nil || ws.Status.PodIP == "" {
 		return
 	}
-	uptime := time.Since(ws.Status.StartTime.Time)
-	// Only poll deep-status after the grace period and at ~60s intervals.
-	// The reconcile loop fires every 15s; we poll statusz every 4th cycle.
-	if uptime < healthCheckGracePeriod {
+	if time.Since(ws.Status.StartTime.Time) < healthCheckGracePeriod {
 		return
 	}
-	// Use seconds-since-start modulo deepStatusInterval to approximate cadence.
-	// This avoids adding a new status field just for timing.
-	secondsSinceStart := int64(uptime.Seconds())
-	if secondsSinceStart%(int64(deepStatusInterval.Seconds())) > int64(requeueActive.Seconds()) {
+
+	r.lastDeepStatusMu.Lock()
+	if r.lastDeepStatus == nil {
+		r.lastDeepStatus = make(map[string]time.Time)
+	}
+	last, exists := r.lastDeepStatus[ws.Name]
+	if exists && time.Since(last) < deepStatusInterval {
+		r.lastDeepStatusMu.Unlock()
 		return
 	}
+	r.lastDeepStatus[ws.Name] = time.Now()
+	r.lastDeepStatusMu.Unlock()
+
 	r.enrichAgentStatus(ctx, ws)
 }
 
