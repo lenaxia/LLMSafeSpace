@@ -69,7 +69,36 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// are no-ops if the Secret is already gone, so this is safe to
 		// call on every reconcile.
 		r.cleanupFailedWorkspaceSecrets(ctx, workspace)
-		logger.V(1).Info("Workspace in Failed phase; manual intervention required")
+
+		// Epic 21 Change A — declarative recovery from Failed.
+		// If the operator (or API) bumps spec.restartGeneration past
+		// status.observedRestartGeneration, treat that as a request
+		// to retry: clear stale status fields and walk back to
+		// Pending so handlePending re-creates PVC + password Secret +
+		// pod from scratch. handlePending is idempotent and creates
+		// missing resources, so it doesn't matter that
+		// cleanupFailedWorkspaceSecrets just deleted the password
+		// Secret — handlePending will recreate it (with a freshly
+		// generated password, which is the desired security posture
+		// after a failure).
+		if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
+			logger.Info("RestartGeneration bumped on Failed workspace; transitioning to Pending",
+				"gen", workspace.Spec.RestartGeneration,
+				"observed", workspace.Status.ObservedRestartGeneration)
+			workspace.Status.Phase = v1.WorkspacePhasePending
+			workspace.Status.Message = ""
+			workspace.Status.PodName = ""
+			workspace.Status.PodNamespace = ""
+			workspace.Status.PodIP = ""
+			workspace.Status.Endpoint = ""
+			workspace.Status.TransientFailureCount = 0
+			workspace.Status.LastTransientFailureAt = nil
+			workspace.Status.RestartCount++
+			workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
+			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		}
+
+		logger.V(1).Info("Workspace in Failed phase; bump spec.restartGeneration to retry")
 		return ctrl.Result{}, nil
 	default:
 		logger.Info("Unknown workspace phase", "phase", workspace.Status.Phase)

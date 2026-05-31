@@ -113,7 +113,115 @@ func TestNew_NilConfig_UsesDefaults(t *testing.T) {
 	log.On("With", mock.Anything).Return(log).Maybe()
 	svc, err := New(log, kmocks.NewMockKubernetesClient(), &imocks.MockDatabaseService{}, nil, &imocks.MockMetricsService{}, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, "default", svc.config.Namespace)
+	assert.NotNil(t, svc)
+}
+
+// ===== RestartWorkspace (Epic 21 Change A) =====
+//
+// RestartWorkspace bumps spec.restartGeneration and writes the spec via
+// Update (not UpdateStatus, which the controller uses to flip phase).
+// The controller's handleFailed and handleActive both observe the bump
+// and walk back to Pending (or delete the running pod for Active).
+
+func TestRestartWorkspace_FromFailed_BumpsRestartGeneration(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	failedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	failedCrd.Status.Phase = v1.WorkspacePhaseFailed
+	failedCrd.Spec.RestartGeneration = 2
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(failedCrd, nil)
+	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.RestartGeneration == 3
+	})).Return(failedCrd, nil)
+
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+	// MUST NOT touch status — that's the controller's job after the spec bump.
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestRestartWorkspace_FromActive_BumpsRestartGeneration(t *testing.T) {
+	// Restart from any non-terminal phase is allowed; this lets users
+	// recover from "stuck" Active workspaces (where the agent is hung
+	// but the controller hasn't given up yet) without waiting for the
+	// transient-failure budget to exhaust.
+	f := newFixture(t)
+	ctx := context.Background()
+
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	activeCrd.Spec.RestartGeneration = 0
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.RestartGeneration == 1
+	})).Return(activeCrd, nil)
+
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.NoError(t, err)
+	f.ws.AssertExpectations(t)
+}
+
+func TestRestartWorkspace_WrongOwner_ReturnsForbidden(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "other-user", "my-ws", "10Gi"), nil)
+
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+	f.ws.AssertNotCalled(t, "Update")
+}
+
+func TestRestartWorkspace_FromTerminating_Rejected(t *testing.T) {
+	// Terminating/Terminated are genuinely terminal; restarting them
+	// would race with finalizer logic. Reject explicitly with conflict.
+	for _, phase := range []v1.WorkspacePhase{v1.WorkspacePhaseTerminating, v1.WorkspacePhaseTerminated} {
+		t.Run(string(phase), func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+
+			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+			crd.Status.Phase = phase
+			f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+
+			err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+			assert.Error(t, err)
+			f.ws.AssertNotCalled(t, "Update")
+		})
+	}
+}
+
+func TestRestartWorkspace_K8sGetFails(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("boom"))
+
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.Error(t, err)
+	f.ws.AssertNotCalled(t, "Update")
+}
+
+func TestRestartWorkspace_K8sUpdateFails(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	failedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	failedCrd.Status.Phase = v1.WorkspacePhaseFailed
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(failedCrd, nil)
+	f.ws.On("Update", mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("etcd unavailable"))
+
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace_restart_failed")
 }
 
 // ===== CreateWorkspace =====

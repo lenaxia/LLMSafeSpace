@@ -76,6 +76,7 @@ var workspaceRoutes = []struct {
 	{http.MethodDelete, "/api/v1/workspaces/ws-1"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/suspend"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/resume"},
+	{http.MethodPost, "/api/v1/workspaces/ws-1/restart"},
 	{http.MethodGet, "/api/v1/workspaces/ws-1/status"},
 	{http.MethodPut, "/api/v1/workspaces/ws-1"},
 }

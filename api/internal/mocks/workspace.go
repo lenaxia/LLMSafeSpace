@@ -51,6 +51,10 @@ func (m *MockWorkspaceService) ResumeWorkspace(ctx context.Context, userID, work
 	return m.Called(ctx, userID, workspaceID).Error(0)
 }
 
+func (m *MockWorkspaceService) RestartWorkspace(ctx context.Context, userID, workspaceID string) error {
+	return m.Called(ctx, userID, workspaceID).Error(0)
+}
+
 func (m *MockWorkspaceService) GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error) {
 	args := m.Called(ctx, userID, workspaceID)
 	if args.Get(0) == nil {

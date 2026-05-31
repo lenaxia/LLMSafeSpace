@@ -115,6 +115,7 @@ type WorkspaceService interface {
 	DeleteWorkspace(ctx context.Context, userID, workspaceID string) error
 	SuspendWorkspace(ctx context.Context, userID, workspaceID string) error
 	ResumeWorkspace(ctx context.Context, userID, workspaceID string) error
+	RestartWorkspace(ctx context.Context, userID, workspaceID string) error
 	GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error)
 	ActivateWorkspace(ctx context.Context, userID, workspaceID string) (*types.ActivateWorkspaceResponse, error)
 	EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error)

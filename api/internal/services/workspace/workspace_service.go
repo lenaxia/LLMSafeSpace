@@ -442,6 +442,58 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 	return nil
 }
 
+// RestartWorkspace bumps spec.restartGeneration so the controller's
+// handleFailed (Epic 21 Change A) or handleActive recovery paths walk
+// the workspace back through Pending and rebuild the pod from scratch.
+//
+// Use cases:
+//   - Recover a Failed workspace (the original motivation; previously
+//     required `kubectl patch --subresource=status`).
+//   - Force-restart a stuck Active workspace whose agent is hung but
+//     the controller hasn't yet exhausted its transient-failure budget.
+//
+// Restart is REJECTED for Terminating/Terminated phases — those are
+// genuinely terminal and would race with finalizer cleanup. For all
+// other phases the call is idempotent at the spec layer (each call
+// bumps the field by 1; the controller responds to each bump exactly
+// once via the strict-greater-than check on observedRestartGeneration).
+func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID string) error {
+	start := time.Now()
+	defer func() {
+		if s.metricsService != nil {
+			s.metricsService.RecordRequest("RestartWorkspace", "", 0, time.Since(start), 0)
+		}
+	}()
+
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return err
+	}
+
+	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return apierrors.NewInternalError("workspace_get_failed", err)
+	}
+
+	if crd.Status.Phase == v1.WorkspacePhaseTerminating || crd.Status.Phase == v1.WorkspacePhaseTerminated {
+		return apierrors.NewConflictError(
+			"workspace",
+			workspaceID,
+			fmt.Errorf("cannot restart workspace in phase %q", crd.Status.Phase),
+		)
+	}
+
+	crd.Spec.RestartGeneration++
+	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Update(crd); err != nil {
+		s.logger.Error("Failed to bump RestartGeneration", err, "workspaceID", workspaceID)
+		return apierrors.NewInternalError("workspace_restart_failed", err)
+	}
+
+	s.logger.Info("Workspace restart initiated",
+		"workspaceID", workspaceID, "userID", userID,
+		"restartGeneration", crd.Spec.RestartGeneration, "fromPhase", string(crd.Status.Phase))
+	return nil
+}
+
 // GetWorkspaceStatus returns infrastructure state from the Workspace CRD.
 func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error) {
 	start := time.Now()

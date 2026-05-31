@@ -558,6 +558,22 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 		c.Status(http.StatusAccepted)
 	})
 
+	// Epic 21 Change A — declarative recovery from Failed (and force-restart
+	// from Active). Bumps spec.restartGeneration; controller observes and
+	// transitions back through Pending. Idempotent at the spec layer.
+	rg.POST("/:id/restart", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		if err := wsSvc.RestartWorkspace(c.Request.Context(), userID, c.Param("id")); err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.Status(http.StatusAccepted)
+	})
+
 	rg.GET("/:id/status", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {

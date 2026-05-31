@@ -339,13 +339,106 @@ func TestReconcile_Terminating_CleansUp(t *testing.T) {
 	assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
 }
 
-func TestReconcile_Failed_NoAction(t *testing.T) {
-	ws := makeWorkspace("ws-fail", "default", v1.WorkspacePhaseFailed)
+func TestReconcile_Failed_NoBump_NoRecovery(t *testing.T) {
+	// Failed + restartGeneration unchanged → no recovery; controller stays
+	// quiet (the cleanup helpers run inside r.Reconcile but don't change
+	// phase). This is the original behavior: a Failed workspace stays
+	// Failed unless the operator/API explicitly asks for retry by
+	// bumping spec.restartGeneration.
+	ws := makeWorkspace("ws-fail-noop", "default", v1.WorkspacePhaseFailed)
+	ws.Status.Message = "pod entered Failed phase during creation"
 	r := reconcilerFor(t, ws)
 
-	result, err := r.Reconcile(context.Background(), reqFor("ws-fail", "default"))
-	assert.NoError(t, err)
-	assert.Zero(t, result.RequeueAfter)
+	result, err := r.Reconcile(context.Background(), reqFor("ws-fail-noop", "default"))
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter, "no requeue when no recovery requested")
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-noop", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase, "phase preserved without bump")
+	assert.Equal(t, "pod entered Failed phase during creation", updated.Status.Message, "message preserved without bump")
+}
+
+// TestReconcile_Failed_RestartGenerationBump_Recovers is the regression test
+// for Epic 21 Change A: a Failed workspace must be recoverable by bumping
+// spec.restartGeneration, mirroring the existing recovery semantics for
+// Active workspaces (see TestReconcile_Active_RestartGeneration_RecreatesPod).
+//
+// Worklog 0099 incident: workspaces marked Failed by transient agentd
+// timeouts or pod-deletion-during-recovery had no declarative recovery path;
+// operators had to hand-edit status with `kubectl patch --subresource=status`,
+// which is a code smell and not auditable. After this change the recovery
+// is a single `kubectl patch workspace ... --type=merge -p '{"spec":{"restartGeneration":N+1}}'`
+// (or the equivalent API call), which leaves a normal CRD audit trail.
+func TestReconcile_Failed_RestartGenerationBump_Recovers(t *testing.T) {
+	ws := makeWorkspace("ws-fail-recover", "default", v1.WorkspacePhaseFailed)
+	ws.Spec.RestartGeneration = 1
+	ws.Status.ObservedRestartGeneration = 0
+	ws.Status.Message = "pod lost 3 times; marking failed"
+	ws.Status.PodName = "stale-pod"
+	ws.Status.PodNamespace = "default"
+	ws.Status.PodIP = "10.0.0.99"
+	ws.Status.Endpoint = "http://10.0.0.99:4096"
+	ws.Status.TransientFailureCount = 3
+	now := metav1.Now()
+	ws.Status.LastTransientFailureAt = &now
+	ws.Status.RestartCount = 0
+	r := reconcilerFor(t, ws)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-fail-recover", "default"))
+	require.NoError(t, err)
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-recover", Namespace: "default"}, updated))
+
+	// Phase walks back through Pending so handlePending re-creates PVC + secret + (eventually) pod.
+	assert.Equal(t, v1.WorkspacePhasePending, updated.Status.Phase,
+		"Failed + bumped RestartGeneration must transition to Pending")
+	// ObservedRestartGeneration catches up so we don't loop.
+	assert.Equal(t, int64(1), updated.Status.ObservedRestartGeneration)
+	// RestartCount increments for observability/metrics.
+	assert.Equal(t, int32(1), updated.Status.RestartCount)
+	// Stale fields are cleared so handlePending starts fresh.
+	assert.Empty(t, updated.Status.Message, "stale failure message must be cleared on recovery")
+	assert.Empty(t, updated.Status.PodName)
+	assert.Empty(t, updated.Status.PodNamespace)
+	assert.Empty(t, updated.Status.PodIP)
+	assert.Empty(t, updated.Status.Endpoint)
+	// Transient counters reset so the new run gets a fresh budget.
+	assert.Equal(t, int32(0), updated.Status.TransientFailureCount)
+	assert.Nil(t, updated.Status.LastTransientFailureAt)
+}
+
+// TestReconcile_Failed_RestartGenerationStale_NoRecovery: spec.restartGeneration
+// must be STRICTLY GREATER than the observed value to trigger recovery. Equal
+// values mean "the controller already responded to that bump"; lower values
+// are a malformed write that should be ignored, not interpreted as a retry.
+func TestReconcile_Failed_RestartGenerationStale_NoRecovery(t *testing.T) {
+	cases := []struct {
+		name              string
+		spec              int64
+		observed          int64
+		expectStillFailed bool
+	}{
+		{"equal", 5, 5, true},
+		{"observed_ahead_of_spec", 1, 5, true},
+		{"zero_zero", 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := makeWorkspace("ws-fail-stale", "default", v1.WorkspacePhaseFailed)
+			ws.Spec.RestartGeneration = tc.spec
+			ws.Status.ObservedRestartGeneration = tc.observed
+			r := reconcilerFor(t, ws)
+
+			_, err := r.Reconcile(context.Background(), reqFor("ws-fail-stale", "default"))
+			require.NoError(t, err)
+
+			updated := &v1.Workspace{}
+			require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-stale", Namespace: "default"}, updated))
+			assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
+		})
+	}
 }
 
 // TestReconcile_Failed_CleansUpSecrets is the regression test for Bug 12
