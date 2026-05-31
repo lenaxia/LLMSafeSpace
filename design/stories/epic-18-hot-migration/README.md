@@ -169,7 +169,8 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 - [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=25s, StartingTarget=120s, CuttingOver=5s
 - [ ] Spot-triggered migrations use tighter timeouts (see S18.5): total budget 75s. Migration spec carries `timeoutBudgetSeconds` field; reconciler uses min(phase default, remaining budget).
 - [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
-- [ ] Failed → rollback: delete target pod, leave source running (if source opencode was stopped, restart it via `POST /v1/migrate/start-opencode`)
+- [ ] Failed → rollback: (1) stop target opencode via `POST /v1/migrate/stop-opencode` on target (best-effort), (2) if target unreachable, delete target pod (SIGKILL), (3) only after target confirmed dead, restart source opencode via `POST /v1/migrate/start-opencode` on source. This ordering prevents two opencode processes running simultaneously.
+- [ ] Migration CR has finalizer `llmsafespace.dev/migration-cleanup` — deletion triggers rollback sequence above before CR is removed
 - [ ] Target pod created via shared `pkg/workspace/pod.BuildPod()` with name `{workspace}-{uid[:8]}-mig`, nodeAffinity, and `AGENTD_SUPERVISE=false` env var (agentd starts without launching opencode)
 - [ ] Target pod has OwnerReference → workspace (for GC if workspace deleted during migration)
 - [ ] CuttingOver phase patches `workspace.status.{podName, podIP, endpoint}` atomically

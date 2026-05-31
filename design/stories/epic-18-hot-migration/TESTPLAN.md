@@ -12,8 +12,8 @@
 
 | ID | Test | Type | What It Validates |
 |----|------|------|-------------------|
-| U1.1 | `buildPVC()` with `AccessMode=ReadWriteMany` produces RWX PVC | Happy | PVC spec has correct access mode |
-| U1.2 | `BuildPod()` extracted function produces identical pod spec to old `buildPod()` | Happy | Refactor correctness — no behavioral change |
+| U1.1 | `BuildPod()` with custom name + nodeAffinity produces correct pod spec for migration target | Happy | Migration controller can create correctly-shaped target pods |
+| U1.2 | `BuildPod()` output includes OwnerReference, labels, password Secret mount, PVC mount | Happy | All required fields present for both normal and migration pods |
 | U1.3 | `BuildPod()` accepts custom pod name parameter | Happy | Migration controller can use different name |
 | U1.4 | `handleActive` finds pod by `Status.PodName` | Happy | Refactored lookup works |
 | U1.5 | `handleActive` calls `recoverFromTransientPodLoss` when pod named in `Status.PodName` is missing | Unhappy | Transient recovery still works after refactor |
@@ -30,7 +30,7 @@
 |----|------|------|-------------------|
 | I1.1 | Create workspace with RWX StorageClass → PVC bound → pod running → write file → read file | Happy | Full RWX lifecycle |
 | I1.2 | Two pods mount same RWX PVC simultaneously, both read/write different files | Happy | RWX concurrent mount works |
-| I1.3 | Two pods mount same RWX PVC, both write to same file → last writer wins (no corruption) | Edge | NFS write semantics |
+| I1.3 | Source pod writes file to `/workspace/test.txt` → source pod deleted → target pod reads same file → content matches | Happy | RWX data persistence across pod lifecycle |
 | I1.4 | Workspace suspend → resume cycle with RWX PVC | Happy | Suspend/resume unaffected by RWX |
 | I1.5 | Workspace with `nosuid,nodev` mount options → verify via `mount` inside pod | Security | G23 mitigation confirmed |
 
@@ -60,9 +60,12 @@
 | U2.16 | Migration with `targetNode=""` → target pod scheduled by K8s scheduler (no nodeAffinity) | Happy | Optional target node |
 | U2.17 | Migration with `targetNode` set → target pod has nodeAffinity for that node | Happy | Explicit target |
 | U2.18 | Migration with `timeoutBudgetSeconds=75` → phases use tighter timeouts | Happy | Spot budget enforcement |
-| U2.19 | Rollback after StoppingSource: source agentd `start-opencode` called → opencode running again | Unhappy | Rollback restores service |
-| U2.20 | `handoffDurationMs` recorded = time from StoppingSource start to StartingTarget complete | Happy | Metric correctness |
-| U2.21 | Metrics emitted: `migration_total`, `migration_in_progress`, `migration_cutover_duration_seconds` | Happy | Observability |
+| U2.19 | Rollback after StoppingSource: (1) stop target opencode, (2) delete target pod, (3) THEN restart source opencode — in that order | Unhappy | Rollback ordering prevents two-opencode race |
+| U2.20 | Rollback when target unreachable: delete target pod (SIGKILL) → wait for pod gone → then restart source | Unhappy | Partition-safe rollback |
+| U2.21 | Migration CR has finalizer `llmsafespace.dev/migration-cleanup` | Happy | Finalizer present |
+| U2.22 | Delete Migration CR mid-flight → finalizer runs cleanup (stop target, restart source) before CR removed | Edge | Admin deletion safety |
+| U2.23 | `handoffDurationMs` recorded = time from StoppingSource start to StartingTarget complete | Happy | Metric correctness |
+| U2.24 | Metrics emitted: `migration_total`, `migration_in_progress`, `migration_cutover_duration_seconds` | Happy | Observability |
 
 ### Integration Tests
 
@@ -115,7 +118,7 @@
 
 | ID | Test | Type | What It Validates |
 |----|------|------|-------------------|
-| U4.1 | Proxy reads `workspace.Status.PodIP` per request (not cached) | Happy | Per-request resolution |
+| U4.1 | Proxy routes to new podIP immediately after workspace.status.podIP changes (no stale cache) | Happy | Cutover is instant from proxy perspective |
 | U4.2 | Connection error + active Migration CR → `Retry-After: 1` (not 10) | Happy | Fast retry during migration |
 | U4.3 | Connection error + no Migration CR → `Retry-After: 10` (default) | Happy | Normal behavior preserved |
 | U4.4 | Proxy retries with fresh podIP on connection error → routes to new pod | Happy | Existing retry handles cutover |
@@ -239,6 +242,12 @@
 | E2E.10 | **Migration under memory pressure:** Node at 85% memory → load balancer triggers migration → workspace moves to healthy node → node pressure drops below 65% | Happy | Load balancing effectiveness |
 | E2E.11 | **Provider reconnection timing:** Migrate workspace → measure time from stop-opencode to target readyz → assert < 15s p99 | Performance | Handoff SLO |
 | E2E.12 | **Zero dropped requests:** Send 100 requests/s during migration → verify all get 200 or retryable 503 → none get 500 or timeout | Performance | Request safety |
+| E2E.13 | **Dirty WAL recovery:** SIGKILL source opencode (simulating drain timeout) → start target opencode on same PVC → `PRAGMA integrity_check` passes → sessions readable | Robustness | WAL recovery on NFS after unclean shutdown |
+| E2E.14 | **Migration during opencode crash-loop:** Source opencode in CrashLoopBackOff → trigger migration → migration completes (stop-opencode is no-op since already dead) → target opencode starts fresh → DB intact | Edge | Degraded source state |
+| E2E.15 | **Network partition during rollback:** Migration at StartingTarget → kill network to target pod → controller times out → rollback deletes target pod → source opencode restarted → verify only ONE opencode running at end | Robustness | Partition safety (invariant: never two opencode on same DB) |
+| E2E.16 | **Migration CR deleted mid-flight:** Migration at StartingTarget → delete Migration CR → finalizer triggers cleanup → target pod deleted → source opencode restarted → workspace serving | Edge | Admin intervention safety |
+| E2E.17 | **Status update race:** Force workspace reconciler to reconcile during CuttingOver → verify migration controller's podIP/podName update wins (optimistic concurrency retry) | Robustness | Controller coexistence |
+| E2E.18 | **Migration during init script:** Workspace with slow init script (writing files to /workspace) → trigger migration → init killed with source pod → target pod re-runs init → workspace functional | Edge | Init interaction |
 
 ---
 
