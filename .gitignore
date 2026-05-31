@@ -58,3 +58,4 @@ frontend/test-results/
 # These are reproducible from the scripts; never commit.
 design/stories/epic-17-security-review/phase-0/phase-0-artefacts/
 design/stories/epic-17-security-review/phase-0-prod/phase-0-prod-artefacts/
+.tmp/
