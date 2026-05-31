@@ -201,6 +201,10 @@ spec:
                         type: string
                 message:
                   type: string
+                failureReason:
+                  description: "Typed enum identifying why the workspace entered Failed phase."
+                  type: string
+                  enum: ["", "TransientPodLoss", "PodFailedDuringCreation", "PodBuildFailed", "PVCBindTimeout", "PendingTimeout", "TooManyFailures"]
                 observedGeneration:
                   type: integer
                   format: int64

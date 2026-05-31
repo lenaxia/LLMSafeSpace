@@ -149,6 +149,20 @@ const (
 	WorkspacePhaseFailed      WorkspacePhase = "Failed"
 )
 
+// FailureReason is a typed enum identifying why a workspace entered Failed.
+// Operators and frontend can switch on this for per-cause UX and alerting.
+type FailureReason string
+
+const (
+	FailureReasonNone                    FailureReason = ""
+	FailureReasonTransientPodLoss        FailureReason = "TransientPodLoss"
+	FailureReasonPodFailedDuringCreation FailureReason = "PodFailedDuringCreation"
+	FailureReasonPodBuildFailed          FailureReason = "PodBuildFailed"
+	FailureReasonPVCBindTimeout          FailureReason = "PVCBindTimeout"
+	FailureReasonPendingTimeout          FailureReason = "PendingTimeout"
+	FailureReasonTooManyFailures         FailureReason = "TooManyFailures"
+)
+
 type PVCState string
 
 const (
@@ -212,6 +226,11 @@ type WorkspaceStatus struct {
 	Conditions         []WorkspaceCondition `json:"conditions,omitempty"`
 	Message            string               `json:"message,omitempty"`
 	ObservedGeneration int64                `json:"observedGeneration,omitempty"`
+
+	// FailureReason provides a typed enum for programmatic consumers when
+	// Phase == Failed. Operators and frontend can switch on this without
+	// parsing free-form Message strings. Empty when not in Failed phase.
+	FailureReason FailureReason `json:"failureReason,omitempty"`
 
 	// Pod status fields (absorbed from Sandbox):
 	PodName                   string       `json:"podName,omitempty"`

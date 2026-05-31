@@ -90,6 +90,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				"observed", workspace.Status.ObservedRestartGeneration)
 			workspace.Status.Phase = v1.WorkspacePhasePending
 			workspace.Status.Message = ""
+			workspace.Status.FailureReason = v1.FailureReasonNone
 			workspace.Status.PodName = ""
 			workspace.Status.PodNamespace = ""
 			workspace.Status.PodIP = ""
@@ -138,8 +139,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, err
 		}
 		if r.pendingTimedOut(workspace) {
-			workspace.Status.Phase = v1.WorkspacePhaseFailed
-			workspace.Status.Message = "workspace timed out in Pending phase"
+			markFailed(workspace, v1.FailureReasonPendingTimeout, "workspace timed out in Pending phase")
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		newPVC := r.buildPVC(workspace, pvcName)
@@ -169,8 +169,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		if r.pendingTimedOut(workspace) {
-			workspace.Status.Phase = v1.WorkspacePhaseFailed
-			workspace.Status.Message = "PVC not bound after timeout"
+			markFailed(workspace, v1.FailureReasonPVCBindTimeout, "PVC not bound after timeout")
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		return ctrl.Result{RequeueAfter: requeueActive}, nil
@@ -203,8 +202,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		pod, buildErr := r.buildPod(ctx, workspace)
 		if buildErr != nil {
 			logger.Error(buildErr, "Failed to build pod")
-			workspace.Status.Phase = v1.WorkspacePhaseFailed
-			workspace.Status.Message = fmt.Sprintf("pod build failed: %v", buildErr)
+			markFailed(workspace, v1.FailureReasonPodBuildFailed, "pod build failed: %v", buildErr)
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		if err := controllerutil.SetControllerReference(workspace, pod, r.Scheme); err != nil {
@@ -255,8 +253,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	}
 
 	if existingPod.Status.Phase == corev1.PodFailed {
-		workspace.Status.Phase = v1.WorkspacePhaseFailed
-		workspace.Status.Message = "pod entered Failed phase during creation"
+		markFailed(workspace, v1.FailureReasonPodFailedDuringCreation, "pod entered Failed phase during creation")
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
 	}
 
@@ -493,8 +490,7 @@ func (r *WorkspaceReconciler) recoverFromTransientPodLoss(ctx context.Context, w
 	}
 
 	if workspace.Status.TransientFailureCount >= maxRetries {
-		workspace.Status.Phase = v1.WorkspacePhaseFailed
-		workspace.Status.Message = fmt.Sprintf("pod lost %d times; marking failed", workspace.Status.TransientFailureCount)
+		markFailed(workspace, v1.FailureReasonTransientPodLoss, "pod lost %d times; marking failed", workspace.Status.TransientFailureCount)
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
 	}
 
