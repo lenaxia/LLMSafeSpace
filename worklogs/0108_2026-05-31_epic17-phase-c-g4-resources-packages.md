@@ -1,4 +1,4 @@
-# 0105 — Epic 17 Phase C/G4 part 1: Spec.Resources + Spec.Packages hardening
+# 0108 — Epic 17 Phase C/G4 part 1: Spec.Resources + Spec.Packages hardening
 
 **Date:** 2026-05-31
 **Author:** mikekao + opencode (sonnet)
