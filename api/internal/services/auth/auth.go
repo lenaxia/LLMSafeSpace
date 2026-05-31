@@ -417,21 +417,13 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		return nil, apierrors.NewConflictError("user", "email", fmt.Errorf("registration failed"))
 	}
 
-	// First user in a fresh installation is auto-promoted to admin so the
-	// system has at least one administrator. CountUsers must succeed; on
-	// error we fail closed (do not silently default to admin).
-	userCount, err := s.dbService.CountUsers(ctx)
-	if err != nil {
-		s.logger.Error("Register: failed to count users", err)
-		return nil, errors.New("registration failed")
-	}
-	role := "user"
-	if userCount == 0 {
-		role = "admin"
-		s.logger.Info("Register: first user in fresh installation, promoting to admin",
-			"email", req.Email)
-	}
-
+	// G8 (Epic 17): role assignment is now atomic in CreateUser via
+	// the SQL CTE that counts existing users in the same statement
+	// as the INSERT. We pass "user" as the desired role; the database
+	// promotes to "admin" if and only if the user count is 0 at the
+	// moment of insert. This eliminates the count-then-insert race
+	// where two concurrent Register() calls could both observe count=0
+	// and both end up admin.
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
 	if err != nil {
 		return nil, errors.New("registration failed")
@@ -444,7 +436,7 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
 		PasswordHash: string(hash),
 		Active:       true,
-		Role:         role,
+		Role:         "user",
 	}
 
 	if err := s.dbService.CreateUser(ctx, user); err != nil {

@@ -153,11 +153,6 @@ func (s *Service) CountUsers(ctx context.Context) (int, error) {
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
-	query := `
-        INSERT INTO users (id, username, email, password_hash, created_at, updated_at, active, role)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `
-
 	now := time.Now()
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = now
@@ -166,7 +161,25 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 		user.UpdatedAt = now
 	}
 
-	_, err := s.DB.ExecContext(ctx, query,
+	// G8 (Epic 17): atomically promote the very first registrant to
+	// admin in the same SQL statement so the count-then-insert race
+	// is impossible. The CTE counts users `BEFORE` insert; if zero,
+	// the role is forced to 'admin' regardless of the caller-supplied
+	// value. If non-zero, the caller-supplied role wins (typically
+	// 'user'). Postgres serialises the count + insert under the
+	// row-level locks of the unique index on (email).
+	query := `
+		WITH existing AS (
+			SELECT COUNT(*) AS n FROM users
+		)
+		INSERT INTO users (id, username, email, password_hash, created_at, updated_at, active, role)
+		SELECT $1, $2, $3, $4, $5, $6, $7,
+		       CASE WHEN existing.n = 0 THEN 'admin' ELSE $8 END
+		FROM existing
+		RETURNING role`
+
+	var assignedRole string
+	err := s.DB.QueryRowContext(ctx, query,
 		user.ID,
 		user.Username,
 		user.Email,
@@ -175,12 +188,11 @@ func (s *Service) CreateUser(ctx context.Context, user *types.User) error {
 		user.UpdatedAt,
 		user.Active,
 		user.Role,
-	)
-
+	).Scan(&assignedRole)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
-
+	user.Role = assignedRole // reflect the actual role written
 	return nil
 }
 

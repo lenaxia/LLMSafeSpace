@@ -31,7 +31,14 @@ type RateLimitConfig struct {
 
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		Enabled:       false,
+		// G13 / RT-2.4 / RT-2.5 (Epic 17): the previous default was
+		// `false`, leaving auth + secret endpoints completely
+		// unthrottled. Pentest confirmed: 200 sequential api-key
+		// validation calls returned 0 rate-limited responses,
+		// allowing unbounded brute-force from any IP. Enabled by
+		// default; operators can opt out via the instance-settings
+		// `rateLimiting.enabled=false` knob.
+		Enabled:       true,
 		DefaultLimit:  100,
 		DefaultWindow: time.Minute,
 		BurstSize:     20,

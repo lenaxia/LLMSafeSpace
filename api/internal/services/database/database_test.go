@@ -612,9 +612,10 @@ func TestCreateUser(t *testing.T) {
 			Role:         "user",
 		}
 
-		mock.ExpectExec("INSERT INTO users").
+		// G8: CreateUser is now QueryRowContext (RETURNING role).
+		mock.ExpectQuery("WITH existing AS").
 			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, user.CreatedAt, user.UpdatedAt, user.Active, user.Role).
-			WillReturnResult(sqlmock.NewResult(1, 1))
+			WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("user"))
 
 		err := service.CreateUser(ctx, user)
 		assert.NoError(t, err)
@@ -635,9 +636,9 @@ func TestCreateUser(t *testing.T) {
 			// CreatedAt and UpdatedAt intentionally zero
 		}
 
-		mock.ExpectExec("INSERT INTO users").
+		mock.ExpectQuery("WITH existing AS").
 			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
-			WillReturnResult(sqlmock.NewResult(1, 1))
+			WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
 
 		err := service.CreateUser(ctx, user)
 		assert.NoError(t, err)
@@ -657,7 +658,7 @@ func TestCreateUser(t *testing.T) {
 			Email:    "dup@example.com",
 		}
 
-		mock.ExpectExec("INSERT INTO users").
+		mock.ExpectQuery("WITH existing AS").
 			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
 			WillReturnError(sql.ErrConnDone)
 
@@ -665,6 +666,33 @@ func TestCreateUser(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create user")
 		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	// G8 (Epic 17): When the users table is empty, the SQL CTE
+	// promotes the inserted row to admin regardless of the
+	// caller-supplied role. The CreateUser call also reflects the
+	// actual role into user.Role for the caller.
+	t.Run("first_user_is_admin_atomically", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		user := &types.User{
+			ID:       "user-first",
+			Username: "founder",
+			Email:    "founder@example.com",
+			Active:   true,
+			Role:     "user", // caller passes "user"; DB will return "admin"
+		}
+
+		mock.ExpectQuery("WITH existing AS").
+			WithArgs(user.ID, user.Username, user.Email, user.PasswordHash, sqlmock.AnyArg(), sqlmock.AnyArg(), user.Active, user.Role).
+			WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+
+		err := service.CreateUser(ctx, user)
+		assert.NoError(t, err)
+		assert.Equal(t, "admin", user.Role,
+			"DB-assigned role must be reflected back into user.Role (G8)")
 	})
 }
 

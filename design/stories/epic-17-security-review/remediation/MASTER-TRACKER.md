@@ -35,12 +35,12 @@ the row.
 | G5 | Controller SA cluster-wide Secret access (default) | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | `charts/llmsafespace/templates/rbac.yaml` |
 | G6 | No rate limiting on sensitive secret endpoints | Medium | OTHER (touches `/secrets/*`) | `api/internal/server/router.go:171-180` |
 | G7 | SSE bypasses injection-detection | Low | MINE (proxy) | `api/internal/handlers/proxy.go` |
-| G8 | First-user-admin auto-promotion race | Medium | MINE | `api/internal/services/auth/auth.go:386-394` |
+| G8 | First-user-admin auto-promotion race | Medium | MINE — code-fix landed worklog 0112, awaiting live re-pentest | `api/internal/services/auth/auth.go:386-394` |
 | G9 | No image signature verification | Medium | MINE | `runtimes/base/Dockerfile:67-78` |
 | G10 | Redis session cache not encrypted at rest | Low | OPERATOR + chart docs | `charts/llmsafespace/values.yaml` |
 | G11 | No PSA enforcement | Medium | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `charts/llmsafespace/templates/namespace.yaml` |
 | G12 | Proxy ResponseHeaderTimeout 300s | Low | MINE — code-fix landed worklog 0111, awaiting live re-pentest | `api/internal/handlers/proxy.go:95` |
-| G13 | Account lockout DoS | Medium | MINE (auth, not secrets) | `api/internal/services/auth/auth.go:440-512` |
+| G13 | Account lockout DoS (per-IP rate-limit on by default; full email+IP tuple lockout deferred) | Medium | MINE — code-fix landed worklog 0112, awaiting live re-pentest (partial) | `api/internal/services/auth/auth.go:440-512` |
 | G14 | No egress request body inspection | High | MINE (proxy) | accepted residual; doc only |
 | G15 | Sandbox emptyDir disk-backed | High | OTHER (secrets-mgmt) | `controller/internal/workspace/controller.go:630-632` |
 | G16 | NetworkPolicy templates ship | Critical | DONE | worklog 0078 |
@@ -116,8 +116,8 @@ is the list of distinct items.
 
 | ID | Title | Severity | Class | Notes |
 |---|---|---|---|---|
-| RT-2.4 | API key brute-force resistance: 0 rate-limited in 200 reqs | Medium | MINE (auth/middleware) | new test + middleware |
-| RT-2.5 | Registration rate limiting: 10/10 succeeded | INCONCLUSIVE→Medium | MINE | per-IP throttle |
+| RT-2.4 | API key brute-force resistance: 0 rate-limited in 200 reqs | Medium | MINE — code-fix landed worklog 0112, awaiting live re-pentest | new test + middleware |
+| RT-2.5 | Registration rate limiting: 10/10 succeeded | INCONCLUSIVE→Medium | MINE — code-fix landed worklog 0112, awaiting live re-pentest | per-IP throttle |
 | RT-2.6 | Account lockout DoS via email-keyed lockout | Medium | duplicate of G13 | merged |
 | RT-2.13 | JWT revocation feature unreachable | Medium | duplicate of G18 | merged |
 | RT-2.14 | No JWT signing-key rotation | Medium | duplicate of F1.7.5 | merged |

@@ -456,8 +456,13 @@ func TestRegister_Success(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()
 
+	// G8 (Epic 17): Register no longer calls CountUsers; the role
+	// decision is atomic in CreateUser via the SQL CTE that runs
+	// the count and the insert in the same statement. Tests that
+	// formerly mocked CountUsers must instead simulate the
+	// CreateUser side-effect (set user.Role = "admin" if empty
+	// system, "user" otherwise).
 	mockDb.On("GetUserByEmail", ctx, "new@example.com").Return(nil, nil)
-	mockDb.On("CountUsers", ctx).Return(5, nil) // existing users → role=user
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com" && u.Username == "newuser" && u.PasswordHash != "" && u.Active && u.Role == "user"
 	})).Return(nil)
@@ -478,17 +483,23 @@ func TestRegister_Success(t *testing.T) {
 }
 
 // TestRegister_FirstUserBecomesAdmin verifies that the first user registered
-// in a fresh installation is auto-promoted to admin. Otherwise the system
-// has no admin and is effectively inert (no way to grant admin powers).
+// in a fresh installation is auto-promoted to admin. The promotion happens
+// inside CreateUser (atomic via SQL CTE — see G8 fix), so the test mocks
+// CreateUser to set user.Role="admin" as the DB would.
 func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()
 
 	mockDb.On("GetUserByEmail", ctx, "first@example.com").Return(nil, nil)
-	mockDb.On("CountUsers", ctx).Return(0, nil) // empty system → first user is admin
+	// Simulate the SQL CTE returning role="admin" because the users
+	// table was empty at insert time. The mock mutates u.Role to
+	// match the production DB behaviour.
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
-		return u.Email == "first@example.com" && u.Role == "admin"
-	})).Return(nil)
+		return u.Email == "first@example.com"
+	})).Run(func(args mock.Arguments) {
+		u := args.Get(1).(*types.User)
+		u.Role = "admin"
+	}).Return(nil)
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "founder",
@@ -502,15 +513,14 @@ func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
 	mockDb.AssertExpectations(t)
 }
 
-// TestRegister_SubsequentUsersAreNotAdmin verifies that after the first user
-// exists, subsequent registrations get role=user. Only the very first user
-// (CountUsers == 0 at registration time) is auto-promoted.
+// TestRegister_SubsequentUsersAreNotAdmin verifies subsequent registrations
+// get role="user". The mock returns u.Role="user" verbatim (no DB-side
+// promotion) because the SQL CTE only promotes when count==0.
 func TestRegister_SubsequentUsersAreNotAdmin(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()
 
 	mockDb.On("GetUserByEmail", ctx, "second@example.com").Return(nil, nil)
-	mockDb.On("CountUsers", ctx).Return(1, nil) // one existing user
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "second@example.com" && u.Role == "user"
 	})).Return(nil)
@@ -527,15 +537,15 @@ func TestRegister_SubsequentUsersAreNotAdmin(t *testing.T) {
 	mockDb.AssertExpectations(t)
 }
 
-// TestRegister_CountUsersError_FailsClosed verifies that a CountUsers failure
-// blocks registration rather than silently defaulting to admin. We must not
-// accidentally promote on transient DB errors.
-func TestRegister_CountUsersError_FailsClosed(t *testing.T) {
+// TestRegister_CreateUserError_FailsClosed verifies that a CreateUser
+// failure blocks registration. (G8: was TestRegister_CountUsersError;
+// CountUsers is no longer called.)
+func TestRegister_CreateUserError_FailsClosed(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()
 
 	mockDb.On("GetUserByEmail", ctx, "any@example.com").Return(nil, nil)
-	mockDb.On("CountUsers", ctx).Return(0, errors.New("db down"))
+	mockDb.On("CreateUser", ctx, mock.Anything).Return(errors.New("db down"))
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "any",
@@ -546,7 +556,6 @@ func TestRegister_CountUsersError_FailsClosed(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	mockDb.AssertExpectations(t)
-	mockDb.AssertNotCalled(t, "CreateUser")
 }
 
 func TestRegister_DuplicateEmail(t *testing.T) {
