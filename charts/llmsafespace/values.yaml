@@ -173,7 +173,15 @@ controller:
   leaderElection:
     enabled: true
 
-  metricsAddr: ":8080"
+  # F1.4.3 (Epic 17): pre-fix the controller bound /metrics on
+  # 0.0.0.0:8080, reachable from any pod with route to the controller
+  # IP. The default now binds to loopback so only same-pod sidecars
+  # can scrape. For Prometheus, operators should run a
+  # kube-rbac-proxy sidecar that authenticates incoming scrapes and
+  # forwards to 127.0.0.1:8080. Override this value to "0.0.0.0:8080"
+  # if you accept the unauthenticated-metrics trade-off (e.g. trusted
+  # cluster + NetworkPolicy already enforces ingress).
+  metricsAddr: "127.0.0.1:8080"
   probeAddr: ":8081"
   webhookPort: 9443
 

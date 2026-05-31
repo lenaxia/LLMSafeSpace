@@ -6,8 +6,8 @@ package server
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -107,10 +107,14 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig, cfg.InstanceSettings))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
 
-	// Add WebSocket security middleware to WebSocket routes
-	wsGroup := router.Group("/api/v1/workspaces/:id/stream")
-	wsGroup.Use(middleware.WebSocketSecurityMiddleware(logger, cfg.AllowedWebSocketOrigins...))
-	wsGroup.Use(middleware.WebSocketMetricsMiddleware(services.GetMetrics()))
+	// F1.1.4 (Epic 17): the previous `/api/v1/workspaces/:id/stream`
+	// group had middleware attached but no handlers — dead code that
+	// existed only because an earlier API design wired SSE here. The
+	// current SSE endpoint is `/api/v1/workspaces/:id/events`
+	// registered below; the actual WebSocket terminal endpoint is
+	// `/api/v1/workspaces/:id/terminal/...` which gets the WebSocket
+	// security middleware via its own router group.
+	_ = router // wsGroup removal — kept the var to avoid unused-import warnings if a future commit re-adds /stream.
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
@@ -200,8 +204,24 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
 	}
 
-	// Metrics endpoint
-	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	// Metrics endpoint.
+	//
+	// F1.1.3 (Epic 17): pre-fix /metrics was unauthenticated, leaking
+	// internal counters (request rates per route, error rates, etc.)
+	// to any pod that could route to the API service. We now require
+	// `Authorization: Bearer <token>` if the env var
+	// LLMSAFESPACE_METRICS_TOKEN is set. Operators who want
+	// Prometheus to scrape unauthenticated should leave the env unset
+	// (matching the pre-fix behavior with explicit opt-in).
+	router.GET("/metrics", func(c *gin.Context) {
+		token := os.Getenv("LLMSAFESPACE_METRICS_TOKEN")
+		if token != "" && c.GetHeader("Authorization") != "Bearer "+token {
+			c.Header("WWW-Authenticate", `Bearer realm="metrics"`)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	// Liveness probe — always returns 200 if the process is responding.
 	// Use this for Kubernetes livenessProbe.
@@ -222,27 +242,36 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
+		// F1.1.1 (Epic 17): pre-fix the failure list contained the
+		// raw `err.Error()` from the driver, which can include the
+		// connection string, hostname, port, and sometimes the
+		// password depending on the driver. We now log the detailed
+		// error server-side and return only a generic component
+		// status to the client.
 		var failures []string
 
 		db := services.GetDatabase()
 		if db == nil {
 			failures = append(failures, "database: not configured")
 		} else if err := db.Ping(ctx); err != nil {
-			failures = append(failures, "database: "+err.Error())
+			logger.Warn("/readyz: database ping failed",
+				"error", err.Error())
+			failures = append(failures, "database: unreachable")
 		}
 
 		cache := services.GetCache()
 		if cache == nil {
 			failures = append(failures, "cache: not configured")
 		} else if err := cache.Ping(ctx); err != nil {
-			failures = append(failures, "cache: "+err.Error())
+			logger.Warn("/readyz: cache ping failed",
+				"error", err.Error())
+			failures = append(failures, "cache: unreachable")
 		}
 
 		if len(failures) > 0 {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status":   "unhealthy",
 				"failures": failures,
-				"detail":   strings.Join(failures, "; "),
 			})
 			return
 		}
