@@ -90,7 +90,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 1. **CreatingTarget:** Create target pod with `--supervise=false` (agentd starts, opencode does NOT start). Same PVC, labels, password Secret, nodeAffinity, OwnerReference → workspace.
 2. **WaitingAgentd:** Wait for target agentd healthy (`/v1/healthz` returns 200). Opencode is not running yet — no SQLite contention.
 3. **Snapshotting:** `GET /v1/migrate/snapshot` on source agentd (captures session routing state).
-4. **StoppingSource:** `POST /v1/migrate/stop-opencode` on source agentd → graceful SIGTERM to source opencode → wait for exit (WAL checkpoint, lock release). Source agentd remains running and returns `503 Retry-After: 5` to proxied requests.
+4. **StoppingSource:** `POST /v1/migrate/stop-opencode` on source agentd → agentd stops accepting new requests (503) → drains in-flight requests (up to 10s) → closes SSE connections → SIGTERM to opencode → wait for exit (WAL checkpoint, lock release).
 5. **StartingTarget:** `POST /v1/migrate/start-opencode` on target agentd → starts opencode process → waits for healthy + providers connected. SQLite DB is now exclusively owned by target.
 6. **Restoring:** `POST /v1/migrate/restore` on target agentd (restores session routing state).
 7. **CuttingOver:** Patch `workspace.status.{podName, podIP, endpoint}` to target pod values. Proxy routes new requests to target.
@@ -104,9 +104,11 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 
 **User-visible disruption:**
 - Steps 1-3: zero (source still serving normally)
-- Steps 4-5: **5-10s of `503 Retry-After: 5`** (opencode handoff gap). SDK auto-retries. User sees "thinking..." slightly longer.
+- Step 4 drain: 0-10s (in-flight requests complete; SSE connections closed — clients reconnect immediately)
+- Steps 4-5: **5-15s of `503 Retry-After: 5`** (opencode handoff gap — dominated by provider connection time on target). SDK auto-retries.
 - Steps 6-8: zero (target serving, proxy cuts over)
-- Total: **5-10s of retried requests** (vs 22s hard downtime with RWO volume migration)
+- Total: **5-15s of retried requests** (vs 22s hard downtime with RWO volume migration)
+- Worst case (cold provider, rate-limited): up to 30s. Mitigated by future optimization: pre-warm provider connections on target agentd before stopping source (not in scope for this epic).
 
 **After step 7:** proxy routes new requests to target pod. Workspace reconciler finds target pod via `Status.PodName`.
 
@@ -164,7 +166,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 - [ ] Reconciler implements 8-step sequence with idempotent phase transitions
 - [ ] Write-ahead: phase persisted to status BEFORE executing next step
 - [ ] One active Migration per workspace — reject if another in-progress
-- [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=15s, StartingTarget=120s, CuttingOver=5s
+- [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=25s, StartingTarget=120s, CuttingOver=5s
 - [ ] Spot-triggered migrations use tighter timeouts (see S18.5): total budget 75s. Migration spec carries `timeoutBudgetSeconds` field; reconciler uses min(phase default, remaining budget).
 - [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
 - [ ] Failed → rollback: delete target pod, leave source running (if source opencode was stopped, restart it via `POST /v1/migrate/start-opencode`)
@@ -216,6 +218,8 @@ status:
 **Acceptance Criteria:**
 - [ ] `--supervise=false` flag (or `AGENTD_SUPERVISE=false` env): agentd starts without launching opencode. `/v1/healthz` returns healthy, `/v1/readyz` returns `ready: false` (no opencode).
 - [ ] `POST /v1/migrate/stop-opencode`: sends SIGTERM to managed opencode process, waits for exit (max 10s, then SIGKILL). Returns 200 when opencode is fully stopped. After stop, agentd returns `503 Retry-After: 5` for all proxied requests.
+- [ ] Before SIGTERM: agentd stops accepting new requests (503), waits up to 10s for in-flight LLM requests to complete (drain period), then SIGTERMs opencode
+- [ ] After stop: agentd closes all active SSE connections by sending an SSE comment `retry: 1000` followed by closing the HTTP response. Clients reconnect within 1s and get routed to target after cutover.
 - [ ] `POST /v1/migrate/start-opencode`: starts opencode process (same as `--supervise` mode). Returns 200 when opencode is healthy + providers connected. `/v1/readyz` becomes true.
 - [ ] `GET /v1/migrate/snapshot`: returns JSON of agentd in-memory state (session statuses, provider cache)
 - [ ] `POST /v1/migrate/restore`: accepts snapshot, reconstructs state
@@ -357,6 +361,7 @@ status:
 - [ ] All `Workspaces(h.namespace)` calls accept namespace parameter
 - [ ] Tenant deletion cascades (namespace → workspaces → PVCs → pods)
 - [ ] EFS access points: one per workspace, root `/tenants/{tenant_id}/workspaces/{workspace_id}`
+- [ ] Tenant context flows to EFS CSI via PVC annotations: workspace reconciler sets `efs.csi.aws.com/rootDirectory` and `efs.csi.aws.com/uid`/`gid` annotations on PVC based on workspace owner's tenant_id. CSI driver reads these during dynamic provisioning.
 - [ ] Scale test: 100 tenants × 10 workspaces, reconcile <500ms p99
 
 **Why Capsule:** vCluster = ~256MB/tenant = 256GB at 1000 tenants. Capsule = ~0 overhead.
