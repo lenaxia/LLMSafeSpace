@@ -36,6 +36,9 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | A14 | Workspace reconciler sets OwnerReference on pods (workspace owns pod) | ✅ `controller.go:178`: `controllerutil.SetControllerReference(workspace, pod, r.Scheme)` |
 | A15 | `buildPod()` is unexported method on `WorkspaceReconciler` | ✅ `controller.go:611`: `func (r *WorkspaceReconciler) buildPod(...)` |
 | A16 | Workspace admission webhook validates Workspace CRD only, not Pods | ✅ `workspace_webhook.go:17`: `resources=workspaces` — won't block migration controller pod creation |
+| A17 | Opencode uses SQLite (WAL mode) for session/conversation storage | ✅ `opencode-upstream/packages/opencode/src/storage/db.ts:104`: `PRAGMA journal_mode = WAL`; DB at `$XDG_DATA_HOME/opencode/opencode.db` |
+| A18 | SQLite + WAL over NFS = corruption if two processes open same DB | ✅ SQLite docs: WAL requires shared memory (`-shm` file via mmap); mmap not coherent across NFS clients. Two writers = guaranteed corruption |
+| A19 | Agentd can run without opencode (`--supervise=false` mode) | ⚠️ NOT YET IMPLEMENTED — agentd currently always starts opencode. S18.3 must add this mode |
 
 ---
 
@@ -53,6 +56,8 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | Pod naming for migration | Target pod: `{workspace}-{uid[:8]}-mig`; after cutover, `Status.PodName` updated | Migration controller creates pod directly; workspace reconciler adopts via `Status.PodName` |
 | Pod lookup in reconciler | Always use `workspace.Status.PodName` (not `podName()` derivation) | Simpler, no conditional; `Status.PodName` is always set (A11) |
 | Concurrent write safety | Sequential phases, no Lease | No concurrent-write window exists by design |
+| Opencode DB safety | Stop source opencode before starting target opencode | SQLite WAL over NFS corrupts if two processes open same DB (A17, A18). Sequential handoff is mandatory. |
+| Target pod startup mode | Agentd-only (no opencode) until migration controller signals | Allows target pod to be "warm" (mounted, networked) without touching SQLite DB |
 | Pod building for migration | Extract `buildPod` logic into shared `pkg/workspace/pod` package | Migration controller reuses same pod spec; avoids duplication |
 
 ---
@@ -63,36 +68,49 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 ┌──────────────────────────────────────────────────────────┐
 │              Migration Controller                          │
 │  Triggers: node pressure, Spot warning, manual            │
-└──────────┬───────────────────────────────────┬───────────┘
-           │ 1. Create target pod               │ 4. Patch workspace.status
-           │    (name: ws-abc-1234-mig)         │    {podName, podIP, endpoint}
-           ▼                                    ▼
+└──┬────────────────────┬──────────────────────┬───────────┘
+   │ 1. Create target   │ 4. Stop source OC    │ 7. Patch workspace.status
+   │    (agentd only)   │ 5. Start target OC   │
+   ▼                    ▼                      ▼
 ┌─────────────────────┐          ┌──────────────────────────┐
 │  Source Pod (Node A) │          │  Target Pod (Node B)      │
-│  ws-abc-1234         │──3.───── │  ws-abc-1234-mig          │
-│  workspace-agentd    │  session │  workspace-agentd         │
-└────────┬─────────────┘  state  └────────┬──────────────────┘
+│  agentd ✓            │──3.───── │  agentd ✓                 │
+│  opencode ✓→✗(step4) │ snapshot │  opencode ✗→✓(step5)      │
+└────────┬─────────────┘          └────────┬──────────────────┘
          │                                 │
          └────────────┬────────────────────┘
                       ▼
            ┌─────────────────────┐
-           │   RWX PVC            │  ← both pods mount simultaneously
-           │   /workspace          │     zero data movement
+           │   RWX PVC            │  ← both pods mount, but only ONE
+           │   /workspace          │     opencode has DB open at a time
            └─────────────────────┘
 ```
 
-**Migration sequence (5 steps):**
-1. Migration controller creates target pod (same PVC, same labels, same password Secret, nodeAffinity for target node, OwnerReference → workspace)
-2. Wait for target pod Ready (opencode healthy via `/v1/readyz`)
-3. Transfer session state: `GET /v1/migrate/snapshot` on source → `POST /v1/migrate/restore` on target
-4. Patch `workspace.status.{podName, podIP, endpoint}` to target pod values
-5. Delete source pod
+**Migration sequence (8 steps):**
+1. **CreatingTarget:** Create target pod with `--supervise=false` (agentd starts, opencode does NOT start). Same PVC, labels, password Secret, nodeAffinity, OwnerReference → workspace.
+2. **WaitingAgentd:** Wait for target agentd healthy (`/v1/healthz` returns 200). Opencode is not running yet — no SQLite contention.
+3. **Snapshotting:** `GET /v1/migrate/snapshot` on source agentd (captures session routing state).
+4. **StoppingSource:** `POST /v1/migrate/stop-opencode` on source agentd → graceful SIGTERM to source opencode → wait for exit (WAL checkpoint, lock release). Source agentd remains running and returns `503 Retry-After: 5` to proxied requests.
+5. **StartingTarget:** `POST /v1/migrate/start-opencode` on target agentd → starts opencode process → waits for healthy + providers connected. SQLite DB is now exclusively owned by target.
+6. **Restoring:** `POST /v1/migrate/restore` on target agentd (restores session routing state).
+7. **CuttingOver:** Patch `workspace.status.{podName, podIP, endpoint}` to target pod values. Proxy routes new requests to target.
+8. **Cleanup:** Delete source pod.
 
-**After step 4:** proxy routes new requests to target pod (reads `Status.PodIP` per-request). Workspace reconciler finds target pod via `Status.PodName`. No conflict.
+**Why this sequence (SQLite safety):**
+- Opencode uses SQLite with WAL mode for session/conversation storage (`/workspace/.local/opencode/opencode.db`)
+- SQLite + WAL over NFS = corruption if two processes open the same DB simultaneously
+- Steps 4-5 ensure **at most one opencode process has the DB open at any time**
+- Source agentd stays alive during the gap (steps 4-6) to return `503 Retry-After` to any proxied requests
 
-**After step 5:** existing SSE connections to source pod break → clients reconnect → routed to target pod.
+**User-visible disruption:**
+- Steps 1-3: zero (source still serving normally)
+- Steps 4-5: **5-10s of `503 Retry-After: 5`** (opencode handoff gap). SDK auto-retries. User sees "thinking..." slightly longer.
+- Steps 6-8: zero (target serving, proxy cuts over)
+- Total: **5-10s of retried requests** (vs 22s hard downtime with RWO volume migration)
 
-**Total user-visible disruption:** ~100ms (SSE reconnect after source pod deletion)
+**After step 7:** proxy routes new requests to target pod. Workspace reconciler finds target pod via `Status.PodName`.
+
+**After step 8:** SSE connections to source pod break → clients reconnect → routed to target.
 
 ---
 
@@ -142,14 +160,14 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 **Acceptance Criteria:**
 - [ ] `Migration` CRD in `pkg/apis/llmsafespace/v1/migration_types.go`
 - [ ] Spec: `workspaceRef` (string), `targetNode` (string, optional), `reason` (enum: `SpotReclamation | NodePressure | Manual | Maintenance`), `priority` (int32)
-- [ ] Status: `phase` (enum: `Pending | CreatingTarget | WaitingReady | TransferringState | CuttingOver | Cleanup | Completed | Failed`), `startTime`, `completionTime`, `sourceNode`, `targetNode`, `sourcePodName`, `targetPodName`, `cutoverDurationMs`, `error`, `conditions`
-- [ ] Reconciler implements 5-step sequence with idempotent phase transitions
+- [ ] Status: `phase` (enum: `Pending | CreatingTarget | WaitingAgentd | Snapshotting | StoppingSource | StartingTarget | Restoring | CuttingOver | Cleanup | Completed | Failed`), `startTime`, `completionTime`, `sourceNode`, `targetNode`, `sourcePodName`, `targetPodName`, `cutoverDurationMs`, `handoffDurationMs`, `error`, `conditions`
+- [ ] Reconciler implements 8-step sequence with idempotent phase transitions
 - [ ] Write-ahead: phase persisted to status BEFORE executing next step
 - [ ] One active Migration per workspace — reject if another in-progress
-- [ ] Timeouts: CreatingTarget=60s, WaitingReady=120s, TransferringState=10s, CuttingOver=5s
+- [ ] Timeouts: CreatingTarget=60s, WaitingAgentd=30s, StoppingSource=15s, StartingTarget=120s, CuttingOver=5s
 - [ ] Abort (set Failed) if workspace phase is no longer `Active` at any step — prevents conflict with restart/suspend/terminate
-- [ ] Failed → rollback: delete target pod, leave source running
-- [ ] Target pod created via shared `pkg/workspace/pod.BuildPod()` with name `{workspace}-{uid[:8]}-mig` and nodeAffinity for target node
+- [ ] Failed → rollback: delete target pod, leave source running (if source opencode was stopped, restart it via `POST /v1/migrate/start-opencode`)
+- [ ] Target pod created via shared `pkg/workspace/pod.BuildPod()` with name `{workspace}-{uid[:8]}-mig`, nodeAffinity, and `AGENTD_SUPERVISE=false` env var (agentd starts without launching opencode)
 - [ ] Target pod has OwnerReference → workspace (for GC if workspace deleted during migration)
 - [ ] CuttingOver phase patches `workspace.status.{podName, podIP, endpoint}` atomically
 - [ ] Cleanup phase deletes source pod by `migration.status.sourcePodName`
@@ -189,20 +207,21 @@ status:
 
 ---
 
-### S18.3 — Session State Snapshot/Restore
+### S18.3 — Agentd Migration Endpoints
 
-**Goal:** Add snapshot/restore endpoints to `workspace-agentd` for transferring in-memory session routing state during migration.
+**Goal:** Add migration lifecycle endpoints to `workspace-agentd`: snapshot/restore session state, stop/start opencode process, and support `--supervise=false` startup mode.
 
 **Acceptance Criteria:**
-- [ ] `GET /v1/migrate/snapshot` returns JSON of agentd in-memory state
-- [ ] `POST /v1/migrate/restore` accepts snapshot and reconstructs state
-- [ ] Snapshot includes: `sessionStatusTracker.statuses` (map[string]string), `providerCache` (connected, configured, sessions)
-- [ ] Snapshot excludes: opencode process state (on PVC at `/workspace/.local/opencode/`), credentials (K8s Secret mount), files (shared PVC)
-- [ ] Snapshot size < 50KB for 5 sessions (unit test assertion)
+- [ ] `--supervise=false` flag (or `AGENTD_SUPERVISE=false` env): agentd starts without launching opencode. `/v1/healthz` returns healthy, `/v1/readyz` returns `ready: false` (no opencode).
+- [ ] `POST /v1/migrate/stop-opencode`: sends SIGTERM to managed opencode process, waits for exit (max 10s, then SIGKILL). Returns 200 when opencode is fully stopped. After stop, agentd returns `503 Retry-After: 5` for all proxied requests.
+- [ ] `POST /v1/migrate/start-opencode`: starts opencode process (same as `--supervise` mode). Returns 200 when opencode is healthy + providers connected. `/v1/readyz` becomes true.
+- [ ] `GET /v1/migrate/snapshot`: returns JSON of agentd in-memory state (session statuses, provider cache)
+- [ ] `POST /v1/migrate/restore`: accepts snapshot, reconstructs state
+- [ ] Snapshot size < 50KB for 5 sessions (unit test)
 - [ ] Restore is idempotent
 - [ ] `409 Conflict` if snapshot already taken or restore already applied
-- [ ] Auth: port 4097 cluster-internal only; migration controller calls via pod IP
-- [ ] Unit tests: round-trip, idempotency, conflict, size
+- [ ] All endpoints cluster-internal only (port 4097, not exposed via Ingress)
+- [ ] Unit tests: supervise=false mode, stop/start lifecycle, snapshot round-trip, conflict detection
 
 **Snapshot Schema:**
 ```json
@@ -219,39 +238,36 @@ status:
 }
 ```
 
-**In-flight LLM requests during migration:**
-- Source opencode terminated when source pod deleted (step 5)
-- Target opencode starts fresh, reads conversation state from PVC (`/workspace/.local/opencode/`)
-- Client sees SSE close → reconnects → resumes. Partial response lost; client re-sends.
-- Acceptable: migrations rare (~1/hour); equivalent to network blip.
+**SQLite safety guarantee:**
+- Source opencode stopped (step 4) → WAL checkpointed, DB locks released, `-shm`/`-wal` files flushed
+- Target opencode started (step 5) → opens DB exclusively, no contention
+- At no point do two opencode processes have the DB open simultaneously
 
 **Implementation Notes:**
-- Two new handlers on existing `mux` in `cmd/workspace-agentd/main.go`
-- Export `sessionStatusTracker` and `providerCache` fields for serialization
-- No new dependencies
+- `managedProcess` in `cmd/workspace-agentd/main.go` already has `start()` and `restart()` methods. Add `stop()` that sends SIGTERM + waits.
+- `--supervise=false`: skip the `proc.start()` call in `main()`. Agentd serves health/status endpoints but opencode isn't running.
+- After `stop-opencode`, set a flag so that `/v1/readyz` returns false and proxied requests get 503.
 
-**Estimated Effort:** 3 points
+**Estimated Effort:** 5 points
 
 ---
 
 ### S18.4 — Proxy Handoff
 
-**Goal:** Ensure proxy routes to new pod after migration with minimal disruption.
+**Goal:** Ensure proxy handles the migration gracefully: routes to source during normal operation, returns retryable errors during handoff gap, routes to target after cutover.
 
 **Acceptance Criteria:**
-- [ ] After `workspace.status.podIP` updated, new HTTP requests route to target (existing behavior — A3)
-- [ ] SSE connections persist on source pod until deletion, then client reconnects to target (existing behavior — A7)
-- [ ] Proxy returns `503 Retry-After: 1` (not 10) when workspace has active Migration
-- [ ] Integration test: SSE stream → trigger migration → stream resumes on new pod within 3s
+- [ ] During steps 1-3 (source opencode running): proxy routes normally to source pod via `Status.PodIP`
+- [ ] During steps 4-5 (handoff gap): source agentd returns `503 Retry-After: 5` for proxied requests. Proxy passes this through to client. SDK auto-retries.
+- [ ] After step 7 (cutover): proxy reads updated `Status.PodIP`, routes to target pod
+- [ ] After step 8 (source deleted): SSE connections break, clients reconnect, routed to target
+- [ ] Proxy returns `Retry-After: 1` (not 10) when workspace has active Migration CR
+- [ ] Integration test: send request during handoff gap → get 503 → retry after cutover → success
 
-**Why no buffer/swap needed:**
-- Proxy reads `Status.PodIP` per-request (A3). After update, new requests go to target.
-- Source pod alive until Cleanup (step 5). In-flight requests complete normally.
-- SSE: TCP connection breaks when source pod deleted. Client reconnects. Standard behavior.
-
-**Code changes:**
-- `proxy.go`: check for active Migration on connection error → `Retry-After: 1`
-- That's it. The existing retry logic (line 371) handles the rest.
+**Why this is simple:**
+- During handoff gap, the SOURCE agentd handles the 503 (it knows opencode is stopped). Proxy doesn't need special logic.
+- After cutover, proxy reads new `Status.PodIP` per-request (A3). No buffering needed.
+- The only proxy change: reduce `Retry-After` from 10 to 1 when migration is active.
 
 **Estimated Effort:** 1 point
 
@@ -395,7 +411,7 @@ Phase D (Multi-tenancy):
 Phase A delivers a working migration system testable on any multi-node cluster with RWX storage.
 Phase B adds automated triggers. Phase C/D are production-only.
 
-**Total: 39 points (~3 sprints)**
+**Total: 41 points (~3 sprints)**
 
 ---
 
@@ -422,7 +438,8 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | R3 | Spot interruption exceeds migration capacity | Low | 6+ instance types; OD baseline; graceful suspension fallback |
 | R4 | Session transfer fails mid-flight | Medium | Rollback to source; client retries; no corruption (shared PVC) |
 | R5 | EFS access point limit (1000/fs) | Medium | Monitor; second filesystem at 800 |
-| R6 | Two pods writing to same PVC concurrently corrupt opencode state | Low | Sequential phases: source is read-only during snapshot; target writes only after restore; opencode not running on target until step 2 completes |
+| R6 | SQLite DB corruption from concurrent opencode processes | **Mitigated** | Sequential handoff: source opencode stopped + WAL checkpointed before target starts (A17, A18). Enforced by migration controller phase ordering. |
+| R7 | Rollback after source opencode stopped leaves workspace with no opencode running | Medium | Rollback handler calls `POST /v1/migrate/start-opencode` on source agentd to restart it |
 
 ---
 
@@ -438,7 +455,8 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | Q6 | EFS access point limit? | 🔶 | Second filesystem at 800 workspaces |
 | Q7 | Requires EFS? | ✅ | No. Any RWX CSI works |
 | Q8 | Pod conflict with workspace reconciler? | ✅ | Direct creation + `Status.PodName` adoption |
-| Q9 | Concurrent PVC writes? | ✅ | No concurrent writes — sequential phases (see R6) |
+| Q9 | Concurrent PVC writes? | ✅ | SQLite WAL over NFS = corruption. Solved by sequential opencode handoff (stop source → start target). |
+| Q10 | User-visible disruption during migration? | ✅ | 5-10s of `503 Retry-After` during opencode handoff. SDK retries transparently. vs 22s hard downtime with RWO. |
 
 ---
 
@@ -446,10 +464,10 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 
 | Metric | Target |
 |--------|--------|
-| Migration cutover (p99) | < 500ms |
-| Total migration (p99) | < 10s |
+| Opencode handoff gap (p99) | < 15s |
+| Total migration (p99) | < 30s |
 | Spot reclamation success | > 95% |
-| Dropped requests during migration | 0 |
+| Requests dropped (not retried) | 0 |
 | Cost per workspace/month | < $25 |
 | gVisor I/O overhead | < 20% |
 
@@ -464,9 +482,9 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | **Maintainability** | 5 | `BuildPod()` extracted to shared package (DRY); migration controller is isolated new component; workspace reconciler change is replacing `podName()` calls with `Status.PodName` reads (simpler, not more complex) |
 | **Scalability** | 5 | Stateless controller; bounded concurrency; Capsule + Karpenter to 1000+ tenants |
 | **Security** | 5 | Defense-in-depth: gVisor + EFS access points + Capsule + NetworkPolicy; sequential phases prevent concurrent-write |
-| **Performance** | 4.5 | ~100ms cutover; EFS +1-3ms vs EBS; gVisor ~5% CPU (prod only) |
+| **Performance** | 4 | 5-10s handoff gap (opencode restart) vs 22s RWO migration — 2-4x improvement. EFS +1-3ms vs EBS. gVisor ~5% CPU. -1: handoff gap is user-visible (503 retries) |
 | **SOLID** | 5 | SRP: migration controller migrates, workspace reconciler manages pods. OCP: new triggers via CRD. DIP: migration controller uses `BuildPod()` interface, not reconciler internals |
 | **Idiomatic** | 5 | CRD + reconciler, status subresource, write-ahead, OwnerReferences, leader election |
 | **Complexity** | 5 | No lease fencing, no proxy buffering, no dual-pod mode. One refactor (pod lookup) + one new controller + two agentd endpoints. Minimal surface area |
 
-**Overall: 4.9/5** (-0.5 for EFS latency overhead vs EBS in performance)
+**Overall: 4.8/5** (-1 for handoff gap latency; inherent to SQLite-on-NFS constraint)
