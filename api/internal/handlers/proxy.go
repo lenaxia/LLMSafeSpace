@@ -58,6 +58,11 @@ type ProxyHandler struct {
 	wsConfig   map[string]workspaceConfig
 	wsConfigMu sync.RWMutex
 
+	// US-23.4: Track prior phase per workspace to detect Active-from-non-Active
+	// transitions that require password cache invalidation.
+	priorPhase   map[string]string
+	priorPhaseMu sync.Mutex
+
 	activeSess map[string]map[string]bool
 	activeMu   sync.Mutex
 
@@ -107,6 +112,7 @@ func NewProxyHandler(
 		dialect:    dialect,
 		pwCache:    make(map[string]string),
 		wsConfig:   make(map[string]workspaceConfig),
+		priorPhase: make(map[string]string),
 		activeSess: make(map[string]map[string]bool),
 		connCount:  make(map[string]int),
 	}, nil
@@ -434,6 +440,22 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// US-23.4: If upstream returns 401, the password is stale (e.g., rotated
+	// after Failed→recovery). Convert to 502 without forwarding
+	// WWW-Authenticate (which would trigger a browser basic-auth dialog).
+	// Proactively invalidate the password cache so the next request fetches fresh.
+	if resp.StatusCode == http.StatusUnauthorized {
+		wsID := c.Param("id")
+		h.invalidateCaches(wsID)
+		h.logger.Warn("Upstream auth failed; password cache invalidated",
+			"workspaceID", wsID, "path", targetPath)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":       "upstream authentication failed; please retry",
+			"workspaceID": wsID,
+		})
+		return nil
+	}
+
 	// Determine whether to filter the response. Filtering only applies when
 	// the caller asked, the response is JSON, and the upstream succeeded.
 	contentType := resp.Header.Get("Content-Type")
@@ -450,23 +472,15 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			h.logger.Warn("Failed to filter response, returning original", "error", filterErr.Error())
 			filtered = raw
 		}
-		// Copy headers, then overwrite Content-Length to match filtered body.
-		for k, vs := range resp.Header {
-			for _, v := range vs {
-				c.Writer.Header().Add(k, v)
-			}
-		}
+		// Copy safe headers, then overwrite Content-Length to match filtered body.
+		copyResponseHeaders(resp.Header, c.Writer.Header())
 		c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(filtered)))
 		c.Writer.WriteHeader(resp.StatusCode)
 		_, _ = c.Writer.Write(filtered)
 		return nil
 	}
 
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			c.Writer.Header().Add(k, v)
-		}
-	}
+	copyResponseHeaders(resp.Header, c.Writer.Header())
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(resp.StatusCode)
 
@@ -488,11 +502,34 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	return nil
 }
 
-// stripVerboseQuery removes the "verbose" query parameter from a raw query
+// blockedResponseHeaders are headers from upstream that must never be
+// forwarded to the browser. WWW-Authenticate triggers a basic-auth dialog;
+// Set-Cookie and Proxy-Authenticate are security-sensitive.
+var blockedResponseHeaders = map[string]bool{
+	"Www-Authenticate":  true,
+	"Proxy-Authenticate": true,
+	"Set-Cookie":         true,
+}
+
+// copyResponseHeaders copies upstream response headers to the client writer,
+// stripping any headers in blockedResponseHeaders. This prevents the browser
+// from receiving WWW-Authenticate (which triggers a basic-auth dialog) when
+// the proxy's cached password is stale (US-23.4).
+func copyResponseHeaders(src http.Header, dst http.Header) {
+	for k, vs := range src {
+		if blockedResponseHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
+}
+
+// stripVerboseQuery removes the "verbose" query parameter from the raw query
 // string. The verbose flag is consumed by the API proxy and must not be
-// forwarded to opencode (which would reject unknown query params on some
-// endpoints). Returns the remaining query string with "verbose" entries
-// removed; preserves the order of remaining parameters.
+// forwarded to opencode. Returns the remaining query string with "verbose"
+// entries removed; preserves the order of remaining parameters.
 func stripVerboseQuery(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
@@ -697,6 +734,12 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	phase := workspace.Status.Phase
 
+	// Track prior phase for Active-from-non-Active detection (US-23.4).
+	h.priorPhaseMu.Lock()
+	prior := h.priorPhase[workspace.Name]
+	h.priorPhase[workspace.Name] = string(phase)
+	h.priorPhaseMu.Unlock()
+
 	// Publish the phase change to all browser SSE subscribers.
 	if h.broker != nil {
 		h.broker.Publish(workspace.Name, WorkspaceSSEEvent{
@@ -710,12 +753,35 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(workspace.Name)
 		}
+		// Clean up priorPhase for terminal phases.
+		if phase == phaseTerminated || phase == phaseTerminating {
+			h.priorPhaseMu.Lock()
+			delete(h.priorPhase, workspace.Name)
+			h.priorPhaseMu.Unlock()
+		}
 		return
 	}
+
+	// US-23.4: Invalidate pwCache on Failed (password secret is deleted by
+	// cleanupFailedWorkspaceSecrets; ensurePasswordSecret regenerates a new
+	// one on recovery).
+	if phase == v1.WorkspacePhaseFailed {
+		h.invalidateCaches(workspace.Name)
+		return
+	}
+
 	if phase == phaseActive {
-		h.wsConfigMu.Lock()
-		delete(h.wsConfig, workspace.Name)
-		h.wsConfigMu.Unlock()
+		// US-23.4: Password may have rotated during a non-Active interval
+		// (e.g., ensurePasswordSecret regenerated it after Failed→recovery).
+		// Invalidate pwCache when transitioning Active-from-non-Active.
+		if prior != "" && prior != string(phaseActive) {
+			h.invalidateCaches(workspace.Name)
+		} else {
+			// Active→Active reconcile (no transition). Only wsConfig may be stale.
+			h.wsConfigMu.Lock()
+			delete(h.wsConfig, workspace.Name)
+			h.wsConfigMu.Unlock()
+		}
 	}
 }
 
