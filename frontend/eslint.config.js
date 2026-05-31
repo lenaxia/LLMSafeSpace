@@ -25,8 +25,8 @@ export default defineConfig([
       'react-hooks/immutability': 'off',
       'react-hooks/preserve-manual-memoization': 'off',
       'react-hooks/refs': 'off',
-      // Allow exporting hooks alongside components (standard pattern)
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Allow exporting hooks alongside components (standard Provider pattern)
+      'react-refresh/only-export-components': 'off',
       // Allow underscore-prefixed unused vars (intentional destructure ignores)
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
