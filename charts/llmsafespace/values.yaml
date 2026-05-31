@@ -541,7 +541,13 @@ frontend:
     enabled: false
     className: ""
     host: "safespace.example.com"
-    tls: false
+    # RT-6.14 (Epic 17): TLS default flipped from `false` → `true`.
+    # Operators must explicitly set `tls: false` to disable HTTPS for
+    # the frontend ingress. Pre-fix the chart-default install
+    # exposed the frontend over plain HTTP, leaking JWT cookies on
+    # every request. Combined with the HSTS header in `annotations`
+    # below, this prevents downgrade attacks from session takeover.
+    tls: true
     tlsSecret: ""
     # G31 (Epic 17 worklog 0092 RT-7.13): pre-fix the frontend
     # ingress carried no security headers. Default annotations

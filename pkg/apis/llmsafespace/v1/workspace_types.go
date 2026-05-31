@@ -56,8 +56,13 @@ type WorkspaceCredentialRef struct {
 
 // PodSecurityContext defines security context for the workspace pod.
 type PodSecurityContext struct {
-	RunAsUser      int64  `json:"runAsUser,omitempty"`
-	RunAsGroup     int64  `json:"runAsGroup,omitempty"`
+	RunAsUser  int64 `json:"runAsUser,omitempty"`
+	RunAsGroup int64 `json:"runAsGroup,omitempty"`
+	// SeccompProfile is DEPRECATED in v1 (F1.2.8 / G24, Epic 17):
+	// the controller unconditionally sets RuntimeDefault on the
+	// generated PodSecurityContext to enforce the same hardening
+	// baseline across every workspace. Setting this field has no
+	// effect; it remains for API compatibility.
 	SeccompProfile string `json:"seccompProfile,omitempty"`
 }
 
