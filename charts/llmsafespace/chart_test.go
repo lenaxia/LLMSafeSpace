@@ -34,6 +34,7 @@ package chart_test
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -615,4 +616,191 @@ func TestG2_ControllerArgs_HonorsOperatorOverride(t *testing.T) {
 	require.Equal(t, "registry.k8s.io/", asMap["--allowed-image-registries"])
 	require.Equal(t, "longhorn,gp3", asMap["--allowed-storage-class-names"])
 	require.Equal(t, "64", asMap["--max-workspace-storage-gi"])
+}
+
+// =============================================================================
+// G5 / F1.3.x — RBAC tightening (worklog 0107)
+// =============================================================================
+
+// findResources returns all rendered docs of the given Kind.
+func findResources(docs []map[string]any, kind string) []map[string]any {
+	out := []map[string]any{}
+	for _, d := range docs {
+		if d["kind"] == kind {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// resourceVerbs walks the rules of a Role/ClusterRole doc and returns
+// a {apiGroup/resource: verbs[]} map for assertion.
+func resourceVerbs(doc map[string]any) map[string][]string {
+	out := map[string][]string{}
+	rules, _ := doc["rules"].([]any)
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		groups, _ := rule["apiGroups"].([]any)
+		resources, _ := rule["resources"].([]any)
+		verbs, _ := rule["verbs"].([]any)
+		var verbStrs []string
+		for _, v := range verbs {
+			if s, ok := v.(string); ok {
+				verbStrs = append(verbStrs, s)
+			}
+		}
+		for _, g := range groups {
+			for _, res := range resources {
+				key := fmt.Sprintf("%s/%s", g, res)
+				out[key] = append(out[key], verbStrs...)
+			}
+		}
+	}
+	return out
+}
+
+// TestG5_DefaultIsNamespaceScope asserts the post-fix default `rbac.scope`
+// is "namespace" — operators no longer get cluster-wide secrets/pods
+// access by default.
+func TestG5_DefaultIsNamespaceScope(t *testing.T) {
+	docs := helmTemplate(t, "")
+	clusterRoles := findResources(docs, "ClusterRole")
+	// Allow ONLY the storageclass-reader ClusterRole — the cluster
+	// scope ClusterRole must NOT be rendered by default.
+	for _, cr := range clusterRoles {
+		name := metaName(cr)
+		require.NotContains(t, name, "controller-cluster",
+			"default install must NOT render the cluster-scope ClusterRole; got %q", name)
+	}
+}
+
+// TestG5_ClusterScopeOptInRendersClusterRole asserts the cluster
+// scope is preserved as an opt-in.
+func TestG5_ClusterScopeOptInRendersClusterRole(t *testing.T) {
+	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
+	clusterRoles := findResources(docs, "ClusterRole")
+	var sawClusterScope bool
+	for _, cr := range clusterRoles {
+		if strings.Contains(metaName(cr), "controller-cluster") {
+			sawClusterScope = true
+			// Confirm pods/secrets are NOT in the cluster grant.
+			rv := resourceVerbs(cr)
+			require.NotContains(t, rv, "/pods",
+				"cluster ClusterRole must NOT grant cluster-wide pods (G5 / F1.3.3)")
+			require.NotContains(t, rv, "/secrets",
+				"cluster ClusterRole must NOT grant cluster-wide secrets (G5 / F1.3.3)")
+		}
+	}
+	require.True(t, sawClusterScope,
+		"rbac.scope=cluster must render the controller-cluster ClusterRole")
+}
+
+// TestF132_LeasesAreNamespaceScoped asserts coordination.k8s.io/leases
+// is granted via Role (namespace), not ClusterRole.
+func TestF132_LeasesAreNamespaceScoped(t *testing.T) {
+	docs := helmTemplate(t, "")
+	clusterRoles := findResources(docs, "ClusterRole")
+	for _, cr := range clusterRoles {
+		rv := resourceVerbs(cr)
+		require.NotContains(t, rv, "coordination.k8s.io/leases",
+			"leases must not be cluster-scoped (F1.3.2); found in ClusterRole %q", metaName(cr))
+	}
+	// And the Role for leader election must contain leases.
+	roles := findResources(docs, "Role")
+	var sawLeases bool
+	for _, role := range roles {
+		rv := resourceVerbs(role)
+		if _, ok := rv["coordination.k8s.io/leases"]; ok {
+			sawLeases = true
+		}
+	}
+	require.True(t, sawLeases, "leases must be granted via a namespace-scoped Role")
+}
+
+// TestF134_APIDoesNotGrantRuntimeEnvironments asserts the API SA Role
+// does not include runtimeenvironments (unused per audit).
+func TestF134_APIDoesNotGrantRuntimeEnvironments(t *testing.T) {
+	docs := helmTemplate(t, "")
+	roles := findResources(docs, "Role")
+	for _, role := range roles {
+		name := metaName(role)
+		if !strings.Contains(name, "-api") {
+			continue
+		}
+		rv := resourceVerbs(role)
+		require.NotContains(t, rv, "llmsafespace.dev/runtimeenvironments",
+			"API Role %q must NOT grant runtimeenvironments (F1.3.4)", name)
+	}
+}
+
+// TestF135_APIDoesNotGrantPodsLog asserts the API SA Role does not
+// include pods/log (unused per audit).
+func TestF135_APIDoesNotGrantPodsLog(t *testing.T) {
+	docs := helmTemplate(t, "")
+	roles := findResources(docs, "Role")
+	for _, role := range roles {
+		name := metaName(role)
+		if !strings.Contains(name, "-api") {
+			continue
+		}
+		rv := resourceVerbs(role)
+		require.NotContains(t, rv, "/pods/log",
+			"API Role %q must NOT grant pods/log (F1.3.5)", name)
+	}
+}
+
+// TestF131_ControllerDoesNotGrantUnusedResources asserts services and
+// configmaps are removed from the controller's grants (F1.3.1).
+func TestF131_ControllerDoesNotGrantUnusedResources(t *testing.T) {
+	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
+	for _, kind := range []string{"Role", "ClusterRole"} {
+		for _, doc := range findResources(docs, kind) {
+			name := metaName(doc)
+			if !strings.Contains(name, "controller") {
+				continue
+			}
+			rv := resourceVerbs(doc)
+			require.NotContains(t, rv, "/services",
+				"%s %q must NOT grant services (F1.3.1)", kind, name)
+			require.NotContains(t, rv, "/configmaps",
+				"%s %q must NOT grant configmaps (F1.3.1)", kind, name)
+		}
+	}
+}
+
+// TestF137_StorageClassesIsAlwaysClusterRole asserts storageclasses
+// is granted via a ClusterRole regardless of rbac.scope, so it doesn't
+// silently disappear in namespace mode.
+func TestF137_StorageClassesIsAlwaysClusterRole(t *testing.T) {
+	for _, scope := range []string{"namespace", "cluster"} {
+		t.Run("scope="+scope, func(t *testing.T) {
+			docs := helmTemplate(t, fmt.Sprintf("rbac:\n  scope: %s\n", scope))
+			clusterRoles := findResources(docs, "ClusterRole")
+			var sawSC bool
+			for _, cr := range clusterRoles {
+				rv := resourceVerbs(cr)
+				if _, ok := rv["storage.k8s.io/storageclasses"]; ok {
+					sawSC = true
+				}
+			}
+			require.True(t, sawSC,
+				"storageclasses must be granted via a ClusterRole when scope=%s (F1.3.7)", scope)
+		})
+	}
+}
+
+// TestF133_ControllerSecretsAreNamespaceScoped asserts that secrets
+// are NEVER granted via ClusterRole, even when rbac.scope=cluster.
+func TestF133_ControllerSecretsAreNamespaceScoped(t *testing.T) {
+	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
+	clusterRoles := findResources(docs, "ClusterRole")
+	for _, cr := range clusterRoles {
+		rv := resourceVerbs(cr)
+		require.NotContains(t, rv, "/secrets",
+			"ClusterRole %q must NOT grant cluster-wide secrets (F1.3.3 / G5)",
+			metaName(cr))
+		require.NotContains(t, rv, "/pods",
+			"ClusterRole %q must NOT grant cluster-wide pods (F1.3.3 / G5)",
+			metaName(cr))
+	}
 }

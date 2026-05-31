@@ -19,6 +19,7 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -244,13 +245,45 @@ func (h *TerminalHandler) HandleTerminal(c *gin.Context) {
 		return
 	}
 
-	h.bridgeExec(conn, ws.Status.PodName, ws.Status.PodNamespace)
+	h.bridgeExec(conn, workspaceID, ws.Status.PodName, ws.Status.PodNamespace)
 }
 
 // bridgeExec creates a K8s exec session and bridges it to the WebSocket.
-func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, podName, podNamespace string) {
+//
+// F1.3.6 (Epic 17): the API ServiceAccount has pods/exec on the entire
+// workspace namespace because standard k8s RBAC doesn't support
+// resourceNames/labelSelectors on subresources. Defense-in-depth at
+// the application layer: refuse to exec into a pod whose
+// llmsafespace.dev/workspace label does not match the workspaceID
+// the caller authenticated against. Without this check, a
+// compromised workspace.Status.PodName (mitigated by the F1.2.2
+// webhook) OR a legitimate operator-initiated workload sharing the
+// same namespace label would be reachable from any user's terminal
+// endpoint.
+func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, workspaceID, podName, podNamespace string) {
 	if podNamespace == "" {
 		podNamespace = h.namespace
+	}
+
+	// Confirm the target pod is genuinely the sandbox pod for this
+	// workspace. This guards against (a) a stale Status.PodName, (b)
+	// an unrelated pod with the same name in the same namespace, (c)
+	// any future change that grants pods/exec more broadly.
+	if h.clientset != nil {
+		pod, err := h.clientset.CoreV1().Pods(podNamespace).
+			Get(context.Background(), podName, metav1.GetOptions{})
+		if err != nil {
+			msg := TerminalMessage{Type: "error", Message: "pod lookup failed"}
+			data, _ := json.Marshal(msg)
+			_ = conn.WriteMessage(websocket.TextMessage, data)
+			return
+		}
+		if pod.Labels["llmsafespace.dev/workspace"] != workspaceID {
+			msg := TerminalMessage{Type: "error", Message: "pod ownership mismatch — refusing exec"}
+			data, _ := json.Marshal(msg)
+			_ = conn.WriteMessage(websocket.TextMessage, data)
+			return
+		}
 	}
 
 	execReq := h.clientset.CoreV1().RESTClient().Post().

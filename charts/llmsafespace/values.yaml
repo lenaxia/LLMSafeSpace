@@ -407,14 +407,28 @@ serviceAccount:
 rbac:
   create: true
   # scope controls how the controller's RBAC is granted:
-  #   "cluster"   (default)   ClusterRole + ClusterRoleBinding — controller
-  #                           can manage CRDs in any namespace.
-  #   "namespace"             Role + RoleBinding scoped to .Release.Namespace
-  #                           only. The controller will fail to reconcile
-  #                           resources in other namespaces. Use this with
-  #                           controller.watchNamespaces set to a single ns
-  #                           for tightest isolation.
-  scope: "cluster"
+  #   "namespace" (default, G5)  Role + RoleBinding scoped to .Release.Namespace
+  #                              and the workspace namespace only. The
+  #                              controller can manage workspaces ONLY in the
+  #                              configured namespace(s). Use this with
+  #                              controller.watchNamespaces unset (or set to
+  #                              the workspace namespace) for tightest
+  #                              least-privilege.
+  #   "cluster"                  Adds a ClusterRole + ClusterRoleBinding for
+  #                              llmsafespace.dev/* + storageclasses, letting
+  #                              the controller watch workspaces across all
+  #                              namespaces. Pods, secrets, PVCs, and
+  #                              NetworkPolicies remain namespace-scoped
+  #                              regardless — operators running multi-
+  #                              namespace deployments must per-namespace-bind
+  #                              the workspace Role themselves.
+  #
+  # SECURITY (G5, Epic 17): the default flipped from "cluster" to
+  # "namespace" in worklog 0107. Pre-flip the chart-default install
+  # gave the controller cluster-wide secrets+pods access; that was a
+  # blast-radius hazard for a single-namespace deployment. Operators
+  # who genuinely need cluster-wide CRD watch must explicitly opt in.
+  scope: "namespace"
   # If false, you must create the (Cluster)Role + (Cluster)RoleBinding
   # out-of-band.
 

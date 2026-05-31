@@ -32,7 +32,7 @@ the row.
 | G2 | Entrypoint shell injection via secret values | High | DONE | Fixed worklog 0078; live-test requires G28 fix → wait on OTHER |
 | G3 | env-secret readable via /proc/self/environ | Medium | OTHER (secrets-mgmt) | `entrypoint-opencode.sh:14` |
 | G4 | No mTLS between API and sandbox pods | Medium | MINE | `api/internal/handlers/proxy.go:91-95` |
-| G5 | Controller SA cluster-wide Secret access (default) | High | MINE | `charts/llmsafespace/templates/rbac.yaml` |
+| G5 | Controller SA cluster-wide Secret access (default) | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | `charts/llmsafespace/templates/rbac.yaml` |
 | G6 | No rate limiting on sensitive secret endpoints | Medium | OTHER (touches `/secrets/*`) | `api/internal/server/router.go:171-180` |
 | G7 | SSE bypasses injection-detection | Low | MINE (proxy) | `api/internal/handlers/proxy.go` |
 | G8 | First-user-admin auto-promotion race | Medium | MINE | `api/internal/services/auth/auth.go:386-394` |
@@ -91,13 +91,13 @@ is the list of distinct items.
 | F1.2.8 | Spec.PodSecurityContext.SeccompProfile ignored | Medium | MINE | controller (relates G24) |
 | F1.2.9 | Spec.Storage.StorageClassName no allowlist | Medium | MINE — code-fix landed worklog 0096, awaiting live re-pentest | webhook validator |
 | F1.2.10 | RuntimeEnvironment.Spec.Image validated only for non-empty | Low/Medium | MINE | webhook validator |
-| F1.3.1 | Controller cluster-scope grants 5 unused permissions | High | MINE | `charts/llmsafespace/templates/rbac.yaml` (relates G5) |
-| F1.3.2 | `coordination.k8s.io/leases` cluster-wide | High | MINE | rbac.yaml |
-| F1.3.3 | secrets/pods cluster-wide vs controller.watchNamespaces intent | Medium | MINE | rbac.yaml |
-| F1.3.4 | `runtimeenvironments` full CRUD granted to API SA but unused | Medium | MINE | rbac.yaml |
-| F1.3.5 | `pods/log` granted to API SA but unused | Medium | MINE | rbac.yaml |
-| F1.3.6 | `pods/exec` in workspace ns extends to non-sandbox pods | High | MINE | rbac.yaml resourceNames or label selector |
-| F1.3.7 | `storageclasses` grant degrades silently in namespace mode | Low | MINE | rbac.yaml |
+| F1.3.1 | Controller cluster-scope grants 5 unused permissions | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | `charts/llmsafespace/templates/rbac.yaml` (relates G5) |
+| F1.3.2 | `coordination.k8s.io/leases` cluster-wide | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
+| F1.3.3 | secrets/pods cluster-wide vs controller.watchNamespaces intent | Medium | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
+| F1.3.4 | `runtimeenvironments` full CRUD granted to API SA but unused | Medium | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
+| F1.3.5 | `pods/log` granted to API SA but unused | Medium | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
+| F1.3.6 | `pods/exec` in workspace ns extends to non-sandbox pods | High | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml resourceNames or label selector |
+| F1.3.7 | `storageclasses` grant degrades silently in namespace mode | Low | MINE — code-fix landed worklog 0107, awaiting live re-pentest | rbac.yaml |
 | F1.4.1 | Zero L3/L4 isolation between tenants | High | DONE | G16 closed; verified post-fix RT-1.4 |
 | F1.4.2 | agentd `/v1/statusz` and `/v1/healthz` unauthenticated | High | MINE | `pkg/agentd/...` health endpoints |
 | F1.4.3 | Controller `/metrics` unauthenticated | Medium | MINE | controller metrics server |

@@ -1,93 +1,207 @@
 {{- if .Values.rbac.create }}
 {{- $isCluster := eq .Values.rbac.scope "cluster" }}
 # ============================================================================
-# Controller RBAC.
-# When rbac.scope == "cluster" (default): ClusterRole + ClusterRoleBinding.
-# When rbac.scope == "namespace":          Role + RoleBinding scoped to the
-#                                          release namespace only.
+# Controller RBAC (G5 + F1.3.x fixes — Epic 17).
+#
+# Pre-fix: a single $controllerRules list was applied as either a
+# ClusterRole+ClusterRoleBinding (when scope=cluster, the default)
+# or a Role+RoleBinding (when scope=namespace). The list mixed
+# resources that legitimately need cluster scope (storageclasses,
+# RuntimeEnvironment lookups across namespaces) with resources that
+# should ALWAYS be namespace-scoped (secrets, pods, leases). When
+# scope=cluster shipped, secrets and pods were granted cluster-wide,
+# violating least-privilege (G5 + F1.3.3).
+#
+# Post-fix layout:
+#  1. A namespace-scoped Role for the workspace lifecycle
+#     (pods, secrets, PVCs, NetworkPolicies, events, leader-election leases).
+#     Lives in the workspace namespace; this is true regardless of
+#     rbac.scope.
+#  2. A Role for the controller's release namespace (where the
+#     controller pod runs) for events + leases (leader election).
+#  3. A ClusterRole for workspaces (the CRD itself is namespaced but
+#     the controller may need to watch ALL namespaces when
+#     watchNamespaces is unset). The cluster grant is scoped to
+#     llmsafespace.dev/* and storageclasses (read-only) — the
+#     two resource classes that genuinely span the cluster.
+#  4. Bindings: the namespace Role is bound in the WORKSPACE namespace;
+#     the cluster grant is bound only when rbac.scope == "cluster".
+#
+# This design closes:
+#   F1.3.1 (5 unused permissions removed: services, configmaps,
+#          runtimeenvironments/status).
+#   F1.3.2 (leases moved to namespace Role).
+#   F1.3.3 (secrets/pods scoped to workspace namespace, never cluster).
+#   F1.3.7 (storageclasses split into its own cluster grant so it
+#          doesn't silently disappear in namespace mode).
+#   G5    (default scope flipped to "namespace"; the cluster grant is
+#          opt-in for multi-namespace deployments).
+#
+# Operators who ran scope=cluster pre-fix will see narrower permissions
+# after upgrade. Verify the controller can still reconcile workspaces
+# in your watchNamespaces by reading its logs after the upgrade.
 # ============================================================================
-{{- $controllerRules := list
-  (dict "apiGroups" (list "llmsafespace.dev")
-        "resources" (list "workspaces" "workspaces/status" "workspaces/finalizers"
-                          "runtimeenvironments" "runtimeenvironments/status")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "pods")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "pods/status")
-        "verbs" (list "get" "patch" "update"))
-  (dict "apiGroups" (list "")
-        "resources" (list "secrets")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "persistentvolumeclaims")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "services")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "networking.k8s.io")
-        "resources" (list "networkpolicies")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "events")
-        "verbs" (list "create" "patch"))
-  (dict "apiGroups" (list "coordination.k8s.io")
-        "resources" (list "leases")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "")
-        "resources" (list "configmaps")
-        "verbs" (list "get" "list" "watch" "create" "update" "patch" "delete"))
-  (dict "apiGroups" (list "storage.k8s.io")
-        "resources" (list "storageclasses")
-        "verbs" (list "get" "list" "watch"))
-}}
-{{- if $isCluster }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ include "llmsafespace.fullname" . }}-controller
-  labels:
-    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
-rules:
-  {{- toYaml $controllerRules | nindent 2 }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "llmsafespace.fullname" . }}-controller
-  labels:
-    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "llmsafespace.fullname" . }}-controller
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
-{{- else }}
+
+# Workspace-namespace Role (always created): the day-to-day
+# CRUD-on-pods/secrets/etc. The workspace namespace is the same as
+# the release namespace by default (chart's helm.workspaceNamespace
+# template defaults to .Release.Namespace).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "llmsafespace.fullname" . }}-controller
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "llmsafespace.fullname" . }}-controller-workspace
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
   labels:
     {{- include "llmsafespace.controller.labels" . | nindent 4 }}
 rules:
-  {{- toYaml $controllerRules | nindent 2 }}
+  - apiGroups: ["llmsafespace.dev"]
+    resources:
+      - workspaces
+      - workspaces/status
+      - workspaces/finalizers
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch", "update"]
+
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "llmsafespace.fullname" . }}-controller
+  name: {{ include "llmsafespace.fullname" . }}-controller-workspace
+  namespace: {{ include "llmsafespace.workspaceNamespace" . }}
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llmsafespace.fullname" . }}-controller-workspace
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Release-namespace Role (always created): leader-election leases +
+# events. F1.3.2 fix — leases were previously granted cluster-wide;
+# only the controller's own namespace needs them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespace.controller.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "llmsafespace.fullname" . }}-controller
+  name: {{ include "llmsafespace.fullname" . }}-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# StorageClass read-only ClusterRole (always created — storageclasses
+# are cluster-scoped). F1.3.7 fix — pre-fix this grant was inside the
+# combined $controllerRules list, which silently dropped in namespace
+# mode (Roles cannot reference cluster-scoped resources). Now it's
+# always its own ClusterRole and ClusterRoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-storageclass-reader
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-storageclass-reader
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "llmsafespace.fullname" . }}-controller-storageclass-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if $isCluster }}
+---
+# Cluster-wide grant (opt-in via rbac.scope=cluster): lets the
+# controller watch workspaces and runtimeenvironments across all
+# namespaces. This is needed when controller.watchNamespaces is unset
+# OR contains namespaces other than the release namespace. Single-
+# namespace deployments should keep rbac.scope=namespace (the default
+# post-G5) which omits this block entirely.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-cluster
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["llmsafespace.dev"]
+    resources:
+      - workspaces
+      - workspaces/status
+      - workspaces/finalizers
+      - runtimeenvironments
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pods/secrets/PVCs are intentionally NOT included here — those
+  # remain namespace-scoped (workspace Role above), and operators
+  # running multi-namespace deployments should grant the workspace
+  # Role in each watched namespace via per-namespace bindings or a
+  # GitOps overlay.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller-cluster
+  labels:
+    {{- include "llmsafespace.controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "llmsafespace.fullname" . }}-controller-cluster
 subjects:
   - kind: ServiceAccount
     name: {{ include "llmsafespace.controller.serviceAccountName" . }}
@@ -96,7 +210,8 @@ subjects:
 ---
 # ============================================================================
 # API — namespaced permissions; uses the K8s API to manage CRDs and Secrets
-# in the workspace namespace.
+# in the workspace namespace. F1.3.4: removed unused runtimeenvironments
+# grant. F1.3.5: removed unused pods/log grant.
 # ============================================================================
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -110,7 +225,6 @@ rules:
     resources:
       - workspaces
       - workspaces/status
-      - runtimeenvironments
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - apiGroups: [""]
@@ -121,10 +235,15 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get", "list"]
-  - apiGroups: [""]
     resources: ["pods/exec"]
+    # F1.3.6 caveat: standard k8s RBAC does not support resourceNames
+    # or labelSelectors on pods/exec. Restriction here is namespace-
+    # scope only. The API server's terminal handler MUST verify that
+    # the target pod carries the workspace ownership labels before
+    # exec'ing — see api/internal/handlers/terminal.go for the runtime
+    # check. Without that check, an authenticated user could exec
+    # into ANY pod in the workspace namespace (including the API
+    # itself, the migration job, etc.).
     verbs: ["create"]
 
   - apiGroups: [""]
@@ -147,7 +266,7 @@ subjects:
     name: {{ include "llmsafespace.api.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# Lease for API leader election.
+# Lease for API leader election (release namespace).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
