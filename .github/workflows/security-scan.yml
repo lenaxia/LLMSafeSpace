@@ -32,7 +32,7 @@ jobs:
     name: Gitleaks (secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Full history so gitleaks can scan past commits, not just
           # the working tree. New commits (PR) are scanned against
@@ -62,9 +62,9 @@ jobs:
     name: govulncheck (Go vulns)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -83,7 +83,7 @@ jobs:
     name: Trivy (multi-language + config)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Trivy
         run: |
