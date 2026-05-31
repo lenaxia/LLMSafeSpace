@@ -1,0 +1,20 @@
+# Trivy ignore file for LLMSafeSpace.
+#
+# Format: each line is either:
+#   - a CVE ID (e.g. CVE-2024-1234)
+#   - a misconfig ID (e.g. KSV-0014)
+#   - a CVE ID followed by `exp:YYYY-MM-DD` (expiration)
+#
+# Path-scoped ignores live in .trivyignore.yaml (separate file). This
+# file is for IDs we accept globally with documented rationale.
+#
+# Reviewed quarterly: any expired ignores are re-triaged.
+
+# -----------------------------------------------------------------------------
+# Misconfigurations: development manifests in local/ and security audit
+# fixtures in design/stories/epic-17-security-review/phase-0*/ deliberately
+# ship with weak security context to exercise specific scenarios. Production
+# install path is the chart in charts/llmsafespace/ which is hardened.
+#
+# We do NOT use a global ignore; instead .trivyignore.yaml scopes by path.
+# Keep this file for global CVE accepts only.

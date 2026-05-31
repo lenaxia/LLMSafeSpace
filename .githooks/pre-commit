@@ -11,6 +11,7 @@
 #   - missing/wrong Go imports (goimports)              (imports-check)
 #   - golangci-lint findings (errcheck, bodyclose, …)   (lint)
 #   - broken Helm templates / undefined values          (helm-render)
+#   - secrets accidentally committed                    (gitleaks, optional)
 #
 # Wired up by `make install-hooks`. Each gate runs from a Make target so the
 # enforcement logic has one source of truth (Makefile).
@@ -70,3 +71,19 @@ run_gate "helm-render" "helm-render" \
     - undefined values referenced via .Values.X
     - syntax errors in templates/*.yaml
     - missing required fields in Chart.yaml"
+
+# Gitleaks (secrets in working tree). Cheap (~3s) so it runs locally;
+# the full git-history scan and govulncheck/trivy run in CI to keep
+# pre-commit fast. If gitleaks is not installed locally, the gate is
+# skipped with a hint — CI will still catch any escapes.
+if command -v gitleaks >/dev/null 2>&1; then
+    run_gate "gitleaks" "gitleaks" \
+        "Possible secret detected in your changes. Either:
+    - it's a real secret: rotate it, then remove from the diff;
+    - it's a false positive: extend .gitleaks.toml allowlist with
+      the specific path or pattern (cite the rationale)."
+else
+    echo "== pre-commit: gitleaks (skipped — not installed) =="
+    echo "Install for local secret-scanning:"
+    echo "  go install github.com/zricethezav/gitleaks/v8@latest"
+fi

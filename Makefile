@@ -13,7 +13,8 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
         openapi-validate \
         repolint chart-sync-migrations install-hooks \
-        check tools-install
+        check tools-install \
+        gitleaks govulncheck trivy-fs trivy-config security-scan
 
 all: test build
 
@@ -188,3 +189,56 @@ tools-install:
 check: fmt-check imports-check vet lint helm-render repolint
 	@echo ""
 	@echo "All quality gates passed."
+
+# ---------------------------------------------------------------------------
+# Security scanners (Epic 19, PR B)
+# ---------------------------------------------------------------------------
+# Three complementary scanners:
+#   gitleaks    -- secrets in working tree (test fixtures allow-listed
+#                  via .gitleaks.toml)
+#   govulncheck -- Go vulnerability database; only fails on CALLED vulns
+#   trivy fs    -- multi-language CVEs (npm, pip, mvn, go.mod, ...)
+#   trivy config-- K8s manifest + Dockerfile misconfig
+#
+# Run individually for fast feedback or all of them via `security-scan`.
+
+gitleaks:
+	@which gitleaks >/dev/null 2>&1 || { \
+		echo "gitleaks not installed; install from https://github.com/gitleaks/gitleaks"; \
+		exit 1; }
+	gitleaks detect --redact -c .gitleaks.toml --no-banner
+
+govulncheck:
+	@which govulncheck >/dev/null 2>&1 || $(GOCMD) install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
+trivy-fs:
+	@which trivy >/dev/null 2>&1 || { \
+		echo "trivy not installed; install from https://github.com/aquasecurity/trivy"; \
+		exit 1; }
+	trivy fs --severity HIGH,CRITICAL --exit-code 1 \
+		--skip-dirs frontend/node_modules \
+		--skip-dirs sdks/typescript/node_modules \
+		--skip-dirs sdks/vscode-llmsafespace/node_modules \
+		--ignorefile .trivyignore \
+		.
+
+trivy-config:
+	@which trivy >/dev/null 2>&1 || { \
+		echo "trivy not installed; install from https://github.com/aquasecurity/trivy"; \
+		exit 1; }
+	trivy config --severity HIGH,CRITICAL --exit-code 1 \
+		--skip-dirs frontend/node_modules \
+		--skip-dirs sdks/typescript/node_modules \
+		--skip-dirs sdks/vscode-llmsafespace/node_modules \
+		--skip-dirs design/stories/epic-17-security-review \
+		--skip-dirs local \
+		--ignorefile .trivyignore \
+		.
+
+# security-scan: run all four scanners. Mirrors the CI security-scan
+# workflow exactly. Slow (~30s); use the individual targets for tighter
+# loops.
+security-scan: gitleaks govulncheck trivy-fs trivy-config
+	@echo ""
+	@echo "All security scanners passed."

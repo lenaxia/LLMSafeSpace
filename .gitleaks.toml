@@ -1,0 +1,79 @@
+# gitleaks configuration for LLMSafeSpace.
+#
+# Extends the default ruleset (rules: jwt, generic-api-key, private-key,
+# curl-auth-header, etc. — see https://github.com/gitleaks/gitleaks for
+# the full list).
+#
+# We allow-list known-safe patterns rather than weakening the rules.
+# Any new path added below MUST cite a specific reason — "looks like a
+# test file" is not enough; the file content must demonstrably never
+# contain a real secret. Real PRs wanting to add a credential should
+# fail the gate; this is the entire point.
+
+title = "LLMSafeSpace gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe paths and content. See per-entry rationale."
+
+# Files whose entire purpose is to demonstrate redaction or contain
+# documented test fixtures. Each file's leak content is part of the
+# test corpus and must not change behavior if "leaked".
+paths = [
+  # Redaction package test corpus — patterns are explicitly the strings
+  # the redactor must catch. False positive by construction.
+  '''pkg/redact/redact_test\.go''',
+  '''pkg/utilities/utilities_test\.go''',
+  # Auth tests use canonical "test-secret" / "test-jwt-secret" strings;
+  # never a real signing key (verified by inspection 2026-05-31).
+  '''api/internal/services/auth/auth_test\.go''',
+  '''api/internal/services/auth/auth_settings_test\.go''',
+  '''api/internal/middleware/tests/logging_test\.go''',
+  # Worklog 0030 documents a real e2e test run; the JWT shown is a
+  # short-lived test token bound to localhost. Worklog 0089 is the
+  # epic-17 phase-4 audit narrative — it cites secret patterns the
+  # auditor was checking for, not real secrets.
+  '''worklogs/0030_2026-05-23_e2e-prompt-flow-validated\.md''',
+  '''worklogs/0089_2026-05-30_epic17-phase-4-credential-crypto\.md''',
+  # Epic-17 security audit artifacts: findings, harnesses, evidence.
+  # By definition these document security patterns; gitleaks would
+  # flag the audit's own demonstrations as secrets.
+  '''design/stories/epic-17-security-review/.*''',
+  # Old design doc with an example curl invocation.
+  '''design/0004_2025-03-05_warmingpool\.md''',
+  # Local-development test harness; uses lsp_test... API keys that
+  # exist only in a developer's local Postgres.
+  '''local/test\.sh''',
+  # Build artifact (minified JS); generated, never committed by hand.
+  # Already in .gitignore but kept here as defense in depth.
+  '''frontend/dist/.*''',
+]
+
+# Allow specific regex patterns in any file. Use sparingly; prefer
+# adding the file path to `paths` when possible.
+regexes = [
+  # The test-only JWT secret literal used across the test suite.
+  # If a new file is added that uses a *different* test secret, prefer
+  # changing it to this one rather than expanding the allowlist.
+  '''test-secret-key-for-llmsafespace-only''',
+  # Sample API-key prefix used in worklogs and SDK examples. Real
+  # API keys have an additional 32 random bytes after the prefix.
+  '''lsp_(test|example|placeholder|demo)[A-Za-z0-9_]*''',
+  # Documentation placeholder for "put your real key here". Pre-dates
+  # this file (origin: WARMINGPOOL.md from 2025-03), still in git
+  # history. Not a real credential.
+  '''YOUR_API_KEY''',
+]
+
+# Stop-words: matches that, when seen alongside a candidate secret,
+# disprove the match (e.g. "example", "placeholder").
+stopwords = [
+  "example",
+  "placeholder",
+  "test",
+  "fake",
+  "dummy",
+  "redacted",
+]

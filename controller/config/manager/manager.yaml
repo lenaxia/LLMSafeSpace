@@ -21,9 +21,25 @@ spec:
         app: controller
     spec:
       serviceAccountName: controller
+      # Defense-in-depth security context applied to the pod and the
+      # manager container. The chart in charts/llmsafespace/ is the
+      # canonical install path; this manifest is kept for kubebuilder
+      # tooling compatibility but should match the chart's posture.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: manager
         image: llmsafespace/controller:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
         args:
         - --metrics-addr=:8080
         - --health-probe-bind-address=:8081

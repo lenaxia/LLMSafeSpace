@@ -1,0 +1,119 @@
+name: Security scan
+
+# Runs the security scanners that live alongside CI lint:
+#   - gitleaks      : secrets in commits
+#   - govulncheck   : Go vulnerability database
+#   - trivy fs      : multi-language CVEs (npm, go.mod, requirements.txt, ...)
+#   - trivy config  : K8s misconfig, Dockerfile misconfig
+#
+# Triggers:
+#   - PR: blocks merge on CRITICAL/HIGH findings
+#   - push to main: same as PR (catches force-pushes that bypass PR)
+#   - schedule: daily 06:00 UTC catches new CVEs against unchanged code
+#   - workflow_dispatch: manual rerun
+#
+# This is a separate workflow from ci.yml so a CVE landing overnight
+# fires a single notification on the security-scan run, not a confused
+# "tests broke" alert on ci.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily 06:00 UTC. Kept on a separate workflow file so the schedule
+    # doesn't drag the rest of CI into a (unnecessary) cron run.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  gitleaks:
+    name: Gitleaks (secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so gitleaks can scan past commits, not just
+          # the working tree. New commits (PR) are scanned against
+          # base; pushes/scheduled scans cover the entire history.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan for secrets
+        # --redact: never print actual matched secrets to logs (defense
+        # in depth — even a transient leak in a CI log is bad).
+        # -c .gitleaks.toml: documented allowlist for known-safe paths.
+        run: gitleaks detect --redact -c .gitleaks.toml --no-banner
+
+  govulncheck:
+    name: govulncheck (Go vulns)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan for Go vulnerabilities
+        # Default exit code is non-zero only when a CALLED vulnerability
+        # is found — uncalled vulns in transitive deps don't fail. This
+        # matches the practical risk: a CVE in a function we never
+        # invoke is information, not an outage.
+        run: govulncheck ./...
+
+  trivy:
+    name: Trivy (multi-language + config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          curl -sLO https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz
+          tar xzf trivy_0.70.0_Linux-64bit.tar.gz
+          sudo mv trivy /usr/local/bin/
+          trivy --version
+
+      # Filesystem scan: covers go.mod, package-lock.json (npm),
+      # requirements.txt (Python), pom.xml (Java), Cargo.lock, etc.
+      # govulncheck above is more accurate for Go but only sees Go;
+      # this catches everything else and acts as redundancy for Go too.
+      - name: Trivy filesystem scan
+        run: |
+          trivy fs \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --skip-dirs frontend/node_modules \
+            --skip-dirs sdks/typescript/node_modules \
+            --skip-dirs sdks/vscode-llmsafespace/node_modules \
+            --ignorefile .trivyignore \
+            .
+
+      # Config scan: K8s manifests (charts/), Dockerfiles, compose files.
+      # Catches missing securityContext, privileged containers, runs-as-
+      # root images, etc. Most false-positive-prone scanner of the three
+      # — the .trivyignore.yaml has documented per-path scopes for the
+      # development manifests in local/ and the audit fixtures.
+      - name: Trivy config scan
+        run: |
+          trivy config \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --skip-dirs frontend/node_modules \
+            --skip-dirs sdks/typescript/node_modules \
+            --skip-dirs sdks/vscode-llmsafespace/node_modules \
+            --skip-dirs design/stories/epic-17-security-review \
+            --skip-dirs local \
+            --ignorefile .trivyignore \
+            .
