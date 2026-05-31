@@ -171,3 +171,44 @@ runAsNonRoot=true + AllowPrivilegeEscalation=false + cap-drop ALL +
 RuntimeDefault seccomp. nosuid/nodev are belt-and-braces against
 kernel CVEs that bypass capability checks via setuid binaries on
 the PVC.
+
+EGRESS FQDN HARDENING (G30)
+============================
+
+The chart-shipped NetworkPolicy uses CIDR-based egress rules
+(operator-configurable via `networkPolicy.allowedEgressCIDRs`).
+Standard k8s NetworkPolicy cannot match by FQDN, so this default
+allows broad public-internet egress with only RFC1918 + 169.254/16
+denied.
+
+For tighter egress control to a specific list of LLM provider
+FQDNs (`api.openai.com`, `api.anthropic.com`, etc.), deploy a
+CiliumNetworkPolicy alongside the chart:
+
+    apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata:
+      name: workspace-fqdn-egress
+      namespace: <release-ns>
+    spec:
+      endpointSelector:
+        matchLabels:
+          app: llmsafespace
+          component: workspace
+      egress:
+        - toEndpoints:
+            - matchLabels:
+                k8s-app: kube-dns
+                io.kubernetes.pod.namespace: kube-system
+          toPorts:
+            - ports:
+                - { port: "53", protocol: ANY }
+        - toFQDNs:
+            - matchName: "api.openai.com"
+            - matchName: "api.anthropic.com"
+          toPorts:
+            - ports:
+                - { port: "443", protocol: TCP }
+
+This requires Cilium with FQDN policy enabled. Calico operators
+can use a similar GlobalNetworkPolicy with negative selectors.

@@ -543,7 +543,25 @@ frontend:
     host: "safespace.example.com"
     tls: false
     tlsSecret: ""
-    annotations: {}
+    # G31 (Epic 17 worklog 0092 RT-7.13): pre-fix the frontend
+    # ingress carried no security headers. Default annotations
+    # below set CSP, X-Frame-Options, and HSTS for ingress-nginx.
+    # Operators using a different ingress (Traefik, HAProxy)
+    # should override `annotations` to use their controller's
+    # equivalent header-injection annotations. Override with:
+    #
+    #   --set 'frontend.ingress.annotations.<key>=<val>'
+    #
+    # CSP frame-ancestors 'none' + X-Frame-Options DENY together
+    # block clickjacking. CSP default-src 'self' constrains XSS
+    # blast radius if rehype-sanitize is bypassed (RT-7.9).
+    annotations:
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        more_set_headers "Content-Security-Policy: default-src 'self'; connect-src 'self' wss:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+        more_set_headers "X-Frame-Options: DENY";
+        more_set_headers "X-Content-Type-Options: nosniff";
+        more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+        more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
 
 mcp:
   enabled: true

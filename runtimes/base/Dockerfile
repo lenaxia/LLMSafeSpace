@@ -118,22 +118,30 @@ COPY --chmod=755 runtimes/base/tools/smoke-test.sh /usr/local/bin/smoke-test.sh
 # so image-layer tools are the fallback and PVC tools always win.
 #
 # MISE_YES=1                  — non-interactive (skip trust prompts)
-# MISE_GITHUB_ATTESTATIONS=0  — skip GitHub attestation checks (no outbound
-#                               OIDC calls in restricted build environments)
+# MISE_GITHUB_ATTESTATIONS=1  — enforce Sigstore-backed GitHub
+#                               attestation checks on every download
+#                               (G19, Epic 17). Pre-fix this was 0
+#                               which let mise download a malicious
+#                               binary from a compromised upstream
+#                               release without notice. Note: this
+#                               requires the build environment to
+#                               reach Sigstore + GitHub OIDC; CI
+#                               runners with restricted egress need
+#                               to allow-list those endpoints.
 RUN mkdir -p /etc/mise \
     && ARCH=$(uname -m) \
     && echo "Building for architecture: $ARCH" \
     && for tool in python@latest node@lts rust@stable go@latest; do \
         echo "Installing $tool..." \
         && for attempt in 1 2 3; do \
-            MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
+            MISE_YES=1 MISE_GITHUB_ATTESTATIONS=1 \
             mise install --system "$tool" && break; \
             echo "Retry $attempt for $tool..." && sleep 5; \
         done || { echo "FATAL: failed to install $tool after 3 attempts on $ARCH"; exit 1; }; \
     done \
     && for tool in java@lts maven@latest gradle@latest; do \
         echo "Installing $tool..." \
-        && MISE_YES=1 MISE_GITHUB_ATTESTATIONS=0 \
+        && MISE_YES=1 MISE_GITHUB_ATTESTATIONS=1 \
         mise install --system "$tool" \
         || echo "WARN: $tool failed on $ARCH, skipping (will be available via mise at runtime)"; \
     done \
