@@ -22,9 +22,9 @@ test.describe("Accessibility", () => {
     await expect(form).toBeVisible();
 
     // Inputs have proper types
-    const username = page.getByPlaceholder("Username");
-    await expect(username).toHaveAttribute("type", "text");
-    await expect(username).toHaveAttribute("autocomplete", "username");
+    const username = page.getByPlaceholder("Email");
+    await expect(username).toHaveAttribute("type", "email");
+    await expect(username).toHaveAttribute("autocomplete", "email");
 
     const password = page.getByPlaceholder("Password");
     await expect(password).toHaveAttribute("type", "password");
@@ -48,7 +48,7 @@ test.describe("Accessibility", () => {
     // It becomes visible on focus (keyboard users)
     // Login page uses AuthCard layout, not AppShell — skip link is only in AppShell
     // Verify login page is keyboard-navigable by checking form inputs are focusable
-    const username = page.getByPlaceholder("Username");
+    const username = page.getByPlaceholder("Email");
     await username.focus();
     await expect(username).toBeFocused();
   });

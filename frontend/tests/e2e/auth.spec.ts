@@ -21,8 +21,8 @@ test.describe("Login flow", () => {
     await page.goto("/");
     // Should redirect to /login
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByText("Welcome back")).toBeVisible();
-    await expect(page.getByPlaceholder("Username")).toBeVisible();
+    await expect(page.getByText(/Welcome to/)).toBeVisible();
+    await expect(page.getByPlaceholder("Email")).toBeVisible();
     await expect(page.getByPlaceholder("Password")).toBeVisible();
   });
 
@@ -37,7 +37,7 @@ test.describe("Login flow", () => {
   test("shows error on invalid credentials", async ({ page }) => {
     await mockUnauthenticated(page);
     await page.goto("/login");
-    await page.getByPlaceholder("Username").fill("baduser");
+    await page.getByPlaceholder("Email").fill("bad@user.com");
     await page.getByPlaceholder("Password").fill("badpass");
     await page.getByRole("button", { name: "Sign in" }).click();
     // API returns error — should show generic message

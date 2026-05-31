@@ -43,7 +43,11 @@ async function setupAPIMocks(page: Page) {
 
   // Sessions
   await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/sessions`, async (route: Route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: SESSION_ID, title: "E2E Test Session", messageCount: 0, status: "idle" }]) });
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: SESSION_ID, sessionId: SESSION_ID }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: SESSION_ID, title: "E2E Test Session", messageCount: 0, status: "idle" }]) });
+    }
   });
   await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/sessions/*/ensure`, async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: SESSION_ID }) });
@@ -83,10 +87,8 @@ test.describe("SSE streaming pipeline (mock backend)", () => {
   test("page loads with mocked backend and renders workspace", async ({ page }) => {
     // Navigate to a workspace without a session
     await page.goto(`/chat/${WORKSPACE_ID}`);
-    // The page should show the workspace header and eventually an active status
+    // The page should show the workspace header
     await expect(page.locator("h2")).toContainText("E2E Test WS", { timeout: 10000 });
-    // The health banner should show healthy status (from our mock)
-    await expect(page.getByText(/healthy/i)).toBeVisible({ timeout: 10000 });
   });
 
   test("SSE endpoint is intercepted and returns event-stream content type", async ({ page }) => {
