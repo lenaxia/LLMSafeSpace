@@ -43,12 +43,12 @@ func newAdmissionRequest(t *testing.T, obj runtime.Object) admission.Request {
 
 func TestRuntimeEnvironmentValidator_Allowed(t *testing.T) {
 	s := newScheme(t)
-	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s)}
+	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "py311"},
 		Spec: v1.RuntimeEnvironmentSpec{
-			Image:    "python:3.11-slim",
+			Image:    "docker.io/library/python:3.11-slim",
 			Language: "python",
 		},
 	}
@@ -58,7 +58,7 @@ func TestRuntimeEnvironmentValidator_Allowed(t *testing.T) {
 
 func TestRuntimeEnvironmentValidator_DeniesEmptyImage(t *testing.T) {
 	s := newScheme(t)
-	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s)}
+	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "x"},
@@ -71,11 +71,11 @@ func TestRuntimeEnvironmentValidator_DeniesEmptyImage(t *testing.T) {
 
 func TestRuntimeEnvironmentValidator_DeniesEmptyLanguage(t *testing.T) {
 	s := newScheme(t)
-	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s)}
+	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "x"},
-		Spec:       v1.RuntimeEnvironmentSpec{Image: "img", Language: ""},
+		Spec:       v1.RuntimeEnvironmentSpec{Image: "ghcr.io/lenaxia/img", Language: ""},
 	}
 	resp := v.Handle(context.Background(), newAdmissionRequest(t, re))
 	assert.False(t, resp.Allowed)

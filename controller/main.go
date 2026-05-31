@@ -118,7 +118,10 @@ func main() {
 	webhookDecoder := admission.NewDecoder(mgr.GetScheme())
 
 	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
-		Handler: &webhooks.RuntimeEnvironmentValidator{Decoder: webhookDecoder},
+		Handler: &webhooks.RuntimeEnvironmentValidator{
+			Decoder:                webhookDecoder,
+			AllowedImageRegistries: splitNonEmpty(allowedImageRegistries, ","),
+		},
 	})
 
 	// G2 — Workspace admission webhook closes F1.2.1 (registry allow-list),

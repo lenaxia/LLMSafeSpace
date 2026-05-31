@@ -67,8 +67,7 @@ spec:
                       type: string
                 requiresCredentials:
                   type: boolean
-                  default: false
-                  description: "When true, sandbox creation rejects auto-workspace-creation (no workspaceRef) because the runtime needs LLM credentials to function."
+                  description: "True if this runtime requires LLM provider credentials. Workspace creation rejects requests with no credential secret set when true."
             status:
               type: object
               properties:
