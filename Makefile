@@ -14,7 +14,8 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         openapi-validate \
         repolint chart-sync-migrations install-hooks \
         check tools-install \
-        gitleaks govulncheck trivy-fs trivy-config security-scan
+        gitleaks govulncheck trivy-fs trivy-config security-scan \
+        migration-roundtrip migration-fk-cascade migration-idempotent migration-safety
 
 all: test build
 
@@ -242,3 +243,40 @@ trivy-config:
 security-scan: gitleaks govulncheck trivy-fs trivy-config
 	@echo ""
 	@echo "All security scanners passed."
+
+# ---------------------------------------------------------------------------
+# Migration safety (Epic 19, PR C)
+# ---------------------------------------------------------------------------
+# Runs the migration round-trip + FK cascade + idempotency suite from
+# .github/workflows/migration-safety.yml, but locally against a Postgres
+# you supply via PG* env vars (PGHOST, PGUSER, PGPASSWORD, PGDATABASE).
+#
+# Setup:
+#   docker run -d --rm --name pg-test -p 5432:5432 \
+#     -e POSTGRES_USER=llmsafespace -e POSTGRES_PASSWORD=test \
+#     -e POSTGRES_DB=llmsafespace postgres:16
+#   export PGHOST=localhost PGUSER=llmsafespace PGPASSWORD=test PGDATABASE=llmsafespace
+#   make migration-safety
+#
+# All three sub-targets re-create the schema from scratch in a single
+# database, so they're not parallelizable. Run them in order or use
+# the meta target.
+
+migration-roundtrip:
+	@command -v psql >/dev/null 2>&1 || { echo "psql not installed"; exit 1; }
+	@: $${PGHOST:?must set PG* env vars}
+	bash hack/migration-roundtrip.sh
+
+migration-fk-cascade:
+	@command -v psql >/dev/null 2>&1 || { echo "psql not installed"; exit 1; }
+	@: $${PGHOST:?must set PG* env vars}
+	bash api/migrations/test/fk_cascade.sh
+
+migration-idempotent:
+	@command -v psql >/dev/null 2>&1 || { echo "psql not installed"; exit 1; }
+	@: $${PGHOST:?must set PG* env vars}
+	bash hack/migration-idempotent.sh
+
+migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade
+	@echo ""
+	@echo "All migration safety checks passed."

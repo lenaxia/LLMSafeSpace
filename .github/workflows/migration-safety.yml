@@ -1,0 +1,165 @@
+name: Migration safety
+
+# Validates database migration safety:
+#
+#   1. Round-trip: apply all up migrations, snapshot schema, apply all
+#      down migrations in reverse, re-apply ups, snapshot again. The two
+#      schema snapshots must match (proves down migrations actually
+#      reverse their corresponding up). This catches the class of
+#      migration drift that bit us live during pass-6 live validation
+#      (worklog 0099 / migration 000009 image_tag drift).
+#
+#   2. FK cascade integrity: insert a sample row in every parent table,
+#      delete the parent, assert no orphan rows in any child. Catches
+#      regressions like "binding rows survive a workspace delete"
+#      (worklog 0094 pass-2 audit hazard O11).
+#
+#   3. Idempotency: apply ups twice. Migrations using IF NOT EXISTS /
+#      IF EXISTS clauses should succeed on both runs. Catches the class
+#      where someone uses CREATE TABLE without IF NOT EXISTS, breaking
+#      the redeploy path.
+#
+# Why a separate workflow: same isolation argument as security-scan.yml
+# — failure here is a database-shape regression, not a "tests broke" one,
+# and we want the alert to be unambiguous. The scripts that drive each
+# check live in hack/ and api/migrations/test/ so developers can run
+# them locally with `make migration-safety` against a docker postgres.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/migrations/**'
+      - 'hack/migration-*.sh'
+      - '.github/workflows/migration-safety.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api/migrations/**'
+      - 'hack/migration-*.sh'
+      - '.github/workflows/migration-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Common Postgres service container reused by every job. Each job
+# starts with a fresh database, so the jobs are independent and can
+# run in parallel.
+jobs:
+  round-trip:
+    name: Migration up→down→up round-trip
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: llmsafespace
+          POSTGRES_PASSWORD: migration-test
+          POSTGRES_DB: llmsafespace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmsafespace"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGUSER: llmsafespace
+      PGPASSWORD: migration-test
+      PGDATABASE: llmsafespace
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -U llmsafespace && break
+            sleep 1
+          done
+      - name: Round-trip
+        run: bash hack/migration-roundtrip.sh
+
+  idempotent:
+    name: Migration idempotency (apply ups twice)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: llmsafespace
+          POSTGRES_PASSWORD: migration-test
+          POSTGRES_DB: llmsafespace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmsafespace"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGUSER: llmsafespace
+      PGPASSWORD: migration-test
+      PGDATABASE: llmsafespace
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -U llmsafespace && break
+            sleep 1
+          done
+      - name: Idempotency
+        run: bash hack/migration-idempotent.sh
+
+  fk-cascade:
+    name: FK cascade integrity
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: llmsafespace
+          POSTGRES_PASSWORD: migration-test
+          POSTGRES_DB: llmsafespace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmsafespace"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGUSER: llmsafespace
+      PGPASSWORD: migration-test
+      PGDATABASE: llmsafespace
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -U llmsafespace && break
+            sleep 1
+          done
+
+      # FK cascade test needs the schema applied first; the script
+      # itself doesn't bootstrap (round-trip and idempotent jobs reset
+      # the schema in their first step, so we follow the same pattern
+      # here for symmetry).
+      - name: Apply all up migrations
+        run: |
+          set -euo pipefail
+          for f in $(ls api/migrations/*.up.sql | sort); do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: FK cascade
+        run: bash api/migrations/test/fk_cascade.sh
