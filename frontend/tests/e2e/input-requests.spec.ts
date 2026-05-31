@@ -11,8 +11,6 @@ const WORKSPACE_ID = "ws-e2e-input";
 const SESSION_ID = "ses_e2e_input";
 const API_PREFIX = "**/api/v1";
 
-let sseController: { push: (event: object) => void; close: () => void } | null = null;
-
 async function setupAPIMocks(page: Page) {
   await page.route(`${API_PREFIX}/auth/me`, async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "u1", username: "testuser", email: "t@t.com", role: "user", active: true }) });
@@ -48,33 +46,10 @@ async function setupAPIMocks(page: Page) {
   await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/permission/*/reply`, async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: "true" });
   });
-
-  // SSE endpoint — keep connection open and push events on demand
-  await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
-    const events: string[] = [];
-    let resolve: (() => void) | null = null;
-
-    sseController = {
-      push: (event: object) => {
-        events.push(`data: ${JSON.stringify(event)}\n\n`);
-        resolve?.();
-      },
-      close: () => { resolve?.(); },
-    };
-
-    // Return initial empty SSE stream; events pushed later via sseController
-    const body = events.join("");
-    await route.fulfill({
-      status: 200,
-      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-      body,
-    });
-  });
 }
 
 test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   test.beforeEach(async ({ page }) => {
-    sseController = null;
     await setupAPIMocks(page);
   });
 
