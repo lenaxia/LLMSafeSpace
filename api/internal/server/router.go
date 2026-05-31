@@ -12,9 +12,10 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -77,7 +78,7 @@ func DefaultRouterConfig() RouterConfig {
 
 // NewRouter creates a new Gin router with all routes configured.
 // proxyHandler may be nil — proxy routes are not registered in that case.
-func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler *handlers.ProxyHandler, config ...RouterConfig) *gin.Engine {
+func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHandler *handlers.ProxyHandler, config ...RouterConfig) *gin.Engine {
 	// Use default config if none provided
 	cfg := DefaultRouterConfig()
 	if len(config) > 0 {
@@ -110,7 +111,7 @@ func NewRouter(services interfaces.Services, logger *logger.Logger, proxyHandler
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -267,7 +268,7 @@ func setSessionCookie(c *gin.Context, token string) {
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
@@ -326,8 +327,41 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		c.JSON(http.StatusOK, resp)
 	})
 
-	// Public: logout (clears cookie)
+	// Public: logout
+	//
+	// G18 (Epic 17 Phase 4 RT-4.13): the JWT must be added to the
+	// revocation cache so subsequent ValidateToken calls reject it.
+	// Pre-fix this handler only cleared the cookie, leaving the token
+	// replayable by anyone who captured it (including via Authorization
+	// header re-supply).
+	//
+	// Token sources, in priority order:
+	//   1. Authorization: Bearer <jwt> header
+	//   2. lsp_session cookie
+	//
+	// Filtering: API keys (lsp_ prefix) are NOT revoked here. Their
+	// lifecycle is /api-keys/:id DELETE; calling RevokeToken on them
+	// would return a JWT-parse error which we'd then have to ignore.
+	// The router uses the literal "lsp_" prefix to match the chart's
+	// default Auth.APIKeyPrefix; operators who change the prefix get
+	// best-effort revoke-and-log on API keys, which is harmless.
+	//
+	// Failure semantics: RevokeToken errors do NOT propagate. Logout
+	// must always succeed from the user's perspective; the cookie is
+	// cleared and 204 returned regardless. Any revocation failure is
+	// logged at Warn for observability.
 	rg.POST("/logout", func(c *gin.Context) {
+		token := utilities.ExtractToken(c, utilities.TokenExtractorConfig{
+			HeaderName: "Authorization",
+			TokenType:  "Bearer",
+			CookieName: "lsp_session",
+		})
+		if token != "" && !utilities.IsAPIKey(token, "lsp_") {
+			if err := authSvc.RevokeToken(token); err != nil {
+				logger.Warn("auth.logout: RevokeToken failed (proceeding with cookie clear)",
+					"error", err.Error())
+			}
+		}
 		c.SetCookie("lsp_session", "", -1, "/", "", true, true)
 		c.Status(http.StatusNoContent)
 	})

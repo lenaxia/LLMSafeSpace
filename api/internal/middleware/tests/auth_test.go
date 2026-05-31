@@ -35,6 +35,15 @@ func (m *MockAuthService) ValidateToken(token string) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+// RevokeToken mock — added for the AuthService interface change introduced
+// by G18 (Epic 17 Phase 4 RT-4.13). Most middleware tests do not exercise
+// the revocation path, so the mock satisfies the interface and returns
+// whatever the test configures.
+func (m *MockAuthService) RevokeToken(token string) error {
+	args := m.Called(token)
+	return args.Error(0)
+}
+
 func (m *MockAuthService) GetUserID(c *gin.Context) string {
 	args := m.Called(c)
 	return args.String(0)

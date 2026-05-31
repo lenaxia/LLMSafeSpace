@@ -45,7 +45,7 @@ the row.
 | G15 | Sandbox emptyDir disk-backed | High | OTHER (secrets-mgmt) | `controller/internal/workspace/controller.go:630-632` |
 | G16 | NetworkPolicy templates ship | Critical | DONE | worklog 0078 |
 | G17 | AutomountServiceAccountToken false | High | DONE | worklog 0078 |
-| G18 | JWT revocation dormant — `/auth/logout` doesn't call RevokeToken | High | MINE | `api/internal/api/router.go:330-333` |
+| G18 | JWT revocation dormant — `/auth/logout` doesn't call RevokeToken | High | MINE — code-fix landed worklog 0097, awaiting live re-pentest | `api/internal/server/router.go:329-367` |
 | G19 | mise no checksum verification | Medium | MINE | `runtimes/base/Dockerfile:119-130` |
 | G20 | Credential files written without atomic mode 0600 | Medium | DONE | worklog 0078 |
 | G21 | `/sandbox-cfg/password` mode 0644 (init `cp` preserves source) | Medium | OTHER (secrets-mgmt) | `controller/internal/workspace/controller.go:733-738` |

@@ -222,3 +222,102 @@ func TestMe_DBError_Returns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
+
+// =============================================================================
+// G18 — /auth/logout must call RevokeToken (Epic 17 Phase 4 RT-4.13)
+// =============================================================================
+//
+// Pre-fix: the logout handler only cleared the lsp_session cookie;
+// the JWT remained valid and could be replayed via Authorization header
+// or via re-supplying the cookie value (an attacker who captured it
+// before logout). This contradicted the threat model's promise that
+// /auth/logout invalidates the active session.
+//
+// Fix contract:
+//   * On logout, if a JWT token is present (via cookie OR Authorization
+//     header), the handler calls authSvc.RevokeToken(token).
+//   * If the token looks like an API key (lsp_ prefix), RevokeToken is
+//     NOT called — API keys are managed via /api-keys/:id DELETE, not
+//     via session logout.
+//   * RevokeToken errors do NOT prevent the cookie from being cleared
+//     and 204 from being returned. Logout must always succeed from the
+//     user's perspective; the revocation is best-effort defence-in-depth.
+
+func TestG18Logout_RevokesCookieToken(t *testing.T) {
+	router, svc := newAuthFixture(t)
+	svc.auth.On("RevokeToken", "captured-jwt-token").Return(nil).Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "lsp_session", Value: "captured-jwt-token"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	svc.auth.AssertCalled(t, "RevokeToken", "captured-jwt-token")
+}
+
+func TestG18Logout_RevokesBearerToken(t *testing.T) {
+	router, svc := newAuthFixture(t)
+	svc.auth.On("RevokeToken", "header-jwt-token").Return(nil).Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.Header.Set("Authorization", "Bearer header-jwt-token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	svc.auth.AssertCalled(t, "RevokeToken", "header-jwt-token")
+}
+
+func TestG18Logout_NoTokenSkipsRevoke(t *testing.T) {
+	router, svc := newAuthFixture(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	svc.auth.AssertNotCalled(t, "RevokeToken", mock.Anything)
+}
+
+func TestG18Logout_APIKeySkipsRevoke(t *testing.T) {
+	// API keys are managed via /api-keys/:id DELETE. Calling RevokeToken
+	// on them would parse-fail (they aren't JWTs); skip cleanly.
+	router, svc := newAuthFixture(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.Header.Set("Authorization", "Bearer lsp_apikey_aaaaaaaaaaaaaaaa")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	svc.auth.AssertNotCalled(t, "RevokeToken", mock.Anything)
+}
+
+func TestG18Logout_RevokeFailureStillClearsCookie(t *testing.T) {
+	// Revocation can fail (cache outage, token already expired, etc.).
+	// The user has clicked Logout; we MUST still clear the cookie and
+	// return 204 so the UI flips to logged-out state. Surfacing the
+	// revoke failure as a 5xx would force the user to retry logout
+	// indefinitely — a worse failure mode than best-effort revoke.
+	router, svc := newAuthFixture(t)
+	svc.auth.On("RevokeToken", "tok").Return(errors.New("cache unavailable")).Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "lsp_session", Value: "tok"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	cookies := rec.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "lsp_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	require.NotNil(t, sessionCookie)
+	assert.True(t, sessionCookie.MaxAge < 0, "cookie must be cleared even when revoke fails")
+}

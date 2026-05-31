@@ -24,6 +24,12 @@ type AuthService interface {
 	CheckResourceAccess(userID, resourceType, resourceID, action string) bool
 	GenerateToken(userID string) (string, error)
 	ValidateToken(token string) (string, error)
+	// RevokeToken adds the JWT token to the revocation cache so subsequent
+	// ValidateToken calls reject it. Used by /auth/logout to invalidate
+	// the active session (G18, Epic 17). Implementations must be safe to
+	// call with an empty token (return nil) and with non-JWT inputs (the
+	// caller filters out API-key-shaped tokens before calling).
+	RevokeToken(token string) error
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
 	Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error)
 	Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error)
