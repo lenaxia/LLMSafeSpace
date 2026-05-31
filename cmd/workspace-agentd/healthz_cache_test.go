@@ -41,7 +41,7 @@ func TestRefreshOnce_SuccessfulRefresh(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -65,7 +65,7 @@ func TestRefreshOnce_FailedRefresh_IncrementCounter(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -93,7 +93,7 @@ func TestRefreshOnce_FailureThreshold_PreservesHealthyUntilThreshold(t *testing.
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -131,7 +131,7 @@ func TestRefreshOnce_Recovery_AfterThresholdFlip(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -160,7 +160,7 @@ func TestRefreshOnce_OpencodeReportsUnhealthy(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -182,7 +182,7 @@ func TestRefreshOnce_Timeout_TreatedAsFailure(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -207,7 +207,7 @@ func TestRefreshOnce_PanicRecovery(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -229,7 +229,7 @@ func TestHealthzCache_ConcurrentReads_RaceFree(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -275,7 +275,7 @@ func TestRefreshIsHealthyLoop_ExitsOnContextCancel(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -307,7 +307,7 @@ func TestRefreshIsHealthyLoop_ImmediateFirstRefresh(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -336,7 +336,7 @@ func TestRefreshIsHealthyLoop_RefreshesOnTick(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 
@@ -366,7 +366,7 @@ func TestRefreshOnce_VersionPreservedOnFailure(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(mock.URL)
 

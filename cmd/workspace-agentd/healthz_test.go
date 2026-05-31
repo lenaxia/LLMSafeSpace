@@ -64,7 +64,7 @@ func TestHealthzHandler_NeverCallsOpencode(t *testing.T) {
 	}))
 	defer opencodeMock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(opencodeMock.URL)
 
@@ -90,7 +90,7 @@ func TestHealthzHandler_LatencyUnderOpencodeStarvation(t *testing.T) {
 	}))
 	defer opencodeMock.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(opencodeMock.URL)
 

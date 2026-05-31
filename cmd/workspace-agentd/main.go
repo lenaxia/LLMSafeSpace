@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,9 +23,22 @@ import (
 )
 
 var (
-	agentAddr  = fmt.Sprintf("http://localhost:%d", agentd.AgentPort)
-	listenAddr = agentd.AgentdAddr
+	// agentAddrAtomic holds the current opencode agent base URL.
+	// Tests mutate it via setAgentAddr; production sets it once at
+	// startup. atomic.Value gives data-race-free read/write so the
+	// race detector doesn't flag concurrent test access.
+	agentAddrAtomic atomic.Value
+	listenAddr      = agentd.AgentdAddr
 )
+
+func init() {
+	agentAddrAtomic.Store(fmt.Sprintf("http://localhost:%d", agentd.AgentPort))
+}
+
+// getAgentAddr returns the current opencode agent base URL.
+func getAgentAddr() string {
+	return agentAddrAtomic.Load().(string)
+}
 
 var log *zap.Logger
 
@@ -46,7 +60,7 @@ type OpenCodeClient struct {
 }
 
 func (c *OpenCodeClient) doRequest(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", agentAddr+path, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", getAgentAddr()+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +225,7 @@ func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeCl
 }
 
 func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenCodeClient) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", agentAddr+"/event", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", getAgentAddr()+"/event", nil)
 	if err != nil {
 		return err
 	}

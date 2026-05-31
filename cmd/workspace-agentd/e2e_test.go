@@ -72,9 +72,9 @@ func TestE2E_SSEToStatusz(t *testing.T) {
 	}))
 	defer opencodeSrv.Close()
 
-	origAddr := agentAddr
-	defer func() { agentAddr = origAddr }()
-	agentAddr = opencodeSrv.URL
+	origAddr := getAgentAddr()
+	defer func() { agentAddrAtomic.Store(origAddr) }()
+	agentAddrAtomic.Store(opencodeSrv.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -188,9 +188,9 @@ func TestE2E_SSEReconnectsOnDrop(t *testing.T) {
 	}))
 	defer opencodeSrv.Close()
 
-	origAddr := agentAddr
-	defer func() { agentAddr = origAddr }()
-	agentAddr = opencodeSrv.URL
+	origAddr := getAgentAddr()
+	defer func() { agentAddrAtomic.Store(origAddr) }()
+	agentAddrAtomic.Store(opencodeSrv.URL)
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
 	tracker := newSessionStatusTracker()
@@ -236,9 +236,9 @@ func TestE2E_SSENestedFormat(t *testing.T) {
 	}))
 	defer opencodeSrv.Close()
 
-	origAddr := agentAddr
-	defer func() { agentAddr = origAddr }()
-	agentAddr = opencodeSrv.URL
+	origAddr := getAgentAddr()
+	defer func() { agentAddrAtomic.Store(origAddr) }()
+	agentAddrAtomic.Store(opencodeSrv.URL)
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
 	tracker := newSessionStatusTracker()

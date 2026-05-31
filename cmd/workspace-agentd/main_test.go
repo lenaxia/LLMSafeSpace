@@ -42,7 +42,7 @@ func TestListSessions_HappyPath(t *testing.T) {
 	defer server.Close()
 
 	client := &OpenCodeClient{password: "testpw", client: &http.Client{Timeout: 5 * time.Second}}
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
 
@@ -63,7 +63,7 @@ func TestListSessions_EmptyList(t *testing.T) {
 	defer server.Close()
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
 
@@ -79,7 +79,7 @@ func TestListSessions_ServerError(t *testing.T) {
 	defer server.Close()
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
 
@@ -90,7 +90,7 @@ func TestListSessions_ServerError(t *testing.T) {
 
 func TestListSessions_ConnectionRefused(t *testing.T) {
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 1 * time.Second}}
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr("http://127.0.0.1:1") // nothing listening
 
@@ -120,7 +120,7 @@ func TestCachedState_CachesWithinTTL(t *testing.T) {
 	defer server.Close()
 
 	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
 
@@ -165,7 +165,7 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 	}))
 	defer opencodeSrv.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(opencodeSrv.URL)
 
@@ -223,7 +223,7 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 
 // setAgentAddr is a test helper to override the package-level agentAddr.
 func setAgentAddr(addr string) {
-	agentAddr = addr
+	agentAddrAtomic.Store(addr)
 }
 
 // === sessionStatusTracker ===
@@ -307,7 +307,7 @@ func TestSessionStatusTracker_MergesIntoCachedState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origAddr := agentAddr
+	origAddr := getAgentAddr()
 	defer func() { setAgentAddr(origAddr) }()
 	setAgentAddr(server.URL)
 
