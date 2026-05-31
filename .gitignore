@@ -11,6 +11,9 @@
 # Test binary, built with `go test -c`
 *.test
 
+# Locally built CLI helpers (Makefile writes here)
+/bin/
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 

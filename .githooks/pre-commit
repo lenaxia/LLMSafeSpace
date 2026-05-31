@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit
+#
+# Repository-layout lint runs before every commit. Catches:
+#   - duplicate / non-sequential migration version numbers
+#   - duplicate worklog numbers (>= 0097)
+#   - drift between api/migrations/ and charts/llmsafespace/migrations/
+#
+# Wired up by `make install-hooks`. This runs `make repolint` which
+# rebuilds and runs cmd/repolint. Build is incremental so this typically
+# finishes in <1s after the first run.
+#
+# To skip in an emergency: `git commit --no-verify`. Don't make a habit of it.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "== pre-commit: repolint =="
+if ! make -s repolint; then
+    cat >&2 <<'EOF'
+
+Pre-commit blocked: repolint reported failures (see above).
+
+Common fixes:
+  - duplicate migration version: rename to the next available 6-digit number
+                                 (use `ls api/migrations/` to find max)
+  - chart migrations drift:      run `make chart-sync-migrations` and stage
+                                 the resulting changes
+  - duplicate worklog number:    pick the next available 4-digit number
+                                 (use `ls worklogs/` to find max)
+
+To bypass in an emergency: git commit --no-verify
+EOF
+    exit 1
+fi

@@ -15,9 +15,28 @@ env:
   FRONTEND_IMAGE: lenaxia/llmsafespace/frontend
 
 jobs:
+  lint:
+    name: Lint (repo layout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # repolint catches the failure modes that have caused production
+      # incidents: duplicate migration version numbers, drift between
+      # api/migrations/ and charts/llmsafespace/migrations/, and
+      # duplicate worklog numbers. See worklog 0098.
+      - name: Repository layout lint
+        run: make repolint
+
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [lint]
     steps:
       - uses: actions/checkout@v4
 
