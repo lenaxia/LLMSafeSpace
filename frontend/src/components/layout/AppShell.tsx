@@ -20,8 +20,7 @@ export function AppShell() {
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
-      const pathParts = location.pathname.split("/").filter(Boolean);
-      const hasSession = pathParts[0] === "chat" && pathParts.length >= 3;
+      const hasSession = /^\/chat\/[^\/]+\/[^\/]+$/.test(location.pathname);
       if (isMobile && !hasSession) {
         setSidebarOpen(true);
       }
