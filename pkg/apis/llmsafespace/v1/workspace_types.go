@@ -242,23 +242,23 @@ type WorkspaceStatus struct {
 	FailureReason FailureReason `json:"failureReason,omitempty"`
 
 	// Pod status fields (absorbed from Sandbox):
-	PodName                   string       `json:"podName,omitempty"`
-	PodNamespace              string       `json:"podNamespace,omitempty"`
-	PodIP                     string       `json:"podIP,omitempty"`
-	ImageTag                  string       `json:"imageTag,omitempty"`
-	Endpoint                  string       `json:"endpoint,omitempty"`
-	StartTime                 *metav1.Time `json:"startTime,omitempty"`
-	RestartCount              int32        `json:"restartCount,omitempty"`
-	TransientFailureCount     int32        `json:"transientFailureCount,omitempty"`
-	LastTransientFailureAt    *metav1.Time `json:"lastTransientFailureAt,omitempty"`
+	PodName                string       `json:"podName,omitempty"`
+	PodNamespace           string       `json:"podNamespace,omitempty"`
+	PodIP                  string       `json:"podIP,omitempty"`
+	ImageTag               string       `json:"imageTag,omitempty"`
+	Endpoint               string       `json:"endpoint,omitempty"`
+	StartTime              *metav1.Time `json:"startTime,omitempty"`
+	RestartCount           int32        `json:"restartCount,omitempty"`
+	TransientFailureCount  int32        `json:"transientFailureCount,omitempty"`
+	LastTransientFailureAt *metav1.Time `json:"lastTransientFailureAt,omitempty"`
 	// Recovery state (Epic 24 — replaces TransientFailureCount/LastTransientFailureAt)
-	ConsecutiveFailures    int32        `json:"consecutiveFailures,omitempty"`
-	LastFailureClass       string       `json:"lastFailureClass,omitempty"`
-	LastFailureAt          *metav1.Time `json:"lastFailureAt,omitempty"`
-	NextRetryAt            *metav1.Time `json:"nextRetryAt,omitempty"`
-	LastStableAt           *metav1.Time `json:"lastStableAt,omitempty"`
-	ControllerRestartCount int32        `json:"controllerRestartCount,omitempty"`
-	SafeMode               bool         `json:"safeMode,omitempty"`
+	ConsecutiveFailures       int32        `json:"consecutiveFailures,omitempty"`
+	LastFailureClass          string       `json:"lastFailureClass,omitempty"`
+	LastFailureAt             *metav1.Time `json:"lastFailureAt,omitempty"`
+	NextRetryAt               *metav1.Time `json:"nextRetryAt,omitempty"`
+	LastStableAt              *metav1.Time `json:"lastStableAt,omitempty"`
+	ControllerRestartCount    int32        `json:"controllerRestartCount,omitempty"`
+	SafeMode                  bool         `json:"safeMode,omitempty"`
 	ObservedRestartGeneration int64        `json:"observedRestartGeneration,omitempty"`
 	CredentialSecretHash      string       `json:"credentialSecretHash,omitempty"`
 	LastHealthCheckAt         *metav1.Time `json:"lastHealthCheckAt,omitempty"`
