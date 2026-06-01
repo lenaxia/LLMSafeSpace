@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -208,8 +209,17 @@ func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeCl
 			return
 		default:
 		}
-		if err := t.connectAndRead(ctx, client); err != nil {
+		err := t.connectAndRead(ctx, client)
+		if err != nil && ctx.Err() == nil {
 			log.Debug("SSE stream ended", zap.Error(err))
+		}
+		// If the parent context is done, exit
+		if ctx.Err() != nil {
+			return
+		}
+		// Reset backoff on successful read (timeout is expected, not an error)
+		if err == nil || isTimeoutError(err) {
+			backoff = 2 * time.Second
 		}
 		select {
 		case <-ctx.Done():
@@ -224,8 +234,23 @@ func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeCl
 	}
 }
 
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+// sseConnectionTimeout is the maximum lifetime of a single SSE connection.
+// After this duration, the connection is closed and reconnected to prevent
+// goroutine leaks from half-open sockets.
+var sseConnectionTimeout = 5 * time.Minute
+
 func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenCodeClient) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", getAgentAddr()+"/event", nil)
+	connCtx, cancel := context.WithTimeout(ctx, sseConnectionTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(connCtx, "GET", getAgentAddr()+"/event", nil)
 	if err != nil {
 		return err
 	}
