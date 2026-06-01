@@ -272,9 +272,10 @@ spec:
                         type: string
                       title:
                         type: string
-                      lastActivityAt:
+                      status:
                         type: string
-                        format: date-time
+                        enum: ["idle", "busy"]
+                        description: "Activity status of the session as reported by agentd."
                 diskUsedBytes:
                   type: integer
                   format: int64

@@ -33,6 +33,31 @@ NEXT STEPS
 
      kubectl get crd workspaces.llmsafespace.dev sandboxes.llmsafespace.dev sandboxprofiles.llmsafespace.dev runtimeenvironments.llmsafespace.dev
 
+5. CRD UPGRADE — IMPORTANT FOR EVERY `helm upgrade`
+
+   Helm 3 installs CRDs from `crds/` on first install but does NOT
+   upgrade them. If you bumped the chart version, the CRD schema in
+   etcd may be older than what the controller binary expects, and you
+   will see warnings like:
+
+       KubeAPIWarningLogger  unknown field "status.<fieldname>"
+
+   in the controller logs. The controller still works (k8s drops
+   unknown fields) but anything depending on those fields (status
+   reporting, agentd disk metrics, recovery state) silently breaks.
+
+   Fix on every upgrade:
+
+       kubectl apply -f charts/llmsafespace/crds/
+
+   To verify drift after upgrade:
+
+       kubectl get crd workspaces.llmsafespace.dev -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.properties.status.properties}' | jq 'keys | length'
+
+   The number printed should match the count of fields in
+   `pkg/apis/llmsafespace/v1/workspace_types.go::WorkspaceStatus`.
+   If it doesn't, run the kubectl apply above.
+
 {{- if .Values.webhooks.enabled }}
 
 ADMISSION WEBHOOKS
