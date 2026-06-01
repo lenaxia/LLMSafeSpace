@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8s "k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
@@ -85,6 +87,32 @@ func dbWorkspace(id, userID, name, storageSize string) *types.WorkspaceMetadata 
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
+}
+
+// fixtureWithFakeClientset extends fixture with an in-memory K8s
+// Clientset so tests can observe Secret writes (workspace-secrets-<id>)
+// without standing up a real apiserver. Used by the
+// refreshEphemeralSecrets tests added in worklog 0120.
+type fixtureWithFakeClientset struct {
+	*fixture
+	fakeCS *k8sfake.Clientset
+}
+
+func newFixtureWithFakeClientset(t *testing.T) *fixtureWithFakeClientset {
+	t.Helper()
+	f := newFixture(t)
+	cs := k8sfake.NewSimpleClientset()
+	// Stub Clientset() so EnsureSecretsManifest can reach the fake.
+	f.k8s.On("Clientset").Return(k8s.Interface(cs))
+	return &fixtureWithFakeClientset{fixture: f, fakeCS: cs}
+}
+
+// workspaceCtxWithSession is a thin alias for ContextWithSessionID
+// for readability in test code. Kept as a function (not a constant)
+// so future test-only setup (e.g. tracing IDs) can be added in one
+// place without touching every call site.
+func workspaceCtxWithSession(ctx context.Context, sessionID string) context.Context {
+	return ContextWithSessionID(ctx, sessionID)
 }
 
 // ===== New() =====
@@ -225,6 +253,194 @@ func TestRestartWorkspace_K8sUpdateFails(t *testing.T) {
 	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace_restart_failed")
+}
+
+// ===== refreshEphemeralSecrets (worklog 0120) =====
+//
+// Centralizes the workspace-secrets-<id> refresh logic for both
+// ActivateWorkspace (resume from Suspended) and RestartWorkspace
+// (bump restartGeneration). Pre-0119, RestartWorkspace had no refresh
+// at all, so users lost SSH keys and other bound secrets on restart.
+//
+// Behavior contract under test:
+//   - secretInjector nil  → no-op (default test wiring)
+//   - sessionID missing   → no-op + Warn (admin/script restart path)
+//   - bindings empty ("[]") → no-op (preserve existing K8s Secret)
+//   - bindings non-empty   → write workspace-secrets-<id> via the
+//     fake clientset; verify name and payload
+//   - PrepareSecretsForInjection error → Warn, no Secret write,
+//     lifecycle action proceeds (caller error path tested separately)
+
+// fakeSecretInjector lets tests stub PrepareSecretsForInjection
+// without pulling in the full secret service.
+type fakeSecretInjector struct {
+	prepare func(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
+	calls   int
+}
+
+func (f *fakeSecretInjector) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
+	f.calls++
+	if f.prepare == nil {
+		return []byte("[]"), nil
+	}
+	return f.prepare(ctx, userID, sessionID, workspaceID)
+}
+
+func TestRefreshEphemeralSecrets_NilInjector_NoOp(t *testing.T) {
+	// Service created without SetSecretInjector — refresh must be a
+	// pure no-op. No clientset call, no log entry beyond the implicit
+	// caller. This is the production default in tests that don't care
+	// about the secrets path.
+	f := newFixture(t)
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+
+	// Clientset is not stubbed — calling it would panic, proving no-op.
+	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
+}
+
+func TestRefreshEphemeralSecrets_NoSessionID_SkipsAndWarns(t *testing.T) {
+	// Without sessionID, PrepareSecretsForInjection cannot run (no DEK).
+	// The helper must skip cleanly so that admin- or controller-driven
+	// restarts don't either crash or clobber the existing Secret.
+	f := newFixture(t)
+	inj := &fakeSecretInjector{}
+	f.svc.SetSecretInjector(inj)
+	ctx := context.Background() // no sessionID
+
+	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
+
+	assert.Equal(t, 0, inj.calls,
+		"injector must NOT be called without sessionID — DEK retrieval would fail")
+}
+
+func TestRefreshEphemeralSecrets_EmptyBindings_NoWrite(t *testing.T) {
+	// PrepareSecretsForInjection returns "[]" when no bindings exist.
+	// Writing that would clobber any pre-existing K8s Secret. The
+	// helper must short-circuit on len <= 2 to preserve prior state.
+	f := newFixtureWithFakeClientset(t)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte("[]"), nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+
+	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
+
+	assert.Equal(t, 1, inj.calls)
+	// No Secret object was created.
+	secrets, err := f.fakeCS.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items, "no manifest write expected for empty bindings")
+}
+
+func TestRefreshEphemeralSecrets_NonEmptyBindings_WritesManifest(t *testing.T) {
+	// The happy path: real bindings produce a real K8s Secret named
+	// `workspace-secrets-<id>` carrying secrets.json. This is the
+	// regression test for worklog 0120 — RestartWorkspace must
+	// produce this Secret before the controller rebuilds the pod.
+	f := newFixtureWithFakeClientset(t)
+	payload := []byte(`[{"type":"ssh-key","name":"github","metadata":{},"plaintext":"-----BEGIN..."}]`)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return payload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+
+	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
+
+	got, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-1", metav1.GetOptions{})
+	require.NoError(t, err, "workspace-secrets-<id> must exist after refresh")
+	assert.Equal(t, payload, got.Data["secrets.json"],
+		"secrets.json payload must round-trip exactly through the manifest write")
+	assert.Equal(t, "true", got.Labels["llmsafespace.dev/ephemeral"],
+		"ephemeral marker label is required for cleanup logic in workspace deletion")
+	assert.Equal(t, "ws-1", got.Labels["llmsafespace.dev/workspace"])
+}
+
+func TestRefreshEphemeralSecrets_PrepareFails_SkipsWriteCleanly(t *testing.T) {
+	// PrepareSecretsForInjection failure must not propagate to the
+	// caller's lifecycle action. The helper logs Warn and returns;
+	// the existing K8s Secret (if any) is preserved.
+	f := newFixtureWithFakeClientset(t)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return nil, errors.New("DEK unwrap failed")
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+
+	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
+
+	secrets, err := f.fakeCS.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items,
+		"Prepare failure must NOT result in a partial/empty Secret being written")
+}
+
+func TestRestartWorkspace_RefreshesEphemeralSecrets(t *testing.T) {
+	// Integration: the full RestartWorkspace path invokes
+	// refreshEphemeralSecrets BEFORE bumping restartGeneration. This
+	// is the regression test for the worklog 0120 bug: a user's SSH
+	// key disappeared after restart because the Secret was never
+	// re-emitted before the controller rebuilt the pod.
+	f := newFixtureWithFakeClientset(t)
+	payload := []byte(`[{"type":"ssh-key","name":"github","metadata":{},"plaintext":"k"}]`)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return payload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
+
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	require.NoError(t, err)
+
+	got, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-1", metav1.GetOptions{})
+	require.NoError(t, err, "RestartWorkspace must produce workspace-secrets-<id>")
+	assert.Equal(t, payload, got.Data["secrets.json"])
+	assert.Equal(t, 1, inj.calls)
+}
+
+func TestRestartWorkspace_RefreshFailureDoesNotBlockBump(t *testing.T) {
+	// If the refresh fails (e.g. DEK unwrap error), the workspace
+	// restart must still proceed — the user wants the pod recreated
+	// regardless. The pre-existing K8s Secret (if any) carries forward
+	// to the new pod. This trades secret freshness for liveness, which
+	// is the right trade-off: the user can re-bind to refresh; they
+	// cannot easily un-stick a workspace that refused to restart.
+	f := newFixtureWithFakeClientset(t)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return nil, errors.New("DEK unavailable")
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	activeCrd.Spec.RestartGeneration = 5
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.RestartGeneration == 6
+	})).Return(activeCrd, nil)
+
+	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
+	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
+	assert.NoError(t, err, "refresh failure must not propagate")
+	f.ws.AssertExpectations(t)
 }
 
 // ===== CreateWorkspace =====

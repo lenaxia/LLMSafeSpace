@@ -470,6 +470,13 @@ func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID strin
 // other phases the call is idempotent at the spec layer (each call
 // bumps the field by 1; the controller responds to each bump exactly
 // once via the strict-greater-than check on observedRestartGeneration).
+//
+// Before the spec bump, refreshEphemeralSecrets is invoked so the
+// freshly-built pod will mount up-to-date user-provided secrets. This
+// fixes the bug where restarting an Active workspace would lose its
+// `workspace-secrets-<id>` K8s Secret (e.g. SSH keys), because the
+// controller-side pod rebuild path does not call back into the API
+// service to re-emit it. See worklog 0120.
 func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID string) error {
 	start := time.Now()
 	defer func() {
@@ -494,6 +501,15 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 			fmt.Errorf("cannot restart workspace in phase %q", crd.Status.Phase),
 		)
 	}
+
+	// Re-emit the ephemeral secrets manifest BEFORE bumping the restart
+	// generation. The controller observes the bump asynchronously and
+	// deletes the pod; the next pod-create reads workspace-secrets-<id>
+	// from the apiserver. Refreshing first guarantees the new pod sees
+	// the latest secret payload regardless of how fast the controller
+	// reconciles. Failure here is non-fatal — see refreshEphemeralSecrets
+	// godoc.
+	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
 
 	crd.Spec.RestartGeneration++
 	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Update(crd); err != nil {
@@ -837,17 +853,7 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	}
 
 	// Inject secrets into ephemeral K8s Secret (Epic 10).
-	if s.secretInjector != nil {
-		sessionID, _ := ctx.Value(sessionIDContextKey).(string)
-		if sessionID != "" {
-			secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
-			if err != nil {
-				s.logger.Warn("Failed to prepare secrets for injection", "workspaceID", workspaceID, "error", err.Error())
-			} else if len(secretsJSON) > 2 {
-				s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
-			}
-		}
-	}
+	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
 
 	// Enforce max active workspaces — may suspend the stalest workspace
 	suspended, err := s.enforceMaxActiveWorkspaces(ctx, userID, workspaceID)
@@ -971,6 +977,87 @@ func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID 
 	if err := s.EnsureSecretsManifest(ctx, workspaceID, secretsJSON); err != nil {
 		s.logger.Error("Failed to write ephemeral secrets secret", err, "workspaceID", workspaceID)
 	}
+}
+
+// refreshEphemeralSecrets re-materializes the workspace-secrets-<id>
+// K8s Secret from the user's currently-bound secrets in PostgreSQL.
+//
+// This is the single source of truth for the lifecycle paths that
+// build (or rebuild) a workspace pod and need its user-provided
+// secrets to be present at mount time. Two callers today:
+//
+//   - ActivateWorkspace: resume from Suspended; pod is created fresh.
+//   - RestartWorkspace:  bump restartGeneration; controller deletes
+//     the existing pod and recreates it.
+//
+// Both paths previously had their own (or missing) secret-refresh
+// logic. RestartWorkspace had none, which meant SSH keys and other
+// bound secrets were dropped on restart (worklog 0120, the bug that
+// motivated this helper). Folding the logic into one function
+// guarantees the lifecycle invariant "if a pod is about to be
+// (re)built, its secrets are refreshed first" is enforced uniformly.
+//
+// REQUIREMENTS
+//
+//   - secretInjector must be wired (SetSecretInjector called at app
+//     startup). If nil, the helper is a no-op — production always
+//     wires it; tests opt in only when relevant.
+//   - sessionID must be present in ctx (set by ContextWithSessionID).
+//     The per-session DEK is needed to decrypt user secrets;
+//     PrepareSecretsForInjection cannot run without it. Internal
+//     restarts that lack a session (background reconciliation,
+//     admin scripts, controller-initiated restart) skip the refresh
+//     and log Warn — the existing K8s Secret is preserved untouched
+//     so the pod still mounts whatever was there last. This is
+//     deliberate: refusing to refresh is safer than re-emitting an
+//     empty manifest under an admin context with no DEK.
+//
+// # FAILURE MODES
+//
+// Every failure path logs Warn and returns. The caller's lifecycle
+// action proceeds regardless. Rationale: losing one secret refresh
+// is recoverable (user can re-bind or re-activate); failing the
+// lifecycle action would leave the workspace stuck. A pre-existing
+// K8s Secret from the previous successful refresh is preserved
+// untouched on failure, so the pod can still come up with whatever
+// was last seen.
+//
+// NOTE: This is the API-side guarantee. The controller-side path
+// that rebuilds pods (Active phase + restartGeneration bump) does
+// NOT call back into the API service — a kubectl-driven or
+// operator-driven `restartGeneration` bump bypasses this helper
+// entirely. That's the follow-up work tracked in worklog 0120: the
+// controller should refuse to start a pod when the bindings table
+// says secrets should be present but the K8s Secret is empty/absent.
+func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
+	if s.secretInjector == nil {
+		return
+	}
+	sessionID, _ := ctx.Value(sessionIDContextKey).(string)
+	if sessionID == "" {
+		s.logger.Warn("refreshEphemeralSecrets skipped: no sessionID in context",
+			"workspaceID", workspaceID)
+		return
+	}
+	secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	if err != nil {
+		s.logger.Warn("Failed to prepare secrets for injection",
+			"workspaceID", workspaceID, "error", err.Error())
+		return
+	}
+	// PrepareSecretsForInjection returns "[]" (2 bytes) when the user
+	// has no bindings on this workspace. Skip the manifest write in
+	// that case — calling EnsureSecretsManifest with "[]" would
+	// clobber any existing workspace-secrets-<id> Secret with an
+	// empty payload. On a restart path that's specifically the wrong
+	// default: we want to *refresh* secrets, not *remove* them. The
+	// user's explicit "unbind" path (SetBindings with []) goes
+	// through pushSecretsToAgent which is the correct place to clear
+	// the manifest.
+	if len(secretsJSON) <= 2 {
+		return
+	}
+	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
 }
 
 // EnsureSecretsManifest writes (create-or-update) the K8s Secret named
