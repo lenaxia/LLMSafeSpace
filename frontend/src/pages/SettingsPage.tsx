@@ -44,7 +44,7 @@ export function SettingsPage() {
           ))}
         </ul>
       </nav>
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+      <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6">
         {activeTab === "preferences" && <UserSettingsTab />}
         {activeTab === "secrets" && <SecretsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}

@@ -205,32 +205,32 @@ function CreateCredentialForm({ onCreated, onCancel }: {
             <button onClick={() => removeProvider(key)} className="text-destructive hover:underline">remove</button>
           </div>
         ))}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input
             type="text"
             value={providerName}
             onChange={(e) => setProviderName(e.target.value)}
             placeholder="Provider (e.g. openai)"
-            className="h-7 flex-1 rounded border border-border bg-background px-2 text-xs"
+            className="h-7 flex-1 min-w-[8rem] rounded border border-border bg-background px-2 text-xs"
           />
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="API Key"
-            className="h-7 flex-1 rounded border border-border bg-background px-2 text-xs"
+            className="h-7 flex-1 min-w-[8rem] rounded border border-border bg-background px-2 text-xs"
           />
           <input
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder="Base URL (optional)"
-            className="h-7 flex-1 rounded border border-border bg-background px-2 text-xs"
+            className="h-7 flex-1 min-w-[8rem] rounded border border-border bg-background px-2 text-xs"
           />
           <button
             onClick={addProvider}
             disabled={!providerName || !apiKey}
-            className="h-7 rounded border border-border px-2 text-xs hover:bg-accent disabled:opacity-50"
+            className="h-7 rounded border border-border px-2 text-xs hover:bg-accent disabled:opacity-50 shrink-0"
           >
             Add
           </button>

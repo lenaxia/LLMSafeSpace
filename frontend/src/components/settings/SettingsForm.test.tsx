@@ -95,4 +95,23 @@ describe("SettingsForm", () => {
     const input = screen.getByRole("spinbutton");
     expect(input).toBeDisabled();
   });
+
+  describe("responsive layout", () => {
+    it("setting rows use responsive flex direction (column on mobile, row on desktop)", () => {
+      const { container } = render(<SettingsForm schema={mockSchema} values={{}} onSave={vi.fn()} />);
+      const rows = container.querySelectorAll(".divide-y > div");
+      // Each row should have flex-col for mobile and sm:flex-row for desktop
+      rows.forEach((row) => {
+        expect(row.className).toContain("flex-col");
+        expect(row.className).toContain("sm:flex-row");
+      });
+    });
+
+    it("string input uses full width on mobile and fixed width on desktop", () => {
+      render(<SettingsForm schema={mockSchema} values={{ "test.string": "hello" }} onSave={vi.fn()} />);
+      const input = screen.getByDisplayValue("hello");
+      expect(input.className).toContain("w-full");
+      expect(input.className).toContain("sm:w-48");
+    });
+  });
 });

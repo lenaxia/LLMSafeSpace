@@ -70,7 +70,11 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
       }
     }
     return (
-      <div className={cn("prose prose-sm dark:prose-invert max-w-none", wordWrap && "[&_pre]:whitespace-pre-wrap [&_pre]:break-words")}>
+      <div className={cn(
+        "prose prose-sm dark:prose-invert max-w-none",
+        "[&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto [&_:not(pre)>code]:break-all",
+        wordWrap && "[&_pre]:whitespace-pre-wrap [&_pre]:break-words",
+      )}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
           {text}
         </ReactMarkdown>
@@ -146,7 +150,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
           <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
           <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
         </summary>
-        <div className="border-t border-inherit py-1 space-y-1 overflow-hidden">
+        <div className="border-t border-inherit py-1 space-y-1 min-w-0 overflow-hidden">
           {isFileEdit ? (
             <ToolDiffView
               oldStr={String((input as Record<string, unknown>).oldString ?? (input as Record<string, unknown>).oldStr ?? "")}

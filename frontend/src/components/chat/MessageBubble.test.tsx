@@ -41,4 +41,35 @@ describe("MessageBubble", () => {
     expect(screen.getByText("Part 1")).toBeInTheDocument();
     expect(screen.getByText("Part 2")).toBeInTheDocument();
   });
+
+  describe("overflow containment", () => {
+    it("has overflow-hidden to prevent content from escaping bubble", () => {
+      const msg: Message = { id: "4", role: "assistant", parts: [{ type: "text", text: "content" }] };
+      render(<MessageBubble message={msg} />);
+      const bubble = screen.getByText("content").closest("div[class*='overflow-hidden']");
+      expect(bubble).not.toBeNull();
+    });
+
+    it("has min-w-0 to allow flex shrinking below content width", () => {
+      const msg: Message = { id: "5", role: "assistant", parts: [{ type: "text", text: "content" }] };
+      render(<MessageBubble message={msg} />);
+      const bubble = screen.getByText("content").closest("div[class*='min-w-0']");
+      expect(bubble).not.toBeNull();
+    });
+
+    it("has break-words to wrap long unbroken strings", () => {
+      const msg: Message = { id: "6", role: "user", parts: [{ type: "text", text: "content" }] };
+      render(<MessageBubble message={msg} />);
+      const bubble = screen.getByText("content").closest("div[class*='break-words']");
+      expect(bubble).not.toBeNull();
+    });
+
+    it("uses responsive max-width (90% mobile, 80% desktop)", () => {
+      const msg: Message = { id: "7", role: "assistant", parts: [{ type: "text", text: "content" }] };
+      const { container } = render(<MessageBubble message={msg} />);
+      const bubble = container.querySelector("div[class*='max-w-\\[90\\%\\]']");
+      expect(bubble).not.toBeNull();
+      expect(bubble?.className).toContain("sm:max-w-[80%]");
+    });
+  });
 });

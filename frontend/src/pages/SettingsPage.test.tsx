@@ -66,4 +66,10 @@ describe("SettingsPage", () => {
     await user.click(screen.getByText("API Keys"));
     expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument();
   });
+
+  it("content area has min-w-0 to allow proper shrinking on narrow screens", () => {
+    const { container } = renderSettings();
+    const contentArea = container.querySelector(".flex-1.min-w-0.overflow-y-auto");
+    expect(contentArea).not.toBeNull();
+  });
 });

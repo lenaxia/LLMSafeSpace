@@ -79,4 +79,10 @@ describe("MessageList", () => {
     render(<MessageList messages={messages} streaming={true} streamingBubble={<div data-testid="stream-bubble">streaming content</div>} />);
     expect(screen.getByTestId("stream-bubble")).toBeInTheDocument();
   });
+
+  it("prevents horizontal scroll on the scroll container", () => {
+    render(<MessageList messages={messages} />);
+    const scrollContainer = screen.getByRole("log");
+    expect(scrollContainer.className).toContain("overflow-x-hidden");
+  });
 });

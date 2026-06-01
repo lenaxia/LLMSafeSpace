@@ -155,24 +155,19 @@ export function SecretsTab() {
                 <div className="border-t border-border divide-y divide-border">
                   {group.secrets.map((s) => (
                     <div key={s.id} className="px-4 py-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
                           <span className="text-sm font-medium">{s.name}</span>
                           {s.metadata && Object.entries(s.metadata)
                             .filter(([k]) => k !== "public_key" && k !== "notes")
                             .map(([k, v]) => (
                               <span key={k} className="text-xs text-muted-foreground">{k}: {v}</span>
                             ))}
-                          {s.metadata?.public_key && (
-                            <span className="text-xs text-muted-foreground font-mono truncate max-w-[180px] inline-block align-bottom" title={s.metadata.public_key}>
-                              {s.metadata.public_key.slice(0, 30)}…
-                            </span>
-                          )}
                           <span className="text-xs text-muted-foreground">
                             {new Date(s.createdAt).toLocaleDateString()}
                           </span>
                           {s.metadata?.notes && (
-                            <span className="text-xs italic text-muted-foreground truncate max-w-[200px] inline-block align-bottom" title={s.metadata.notes}>
+                            <span className="text-xs italic text-muted-foreground truncate max-w-[12rem] inline-block align-bottom" title={s.metadata.notes}>
                               — {s.metadata.notes}
                             </span>
                           )}
@@ -182,7 +177,7 @@ export function SecretsTab() {
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0">
                           <button
                             onClick={() => { setRevealingId(revealingId === s.id ? null : s.id); setRevealedValue(null); }}
                             className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
@@ -202,13 +197,13 @@ export function SecretsTab() {
                       {s.metadata?.public_key && (
                         <div className="mt-2">
                           <span className="text-xs text-muted-foreground font-medium">Public key (safe to share):</span>
-                          <div className="mt-1 flex items-center gap-2">
-                            <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
+                          <div className="mt-1 flex items-center gap-2 min-w-0">
+                            <code className="flex-1 min-w-0 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
                               {s.metadata.public_key}
                             </code>
                             <button
                               onClick={() => copyToClipboard(s.metadata.public_key!)}
-                              className="text-xs text-primary hover:text-primary/80 whitespace-nowrap"
+                              className="text-xs text-primary hover:text-primary/80 whitespace-nowrap shrink-0"
                             >
                               Copy public key
                           </button>
@@ -440,14 +435,14 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
           </button>
         </div>
         {metadata.public_key && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Public key:</span>
-            <code className="flex-1 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground truncate">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs text-muted-foreground shrink-0">Public key:</span>
+            <code className="flex-1 min-w-0 rounded bg-background border border-border px-2 py-1 text-xs font-mono text-foreground truncate">
               {metadata.public_key}
             </code>
             <button
               onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }}
-              className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+              className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90 shrink-0"
             >
               Copy
             </button>
@@ -461,7 +456,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-md border border-border p-4 bg-accent/5">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="text-sm font-medium">Name</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-api-key" required />
@@ -503,7 +498,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       </div>
 
       {selectedType.metaFields.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {selectedType.metaFields.map((field) => (
             <div key={field}>
               <label className="text-sm font-medium inline-flex items-center gap-1">
@@ -585,11 +580,11 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       {metadata.public_key && (
         <div>
           <label className="text-sm font-medium">Public Key (will be stored unencrypted for display)</label>
-          <div className="flex items-center gap-2 mt-1">
-            <code className="flex-1 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
+          <div className="flex items-center gap-2 mt-1 min-w-0">
+            <code className="flex-1 min-w-0 rounded bg-accent/50 px-2 py-1 text-xs font-mono truncate">
               {metadata.public_key}
             </code>
-            <button type="button" onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }} className="text-xs text-primary">
+            <button type="button" onClick={() => { navigator.clipboard.writeText(metadata.public_key ?? ""); toast("Public key copied"); }} className="text-xs text-primary shrink-0">
               Copy
             </button>
           </div>

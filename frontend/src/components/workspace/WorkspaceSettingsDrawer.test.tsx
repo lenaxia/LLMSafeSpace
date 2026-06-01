@@ -137,4 +137,17 @@ describe("WorkspaceSettingsDrawer", () => {
     fireEvent.click(screen.getByText("Save"));
     expect(screen.getByText("Saving...")).toBeInTheDocument();
   });
+
+  it("drawer content has max-w-full to prevent overflow on narrow screens", () => {
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={mockWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    const content = screen.getByText("Workspace Settings").closest("[class*='max-w-full']");
+    expect(content).not.toBeNull();
+  });
 });

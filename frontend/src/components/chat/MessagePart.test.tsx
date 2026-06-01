@@ -91,6 +91,34 @@ describe("MessagePart", () => {
     expect(screen.getByText(/tool/)).toBeInTheDocument();
   });
 
+  describe("overflow containment", () => {
+    it("applies overflow-x-auto to code blocks via prose selector", () => {
+      const code = "```js\nconst x = 1;\n```";
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: code }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose?.className).toContain("[&_pre]:overflow-x-auto");
+    });
+
+    it("applies overflow-x-auto to tables via prose selector", () => {
+      const table = "| A | B |\n|---|---|\n| 1 | 2 |";
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: table }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose?.className).toContain("[&_table]:overflow-x-auto");
+    });
+
+    it("applies break-all to inline code via prose selector", () => {
+      const { container } = render(
+        <MessagePart part={{ type: "text", text: "Use `some_long_function_name`" }} isUser={false} />,
+      );
+      const prose = container.querySelector(".prose");
+      expect(prose?.className).toContain("[&_:not(pre)>code]:break-all");
+    });
+  });
+
   describe("codeBlockWordWrap setting", () => {
     const STORAGE_KEY = "llmsafespace_user_settings";
     const codeMarkdown = "```js\nconst x = 1;\n```";

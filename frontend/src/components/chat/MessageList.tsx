@@ -102,7 +102,7 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     <div className="relative flex-1 overflow-hidden">
       <div
         ref={scrollRef}
-        className="h-full overflow-y-auto overscroll-contain"
+        className="h-full overflow-y-auto overflow-x-hidden overscroll-contain"
         role="log"
         aria-live="polite"
         aria-label="Chat messages"
@@ -118,8 +118,10 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
               return (
                 <div
                   key="load-marker"
-                  style={{ height: virtualItem.size, transform: `translateY(${virtualItem.start}px)` }}
-                  className="absolute left-0 right-0 flex justify-center py-3"
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${virtualItem.start}px)` }}
+                  className="flex justify-center py-3"
                 >
                   {loadingOlder ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -139,8 +141,10 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
               return (
                 <div
                   key="streaming"
-                  style={{ height: virtualItem.size, transform: `translateY(${virtualItem.start}px)` }}
-                  className="absolute left-0 right-0 px-1"
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${virtualItem.start}px)` }}
+                  className="px-1 py-1"
                 >
                   {streamingBubble}
                 </div>
@@ -151,9 +155,12 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
               return (
                 <div
                   key="bottom"
-                  ref={bottomRef}
-                  style={{ height: virtualItem.size, transform: `translateY(${virtualItem.start}px)` }}
-                  className="absolute left-0 right-0"
+                  ref={(el) => {
+                    (bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+                    if (el) virtualizer.measureElement(el);
+                  }}
+                  data-index={virtualItem.index}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${virtualItem.start}px)`, height: 1 }}
                 />
               );
             }
@@ -161,8 +168,10 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
             return (
               <div
                 key={item.msg.id}
-                style={{ height: virtualItem.size, transform: `translateY(${virtualItem.start}px)` }}
-                className="absolute left-0 right-0 px-1"
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${virtualItem.start}px)` }}
+                className="px-1 py-1"
               >
                 <MessageBubble message={item.msg} />
               </div>

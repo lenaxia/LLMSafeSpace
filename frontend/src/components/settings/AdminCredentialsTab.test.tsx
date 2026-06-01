@@ -100,4 +100,16 @@ describe("AdminCredentialsTab", () => {
       expect(container.innerHTML).toBe("");
     });
   });
+
+  it("provider input row wraps on narrow screens with min-width constraints", async () => {
+    mockList.mockResolvedValue([]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("Credential Sets"));
+    fireEvent.click(screen.getByText("Add"));
+
+    const providerInput = screen.getByPlaceholderText("Provider (e.g. openai)");
+    const row = providerInput.closest("div[class*='flex']");
+    expect(row?.className).toContain("flex-wrap");
+    expect(providerInput.className).toContain("min-w-[8rem]");
+  });
 });

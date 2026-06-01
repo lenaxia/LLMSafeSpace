@@ -63,7 +63,7 @@ function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-4 py-3">
       <div className="flex-1 min-w-0">
         <label className="text-sm font-medium" htmlFor={def.key}>
           {def.label}
@@ -153,7 +153,7 @@ function StringInput({ id, value, onCommit, disabled, placeholder }: {
       onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
       disabled={disabled}
       placeholder={placeholder}
-      className="h-8 w-48 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+      className="h-8 w-full sm:w-48 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
     />
   );
 }
