@@ -52,17 +52,17 @@ func TestCalculateBackoff_ShiftCappedAt30(t *testing.T) {
 
 func TestRecoveryPolicy_InfrastructureNeverSafeMode(t *testing.T) {
 	policy := recoveryPolicies[FailureClassInfrastructure]
-	assert.Equal(t, 0, policy.SafeModeAfter)
+	assert.Equal(t, int32(0), policy.SafeModeAfter)
 }
 
 func TestRecoveryPolicy_ProcessSafeModeAfter6(t *testing.T) {
 	policy := recoveryPolicies[FailureClassProcess]
-	assert.Equal(t, 6, policy.SafeModeAfter)
+	assert.Equal(t, int32(6), policy.SafeModeAfter)
 }
 
 func TestRecoveryPolicy_ConfigurationSafeModeAfter3(t *testing.T) {
 	policy := recoveryPolicies[FailureClassConfiguration]
-	assert.Equal(t, 3, policy.SafeModeAfter)
+	assert.Equal(t, int32(3), policy.SafeModeAfter)
 }
 
 func TestShouldEnterSafeMode_InfraAtHighCount_Never(t *testing.T) {

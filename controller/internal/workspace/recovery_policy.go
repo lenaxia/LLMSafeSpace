@@ -17,7 +17,7 @@ type RecoveryPolicy struct {
 	BackoffMax     time.Duration
 	BackoffFactor  int
 	StabilityReset time.Duration
-	SafeModeAfter  int
+	SafeModeAfter  int32
 }
 
 var recoveryPolicies = map[FailureClass]RecoveryPolicy{
@@ -43,9 +43,14 @@ func calculateBackoff(failures int32, policy RecoveryPolicy) time.Duration {
 }
 
 func shouldEnterSafeMode(consecutiveFailures int32, policy RecoveryPolicy) bool {
-	return policy.SafeModeAfter > 0 && consecutiveFailures >= int32(policy.SafeModeAfter)
+	return policy.SafeModeAfter > 0 && consecutiveFailures >= policy.SafeModeAfter
 }
 
+// enterRecovery is wired up by the failure-class dispatch in US-24.6.
+// Suppressing the unused warning until the call site lands; the function
+// is exercised by recovery_policy_test.go in the meantime.
+//
+//nolint:unused // wired up by US-24.6 follow-up commit
 func (r *WorkspaceReconciler) enterRecovery(ctx context.Context, ws *v1.Workspace, class FailureClass) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
