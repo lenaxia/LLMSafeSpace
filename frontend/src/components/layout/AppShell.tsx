@@ -15,9 +15,19 @@ export function AppShell() {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const isEdgeSwipe = useRef(false);
+  const isInitialMount = useRef(true);
 
   useEffect(() => {
-    setSidebarOpen(false);
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      const pathParts = location.pathname.split("/").filter(Boolean);
+      const hasSession = pathParts[0] === "chat" && pathParts.length >= 3;
+      if (isMobile && !hasSession) {
+        setSidebarOpen(true);
+      }
+    } else {
+      setSidebarOpen(false);
+    }
     mainRef.current?.focus();
   }, [location.pathname]);
 
