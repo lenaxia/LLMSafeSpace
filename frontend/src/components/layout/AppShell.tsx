@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { matchPath, Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useMatches } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
@@ -15,12 +15,13 @@ export function AppShell() {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const isEdgeSwipe = useRef(false);
+  const matches = useMatches();
   const isInitialMount = useRef(true);
 
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
-      const hasSession = matchPath("/chat/:workspaceId/:sessionId", location.pathname) !== null;
+      const hasSession = matches.some(m => m.params?.sessionId);
       if (isMobile && !hasSession) {
         setSidebarOpen(true);
       }
