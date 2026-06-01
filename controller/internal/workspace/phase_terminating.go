@@ -1,0 +1,70 @@
+package workspace
+
+import (
+	"context"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+)
+
+func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
+	uid := string(workspace.UID)
+	name := podName(workspace.Name, uid)
+
+	// Delete pod.
+	r.deletePodByName(ctx, name, workspace.Namespace)
+
+	// Delete PVC.
+	if workspace.Status.PVCName != "" {
+		pvc := &corev1.PersistentVolumeClaim{}
+		pvc.Name = workspace.Status.PVCName
+		pvc.Namespace = workspace.Namespace
+		if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Delete password secret.
+	pwSecret := &corev1.Secret{}
+	pwSecret.Name = passwordSecretName(workspace.Name)
+	pwSecret.Namespace = workspace.Namespace
+	if err := r.Delete(ctx, pwSecret); err != nil && !errors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+
+	workspace.Status.Phase = v1.WorkspacePhaseTerminated
+
+	// Clean up in-memory state for this workspace.
+	r.lastDeepStatusMu.Lock()
+	delete(r.lastDeepStatus, workspace.Name)
+	r.lastDeepStatusMu.Unlock()
+	workspace.Status.PodName = ""
+	workspace.Status.PodIP = ""
+	workspace.Status.Endpoint = ""
+	workspace.Status.Sessions = nil
+	workspace.Status.ActiveSessions = 0
+	workspace.Status.DiskUsedBytes = 0
+	workspace.Status.DiskTotalBytes = 0
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	common.RemoveFinalizer(workspace, WorkspaceFinalizer)
+	return ctrl.Result{}, r.Update(ctx, workspace)
+}
+
+func (r *WorkspaceReconciler) handleDeletion(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(workspace, WorkspaceFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	// Reuse terminating logic.
+	workspace.Status.Phase = v1.WorkspacePhaseTerminating
+	return r.handleTerminating(ctx, workspace)
+}
+
+// --- Transient recovery ---

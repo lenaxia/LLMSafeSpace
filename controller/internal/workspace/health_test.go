@@ -556,3 +556,38 @@ func makeRuntimeEnv(name string) *v1.RuntimeEnvironment {
 		Spec:       v1.RuntimeEnvironmentSpec{Image: "ghcr.io/test/" + name, Language: "python", Version: "3.11"},
 	}
 }
+
+func TestRemoveCondition(t *testing.T) {
+	ws := &v1.Workspace{
+		Status: v1.WorkspaceStatus{
+			Conditions: []v1.WorkspaceCondition{
+				{Type: v1.WorkspaceConditionReady, Status: "True"},
+				{Type: v1.WorkspaceConditionPodRunning, Status: "True"},
+				{Type: v1.WorkspaceConditionAgentHealthy, Status: "False"},
+			},
+		},
+	}
+	r := reconcilerFor(t)
+
+	r.removeCondition(ws, v1.WorkspaceConditionPodRunning)
+
+	assert.Len(t, ws.Status.Conditions, 2)
+	for _, c := range ws.Status.Conditions {
+		assert.NotEqual(t, v1.WorkspaceConditionPodRunning, c.Type)
+	}
+}
+
+func TestRemoveCondition_NotPresent(t *testing.T) {
+	ws := &v1.Workspace{
+		Status: v1.WorkspaceStatus{
+			Conditions: []v1.WorkspaceCondition{
+				{Type: v1.WorkspaceConditionReady, Status: "True"},
+			},
+		},
+	}
+	r := reconcilerFor(t)
+
+	r.removeCondition(ws, v1.WorkspaceConditionPodRunning)
+
+	assert.Len(t, ws.Status.Conditions, 1)
+}
