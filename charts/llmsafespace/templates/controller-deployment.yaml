@@ -71,10 +71,10 @@ spec:
             {{- end }}
           ports:
             - name: metrics
-              containerPort: {{ .Values.controller.metricsAddr | trimPrefix ":" | atoi }}
+              containerPort: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}
               protocol: TCP
             - name: probe
-              containerPort: {{ .Values.controller.probeAddr | trimPrefix ":" | atoi }}
+              containerPort: {{ .Values.controller.probeAddr | regexFind "[0-9]+$" | atoi }}
               protocol: TCP
             - name: webhook
               containerPort: {{ .Values.controller.webhookPort }}
