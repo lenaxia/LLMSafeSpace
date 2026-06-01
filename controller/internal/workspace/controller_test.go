@@ -179,6 +179,48 @@ func TestReconcile_Creating_PodRunning_TransitionsToActive(t *testing.T) {
 	assert.Equal(t, "http://10.0.0.5:4096", updated.Status.Endpoint)
 }
 
+// TestReconcile_Creating_NoPod_NoPwSecret_SelfHealsCreatesSecret pins the
+// production self-heal observed at safespace.thekao.cloud on 2026-06-01:
+// 6+ workspaces were stuck in Creating phase from a pre-fix controller
+// that did not create per-workspace bcrypt password Secrets. After the
+// new controller landed, those workspaces still couldn't progress because
+// handleCreating did not call ensurePasswordSecret — only handlePending
+// did, and these workspaces had already moved past Pending.
+//
+// The fix calls ensurePasswordSecret defensively before pod build. This
+// test asserts: given Creating phase + bound PVC + no pod + missing
+// pw Secret, the reconcile creates the Secret and proceeds to build the
+// pod. Without the fix the test would fail at pod build (CreateSecret
+// volume mount references workspace-pw-* which doesn't exist).
+func TestReconcile_Creating_NoPod_NoPwSecret_SelfHealsCreatesSecret(t *testing.T) {
+	ws := makeWorkspace("ws-stuck", "default", v1.WorkspacePhaseCreating)
+	ws.Status.PVCName = "workspace-ws-stuck"
+	pvc := makeBoundPVC("workspace-ws-stuck", "default", ws.UID)
+	rte := &v1.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python-3.11"},
+		Spec:       v1.RuntimeEnvironmentSpec{Image: "ghcr.io/test/python:3.11", Language: "python", Version: "3.11"},
+	}
+	// Note: no pwSecret in the fixture — that's the regression scenario.
+	r := reconcilerFor(t, ws, pvc, rte)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-stuck", "default"))
+	require.NoError(t, err, "reconcile must self-heal a missing pw secret in Creating phase, not error out")
+
+	// Assert the password Secret was created
+	pwSec := &corev1.Secret{}
+	err = r.Get(context.Background(),
+		types.NamespacedName{Name: passwordSecretName("ws-stuck"), Namespace: "default"},
+		pwSec)
+	assert.NoError(t, err, "ensurePasswordSecret should have created the Secret")
+
+	// Assert the pod was created (proceeded past the secret check)
+	pod := &corev1.Pod{}
+	err = r.Get(context.Background(),
+		types.NamespacedName{Name: podName("ws-stuck", string(ws.UID)), Namespace: "default"},
+		pod)
+	assert.NoError(t, err, "pod should be built once pw Secret exists")
+}
+
 // --- Active Phase Tests ---
 
 func TestReconcile_Active_PodRunning_RequeuesAfter30s(t *testing.T) {

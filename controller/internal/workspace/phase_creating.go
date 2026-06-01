@@ -29,6 +29,21 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
+		// Defensive self-heal: ensure the workspace's bcrypt password
+		// Secret exists before we build the pod. handlePending also
+		// calls this when transitioning Pending -> Creating, but a
+		// workspace can land in Creating without going through that
+		// path (e.g. when restored from etcd after a controller
+		// version that didn't create the Secret, or when an external
+		// actor or an earlier controller left phase=Creating with the
+		// Secret missing). Without the Secret the pod's pw-secret
+		// volume mount fails with FailedMount and the pod is stuck
+		// in Init forever. Idempotent: returns nil if Secret already
+		// exists.
+		if err := r.ensurePasswordSecret(ctx, workspace); err != nil {
+			logger.Error(err, "Failed to ensure password secret in Creating phase")
+			return ctrl.Result{}, err
+		}
 		// Ensure per-workspace egress NetworkPolicy BEFORE pod creation
 		// (F1.2.4 / G4 part 2). Built from spec.networkAccess.egress;
 		// no-op when the field is nil/empty (chart-wide policy applies).

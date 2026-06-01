@@ -1,0 +1,76 @@
+# Cluster-specific Helm values for the home-kubernetes deployment.
+# Override defaults that don't fit this cluster (Redis named valkey,
+# traefik ingress, no cluster-internal DNS named redis-master, etc.)
+
+# Pin all components to the same commit so they reconcile against
+# matching CRD schema and protocol expectations. sha-b446443 includes:
+#   - 94a944f: controller self-heal for missing workspace-pw secret +
+#     Failed non-terminal recovery + default memory raised 512Mi -> 1Gi
+#   - cfe35df: chart fix for `port: 0` controller-metrics service
+#   - 191537f: API trusts X-Forwarded-Proto behind ingress (login fix) +
+#     controller-service.yaml port fix
+api:
+  image:
+    tag: sha-b446443
+    pullPolicy: IfNotPresent
+  ingress:
+    # API is exposed via the frontend ingress at /api; no separate
+    # api-only ingress needed.
+    enabled: false
+
+controller:
+  image:
+    tag: sha-b446443
+    pullPolicy: IfNotPresent
+
+# The cluster runs Valkey, not Bitnami Redis. The chart default
+# (`redis-master`) does not resolve in this namespace.
+redis:
+  host: valkey
+  port: 6379
+
+# Disable MCP — image llmsafespace/mcp:0.1.0 doesn't exist on the
+# registry and we're not using MCP yet.
+mcp:
+  enabled: false
+
+# Frontend + ingress for safespace.thekao.cloud.
+frontend:
+  enabled: true
+  image:
+    tag: sha-b446443
+    pullPolicy: IfNotPresent
+  ingress:
+    enabled: true
+    className: traefik
+    host: safespace.thekao.cloud
+    tls: true
+    # Match cluster cert-manager pattern used by tinyrsvp/ogcs.
+    # Annotations override the chart defaults (which are nginx-only)
+    # so we don't ship X-Frame-Options via configuration-snippet here;
+    # traefik handles those via Middleware CRDs separately if needed.
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-production
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+
+runtimeEnvironments:
+  base:
+    image:
+      tag: sha-b446443
+
+# Webhook image-registry allow-list — required so the controller's
+# RuntimeEnvironment validating webhook accepts ghcr.io images.
+# The default values.yaml already includes this, but we re-state
+# explicitly so it survives any future chart-default changes.
+webhooks:
+  enabled: true
+  allowedImageRegistries:
+    - "ghcr.io/lenaxia/"
+
+# Cluster-scoped RBAC. The controller watches workspaces, pods, and
+# secrets across all namespaces, so it needs ClusterRole-backed
+# list/watch permissions. Without this the controller-runtime
+# informer cache cannot sync and the controller CrashLoopBackOffs
+# during startup ("failed to wait for workspace caches to sync").
+rbac:
+  scope: cluster
