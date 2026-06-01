@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, getRaw } from "./client";
 import type { Message, SendMessageRequest } from "./types";
 
 interface OpenCodeMessage {
@@ -49,12 +49,35 @@ function transformHistory(raw: OpenCodeMessage[]): Message[] {
     .filter((m) => m.parts.length > 0);
 }
 
+export interface HistoryPage {
+  messages: Message[];
+  nextCursor?: string;
+}
+
+const PAGE_LIMIT = 50;
+
 export const messagesApi = {
   getHistory: async (workspaceId: string, sessionId: string): Promise<Message[]> => {
     const raw = await api.get<OpenCodeMessage[]>(
       `/workspaces/${workspaceId}/sessions/${sessionId}/message`,
     );
     return transformHistory(raw);
+  },
+  getHistoryPage: async (
+    workspaceId: string,
+    sessionId: string,
+    opts?: { before?: string },
+  ): Promise<HistoryPage> => {
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE_LIMIT));
+    if (opts?.before) params.set("before", opts.before);
+    const { data, headers } = await getRaw<OpenCodeMessage[]>(
+      `/workspaces/${workspaceId}/sessions/${sessionId}/message?${params.toString()}`,
+    );
+    return {
+      messages: transformHistory(data),
+      nextCursor: headers.get("X-Next-Cursor") ?? undefined,
+    };
   },
   sendAsync: (workspaceId: string, sessionId: string, req: SendMessageRequest) =>
     api.post<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/prompt`, req),

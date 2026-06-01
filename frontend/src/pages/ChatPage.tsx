@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
@@ -70,7 +70,11 @@ export function ChatPage() {
   }, [isReady, workspaceId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
-  const { data: history, isLoading: historyLoading } = useMessageHistory(activeWorkspaceId, sessionId);
+  const { data: historyPages, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
+  const history = useMemo(() => {
+    if (!historyPages?.pages) return [];
+    return [...historyPages.pages].reverse().flatMap((p) => [...p.messages].reverse());
+  }, [historyPages?.pages]);
 
   // US-15.1: Derive serverBusy from workspace status
   const sessionStatus = status?.sessions?.find((s) => s.id === sessionId);
@@ -129,7 +133,7 @@ export function ChatPage() {
   const reconcileOnIdle = useCallback(async () => {
     if (!workspaceId || !sessionId) return;
     try {
-      await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
+      await queryClient.resetQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
       // History is now authoritative for this session — clear localMessages
       // so the merged view (history + localMessages) does not double-render
@@ -559,6 +563,9 @@ export function ChatPage() {
             disabled={!workspaceId || !sessionId || isSuspended}
             onSend={handleSend}
             onAbort={abort}
+            onLoadEarlier={() => fetchNextPage()}
+            hasOlderMessages={hasNextPage}
+            loadingOlder={isFetchingNextPage}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
                 <>

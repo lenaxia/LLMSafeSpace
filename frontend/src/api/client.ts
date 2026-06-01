@@ -55,6 +55,26 @@ export const api = {
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
+export async function getRaw<T>(path: string): Promise<{ data: T; headers: Headers }> {
+  const { apiBaseUrl } = getEnv();
+  const url = `${apiBaseUrl}${path}`;
+  const res = await fetch(url, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    if (path !== "/auth/me") {
+      await handleUnauthorized(res.status);
+    }
+    throw new ApiClientError(res.status, body);
+  }
+
+  if (res.status === 204) return { data: undefined as T, headers: res.headers };
+  return { data: await res.json(), headers: res.headers };
+}
+
 /**
  * Streaming fetch for chat messages. Returns the raw Response for
  * ReadableStream consumption.

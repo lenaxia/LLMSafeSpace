@@ -22,9 +22,12 @@ interface Props {
   onSend: (text: string) => void;
   onAbort: () => void;
   prompts?: React.ReactNode;
+  onLoadEarlier?: () => void;
+  hasOlderMessages?: boolean;
+  loadingOlder?: boolean;
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -49,6 +52,9 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
               />
             ) : undefined
           }
+          onLoadEarlier={onLoadEarlier}
+          hasOlderMessages={hasOlderMessages}
+          loadingOlder={loadingOlder}
         />
         {streaming && <StreamingIndicator />}
       </div>
