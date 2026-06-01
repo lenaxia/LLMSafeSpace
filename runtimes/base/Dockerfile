@@ -46,10 +46,75 @@ ARG OPENCODE_VERSION=1.15.12
 
 ARG MISE_VERSION=2026.5.15
 
+# AWS CLI v2 — pinned to a specific patch release.
+# Source: https://awscli.amazonaws.com/awscli-exe-linux-{x86_64,aarch64}-${VERSION}.zip
+# Verification: the corresponding .sig file is PGP-signed with the AWS CLI
+# Team key (fingerprint FB5D B77F D5C1 18B8 0511  ADA8 A631 0ACC 4672 475C).
+# We import the key into a temporary keyring and verify before extraction.
+ARG AWSCLI_VERSION=2.34.57
+
 ENV DEBIAN_FRONTEND=noninteractive
 
+# System packages.
+#
+# Why these are in the base image (not via mise or on-demand):
+# - bash, ca-certificates, curl, git, jq, unzip, xz-utils — required by the
+#   opencode/mise install steps below; chicken-and-egg if deferred.
+# - openssh-client — `ssh`, `ssh-keygen`, `ssh-agent`. Required for `git push`
+#   over SSH from inside the sandbox.
+# - make, build-essential — Makefiles are ubiquitous in real projects;
+#   build-essential supplies gcc/g++/libc-dev for native extensions
+#   (cgo, npm node-gyp, pip wheels with C deps). ~250MB but unavoidable
+#   for a credible dev environment.
+# - less — git's default pager. Without it, `git log/diff/show` produce
+#   broken output. Tiny.
+# - vim-tiny — `git commit` (no -m), `git rebase -i`, conflict resolution
+#   need an editor. vim-tiny is ~1MB; full vim is not needed.
+# - procps — `ps`, `top`, `kill`. debian:slim ships without these.
+# - file — file-type detection used by many build/test scripts.
+# - rsync — common in deploy/sync scripts; works with ssh transport above.
+# - gnupg — used immediately below to verify the AWS CLI v2 signature, and
+#   generally needed for `git commit -S`, signed-tag verification, and
+#   third-party apt repos that agents may want to add at runtime.
+# - openssl — CLI for cert/key inspection and ad-hoc crypto. The `openssl`
+#   binary is separate from `ca-certificates` (which only ships CA bundles).
+# - sqlite3 — file-based DB; common as application local store and test fixture.
+# - postgresql-client — `psql`, `pg_dump`. Connect to managed Postgres
+#   from sandbox without installing a Python/Node driver first.
+# - default-mysql-client — `mysql` client (MariaDB-based, smaller than
+#   Oracle's). Same rationale as postgres.
+#
+# Deliberately excluded:
+# - sudo — sandbox runs as non-root by design; sudo would defeat the
+#   confinement.
+# - docker / kubectl — the sandbox boundary; revisit if/when we have a
+#   concrete need (e.g. dind via gVisor).
+# - cloud CLIs other than AWS — gcloud and azure CLIs add ~350MB combined
+#   and require third-party apt repos with their own GPG keys (extra
+#   supply-chain surface). AWS CLI is installed below from the official
+#   AWS-signed tarball; gcloud/azure are available on demand via mise or
+#   the agent's own install.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git jq unzip xz-utils \
+    bash \
+    build-essential \
+    ca-certificates \
+    curl \
+    default-mysql-client \
+    file \
+    git \
+    gnupg \
+    jq \
+    less \
+    make \
+    openssh-client \
+    openssl \
+    postgresql-client \
+    procps \
+    rsync \
+    sqlite3 \
+    unzip \
+    vim-tiny \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install opencode from upstream releases.
@@ -100,6 +165,47 @@ RUN set -eux; \
     cp /tmp/mise/bin/mise /usr/local/bin/mise; \
     chmod +x /usr/local/bin/mise; \
     rm -rf /tmp/mise /tmp/mise.tar.gz
+
+# Install AWS CLI v2 from the official AWS-signed tarball.
+#
+# Source: https://awscli.amazonaws.com/awscli-exe-linux-{x86_64,aarch64}-${AWSCLI_VERSION}.zip
+# Asset arch naming: x86_64 / aarch64 (NOT amd64/arm64).
+#
+# Integrity: the .sig file alongside the .zip is a PGP signature from the
+# AWS CLI Team key (fingerprint FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C,
+# expires 2026-07-07). The public key is shipped in the repo at
+# runtimes/base/security/aws-cli-team.pgp so the build does NOT depend on a
+# public keyserver — this avoids supply-chain exposure to keyserver compromise
+# or build-time network reachability issues.
+#
+# When the AWS CLI Team rotates this key (currently expires 2026-07-07),
+# replace runtimes/base/security/aws-cli-team.pgp with the new key from
+# https://docs.aws.amazon.com/cli/latest/userguide/getting-started-version.html,
+# update EXPECTED_FPR below, and bump AWSCLI_VERSION.
+COPY runtimes/base/security/aws-cli-team.pgp /tmp/aws-cli-team.pgp
+RUN set -eux; \
+    TARGETARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "${TARGETARCH}" in \
+        amd64) AWS_ARCH=x86_64 ;; \
+        arm64) AWS_ARCH=aarch64 ;; \
+        *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    GNUPGHOME="$(mktemp -d)"; export GNUPGHOME; \
+    gpg --batch --import /tmp/aws-cli-team.pgp; \
+    EXPECTED_FPR="FB5DB77FD5C118B80511ADA8A6310ACC4672475C"; \
+    ACTUAL_FPR="$(gpg --batch --with-colons --fingerprint aws-cli@amazon.com | awk -F: '/^fpr:/ {print $10; exit}')"; \
+    [ "${ACTUAL_FPR}" = "${EXPECTED_FPR}" ] || { echo "FATAL: AWS CLI key fingerprint mismatch (got ${ACTUAL_FPR})" >&2; exit 1; }; \
+    curl --fail --show-error --location \
+        "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}-${AWSCLI_VERSION}.zip" \
+        -o /tmp/awscliv2.zip; \
+    curl --fail --show-error --location \
+        "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}-${AWSCLI_VERSION}.zip.sig" \
+        -o /tmp/awscliv2.zip.sig; \
+    gpg --batch --verify /tmp/awscliv2.zip.sig /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; \
+    /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli; \
+    rm -rf /tmp/aws /tmp/awscliv2.zip /tmp/awscliv2.zip.sig /tmp/aws-cli-team.pgp "${GNUPGHOME}"; \
+    aws --version
 
 COPY --from=redact-builder --chmod=755 /out/redact /usr/local/bin/redact
 COPY --from=agentd-builder --chmod=755 /out/workspace-agentd /usr/local/bin/workspace-agentd
