@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -339,6 +340,116 @@ func TestEnforceMaxActive_StaleDBPhase_Mixed_SuspendsCorrectStalest(t *testing.T
 	}
 	if suspended != "ws-real-1" {
 		t.Errorf("expected ws-real-1 (stalest truly active) to be suspended, got %q", suspended)
+	}
+}
+
+// TestEnforceMaxActive_AllAtCapAreCreating_ReturnsConflict pins the
+// production regression observed at safespace.thekao.cloud on 2026-06-01:
+// when every workspace consuming a capacity slot is in a non-suspendable
+// transitional phase (Creating/Resuming), the previous implementation
+// picked the stalest of those and called SuspendWorkspace, which rejects
+// non-Active phases with a NewConflictError. The error then surfaced as
+// a generic 500 ("failed to suspend stalest workspace ...: conflict ...
+// cannot suspend workspace in phase \"Creating\"") on every activate
+// attempt, with no actionable signal for the user.
+//
+// The fix returns a 409 directly from enforcement so the user gets a
+// clear "wait for in-flight workspaces to settle or delete a Creating
+// one" message instead of an internal server error.
+func TestEnforceMaxActive_AllAtCapAreCreating_ReturnsConflict(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal(2)
+	store.data["workspace.maxActiveWorkspacesPerUser"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+
+	now := time.Now()
+	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		{ID: "ws-creating-1", UserID: "user-1", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-creating-2", UserID: "user-1", UpdatedAt: now.Add(-1 * time.Hour)},
+	}}
+
+	k8sMock := &mockK8sForMaxActive{
+		workspaces: map[string]*v1.Workspace{
+			"ws-creating-1": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-creating-1"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+			},
+			"ws-creating-2": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-creating-2"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+			},
+		},
+	}
+
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+		dbService:        db,
+		k8sClient:        k8sMock,
+		config:           &Config{Namespace: "default"},
+	}
+
+	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
+	if err == nil {
+		t.Fatalf("expected ConflictError when at cap with no Active workspace to evict, got nil (suspended=%q)", suspended)
+	}
+	if suspended != "" {
+		t.Errorf("no workspace should be reported as suspended on conflict, got %q", suspended)
+	}
+	// Error message must mention max active so the user knows what's
+	// happening (vs. a generic 500).
+	if !strings.Contains(err.Error(), "max active") {
+		t.Errorf("expected error to mention 'max active', got %q", err.Error())
+	}
+}
+
+// TestEnforceMaxActive_AtCapMixedActiveAndCreating_SuspendsActive pins
+// the partial-capacity case: when some workspaces at the cap are Active
+// and others are Creating, eviction must pick from the Active subset
+// (only Active is suspendable) even if a Creating workspace is staler.
+func TestEnforceMaxActive_AtCapMixedActiveAndCreating_SuspendsActive(t *testing.T) {
+	store := &mockSettingsStore{data: make(map[string]json.RawMessage)}
+	raw, _ := json.Marshal(2)
+	store.data["workspace.maxActiveWorkspacesPerUser"] = raw
+
+	instanceSvc := settings.NewInstanceService(store, nil)
+
+	now := time.Now()
+	db := &mockDBForMaxActive{workspaces: []*types.WorkspaceMetadata{
+		// ws-creating is staler than ws-active, but it's not suspendable
+		// so eviction must pick ws-active.
+		{ID: "ws-creating", UserID: "user-1", UpdatedAt: now.Add(-3 * time.Hour)},
+		{ID: "ws-active", UserID: "user-1", UpdatedAt: now.Add(-1 * time.Hour)},
+	}}
+
+	k8sMock := &mockK8sForMaxActive{
+		workspaces: map[string]*v1.Workspace{
+			"ws-creating": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-creating"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+			},
+			"ws-active": {
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-active"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+		},
+	}
+
+	svc := &Service{
+		logger:           &testLogger{},
+		instanceSettings: instanceSvc,
+		dbService:        db,
+		k8sClient:        k8sMock,
+		config:           &Config{Namespace: "default"},
+	}
+
+	suspended, err := svc.enforceMaxActiveWorkspaces(context.Background(), "user-1", "ws-target")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended != "ws-active" {
+		t.Errorf("expected ws-active to be suspended (only suspendable phase), got %q", suspended)
 	}
 }
 

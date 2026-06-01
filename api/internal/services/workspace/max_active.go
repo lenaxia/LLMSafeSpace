@@ -47,29 +47,56 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 
 	phaseByID := s.fetchUserWorkspacePhases(ctx, userID)
 
-	var active []*types.WorkspaceMetadata
+	// activeCount counts every phase that consumes capacity (Active,
+	// Creating, Resuming) for the cap check. evictable lists only the
+	// phases the suspend RPC will actually accept (Active) — Creating
+	// and Resuming workspaces cannot be suspended (SuspendWorkspace
+	// rejects them with NewConflictError), so picking one as the
+	// stalest produces a 500 to the user. The cap still includes them
+	// because they DO consume slots; we just can't free those slots
+	// via auto-suspend, only by waiting for them to reach Active or by
+	// the user explicitly deleting them.
+	var activeCount int
+	var evictable []*types.WorkspaceMetadata
 	for _, ws := range result {
 		if ws.ID == targetWorkspaceID {
 			continue
 		}
-		if isActivePhase(v1.WorkspacePhase(phaseByID[ws.ID])) {
-			active = append(active, ws)
+		phase := v1.WorkspacePhase(phaseByID[ws.ID])
+		if !isActivePhase(phase) {
+			continue
+		}
+		activeCount++
+		if phase == v1.WorkspacePhaseActive {
+			evictable = append(evictable, ws)
 		}
 	}
 
-	if len(active) < maxActive {
+	if activeCount < maxActive {
 		return "", nil
 	}
 
+	if len(evictable) == 0 {
+		// Cap is full but every workspace at the cap is in a non-
+		// suspendable transitional phase. Surface a 409 so the user
+		// understands the situation rather than getting a 500 from
+		// SuspendWorkspace's own conflict error.
+		return "", apierrors.NewConflictError(
+			"workspace",
+			targetWorkspaceID,
+			fmt.Errorf("user at max active workspaces (%d) but no workspace is in Active phase to evict; wait for in-flight workspaces to settle or delete a Creating one", maxActive),
+		)
+	}
+
 	// Sort by last activity (oldest first) for stalest selection
-	sort.Slice(active, func(i, j int) bool {
-		ti := active[i].UpdatedAt
-		tj := active[j].UpdatedAt
+	sort.Slice(evictable, func(i, j int) bool {
+		ti := evictable[i].UpdatedAt
+		tj := evictable[j].UpdatedAt
 		return ti.Before(tj)
 	})
 
-	// Suspend the stalest workspace
-	stalest := active[0]
+	// Suspend the stalest evictable workspace
+	stalest := evictable[0]
 	if err := s.SuspendWorkspace(ctx, userID, stalest.ID); err != nil {
 		return "", fmt.Errorf("failed to suspend stalest workspace %s: %w", stalest.ID, err)
 	}
