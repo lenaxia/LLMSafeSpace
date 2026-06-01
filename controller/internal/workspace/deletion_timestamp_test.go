@@ -176,7 +176,7 @@ func TestHandleActive_TerminatingPod_TransitionsToCreating(t *testing.T) {
 
 	fc := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(ws, pod).
+		WithRuntimeObjects(ws, pod, makePasswordSecret("ws-active-dying", "default")).
 		WithStatusSubresource(&v1.Workspace{}).
 		Build()
 	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
@@ -215,7 +215,7 @@ func TestHandleActive_NonRunningPod_NoDeletionTimestamp_RecoverTransient(t *test
 
 	fc := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(ws, pod).
+		WithRuntimeObjects(ws, pod, makePasswordSecret("ws-active-lost", "default")).
 		WithStatusSubresource(&v1.Workspace{}).
 		Build()
 	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}

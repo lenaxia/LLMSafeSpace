@@ -61,7 +61,7 @@ func InstanceSettings() []SettingDef {
 		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 3, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},
 		{Key: "workspace.defaultMaxActiveSessions", Tier: 2, Type: TypeInt, Default: 5, Min: intPtr(1), Max: intPtr(20), Category: "Workspace", Label: "Max Sessions", Description: "Concurrent sessions per workspace"},
 		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit"},
-		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "512Mi", Category: "Workspace", Label: "Default Memory", Description: "Default memory limit"},
+		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Category: "Workspace", Label: "Default Memory", Description: "Default memory limit"},
 		{Key: "workspace.defaultResources.ephemeralStorage", Tier: 2, Type: TypeString, Default: "1Gi", Category: "Workspace", Label: "Default Ephemeral Storage", Description: "Default ephemeral storage"},
 
 		// Auto-Suspend

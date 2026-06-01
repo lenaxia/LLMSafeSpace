@@ -72,7 +72,7 @@ type ResourceRequirements struct {
 	// +kubebuilder:default="500m"
 	CPU string `json:"cpu,omitempty"`
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
-	// +kubebuilder:default="512Mi"
+	// +kubebuilder:default="1Gi"
 	Memory string `json:"memory,omitempty"`
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
 	// +kubebuilder:default="1Gi"

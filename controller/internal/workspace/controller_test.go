@@ -188,7 +188,8 @@ func TestReconcile_Active_PodRunning_RequeuesAfter30s(t *testing.T) {
 	ws.Status.StartTime = &now
 	expectedPodName := podName("ws-active", string(ws.UID))
 	pod := makeRunningPod(expectedPodName, "default", "10.0.0.1")
-	r := reconcilerFor(t, ws, pod)
+	pwSecret := makePasswordSecret("ws-active", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
 
 	result, err := r.Reconcile(context.Background(), reqFor("ws-active", "default"))
 	require.NoError(t, err)
@@ -199,7 +200,8 @@ func TestReconcile_Active_PodMissing_TransientRecovery(t *testing.T) {
 	ws := makeWorkspace("ws-lost", "default", v1.WorkspacePhaseActive)
 	ws.Status.PodIP = "10.0.0.1"
 	ws.Spec.MaxRetries = 3
-	r := reconcilerFor(t, ws) // no pod
+	pwSecret := makePasswordSecret("ws-lost", "default")
+	r := reconcilerFor(t, ws, pwSecret) // no pod
 
 	_, err := r.Reconcile(context.Background(), reqFor("ws-lost", "default"))
 	require.NoError(t, err)
@@ -214,7 +216,8 @@ func TestReconcile_Active_PodMissing_MaxRetries_Failed(t *testing.T) {
 	ws := makeWorkspace("ws-exhausted", "default", v1.WorkspacePhaseActive)
 	ws.Status.TransientFailureCount = 2
 	ws.Spec.MaxRetries = 3
-	r := reconcilerFor(t, ws) // no pod
+	pwSecret := makePasswordSecret("ws-exhausted", "default")
+	r := reconcilerFor(t, ws, pwSecret) // no pod
 
 	_, err := r.Reconcile(context.Background(), reqFor("ws-exhausted", "default"))
 	require.NoError(t, err)
@@ -231,7 +234,8 @@ func TestReconcile_Active_Timeout_Suspends(t *testing.T) {
 	ws.Status.StartTime = &past
 	expectedPodName := podName("ws-timeout", string(ws.UID))
 	pod := makeRunningPod(expectedPodName, "default", "10.0.0.1")
-	r := reconcilerFor(t, ws, pod)
+	pwSecret := makePasswordSecret("ws-timeout", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
 
 	_, err := r.Reconcile(context.Background(), reqFor("ws-timeout", "default"))
 	require.NoError(t, err)
@@ -239,6 +243,24 @@ func TestReconcile_Active_Timeout_Suspends(t *testing.T) {
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-timeout", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseSuspending, updated.Status.Phase)
+}
+
+func TestReconcile_Active_PasswordSecretMissing_RecyclesPod(t *testing.T) {
+	ws := makeWorkspace("ws-nopw", "default", v1.WorkspacePhaseActive)
+	ws.Status.PodIP = "10.0.0.1"
+	now := metav1.Now()
+	ws.Status.StartTime = &now
+	expectedPodName := podName("ws-nopw", string(ws.UID))
+	pod := makeRunningPod(expectedPodName, "default", "10.0.0.1")
+	r := reconcilerFor(t, ws, pod) // no password secret
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-nopw", "default"))
+	require.NoError(t, err)
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-nopw", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "missing password secret should recycle pod")
+	assert.Equal(t, int32(1), updated.Status.RestartCount)
 }
 
 func TestReconcile_Active_RestartGeneration_RecreatesPod(t *testing.T) {
@@ -342,24 +364,19 @@ func TestReconcile_Terminating_CleansUp(t *testing.T) {
 	assert.NotContains(t, updated.Finalizers, WorkspaceFinalizer)
 }
 
-func TestReconcile_Failed_NoBump_NoRecovery(t *testing.T) {
-	// Failed + restartGeneration unchanged → no recovery; controller stays
-	// quiet (the cleanup helpers run inside r.Reconcile but don't change
-	// phase). This is the original behavior: a Failed workspace stays
-	// Failed unless the operator/API explicitly asks for retry by
-	// bumping spec.restartGeneration.
-	ws := makeWorkspace("ws-fail-noop", "default", v1.WorkspacePhaseFailed)
+func TestReconcile_Failed_NoBump_NoPod_RetriesCreating(t *testing.T) {
+	ws := makeWorkspace("ws-fail-nopod", "default", v1.WorkspacePhaseFailed)
 	ws.Status.Message = "pod entered Failed phase during creation"
 	r := reconcilerFor(t, ws)
 
-	result, err := r.Reconcile(context.Background(), reqFor("ws-fail-noop", "default"))
+	_, err := r.Reconcile(context.Background(), reqFor("ws-fail-nopod", "default"))
 	require.NoError(t, err)
-	assert.Zero(t, result.RequeueAfter, "no requeue when no recovery requested")
 
 	updated := &v1.Workspace{}
-	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-noop", Namespace: "default"}, updated))
-	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase, "phase preserved without bump")
-	assert.Equal(t, "pod entered Failed phase during creation", updated.Status.Message, "message preserved without bump")
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-nopod", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "Failed workspace with no pod should auto-retry Creating")
+	assert.Equal(t, int32(0), updated.Status.TransientFailureCount)
+	assert.Empty(t, updated.Status.Message)
 }
 
 // TestReconcile_Failed_RestartGenerationBump_Recovers is the regression test
@@ -423,9 +440,9 @@ func TestReconcile_Failed_RestartGenerationStale_NoRecovery(t *testing.T) {
 		observed          int64
 		expectStillFailed bool
 	}{
-		{"equal", 5, 5, true},
-		{"observed_ahead_of_spec", 1, 5, true},
-		{"zero_zero", 0, 0, true},
+		{"equal", 5, 5, false},
+		{"observed_ahead_of_spec", 1, 5, false},
+		{"zero_zero", 0, 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -439,7 +456,7 @@ func TestReconcile_Failed_RestartGenerationStale_NoRecovery(t *testing.T) {
 
 			updated := &v1.Workspace{}
 			require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-stale", Namespace: "default"}, updated))
-			assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
+			assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "Failed always auto-recovers")
 		})
 	}
 }
@@ -478,4 +495,8 @@ func TestReconcile_Failed_CleansUpSecrets(t *testing.T) {
 		err := r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, &got)
 		assert.True(t, err != nil, "Bug 12: %s must be deleted on Failed reconcile", name)
 	}
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-cleanup", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "Failed with no pod should auto-retry")
 }

@@ -125,7 +125,7 @@ spec:
                       default: "500m"
                     memory:
                       type: string
-                      default: "512Mi"
+                      default: "1Gi"
                     ephemeralStorage:
                       type: string
                       default: "1Gi"

@@ -78,44 +78,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	case v1.WorkspacePhaseTerminating:
 		return r.handleTerminating(ctx, workspace)
 	case v1.WorkspacePhaseFailed:
-		// Clean up associated K8s Secrets so a Failed workspace does
-		// not leak workspace-creds-* / workspace-pw-* / workspace-secrets-*
-		// indefinitely (Bug 12 in worklog 0085). The cleanup helpers
-		// are no-ops if the Secret is already gone, so this is safe to
-		// call on every reconcile.
-		r.cleanupFailedWorkspaceSecrets(ctx, workspace)
-
-		// Epic 21 Change A — declarative recovery from Failed.
-		// If the operator (or API) bumps spec.restartGeneration past
-		// status.observedRestartGeneration, treat that as a request
-		// to retry: clear stale status fields and walk back to
-		// Pending so handlePending re-creates PVC + password Secret +
-		// pod from scratch. handlePending is idempotent and creates
-		// missing resources, so it doesn't matter that
-		// cleanupFailedWorkspaceSecrets just deleted the password
-		// Secret — handlePending will recreate it (with a freshly
-		// generated password, which is the desired security posture
-		// after a failure).
-		if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
-			logger.Info("RestartGeneration bumped on Failed workspace; transitioning to Pending",
-				"gen", workspace.Spec.RestartGeneration,
-				"observed", workspace.Status.ObservedRestartGeneration)
-			workspace.Status.Phase = v1.WorkspacePhasePending
-			workspace.Status.Message = ""
-			workspace.Status.FailureReason = v1.FailureReasonNone
-			workspace.Status.PodName = ""
-			workspace.Status.PodNamespace = ""
-			workspace.Status.PodIP = ""
-			workspace.Status.Endpoint = ""
-			workspace.Status.TransientFailureCount = 0
-			workspace.Status.LastTransientFailureAt = nil
-			workspace.Status.RestartCount++
-			workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
-		}
-
-		logger.V(1).Info("Workspace in Failed phase; bump spec.restartGeneration to retry")
-		return ctrl.Result{}, nil
+		return r.handleFailed(ctx, workspace)
 	default:
 		logger.Info("Unknown workspace phase", "phase", workspace.Status.Phase)
 		return ctrl.Result{}, nil
@@ -305,6 +268,21 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	}
+
+	// Ensure password secret still exists (can be lost during crash cycles
+	// or cleanup). If missing, recycle pod so handleCreating regenerates it.
+	pwSec := &corev1.Secret{}
+	if pwErr := r.Get(ctx, types.NamespacedName{Name: passwordSecretName(workspace.Name), Namespace: workspace.Namespace}, pwSec); pwErr != nil {
+		if errors.IsNotFound(pwErr) {
+			logger.Info("Password secret missing in Active phase; recycling pod to regenerate", "secret", passwordSecretName(workspace.Name))
+			r.deletePodByName(ctx, name, workspace.Namespace)
+			workspace.Status.Phase = v1.WorkspacePhaseCreating
+			workspace.Status.PodIP = ""
+			workspace.Status.Endpoint = ""
+			workspace.Status.RestartCount++
+			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		}
 	}
 
 	// Check pod exists and is running.
@@ -548,6 +526,88 @@ func (r *WorkspaceReconciler) maybeResetTransientCounter(workspace *v1.Workspace
 		workspace.Status.TransientFailureCount = 0
 		workspace.Status.LastTransientFailureAt = nil
 	}
+}
+
+func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Still respect declarative restartGeneration bumps.
+	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
+		logger.Info("RestartGeneration bumped on Failed workspace; transitioning to Pending",
+			"gen", workspace.Spec.RestartGeneration,
+			"observed", workspace.Status.ObservedRestartGeneration)
+		r.cleanupFailedWorkspaceSecrets(ctx, workspace)
+		workspace.Status.Phase = v1.WorkspacePhasePending
+		workspace.Status.Message = ""
+		workspace.Status.FailureReason = v1.FailureReasonNone
+		workspace.Status.PodName = ""
+		workspace.Status.PodNamespace = ""
+		workspace.Status.PodIP = ""
+		workspace.Status.Endpoint = ""
+		workspace.Status.TransientFailureCount = 0
+		workspace.Status.LastTransientFailureAt = nil
+		workspace.Status.RestartCount++
+		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
+		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	}
+
+	uid := string(workspace.UID)
+	name := podName(workspace.Name, uid)
+
+	pod := &corev1.Pod{}
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, pod)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		logger.Info("Workspace Failed; no pod exists, retrying")
+		r.cleanupFailedWorkspaceSecrets(ctx, workspace)
+		workspace.Status.Phase = v1.WorkspacePhaseCreating
+		workspace.Status.PodIP = ""
+		workspace.Status.Endpoint = ""
+		workspace.Status.TransientFailureCount = 0
+		workspace.Status.Message = ""
+		workspace.Status.FailureReason = v1.FailureReasonNone
+		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	}
+
+	if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+		ready := false
+		for _, c := range pod.Status.Conditions {
+			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+				ready = true
+				break
+			}
+		}
+		if ready {
+			logger.Info("Workspace Failed but pod is Running/Ready; self-healing to Active")
+			now := metav1.Now()
+			workspace.Status.Phase = v1.WorkspacePhaseActive
+			workspace.Status.PodName = pod.Name
+			workspace.Status.PodNamespace = pod.Namespace
+			workspace.Status.PodIP = pod.Status.PodIP
+			workspace.Status.Endpoint = fmt.Sprintf("http://%s:4096", pod.Status.PodIP)
+			workspace.Status.ImageTag = imageTagFromPod(pod)
+			workspace.Status.StartTime = &now
+			workspace.Status.TransientFailureCount = 0
+			workspace.Status.ConsecutiveHealthFailures = 0
+			workspace.Status.LastTransientFailureAt = nil
+			workspace.Status.Message = ""
+			workspace.Status.FailureReason = v1.FailureReasonNone
+			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		}
+	}
+
+	logger.Info("Workspace Failed; pod not healthy, deleting and retrying", "podPhase", pod.Status.Phase)
+	r.deletePodByName(ctx, name, workspace.Namespace)
+	r.cleanupFailedWorkspaceSecrets(ctx, workspace)
+	workspace.Status.Phase = v1.WorkspacePhaseCreating
+	workspace.Status.PodIP = ""
+	workspace.Status.Endpoint = ""
+	workspace.Status.TransientFailureCount = 0
+	workspace.Status.Message = ""
+	workspace.Status.FailureReason = v1.FailureReasonNone
+	return ctrl.Result{}, r.Status().Update(ctx, workspace)
 }
 
 // --- Pod management helpers ---
