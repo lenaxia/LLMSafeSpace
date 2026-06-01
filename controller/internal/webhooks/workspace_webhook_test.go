@@ -770,3 +770,81 @@ func TestG4_F124_RejectsMalformedDomains(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// US-24.3: Burstable QoS — limit validation
+// =============================================================================
+
+func TestUS243_WebhookRejectsLimitBelowRequest(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+		MaxCPUMillicores:       16000,
+		MaxMemoryMi:            65536,
+		MaxEphemeralStorageGi:  100,
+	}
+	t.Run("cpuLimit below cpu request", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "1000m", CPULimit: "500m"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+		assert.Contains(t, resp.Result.Message, "cpuLimit")
+	})
+	t.Run("memoryLimit below memory request", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{Memory: "2Gi", MemoryLimit: "1Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+		assert.Contains(t, resp.Result.Message, "memoryLimit")
+	})
+	t.Run("limit equals request is allowed", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "500m", CPULimit: "500m", Memory: "512Mi", MemoryLimit: "512Mi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.True(t, resp.Allowed, "%v", resp.Result)
+	})
+	t.Run("limit above request is allowed", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "500m", CPULimit: "2000m", Memory: "512Mi", MemoryLimit: "2Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.True(t, resp.Allowed, "%v", resp.Result)
+	})
+}
+
+func TestUS243_WebhookCapsApplyToLimitFields(t *testing.T) {
+	v := &WorkspaceValidator{
+		Decoder:                admission.NewDecoder(newScheme(t)),
+		AllowedImageRegistries: []string{"ghcr.io/"},
+		MaxStorageGi:           1024,
+		MaxCPUMillicores:       4000,
+		MaxMemoryMi:            8192,
+		MaxEphemeralStorageGi:  100,
+	}
+	t.Run("cpuLimit over cap rejected", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "500m", CPULimit: "8000m"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+		assert.Contains(t, resp.Result.Message, "cpuLimit")
+	})
+	t.Run("memoryLimit over cap rejected", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{Memory: "512Mi", MemoryLimit: "16Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed)
+		assert.Contains(t, resp.Result.Message, "memoryLimit")
+	})
+	t.Run("cpuLimit at cap allowed", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{CPU: "500m", CPULimit: "4000m"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.True(t, resp.Allowed, "%v", resp.Result)
+	})
+	t.Run("memoryLimit at cap allowed", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{Memory: "512Mi", MemoryLimit: "8192Mi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.True(t, resp.Allowed, "%v", resp.Result)
+	})
+}

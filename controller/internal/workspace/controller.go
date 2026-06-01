@@ -972,10 +972,13 @@ func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirement
 		defaultCPU       = "500m"
 		defaultMemory    = "512Mi"
 		defaultEphemeral = "1Gi"
+		burstFactor      = 4
 	)
 	cpu := defaultCPU
 	memory := defaultMemory
 	ephemeral := defaultEphemeral
+	cpuLimit := ""
+	memoryLimit := ""
 	if r := workspace.Spec.Resources; r != nil {
 		if r.CPU != "" {
 			cpu = r.CPU
@@ -986,22 +989,63 @@ func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirement
 		if r.EphemeralStorage != "" {
 			ephemeral = r.EphemeralStorage
 		}
+		cpuLimit = r.CPULimit
+		memoryLimit = r.MemoryLimit
 	}
 	parseOrDefault := func(s, fallback string) resource.Quantity {
 		if q, err := resource.ParseQuantity(s); err == nil {
 			return q
 		}
-		return resource.MustParse(fallback) // defaults are constants; safe
+		return resource.MustParse(fallback)
 	}
-	rl := corev1.ResourceList{
-		corev1.ResourceCPU:              parseOrDefault(cpu, defaultCPU),
-		corev1.ResourceMemory:           parseOrDefault(memory, defaultMemory),
-		corev1.ResourceEphemeralStorage: parseOrDefault(ephemeral, defaultEphemeral),
+
+	cpuReq := parseOrDefault(cpu, defaultCPU)
+	memReq := parseOrDefault(memory, defaultMemory)
+	ephReq := parseOrDefault(ephemeral, defaultEphemeral)
+
+	// CPU limit: explicit > 4× request
+	var cpuLim resource.Quantity
+	if cpuLimit != "" {
+		if q, err := resource.ParseQuantity(cpuLimit); err == nil {
+			cpuLim = q
+		} else {
+			cpuLim = multiplyQuantity(cpuReq, burstFactor)
+		}
+	} else {
+		cpuLim = multiplyQuantity(cpuReq, burstFactor)
 	}
+
+	// Memory limit: explicit > 4× request
+	var memLim resource.Quantity
+	if memoryLimit != "" {
+		if q, err := resource.ParseQuantity(memoryLimit); err == nil {
+			memLim = q
+		} else {
+			memLim = multiplyQuantity(memReq, burstFactor)
+		}
+	} else {
+		memLim = multiplyQuantity(memReq, burstFactor)
+	}
+
 	return corev1.ResourceRequirements{
-		Limits:   rl,
-		Requests: rl.DeepCopy(),
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:              cpuReq,
+			corev1.ResourceMemory:           memReq,
+			corev1.ResourceEphemeralStorage: ephReq,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:              cpuLim,
+			corev1.ResourceMemory:           memLim,
+			corev1.ResourceEphemeralStorage: ephReq, // ephemeral: limit = request (no burst)
+		},
 	}
+}
+
+func multiplyQuantity(q resource.Quantity, factor int64) resource.Quantity {
+	if q.Format == resource.DecimalSI {
+		return *resource.NewMilliQuantity(q.MilliValue()*factor, resource.DecimalSI)
+	}
+	return *resource.NewQuantity(q.Value()*factor, q.Format)
 }
 
 func buildPodSecurityContext(workspace *v1.Workspace) *corev1.PodSecurityContext {

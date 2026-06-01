@@ -178,14 +178,14 @@ func TestG4_F123_PodAppliesSpecResources(t *testing.T) {
 		"main container must carry resource requests derived from spec.resources (F1.2.3)")
 
 	cpuLimit := main.Resources.Limits[corev1.ResourceCPU]
-	require.Equal(t, "750m", cpuLimit.String(),
-		"CPU limit must equal spec.resources.cpu")
+	require.Equal(t, "3", cpuLimit.String(),
+		"CPU limit must be 4× spec.resources.cpu (burstable QoS)")
 	memLimit := main.Resources.Limits[corev1.ResourceMemory]
-	require.Equal(t, "1Gi", memLimit.String(),
-		"memory limit must equal spec.resources.memory")
+	require.Equal(t, "4Gi", memLimit.String(),
+		"memory limit must be 4× spec.resources.memory (burstable QoS)")
 	ephLimit := main.Resources.Limits[corev1.ResourceEphemeralStorage]
 	require.Equal(t, "2Gi", ephLimit.String(),
-		"ephemeral-storage limit must equal spec.resources.ephemeralStorage")
+		"ephemeral-storage limit must equal spec.resources.ephemeralStorage (no burst)")
 }
 
 func TestG4_F123_PodAppliesDefaultsWhenSpecResourcesNil(t *testing.T) {

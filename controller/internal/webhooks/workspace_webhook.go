@@ -480,6 +480,50 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 					r.EphemeralStorage, gi, v.MaxEphemeralStorageGi))
 			}
 		}
+		// 4b. Limit field caps (US-24.3): MaxCPUMillicores/MaxMemoryMi apply to limit fields.
+		if v.MaxCPUMillicores > 0 && r.CPULimit != "" {
+			millis, err := parseCPUMillis(r.CPULimit)
+			if err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.cpuLimit %q: %s", r.CPULimit, err.Error()))
+			}
+			if millis > v.MaxCPUMillicores {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.cpuLimit %q (%d millicores) exceeds the maximum %d millicores",
+					r.CPULimit, millis, v.MaxCPUMillicores))
+			}
+		}
+		if v.MaxMemoryMi > 0 && r.MemoryLimit != "" {
+			mi, err := parseMemoryMi(r.MemoryLimit)
+			if err != nil {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.memoryLimit %q: %s", r.MemoryLimit, err.Error()))
+			}
+			if mi > v.MaxMemoryMi {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.memoryLimit %q (%d Mi) exceeds the maximum %d Mi",
+					r.MemoryLimit, mi, v.MaxMemoryMi))
+			}
+		}
+		// 4c. Limit >= request validation (US-24.3).
+		if r.CPULimit != "" && r.CPU != "" {
+			reqMillis, reqErr := parseCPUMillis(r.CPU)
+			limMillis, limErr := parseCPUMillis(r.CPULimit)
+			if reqErr == nil && limErr == nil && limMillis < reqMillis {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.cpuLimit %q (%d millicores) must be >= cpu request %q (%d millicores)",
+					r.CPULimit, limMillis, r.CPU, reqMillis))
+			}
+		}
+		if r.MemoryLimit != "" && r.Memory != "" {
+			reqMi, reqErr := parseMemoryMi(r.Memory)
+			limMi, limErr := parseMemoryMi(r.MemoryLimit)
+			if reqErr == nil && limErr == nil && limMi < reqMi {
+				return admission.Denied(fmt.Sprintf(
+					"spec.resources.memoryLimit %q (%d Mi) must be >= memory request %q (%d Mi)",
+					r.MemoryLimit, limMi, r.Memory, reqMi))
+			}
+		}
 	}
 
 	// 5. StorageClassName allow-list (optional). Empty = use cluster

@@ -72,12 +72,16 @@ type ResourceRequirements struct {
 	// +kubebuilder:default="500m"
 	CPU string `json:"cpu,omitempty"`
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
-	// +kubebuilder:default="1Gi"
+	// +kubebuilder:default="512Mi"
 	Memory string `json:"memory,omitempty"`
 	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
 	// +kubebuilder:default="1Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
 	CPUPinning       bool   `json:"cpuPinning,omitempty"`
+	// +kubebuilder:validation:Pattern=^([0-9]+m|[0-9]+\.[0-9]+)$
+	CPULimit string `json:"cpuLimit,omitempty"`
+	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
+	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
 // WorkspaceSpec defines the desired state of a Workspace.
