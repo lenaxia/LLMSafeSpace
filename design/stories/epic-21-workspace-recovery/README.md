@@ -1,8 +1,9 @@
 # Epic 21: Workspace Failure-Mode Robustness — State Machine
 
-**Status:** Planning
-**Created:** 2026-05-30 · **Last revised:** 2026-05-31 (audit pass 3 — citation drift, three-writer LastActivityAt reality, sequencing decisions)
+**Status:** Superseded by Epic 24 (Self-Healing Workspace Lifecycle)
+**Created:** 2026-05-30 · **Last revised:** 2026-06-01 (marked superseded)
 **Priority:** Medium-High
+**Superseded:** 2026-06-01. Change C (FailureReason enum + markFailed helper) was shipped in worklog 0105. Change B (exponential backoff) is superseded by Epic 24's per-class recovery policies which remove terminal `Failed` from transient causes entirely rather than merely delaying it.
 **Depends on:** Worklog 0100 (Change A — declarative recovery from `Failed` via `spec.restartGeneration`, shipped); Epic 23 Story 1 (DeletionTimestamp guard) MUST land before any Change B story.
 **Blocks:** none
 **Related epics:**

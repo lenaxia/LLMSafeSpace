@@ -29,6 +29,12 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 15 | Streaming State Resilience & Mid-Stream Reconnect — server-driven streaming indicator, fetch-on-boundary reconnect, idle reconciliation | Epics 3, 6 |
 | 16 | Agent Input Requests — user confirmation flow for agent-initiated actions | Epics 3, 6 |
 | 17 | Security Review & Penetration Testing — red-team assessment, threat model, pentest plan | Epics 6, 8, 10 |
+| 18 | Hot Migration — zero-downtime pod replacement for workspace upgrades | Epics 6, 8 |
+| 21 | ~~Workspace Recovery State Machine~~ — **Superseded by Epic 24** | Epic 22, 23 |
+| 22 | agentd Health-Endpoint Redesign — **Complete** (worklog 0105) | None |
+| 23 | Controller Race Hardening — Stories 1+4 **Complete**, Stories 2+3 deferred | None |
+| 24 | **Self-Healing Workspace Lifecycle** — burstable QoS, failure classification, per-class recovery, remove terminal Failed from transient causes, controller file split | Epics 22, 23 Story 1 |
+| 25 | **API Server Robustness & Correctness** — fix double-release/double-write bugs, proxy decomposition, body size limits, SSE write deadlines, session cleanup, context propagation | Epics 22, 23 Story 1 |
 
 ## V2.1 (Deferred)
 

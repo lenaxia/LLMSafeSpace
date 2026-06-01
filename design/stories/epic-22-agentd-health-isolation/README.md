@@ -1,6 +1,6 @@
 # Epic 22: agentd Health-Endpoint Redesign
 
-**Status:** Planning
+**Status:** Complete (shipped in worklog 0105, 2026-05-31). Epic 24 builds on this work.
 **Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 3 — citation drift, mux split promoted to scope)
 **Priority:** Medium-High
 **Depends on:** none
