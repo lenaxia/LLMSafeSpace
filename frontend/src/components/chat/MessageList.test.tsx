@@ -41,7 +41,6 @@ describe("MessageList", () => {
   it("shows jump-to-bottom button when scrolled away from bottom", async () => {
     render(<MessageList messages={messages} />);
     const scrollContainer = screen.getByRole("log");
-    // Simulate scroll away: set scrollHeight > scrollTop + clientHeight
     Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
     Object.defineProperty(scrollContainer, "clientHeight", { value: 200, configurable: true });
     Object.defineProperty(scrollContainer, "scrollTop", { value: 0, writable: true, configurable: true });
@@ -84,5 +83,16 @@ describe("MessageList", () => {
     render(<MessageList messages={messages} />);
     const scrollContainer = screen.getByRole("log");
     expect(scrollContainer.className).toContain("overflow-x-hidden");
+  });
+
+  it("renders load earlier button when hasOlderMessages is true", () => {
+    render(<MessageList messages={messages} hasOlderMessages={true} />);
+    expect(screen.getByText("Load earlier messages")).toBeInTheDocument();
+  });
+
+  it("shows spinner when loading older messages", () => {
+    render(<MessageList messages={messages} hasOlderMessages={true} loadingOlder={true} />);
+    expect(screen.queryByText("Load earlier messages")).not.toBeInTheDocument();
+    expect(document.querySelector(".animate-spin")).toBeInTheDocument();
   });
 });
