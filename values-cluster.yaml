@@ -3,15 +3,17 @@
 # traefik ingress, no cluster-internal DNS named redis-master, etc.)
 
 # Pin all components to the same commit so they reconcile against
-# matching CRD schema and protocol expectations. sha-b446443 includes:
-#   - 94a944f: controller self-heal for missing workspace-pw secret +
+# matching CRD schema and protocol expectations. sha-a20fb23 includes:
+#   - a20fb23: runtime base image — ssh, build/dev tools, db clients,
+#     and AWS CLI v2 (PGP-verified)
+#   - 89e0295: controller self-heal for missing workspace-pw secret +
 #     Failed non-terminal recovery + default memory raised 512Mi -> 1Gi
 #   - cfe35df: chart fix for `port: 0` controller-metrics service
 #   - 191537f: API trusts X-Forwarded-Proto behind ingress (login fix) +
 #     controller-service.yaml port fix
 api:
   image:
-    tag: sha-b446443
+    tag: sha-a20fb23
     pullPolicy: IfNotPresent
   ingress:
     # API is exposed via the frontend ingress at /api; no separate
@@ -20,7 +22,7 @@ api:
 
 controller:
   image:
-    tag: sha-b446443
+    tag: sha-a20fb23
     pullPolicy: IfNotPresent
 
 # The cluster runs Valkey, not Bitnami Redis. The chart default
@@ -38,7 +40,7 @@ mcp:
 frontend:
   enabled: true
   image:
-    tag: sha-b446443
+    tag: sha-a20fb23
     pullPolicy: IfNotPresent
   ingress:
     enabled: true
@@ -56,7 +58,7 @@ frontend:
 runtimeEnvironments:
   base:
     image:
-      tag: sha-b446443
+      tag: sha-a20fb23
 
 # Webhook image-registry allow-list — required so the controller's
 # RuntimeEnvironment validating webhook accepts ghcr.io images.
