@@ -130,18 +130,11 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workspace.Status.PVCName},
 		}},
-		// G15 (Epic 17): emptyDir volumes are backed by node disk
-		// by default. Plaintext secrets in /sandbox-cfg/secrets.json
-		// would survive on the node's filesystem until kubelet
-		// reclaims it. Set Medium: Memory so all three volumes are
-		// tmpfs-backed — the bytes never touch disk.
-		//
-		// Memory backing is bounded by the pod's memory limit (set
-		// by resourceRequirementsFor); a 100Mi cap on each volume
-		// is generous for the small JSON files we materialize.
-		// Hitting the cap fails the write loud, which is the desired
-		// behavior (alternatives like silent disk fallback would
-		// re-open G15).
+		// G15 (Epic 17): sandbox-cfg and tmp are tmpfs-backed to
+		// prevent plaintext secrets / session keys from touching
+		// node disk. sandbox-home is intentionally disk-backed so
+		// tool caches (npm, pip, etc.) have sufficient space for
+		// package downloads across sessions.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptrQuantity("4Mi"),
@@ -151,8 +144,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			SizeLimit: ptrQuantity("64Mi"),
 		}}},
 		{Name: "sandbox-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium:    corev1.StorageMediumMemory,
-			SizeLimit: ptrQuantity("16Mi"),
+			SizeLimit: ptrQuantity("1Gi"),
 		}}},
 	}
 

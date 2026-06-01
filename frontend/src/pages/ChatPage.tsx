@@ -30,7 +30,14 @@ export function ChatPage() {
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const queryClient = useQueryClient();
 
-  useEffect(() => { setLocalMessages([]); setPendingQuestions([]); setPendingPermissions([]); }, [sessionId]);
+  useEffect(() => {
+    setLocalMessages([]);
+    setSseStreamParts([]);
+    setServerBusy(false);
+    sseHasDrivenBusy.current = false;
+    setPendingQuestions([]);
+    setPendingPermissions([]);
+  }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
 
@@ -83,10 +90,6 @@ export function ChatPage() {
     }
   }, [sessionStatus]);
 
-  // Reset SSE-driven flag on session change
-  useEffect(() => {
-    sseHasDrivenBusy.current = false;
-  }, [sessionId]);
 
   const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
