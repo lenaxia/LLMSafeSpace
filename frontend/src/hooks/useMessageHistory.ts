@@ -7,7 +7,7 @@ export function useMessageHistory(workspaceId: string | undefined, sessionId: st
     queryFn: ({ pageParam }) =>
       messagesApi.getHistoryPage(workspaceId!, sessionId!, { before: pageParam }),
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    getNextPageParam: (lastPage) => lastPage?.nextCursor,
     enabled: !!workspaceId && !!sessionId,
     staleTime: 10_000,
     refetchOnWindowFocus: false,

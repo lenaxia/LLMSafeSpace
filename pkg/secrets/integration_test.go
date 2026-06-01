@@ -300,22 +300,23 @@ func TestIntegration_SecretTypeSpecificMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		secType  SecretType
-		metadata string
-		checkKey string
-		checkVal string
+		name       string
+		secretName string
+		secType    SecretType
+		metadata   string
+		checkKey   string
+		checkVal   string
 	}{
-		{"ssh with host", SecretTypeSSHKey, `{"key_type":"rsa","host":"gitlab.com"}`, "host", "gitlab.com"},
-		{"git with protocol", SecretTypeGitCredential, `{"host":"bitbucket.org","protocol":"https"}`, "host", "bitbucket.org"},
-		{"file with path", SecretTypeSecretFile, `{"mount_path":"app/config.yaml"}`, "mount_path", "app/config.yaml"},
-		{"env with var", SecretTypeEnvSecret, `{"var_name":"API_TOKEN"}`, "var_name", "API_TOKEN"},
+		{"ssh with host", "meta-ssh-with-host", SecretTypeSSHKey, `{"key_type":"rsa","host":"gitlab.com"}`, "host", "gitlab.com"},
+		{"git with protocol", "meta-git-with-protocol", SecretTypeGitCredential, `{"host":"bitbucket.org","protocol":"https"}`, "host", "bitbucket.org"},
+		{"file with path", "meta-file-with-path", SecretTypeSecretFile, `{"mount_path":"app/config.yaml"}`, "mount_path", "app/config.yaml"},
+		{"env with var", "meta-env-with-var", SecretTypeEnvSecret, `{"var_name":"API_TOKEN"}`, "var_name", "API_TOKEN"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-				Name: "meta-" + tt.name, Type: tt.secType, Value: "secret-val",
+				Name: tt.secretName, Type: tt.secType, Value: "secret-val",
 				Metadata: json.RawMessage(tt.metadata),
 			})
 			if err != nil {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -507,7 +508,7 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 
 	newBindings := make([]string, 0, len(req.Vars))
 	for varName, value := range req.Vars {
-		secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
+		secretName := fmt.Sprintf("%s-env-%s", workspaceID, strings.ToLower(varName))
 		metadata, _ := json.Marshal(map[string]string{"var_name": varName})
 
 		existing, err := h.svc.GetSecretByName(ctx, userID, secretName)
@@ -592,7 +593,7 @@ func (h *SecretsHandler) DeleteWorkspaceEnv(c *gin.Context) {
 
 	workspaceID := c.Param("id")
 	varName := c.Param("name")
-	secretName := fmt.Sprintf("%s-env-%s", workspaceID, varName)
+	secretName := fmt.Sprintf("%s-env-%s", workspaceID, strings.ToLower(varName))
 
 	existing, err := h.svc.GetSecretByName(c.Request.Context(), userID, secretName)
 	if err != nil {
