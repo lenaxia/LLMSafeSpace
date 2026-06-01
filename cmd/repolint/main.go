@@ -62,6 +62,7 @@ func main() {
 	failures += runMigrations(root)
 	failures += runWorklogs(root)
 	failures += runChartDrift(root)
+	failures += runCRDDrift(root)
 
 	if failures > 0 {
 		fmt.Fprintf(os.Stderr, "\nrepolint: %d check(s) failed\n", failures)
@@ -147,6 +148,44 @@ func runChartDrift(root string) int {
 		return 1
 	}
 	fmt.Println("ok    chart migrations match api/migrations/")
+	return 0
+}
+
+// runCRDDrift compares each Go struct in repolint.LiveBindings against
+// the corresponding chart CRD's openAPIV3Schema properties. Drift is
+// reported per-binding so a multi-CRD failure surfaces every diff
+// rather than stopping at the first one — the operator may want to
+// fix them in a single edit pass.
+//
+// Originating incident: worklog 0118-0119 (2026-06-01) — the
+// AgentSessionStatus.Status field landed in Go but the chart CRD
+// still had `lastActivityAt: date-time`. apiserver dropped the field
+// silently on every reconcile that wrote a session list. Symptom was
+// invisible in tests because Go-side serialization succeeded; the
+// drop happened on the wire.
+func runCRDDrift(root string) int {
+	bindings := repolint.LiveBindings()
+	failed := 0
+	for _, b := range bindings {
+		rep, err := repolint.CRDDriftCheck(root, b)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL  CRD drift (%s :: %s): %v\n", b.GoFile, b.GoStruct, err)
+			failed++
+			continue
+		}
+		if !rep.OK() {
+			fmt.Fprintf(os.Stderr, "FAIL  CRD drift:\n%s", rep.String())
+			failed++
+		}
+	}
+	if failed > 0 {
+		fmt.Fprintln(os.Stderr,
+			"  Fix: align the chart CRD's openAPIV3Schema.properties\n"+
+				"  with the Go struct's JSON tags. See worklog 0119 and\n"+
+				"  pkg/repolint/crd_drift.go for context.")
+		return 1
+	}
+	fmt.Printf("ok    CRD drift (%d bindings checked)\n", len(bindings))
 	return 0
 }
 

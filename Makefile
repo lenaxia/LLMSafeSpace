@@ -145,8 +145,10 @@ openapi-validate:
 #   - non-sequential migration version numbers (gap = deleted migration)
 #   - duplicate worklog numbers (history confusion)
 #   - drift between api/migrations/ and charts/llmsafespace/migrations/
-# See pkg/repolint/sequence_test.go for the regression cases and worklog 0098
-# for the originating incident.
+#   - drift between Go CRD struct fields and chart CRD openAPIV3Schema
+#     (apiserver silently drops unknown fields; see worklog 0118-0119)
+# See pkg/repolint/sequence_test.go and pkg/repolint/crd_drift_test.go for
+# the regression cases and worklog 0098 for the originating incident.
 repolint:
 	$(GOBUILD) -o bin/repolint ./cmd/repolint
 	./bin/repolint
