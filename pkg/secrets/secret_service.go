@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/lenaxia/llmsafespace/pkg/validation"
 )
 
 // SecretService provides encrypted secret CRUD operations.
@@ -71,6 +73,10 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	if !ValidSecretTypes[req.Type] {
 		return nil, fmt.Errorf("%w: %s (valid: %s)",
 			ErrInvalidSecretType, req.Type, formatSecretTypes(ValidSecretTypesList()))
+	}
+
+	if err := validation.ValidateSecretName(req.Name); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidMetadata, err)
 	}
 
 	if err := validateMetadata(req.Type, req.Metadata); err != nil {

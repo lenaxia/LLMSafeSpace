@@ -63,6 +63,10 @@ type TerminalTicket struct {
 	ExpiresAt string `json:"expiresAt"`
 }
 
+// SecretNamePattern is the regex for valid secret names.
+// Keep in sync with pkg/validation/name.go.
+const SecretNamePattern = "^[a-z0-9._-]+$"
+
 type SecretResponse struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`

@@ -22,6 +22,9 @@ public class LLMSafeSpaceClient {
     private final Gson gson = new Gson();
     private final Duration timeout;
 
+    /** Regex pattern for valid secret names. Keep in sync with pkg/validation/name.go. */
+    public static final String SECRET_NAME_PATTERN = "^[a-z0-9._-]+$";
+
     private LLMSafeSpaceClient(Builder builder) {
         this.baseUrl = builder.baseUrl.replaceAll("/$", "");
         this.apiKey = builder.apiKey;

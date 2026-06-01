@@ -147,7 +147,11 @@ export interface SecretResponse {
   updatedAt: string;
 }
 
+/** Regex pattern for valid secret names. Keep in sync with pkg/validation/name.go. */
+export const SECRET_NAME_PATTERN = /^[a-z0-9._-]+$/;
+
 export interface CreateSecretRequest {
+  /** Lowercase alphanumeric, dots, underscores, hyphens only. Must not start with dot or hyphen. */
   name: string;
   type: "api-key" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
   value: string;

@@ -76,6 +76,10 @@ class TerminalTicket:
     expiresAt: str
 
 
+# Regex pattern for valid secret names. Keep in sync with pkg/validation/name.go.
+SECRET_NAME_PATTERN = r"^[a-z0-9._-]+$"
+
+
 @dataclass
 class SecretResponse:
     id: str

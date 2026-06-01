@@ -63,6 +63,7 @@ import (
 	"strings"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespace/pkg/validation"
 )
 
 // Secret is the materialization-time representation of a credential.
@@ -191,10 +192,6 @@ func DefaultPaths(home string) Paths {
 // scripts and confuse downstream tools.
 var varNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// nameRE is the alphabet allowed in Secret.Name when used to build file
-// paths. Conservative on purpose; it must be safe to embed without quoting.
-var nameRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
 // hostnameRE matches a permissive but safe hostname. RFC 1123 plus a length
 // cap. We do NOT accept IP literals here — operators who need IP-based hosts
 // can configure them via DNS.
@@ -223,16 +220,7 @@ func validateVarName(s string) error {
 }
 
 func validateName(s string) error {
-	if s == "" {
-		return errors.New("name is empty")
-	}
-	if !nameRE.MatchString(s) {
-		return fmt.Errorf("name %q contains characters outside [A-Za-z0-9._-]", s)
-	}
-	if strings.HasPrefix(s, ".") {
-		return fmt.Errorf("name %q must not start with a dot", s)
-	}
-	return nil
+	return validation.ValidateSecretName(s)
 }
 
 func validateHostname(s string) error {

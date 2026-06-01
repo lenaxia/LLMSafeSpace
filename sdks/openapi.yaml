@@ -1749,6 +1749,8 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+          pattern: '^[a-z0-9._-]+$'
+          description: Lowercase alphanumeric, dots, underscores, hyphens only. Must not start with dot or hyphen.
         type:
           type: string
           enum: [llm-provider, ssh-key, git-credential, secret-file, env-secret]
