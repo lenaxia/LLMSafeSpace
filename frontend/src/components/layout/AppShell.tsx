@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { matchPath, Outlet, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
@@ -20,7 +20,7 @@ export function AppShell() {
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
-      const hasSession = /^\/chat\/[^\/]+\/[^\/]+$/.test(location.pathname);
+      const hasSession = matchPath("/chat/:workspaceId/:sessionId", location.pathname) !== null;
       if (isMobile && !hasSession) {
         setSidebarOpen(true);
       }
