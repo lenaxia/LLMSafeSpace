@@ -85,10 +85,18 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 
 	// Create secure middleware
 	secureMiddleware := secure.New(secure.Options{
-		AllowedHosts:          []string{}, // No host restriction by default
-		SSLRedirect:           cfg.RequireHTTPS && !cfg.Development,
-		SSLTemporaryRedirect:  false,
-		SSLHost:               "",
+		AllowedHosts:         []string{}, // No host restriction by default
+		SSLRedirect:          cfg.RequireHTTPS && !cfg.Development,
+		SSLTemporaryRedirect: false,
+		SSLHost:              "",
+		// Trust X-Forwarded-Proto from the ingress so SSLRedirect does
+		// not trigger when TLS is terminated upstream. Without this,
+		// every request behind a TLS-terminating reverse proxy
+		// (traefik, nginx-ingress, etc.) gets a 301 to itself,
+		// producing an infinite redirect loop. SSLRedirect's
+		// guarantee — "treat as already-HTTPS if header present" —
+		// is the contract every reverse-proxy deployment expects.
+		SSLProxyHeaders:       map[string]string{"X-Forwarded-Proto": "https"},
 		STSSeconds:            31536000,
 		STSIncludeSubdomains:  true,
 		STSPreload:            true,

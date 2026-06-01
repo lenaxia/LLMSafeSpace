@@ -10,7 +10,7 @@ spec:
   type: ClusterIP
   ports:
     - name: metrics
-      port: {{ .Values.controller.metricsAddr | trimPrefix ":" | atoi }}
+      port: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}
       targetPort: metrics
       protocol: TCP
   selector:

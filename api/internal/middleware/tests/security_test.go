@@ -139,3 +139,50 @@ func TestCSPReportingMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	mockLogger.AssertExpectations(t)
 }
+
+// TestSecurityMiddleware_TrustsXForwardedProto pins the contract that when
+// the API runs behind a TLS-terminating reverse proxy (the production
+// deployment shape), an inbound request carrying X-Forwarded-Proto=https
+// must NOT be redirected to itself even though SSLRedirect is enabled.
+//
+// Regression: without SSLProxyHeaders set, every API request behind
+// traefik/nginx-ingress hit a 301 self-redirect, producing the
+// "ERR_TOO_MANY_REDIRECTS" / "Maximum redirects followed" symptom seen
+// against safespace.thekao.cloud (worklog 2026-06-01).
+func TestSecurityMiddleware_TrustsXForwardedProto(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockLogger := logmock.NewMockLogger()
+	mockLogger.On("Warn", mock.Anything, mock.Anything).Maybe()
+
+	router := gin.New()
+	config := middleware.SecurityConfig{
+		RequireHTTPS: true,
+		Development:  false,
+	}
+	router.Use(middleware.SecurityMiddleware(mockLogger, config))
+	router.GET("/api/v1/auth/config", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	t.Run("X-Forwarded-Proto=https reaches handler", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/api/v1/auth/config", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code,
+			"request with X-Forwarded-Proto=https must not be redirected; "+
+				"got status %d location %q", w.Code, w.Header().Get("Location"))
+		assert.Equal(t, "ok", w.Body.String())
+	})
+
+	t.Run("plain HTTP without forwarded header still redirects", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/api/v1/auth/config", nil)
+		// No X-Forwarded-Proto: simulates a direct HTTP request that
+		// bypassed the ingress. SSLRedirect must still fire.
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusMovedPermanently, w.Code)
+	})
+}
