@@ -133,7 +133,14 @@ export function ChatPage() {
   const reconcileOnIdle = useCallback(async () => {
     if (!workspaceId || !sessionId) return;
     try {
-      await queryClient.resetQueries({ queryKey: ["messages", workspaceId, sessionId] });
+      // Keep only the first page (avoids loading flash), drop older cached pages,
+      // then refetch the first page for authoritative state after the turn.
+      queryClient.setQueryData(["messages", workspaceId, sessionId], (old: unknown) => {
+        if (!old) return old;
+        const inf = old as { pages: unknown[]; pageParams: unknown[] };
+        return { pages: inf.pages.slice(0, 1), pageParams: inf.pageParams.slice(0, 1) };
+      });
+      await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
       // History is now authoritative for this session — clear localMessages
       // so the merged view (history + localMessages) does not double-render

@@ -19,7 +19,7 @@ vi.mock("../api/workspaces", () => ({
     renameSession: vi.fn(),
   },
 }));
-vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), sendAsync: vi.fn() } }));
+vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }), sendAsync: vi.fn() } }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../api/input", () => ({
   inputApi: {
@@ -64,7 +64,7 @@ function renderChat(qc: QueryClient, path: string) {
   const sesId = path.split("/")[3]; // e.g. "ses_1"
   qc.setQueryData(["workspace-status", wsId], { phase: "Active" });
   qc.setQueryData(["workspaces"], { items: [], pagination: { limit: 20, offset: 0, total: 0 } });
-  qc.setQueryData(["messages", wsId, sesId], []);
+  qc.setQueryData(["messages", wsId, sesId], { pages: [{ messages: [], nextCursor: undefined }], pageParams: [undefined] });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
@@ -117,7 +117,7 @@ describe("ChatPage agent input requests (US-16.11, US-16.12)", () => {
     vi.clearAllMocks();
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } });
-    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], nextCursor: undefined });
   });
 
   it("agent.question event renders QuestionPrompt", async () => {
@@ -239,7 +239,7 @@ describe("ChatPage agent input requests (US-16.11, US-16.12)", () => {
     // Simulate navigation to different session by unmounting and re-rendering
     unmount();
     qc.setQueryData(["workspace-status", "ws-1"], { phase: "Active" });
-    qc.setQueryData(["messages", "ws-1", "ses_2"], []);
+    qc.setQueryData(["messages", "ws-1", "ses_2"], { pages: [{ messages: [], nextCursor: undefined }], pageParams: [undefined] });
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/ses_2"]}>

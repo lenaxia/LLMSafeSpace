@@ -20,12 +20,19 @@ vi.mock("../api/workspaces", () => ({
     renameSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock("../api/messages", () => ({
-  messagesApi: {
-    getHistory: vi.fn().mockResolvedValue([]),
-    sendAsync: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+vi.mock("../api/messages", () => {
+  const gh = vi.fn().mockResolvedValue([]);
+  return {
+    messagesApi: {
+      getHistory: gh,
+      getHistoryPage: vi.fn().mockImplementation(async () => {
+        const msgs = await gh();
+        return { messages: msgs, nextCursor: undefined };
+      }),
+      sendAsync: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+});
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 
 // Capture the SSE handler and onReconnect callback
@@ -297,8 +304,8 @@ describe("US-15.3: History Fetch on Busy Reconnect", () => {
       sessions: [{ id: "sess-1", status: "busy" }],
     });
     (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "msg-1", role: "user", parts: [{ id: "p1", type: "text", text: "Hello" }] },
       { id: "msg-2", role: "assistant", parts: [{ id: "p2", type: "text", text: "Hi there" }] },
+      { id: "msg-1", role: "user", parts: [{ id: "p1", type: "text", text: "Hello" }] },
     ]);
 
     renderChat(qc, "/chat/ws-1/sess-1");

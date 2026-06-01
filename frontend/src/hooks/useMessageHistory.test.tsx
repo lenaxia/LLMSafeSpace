@@ -7,6 +7,7 @@ import { useMessageHistory } from "./useMessageHistory";
 vi.mock("../api/messages", () => ({
   messagesApi: {
     getHistory: vi.fn(),
+    getHistoryPage: vi.fn(),
   },
 }));
 
@@ -29,12 +30,16 @@ describe("useMessageHistory", () => {
   });
 
   it("fetches message history when both ids provided", async () => {
-    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
-      { id: "m2", role: "assistant", parts: [{ type: "text", text: "hello" }] },
-    ]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        { id: "m2", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+      ],
+      nextCursor: undefined,
+    });
     const { result } = renderHook(() => useMessageHistory("sb-1", "sess-1"), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(2);
+    expect(result.current.data?.pages).toHaveLength(1);
+    expect(result.current.data?.pages[0]?.messages).toHaveLength(2);
   });
 });

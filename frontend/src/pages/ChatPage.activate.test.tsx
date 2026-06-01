@@ -13,7 +13,10 @@ vi.mock("../api/workspaces", () => ({
     list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
   },
 }));
-vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), sendAsync: vi.fn() } }));
+vi.mock("../api/messages", () => {
+  const gh = vi.fn().mockResolvedValue([]);
+  return { messagesApi: { getHistory: gh, getHistoryPage: vi.fn().mockImplementation(async () => { const msgs = await gh(); return { messages: msgs, nextCursor: undefined }; }), sendAsync: vi.fn() } };
+});
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
 
