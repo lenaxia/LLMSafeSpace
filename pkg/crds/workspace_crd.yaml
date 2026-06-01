@@ -231,6 +231,25 @@ spec:
                 lastTransientFailureAt:
                   type: string
                   format: date-time
+                consecutiveFailures:
+                  type: integer
+                  format: int32
+                lastFailureClass:
+                  type: string
+                lastFailureAt:
+                  type: string
+                  format: date-time
+                nextRetryAt:
+                  type: string
+                  format: date-time
+                lastStableAt:
+                  type: string
+                  format: date-time
+                controllerRestartCount:
+                  type: integer
+                  format: int32
+                safeMode:
+                  type: boolean
                 observedRestartGeneration:
                   type: integer
                   format: int64
