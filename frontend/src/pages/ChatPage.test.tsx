@@ -134,6 +134,67 @@ describe("ChatPage", () => {
     });
   });
 
+  it("renders messages in chronological order when API returns shuffled order", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    // Arbitrary/scrambled order
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "bb0000000002abcdef", role: "user", parts: [{ type: "text", text: "Second" }] },
+      { id: "dd0000000004abcdef", role: "assistant", parts: [{ type: "text", text: "Fourth" }] },
+      { id: "aa0000000001abcdef", role: "user", parts: [{ type: "text", text: "First" }] },
+      { id: "cc0000000003abcdef", role: "assistant", parts: [{ type: "text", text: "Third" }] },
+    ]);
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => {
+      const bubbles = screen.getAllByText(/First|Second|Third|Fourth/);
+      expect(bubbles[0]).toHaveTextContent("First");
+      expect(bubbles[1]).toHaveTextContent("Second");
+      expect(bubbles[2]).toHaveTextContent("Third");
+      expect(bubbles[3]).toHaveTextContent("Fourth");
+    });
+  });
+
+  it("newest message always renders at the bottom after history refresh", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    // Simulate post-reconcile: newest message has highest ID
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "ff0000000006abcdef", role: "assistant", parts: [{ type: "text", text: "Latest response" }] },
+      { id: "ee0000000005abcdef", role: "user", parts: [{ type: "text", text: "Latest question" }] },
+      { id: "aa0000000001abcdef", role: "user", parts: [{ type: "text", text: "First message" }] },
+    ]);
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => {
+      const bubbles = screen.getAllByText(/First message|Latest question|Latest response/);
+      // Newest must be last (bottom)
+      expect(bubbles[bubbles.length - 1]).toHaveTextContent("Latest response");
+      // Oldest must be first (top)
+      expect(bubbles[0]).toHaveTextContent("First message");
+    });
+  });
+
+  it("local optimistic message appears after history messages", async () => {
+    const user = userEvent.setup();
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "bb0000000002abcdef", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      { id: "aa0000000001abcdef", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ]);
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    renderChatPage("/chat/ws-1/sess-1");
+
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+    await user.click(document.querySelector("textarea")!);
+    await user.type(document.querySelector("textarea")!, "New message");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      // The new local message should render after the history messages
+      const allTexts = screen.getAllByText(/Hello|Hi|New message/);
+      expect(allTexts[0]).toHaveTextContent("Hello");
+      expect(allTexts[1]).toHaveTextContent("Hi");
+      expect(allTexts[allTexts.length - 1]).toHaveTextContent("New message");
+    });
+  });
+
   it("auto-creates session when workspace Active and no sessionId", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
     (sessionsApi.create as ReturnType<typeof vi.fn>).mockResolvedValue({ sessionId: "new-sess" });
