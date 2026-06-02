@@ -50,7 +50,7 @@ type modelCacheEntry struct {
 }
 
 var (
-	modelCacheMu sync.Mutex
+	modelCacheMu  sync.Mutex
 	modelCacheMap = make(map[string]*modelCacheEntry)
 )
 
