@@ -17,7 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -318,7 +317,6 @@ func TestSetModel_Unauthenticated(t *testing.T) {
 }
 
 // Ensure unused import doesn't break compilation.
-var _ = secrets.SecretTypeLLMProvider
 
 // --- Tier Annotation Tests ---
 
