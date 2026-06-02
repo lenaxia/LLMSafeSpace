@@ -37,6 +37,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 )
 
@@ -185,6 +186,16 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 		if result == nil {
 			result = &secrets.MaterializeResult{}
 		}
+
+		// Flush staged llm-provider secrets to AgentConfigPath.
+		// This MUST succeed before we notify the agent of config changes.
+		if err := m.FlushProviders(opencode.FormatOpenCodeConfig); err != nil {
+			log.Error("reload-secrets: flush providers failed", zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "flush providers: " + err.Error()})
+			return
+		}
+
 		mat, skip, fail := result.Counts()
 		log.Info("secrets reloaded",
 			zap.Int("materialized", mat),
@@ -192,12 +203,35 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 			zap.Int("failed", fail),
 		)
 
-		// Restart opencode if env/llm secrets changed and we have a
-		// supervised process.
+		// Notify opencode of credential changes via the Control API.
+		// PUT /auth/:providerID writes each key to auth.json, then
+		// POST /instance/dispose invalidates the instance state so the
+		// next request picks up the new credentials.
+		// In-flight LLM calls are aborted by disposal; session history
+		// persists in SQLite. This is acceptable for MVP — credential
+		// rotation does not happen mid-conversation in practice.
+		configReloaded := false
+		if hasLLMProviders(batch) {
+			staged := m.StagedProviders()
+			if len(staged) > 0 {
+				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort))
+				if err := oc.RefreshCredentials(staged); err != nil {
+					log.Warn("reload-secrets: opencode credential refresh failed, falling back to restart",
+						zap.Error(err))
+					if proc != nil {
+						proc.restart()
+					}
+				} else {
+					configReloaded = true
+				}
+			}
+		}
+
+		// Restart for env-secret changes (agent reads env at boot only).
 		restarted := false
-		if proc != nil && shouldRestart(batch) {
-			log.Info("env/llm secrets changed, restarting opencode")
-			//nolint:contextcheck // restart() spawns its own health-check goroutine with a fresh context; see managedProcess.restart
+		if !configReloaded && proc != nil && shouldRestart(batch) {
+			log.Info("env secrets changed, restarting opencode")
+			//nolint:contextcheck // restart() spawns its own health-check goroutine with a fresh context
 			proc.restart()
 			restarted = true
 		}
@@ -208,18 +242,29 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"reloaded":  mat,
-			"skipped":   skip,
-			"failed":    fail,
-			"results":   result.Results,
-			"restarted": restarted,
+			"reloaded":       mat,
+			"skipped":        skip,
+			"failed":         fail,
+			"results":        result.Results,
+			"restarted":      restarted,
+			"configReloaded": configReloaded,
 		})
 	}
 }
 
 func shouldRestart(batch []secrets.Secret) bool {
 	for _, s := range batch {
-		if s.Type == "env-secret" || s.Type == "api-key" || s.Type == "llm-provider" {
+		if s.Type == "env-secret" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLLMProviders returns true if the batch contains any llm-provider secrets.
+func hasLLMProviders(batch []secrets.Secret) bool {
+	for _, s := range batch {
+		if s.Type == "llm-provider" {
 			return true
 		}
 	}

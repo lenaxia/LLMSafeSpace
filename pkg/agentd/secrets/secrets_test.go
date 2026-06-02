@@ -944,3 +944,37 @@ type errFS struct{ *fakeFS }
 func (e *errFS) OpenForCreate(string, int, os.FileMode) (io.WriteCloser, error) {
 	return nil, errors.New("simulated open failure")
 }
+
+// TestStagedProviders_Accessor verifies the public StagedProviders() method
+// returns the same data that the internal stagedProviders field holds.
+func TestStagedProviders_Accessor(t *testing.T) {
+	m, _ := newFixture(t)
+
+	// Before materialize — nil
+	require.Nil(t, m.StagedProviders())
+
+	_, err := m.Materialize([]Secret{
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","baseURL":"https://custom.endpoint"}`},
+		{Type: "llm-provider", Name: "openai", Plaintext: `{"provider":"openai","apiKey":"sk-oai-456"}`},
+	})
+	require.NoError(t, err)
+
+	staged := m.StagedProviders()
+	require.Len(t, staged, 2)
+	require.Equal(t, "anthropic", staged[0].Provider)
+	require.Equal(t, "sk-ant-123", staged[0].APIKey)
+	require.Equal(t, "https://custom.endpoint", staged[0].BaseURL)
+	require.Equal(t, "openai", staged[1].Provider)
+	require.Equal(t, "sk-oai-456", staged[1].APIKey)
+}
+
+// TestStagedProviders_EmptyAfterNoLLMProviders verifies StagedProviders
+// returns nil when batch has no llm-provider secrets.
+func TestStagedProviders_EmptyAfterNoLLMProviders(t *testing.T) {
+	m, _ := newFixture(t)
+	_, err := m.Materialize([]Secret{
+		{Type: "env-secret", Name: "x", Metadata: map[string]string{"var_name": "X"}, Plaintext: "v"},
+	})
+	require.NoError(t, err)
+	require.Nil(t, m.StagedProviders())
+}

@@ -1,189 +1,235 @@
-# PRR: Contribute API Key Auth Endpoint to opencode
+# PRR: Provider State Hot-Reload After Credential Injection
 
 **Date:** 2026-06-02
-**Status:** Draft
+**Status:** Draft (Rewritten — previous version based on incorrect assumptions)
 **Type:** Upstream contribution (anomalyco/opencode)
-**Motivation:** Enable hot-reload of LLM provider credentials without session disposal
+**Motivation:** Enable credential rotation without aborting in-flight LLM calls
 
 ---
 
 ## Problem
 
-opencode has two ways to inject provider credentials:
+When LLMSafeSpace rotates provider credentials (e.g., user updates their Anthropic key), the new key must reach the running opencode instance. Today, the only way to make opencode pick up new credentials is instance disposal — which aborts any in-flight LLM streaming call.
 
-1. **Config file (`PATCH /global/config`)** — Writes merged config, then calls `disposeAllInstancesAndEmitGlobalDisposed`. All active sessions are killed. Users lose in-flight conversations.
+### Current credential injection paths
 
-2. **Auth service (`Auth.create`)** — Writes to `account.json`, emits `Event.Switched`, AccountPlugin triggers `catalog.transform` which updates provider credentials in-memory. Sessions are preserved.
+| Path | Method | In-flight calls | Sessions |
+|------|--------|----------------|----------|
+| `PATCH /global/config` | Writes config, disposes ALL instances | **Aborted (all)** | History preserved (SQLite), active streams killed |
+| `PUT /auth/:providerID` + `POST /instance/dispose` | Writes auth.json, disposes THIS instance | **Aborted (this instance)** | History preserved, active streams killed |
+| `PUT /auth/:providerID` alone | Writes auth.json, no state refresh | None affected | Stale — new key not used until instance recreated |
 
-Path 2 is the correct hot-reload mechanism, but it has **no HTTP endpoint** for API key credentials. The only HTTP surface for auth is OAuth flows (`POST /provider/:providerID/oauth/authorize` + callback). Direct API key injection is only available internally via `Auth.create({type: "api", key: "..."})`.
+None of these allow: "inject new key → new calls use it → in-flight calls finish naturally."
 
-This forces external orchestrators (like LLMSafeSpace's workspace-agentd) to use path 1, destroying sessions every time credentials are rotated.
+### Why in-flight calls are aborted
+
+The provider `InstanceState` holds a `Map<hash, SDK>` cache. Each SDK is an AI SDK provider object created with `apiKey` baked in at factory time:
+
+```typescript
+const loaded = createAnthropic({ apiKey: "sk-ant-..." })
+s.sdk.set(key, loaded)
+```
+
+Instance disposal runs `disposeInstance(directory)` which calls all registered disposers, including `ScopedCache.invalidate`. This tears down the entire instance — sessions, tools, LSP, file watchers, and the active prompt execution context.
+
+### Why selective invalidation would work
+
+`InstanceState.invalidate(state)` is exported and invalidates a single `ScopedCache` entry. If called on only the provider state:
+
+- The cache entry is marked stale
+- Next `InstanceState.get(state)` recomputes: re-reads `auth.json`, rebuilds provider catalog, creates fresh SDK objects
+- The OLD SDK object in memory is NOT garbage collected — any in-flight prompt holding a reference to it continues streaming until natural completion
+- Sessions, tools, MCP, LSP, file watchers — all unaffected (separate `InstanceState` instances)
+
+---
+
+## Validated Assumptions
+
+| # | Claim | Evidence | File |
+|---|-------|----------|------|
+| V1 | `Auth.Service` has `get`, `all`, `set`, `remove` — no `create` method | Interface definition | `src/auth/index.ts:49-53` |
+| V2 | `auth.set()` writes to `auth.json` and returns — no events emitted, no state invalidation | Implementation reads file, merges, writes — nothing else | `src/auth/index.ts:69-77` |
+| V3 | `PUT /auth/:providerID` already exists in Control API | Route definition + handler | `groups/control.ts:37-49`, `handlers/control.ts:14-20` |
+| V4 | Provider state is `InstanceState<State>` — a `ScopedCache` | `InstanceState.make<State>()` call | `src/provider/provider.ts:1194` |
+| V5 | SDK objects are cached in `State.sdk: Map<string, BundledSDK>` keyed by hash of `{providerID, npm, options}` | `s.sdk.set(key, loaded)` | `src/provider/provider.ts:1658,1682` |
+| V6 | `apiKey` is part of the hash key AND baked into the SDK factory call | `options["apiKey"] = provider.key` before hash + factory | `src/provider/provider.ts:1576,1653` |
+| V7 | `InstanceState.invalidate` is exported and invalidates one cache entry | Public export | `src/effect/instance-state.ts:67` |
+| V8 | Instance disposal kills ALL `InstanceState` caches via `registerDisposer` → `ScopedCache.invalidate` | Disposal mechanism | `src/effect/instance-state.ts:39-40`, `src/effect/instance-registry.ts:7` |
+| V9 | Sessions are persisted in SQLite (survive disposal) | Drizzle ORM with `SessionTable` | `src/session/message-v2.ts:32` |
+| V10 | TUI after `auth.set` calls `instance.dispose()` explicitly — no automatic refresh | Client-side disposal | `cli/cmd/tui/component/dialog-provider.tsx:400` |
+| V11 | `Provider.Service.Interface` does not expose invalidation | Interface has only `list`, `getProvider`, `getModel`, `getLanguage`, `closest`, `getSmallModel`, `defaultModel` | `src/provider/provider.ts:1004-1020` |
+| V12 | The provider `state` variable is local to `Provider.layer` — inaccessible from handlers | Created inside `Layer.effect` closure | `src/provider/provider.ts:1194` |
+| V13 | Control API (`PUT /auth/:providerID`) is root-scoped — no instance context, no `Provider.Service` | `ControlApi` in `RootHttpApi`, provided by `rootApiRoutes` without `instanceContextLayer` | `server.ts:119-121` |
+| V14 | `ProviderApi` (instance-scoped) already has access to `Provider.Service` | Handler resolves `yield* Provider.Service` | `handlers/provider.ts:45` |
+| V15 | `ScopedCache.invalidate` marks entry stale; existing references held by in-flight code are NOT interrupted | Effect's `ScopedCache` is a lookup cache, not a resource manager — invalidation affects next lookup only | `instance-state.ts:67-70` + `session/llm.ts:101` resolves language model ONCE at prompt start |
+
+### Previously incorrect assumptions (from v1 of this PRR)
+
+| # | False claim | Reality |
+|---|------------|---------|
+| ~~P1~~ | `Auth.create` exists and emits `Event.Switched` | No such method or event exists |
+| ~~P2~~ | `AccountPlugin` triggers `catalog.transform` | No `AccountPlugin` or `catalog.transform` in the codebase |
+| ~~P3~~ | Path 2 preserves sessions without disposal | TUI explicitly disposes after `auth.set` |
+| ~~P4~~ | No HTTP endpoint exists for API key injection | `PUT /auth/:providerID` already exists in Control API |
 
 ---
 
 ## Proposed Change
 
-Add a new HTTP endpoint to the provider API group:
+Add a `refreshAuth` method to `Provider.Service.Interface` that invalidates the provider `InstanceState`, forcing credential re-read on next access without instance disposal.
 
-```
-POST /provider/:providerID/auth/key
-```
+### Interface change
 
-### Request Body
-
-```json
-{
-  "key": "sk-ant-api03-...",
-  "metadata": {                    // optional
-    "baseURL": "https://custom.endpoint/v1"
-  }
+```typescript
+// src/provider/provider.ts — add to Interface
+export interface Interface {
+  // ... existing methods ...
+  readonly refreshAuth: () => Effect.Effect<void>
 }
 ```
 
-### Behavior
+### Implementation
 
-1. Validate that `key` is non-empty string
-2. Call `Auth.create({ serviceID: providerID, credential: { type: "api", key, metadata } })`
-3. This triggers:
-   - Write to `account.json`
-   - `Event.Switched` emission
-   - `AccountPlugin.catalog.transform` → sets `provider.options.aisdk.provider.apiKey`
-   - Catalog state updates live
-4. Return the created `Auth.Info` (minus the raw key — return `id` and `serviceID` only)
+```typescript
+// Inside Provider.layer, after state is created:
+const refreshAuth = Effect.fn("Provider.refreshAuth")(function* () {
+  yield* InstanceState.invalidate(state)
+})
 
-### Response
-
-```json
-{
-  "id": "acc_01J...",
-  "serviceID": "anthropic",
-  "description": "default"
-}
+// Add to Service.of:
+return Service.of({
+  list,
+  getProvider,
+  getModel,
+  getLanguage,
+  closest,
+  getSmallModel,
+  defaultModel,
+  refreshAuth,  // new
+})
 ```
 
-### Errors
+### Wiring challenge: Control API is root-scoped, Provider is instance-scoped
 
-| Status | Condition |
-|--------|-----------|
-| 400 | Missing `key` field or empty string |
-| 400 | Invalid `providerID` (not a known or configured provider) |
-| 500 | Failed to write auth file |
+The `PUT /auth/:providerID` endpoint lives in `ControlApi` → `RootHttpApi` → `rootApiRoutes`. This layer has **no instance context** and no access to `Provider.Service` (which is created per-instance inside `InstanceStore.load()`).
+
+Two options for wiring:
+
+**Option A: Add a new instance-scoped endpoint (preferred)**
+
+Add `POST /provider/refresh` to the existing `ProviderApi` group (which already has instance context + Provider.Service):
+
+```typescript
+// src/server/routes/instance/httpapi/groups/provider.ts — add endpoint
+HttpApiEndpoint.post("refresh", `${root}/refresh`, {
+  query: WorkspaceRoutingQuery,
+  success: described(Schema.Boolean, "Provider state refreshed"),
+})
+```
+
+```typescript
+// src/server/routes/instance/httpapi/handlers/provider.ts — add handler
+const refresh = Effect.fn("ProviderHttpApi.refresh")(function* () {
+  yield* provider.refreshAuth()
+  return true
+})
+```
+
+The caller sequence becomes:
+```
+PUT /auth/:providerID       → writes auth.json (root, no instance context)
+POST /provider/refresh      → invalidates provider state (instance-scoped)
+```
+
+**Option B: Trigger invalidation from within Auth.Service.set() via callback**
+
+Register a callback when the provider layer initializes that `Auth.Service` can call after any `set()`:
+
+```typescript
+// Provider.layer registers an on-auth-change hook
+auth.onSet(() => InstanceState.invalidate(state))
+```
+
+This auto-refreshes on every auth write, but requires extending `Auth.Service` interface. More invasive.
+
+**Recommendation:** Option A. Two explicit calls from the orchestrator. The first is already available today (`PUT /auth/:providerID`). The second (`POST /provider/refresh`) is the new endpoint. This keeps the control handler simple, doesn't require architectural changes to the layer system, and fits opencode's existing pattern of explicit instance-scoped operations.
+
+### Behavior (with Option A)
+
+1. `PUT /auth/:providerID` with `{type: "api", key: "sk-new-..."}` → writes `auth.json`
+2. `POST /provider/refresh` (with `?directory=...` query for workspace routing) → `provider.refreshAuth()` → `InstanceState.invalidate(state)` → cache entry marked stale
+3. Next `InstanceState.get(state)` (triggered by next prompt) → re-reads `auth.json`, rebuilds provider catalog with new key, creates fresh SDK
+4. In-flight call still holds reference to old SDK → continues streaming → completes naturally
+5. Both calls return 200
+
+### What happens to the `models` cache
+
+The `State` struct contains both `sdk: Map<string, BundledSDK>` and `models: Map<string, LanguageModelV3>`. Both are rebuilt on state recomputation. The old `LanguageModelV3` references held by in-flight prompts remain valid — they're just no longer in the cache.
 
 ---
 
-## Why This Endpoint Doesn't Exist Today
+## Alternative Considered: Granular SDK cache invalidation
 
-opencode's auth model was designed for interactive flows:
-- OAuth: User clicks "Connect" in TUI → browser redirect → callback
-- API keys: User types key into TUI prompt → directly calls `Auth.set()`
+Instead of invalidating the entire provider `InstanceState`, we could expose only SDK cache clearing:
 
-There's no use case in the standalone opencode TUI for programmatic API key injection. The gap exists because opencode was designed as a standalone tool, not as an embedded agent runtime managed by an orchestrator.
-
----
-
-## Alternative Considered: Write to `account.json` directly
-
-We could bypass the HTTP API and write to `~/.local/share/opencode/account.json` directly from workspace-agentd.
+```typescript
+readonly clearSDKCache: (providerID?: ProviderV2.ID) => Effect.Effect<void>
+```
 
 **Rejected because:**
-- `Auth.create()` emits `Event.Switched` which triggers `catalog.transform`. Writing the file directly doesn't trigger this event — the catalog won't update until next instance creation.
-- File format is an internal implementation detail subject to change
-- Violates process boundaries (agentd shouldn't know opencode's data layout)
+- Provider state reads `auth.json` during initialization. Just clearing the SDK cache doesn't re-read credentials from disk — the `provider.key` in state still holds the old value.
+- Full `InstanceState` invalidation is correct: it re-reads auth, rebuilds providers, and naturally produces new SDKs with updated keys.
+- The cost of full provider state recomputation is ~10-50ms (file reads + SDK factory calls). Acceptable.
 
 ---
 
-## Implementation Plan
+## Alternative Considered: File watcher on `auth.json`
 
-### In opencode (upstream PR)
+Auto-detect changes to `auth.json` and invalidate provider state.
 
-**File: `packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts`**
-
-Add endpoint to `ProviderApi`:
-
-```typescript
-HttpApiEndpoint.post("setApiKey", `${root}/:providerID/auth/key`, {
-  params: { providerID: ProviderV2.ID },
-  query: WorkspaceRoutingQuery,
-  payload: Schema.Struct({
-    key: Schema.String.pipe(Schema.nonEmptyString()),
-    metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  }),
-  success: described(Schema.Struct({
-    id: Auth.ID,
-    serviceID: Auth.ServiceID,
-  }), "API key credential created"),
-  error: ProviderAuthApiError,
-})
-```
-
-**File: `packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts`**
-
-Add handler:
-
-```typescript
-const setApiKey = Effect.fn("ProviderHttpApi.setApiKey")(function* (ctx) {
-  const { providerID } = ctx.params
-  const { key, metadata } = ctx.payload
-  
-  const account = yield* auth.create({
-    serviceID: Auth.ServiceID.make(providerID),
-    credential: new Auth.ApiKeyCredential({
-      type: "api",
-      key,
-      metadata,
-    }),
-  })
-  
-  if (!account) {
-    return yield* Effect.fail(new ProviderAuthApiError({
-      name: "BadRequest",
-      data: { providerID, message: "Failed to create credential" },
-    }))
-  }
-  
-  return { id: account.id, serviceID: account.serviceID }
-})
-```
-
-### In LLMSafeSpace (after upstream merges)
-
-Replace `PATCH /global/config` with:
-
-```go
-// For each staged provider:
-POST http://localhost:{port}/provider/{providerID}/auth/key
-Body: {"key": "sk-...", "metadata": {"baseURL": "..."}}
-```
-
-This eliminates session disposal entirely.
+**Rejected because:**
+- Adds complexity (debouncing, race conditions with concurrent writes)
+- opencode's architecture is pull-based (lazy `ScopedCache`), not push-based
+- The Control API already knows when auth changes — explicit invalidation is simpler and more predictable
+- Would fire even for changes not relevant to the current instance
 
 ---
 
 ## Acceptance Criteria
 
-1. `POST /provider/anthropic/auth/key` with valid key → 200, provider appears in `GET /provider` list as enabled
-2. Active session before key injection continues working after injection (session NOT disposed)
-3. New sessions use the injected key immediately
-4. `POST /provider/anthropic/auth/key` with empty key → 400
-5. Calling the endpoint multiple times updates (not duplicates) the credential for that provider
-6. Credential persists across opencode restart (written to `account.json`)
+1. `PUT /auth/anthropic` with new key → 200 (writes auth.json)
+2. `POST /provider/refresh` → 200 (invalidates provider state)
+3. Immediately start a prompt → uses new key (fresh SDK created)
+4. If a prompt was in-flight during the refresh → it completes without error using the old key
+5. After completion, next prompt uses new key
+6. Session list before and after is identical (no sessions lost)
+7. `GET /provider` after refresh shows provider as connected with new key
 
 ---
 
 ## Questions for Upstream Maintainers
 
-1. **Is this endpoint welcome?** opencode is moving toward being embedded in orchestrators (VS Code extension, web IDE, LLMSafeSpace). Programmatic credential management seems aligned with this direction.
+1. **Is `Provider.refreshAuth()` the right abstraction?** Alternatively, should invalidation be triggered automatically inside `Auth.Service.set()` via a subscriber/hook pattern?
 
-2. **Should this replace or complement OAuth?** For providers that support both OAuth and API keys (e.g., Anthropic via Console), should the endpoint coexist with the OAuth flow?
+2. **Should refreshAuth be on Provider.Service or a separate RefreshService?** Provider already has 7 methods. Adding one more is minimal, but if other state (MCP, plugins) also needs selective refresh in the future, a centralized approach might be better.
 
-3. **Should there be a `DELETE /provider/:providerID/auth/key`?** For credential revocation without using the generic `Auth.remove()`.
+3. **Should the Control API `PUT /auth/:providerID` handler auto-refresh?** Currently it just writes and returns. The question is whether the refresh should be opt-in (caller decides) or automatic (always refresh on write). Automatic is safer for orchestrators.
 
-4. **Naming preference:** `POST /provider/:providerID/auth/key` vs `PUT /provider/:providerID/credential` vs `POST /provider/:providerID/authenticate`?
+4. **Naming:** `refreshAuth` vs `invalidate` vs `reloadCredentials`?
+
+---
+
+## Implementation Complexity
+
+- **Lines changed:** ~25 (interface addition, one method in Provider.layer, one new endpoint definition, one new handler)
+- **Files touched:** `provider/provider.ts` (interface + implementation), `groups/provider.ts` (endpoint), `handlers/provider.ts` (handler)
+- **Risk:** Low. `InstanceState.invalidate` is already used by the disposal system. `ProviderApi` already has instance context and Provider.Service access. No new layers or architectural changes.
+- **Testing:** Unit test: call `refreshAuth`, verify next `list()` call returns updated provider state. Integration test: set key via `PUT /auth/:providerID` → call `POST /provider/refresh` → prompt → verify model connects with new key.
 
 ---
 
 ## Timeline
 
-- **Step 2 (now):** Ship with `PATCH /global/config`. Sessions lost on credential change. Acceptable for MVP.
-- **Upstream PR:** Submit after Step 2 ships. Low urgency — session loss is annoying but not blocking.
-- **Step 3 (after merge):** Switch agentd to use `POST /provider/:providerID/auth/key`. Sessions preserved.
+- **Now (Step 2):** Ship with `PUT /auth/:providerID` + `POST /instance/dispose` (targeted disposal). In-flight calls aborted but this is acceptable for MVP — credential rotation doesn't happen mid-conversation in practice.
+- **Upstream PR:** Submit after Step 2 ships. Small, focused change (~25 lines).
+- **After merge:** Switch agentd to: `PUT /auth/:providerID` → `POST /provider/refresh`. Two calls, but in-flight prompts preserved. No instance disposal needed.

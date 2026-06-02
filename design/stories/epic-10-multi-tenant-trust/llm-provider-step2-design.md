@@ -38,7 +38,7 @@ These are facts confirmed by reading the opencode source code (packages/core/src
 
 **Implication for Step 2:** Use `PATCH /global/config` to push credentials into opencode. This disposes all instances (sessions lost) but avoids process restart, eliminates the restart race, and is the only HTTP API available for API key injection today.
 
-**Future (Step 3): Contribute `POST /provider/:providerID/auth/apikey` to opencode** that calls `Auth.create({type: "api", key})` internally. This triggers `catalog.transform` via `Event.Switched` without disposing instances — true hot-reload with sessions preserved. See `design/stories/epic-10-multi-tenant-trust/opencode-auth-create-prr.md`.
+**Future (Step 3): Contribute `POST /provider/refresh` to opencode** that calls `Provider.refreshAuth()` (selective `InstanceState.invalidate` on the provider cache). This invalidates the cached SDK/provider state without disposing instances — in-flight prompts complete naturally, new prompts pick up updated credentials. See `design/stories/epic-10-multi-tenant-trust/opencode-auth-create-prr.md`.
 
 ---
 

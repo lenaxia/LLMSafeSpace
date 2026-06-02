@@ -224,6 +224,21 @@ func validateName(s string) error {
 	return validation.ValidateSecretName(s)
 }
 
+// sanitizeEnvSuffix converts a secret name into a valid env var suffix by
+// replacing non-alphanumeric characters with underscores and uppercasing.
+func sanitizeEnvSuffix(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToUpper(s) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
 func validateHostname(s string) error {
 	if len(s) == 0 || len(s) > 253 {
 		return fmt.Errorf("hostname length %d out of range", len(s))
@@ -460,12 +475,17 @@ func newValidationError(format string, args ...interface{}) error {
 // --- per-type appliers ----------------------------------------------------
 
 func (m *Materializer) applyAPIKey(s Secret) error {
-	// PLAINTEXT is opaque opencode JSON; we don't validate its shape, only
-	// the fact that it's non-empty.
+	// api-key secrets are written as environment variables, not to AgentConfigPath.
+	// AgentConfigPath is exclusively managed by FlushProviders (llm-provider type).
 	if s.Plaintext == "" {
 		return newValidationError("api-key plaintext is empty")
 	}
-	return atomicWrite(m.FS, m.Paths.AgentConfigPath, []byte(s.Plaintext), 0o600)
+	varName := "API_KEY"
+	if s.Name != "" {
+		varName = "API_KEY_" + sanitizeEnvSuffix(s.Name)
+	}
+	line := FormatEnvLine(varName, s.Plaintext)
+	return appendFile(m.FS, m.Paths.SecretsEnvPath, []byte(line), 0o600)
 }
 
 func (m *Materializer) applySSHKey(s Secret) error {
@@ -571,6 +591,15 @@ func (m *Materializer) applyLLMProvider(s Secret) error {
 	}
 	m.stagedProviders = append(m.stagedProviders, data)
 	return nil
+}
+
+// StagedProviders returns the LLM provider data accumulated during
+// Materialize. Returns nil if no llm-provider secrets were in the batch.
+// This allows callers to use the structured data for direct API injection
+// (e.g., PUT /auth/:providerID) instead of or in addition to file-based
+// config rendering via FlushProviders.
+func (m *Materializer) StagedProviders() []sec.LLMProviderData {
+	return m.stagedProviders
 }
 
 // FlushProviders calls the formatter with all staged LLM provider data and
