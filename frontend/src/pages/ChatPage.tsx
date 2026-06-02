@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
@@ -41,13 +41,14 @@ export function ChatPage() {
 
   const { data: status } = useWorkspaceStatus(workspaceId);
 
-  const { data: workspaces } = useQuery({
+  const { data: workspaceName } = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => workspacesApi.list(),
+    select: (data) => {
+      const ws = data.items?.find((w) => w.id === workspaceId);
+      return ws?.name ?? (workspaceId ? `workspace-${workspaceId.slice(0, 8)}` : "");
+    },
   });
-
-  const workspace = workspaces?.items?.find((w) => w.id === workspaceId);
-  const workspaceName = workspace?.name ?? (workspaceId ? `workspace-${workspaceId.slice(0, 8)}` : "");
 
   const activateMutation = useActivateWorkspace();
 
@@ -70,15 +71,7 @@ export function ChatPage() {
   }, [isReady, workspaceId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeWorkspaceId = isReady ? workspaceId : undefined;
-  const { data: historyPages, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
-  const history = useMemo(() => {
-    if (!historyPages?.pages) return [];
-    // Collect all messages from all pages, then sort by ID.
-    // opencode IDs are timestamp-prefixed hex (ascending = chronological),
-    // so lexicographic sort gives oldest-first regardless of API page order.
-    const all = historyPages.pages.flatMap((p) => p.messages);
-    return all.sort((a, b) => a.id.localeCompare(b.id));
-  }, [historyPages?.pages]);
+  const { data: history, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
 
   // US-15.1: Derive serverBusy from workspace status
   const sessionStatus = status?.sessions?.find((s) => s.id === sessionId);
@@ -167,21 +160,19 @@ export function ChatPage() {
   // Auto-rename workspace from first session title if name is still auto-generated
   const hasAutoRenamedRef = useRef(false);
   useEffect(() => {
-    console.log("[Workspace] sessionTitle:", sessionTitle, "workspace:", workspace?.name, "pattern match:", workspace?.name ? /^[a-z]+-[a-z]+-\d+$/.test(workspace.name) : "n/a");
-    if (!sessionTitle || !workspace || !workspaceId || hasAutoRenamedRef.current) return;
+    if (!sessionTitle || !workspaceName || !workspaceId || hasAutoRenamedRef.current) return;
     // Skip temporary opencode titles (e.g. "New session - 2026-05-27T23:03:56.256Z")
     if (/^New session\s*-\s*\d{4}-/.test(sessionTitle)) return;
     // Detect auto-generated name: adjective-noun-number OR "New session - <timestamp>"
-    const isAutoName = /^[a-z]+-[a-z]+-\d+$/.test(workspace.name) ||
-      /^New session\s*-\s*\d{4}-/.test(workspace.name);
+    const isAutoName = /^[a-z]+-[a-z]+-\d+$/.test(workspaceName) ||
+      /^New session\s*-\s*\d{4}-/.test(workspaceName);
     if (isAutoName) {
       hasAutoRenamedRef.current = true;
-      console.log("[Workspace] auto-renaming to:", sessionTitle);
       workspacesApi.renameWorkspace(workspaceId, sessionTitle).then(() => {
         queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       });
     }
-  }, [sessionTitle, workspace, workspaceId, queryClient]);
+  }, [sessionTitle, workspaceName, workspaceId, queryClient]);
   const [sseStreamParts, setSseStreamParts] = useState<StreamPart[]>([]);
   // Store the text the user just sent so we can strip the user echo from
   // the SSE stream. Opencode echoes the user's message as the first

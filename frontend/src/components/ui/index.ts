@@ -5,3 +5,4 @@ export { Badge } from "./Badge";
 export { Spinner } from "./Spinner";
 export { KebabMenu } from "./KebabMenu";
 export type { KebabMenuItem } from "./KebabMenu";
+export { LazyDetails } from "./LazyDetails";

@@ -29,17 +29,19 @@ describe("useMessageHistory", () => {
     expect(result.current.isFetching).toBe(false);
   });
 
-  it("fetches message history when both ids provided", async () => {
+  it("fetches and returns messages sorted chronologically", async () => {
     (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
       messages: [
-        { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
-        { id: "m2", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+        { id: "bb0000000002", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+        { id: "aa0000000001", role: "user", parts: [{ type: "text", text: "hi" }] },
       ],
       nextCursor: undefined,
     });
     const { result } = renderHook(() => useMessageHistory("sb-1", "sess-1"), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.pages).toHaveLength(1);
-    expect(result.current.data?.pages[0]?.messages).toHaveLength(2);
+    // select sorts by ID (chronological)
+    expect(result.current.data).toHaveLength(2);
+    expect(result.current.data![0]!.id).toBe("aa0000000001");
+    expect(result.current.data![1]!.id).toBe("bb0000000002");
   });
 });

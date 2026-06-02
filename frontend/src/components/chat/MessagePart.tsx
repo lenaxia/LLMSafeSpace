@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -29,22 +29,24 @@ function ToolInput({ input }: { input: unknown }) {
   return <pre className="text-xs text-muted-foreground font-mono whitespace-pre-wrap max-h-20 overflow-y-auto">{JSON.stringify(input, null, 2)}</pre>;
 }
 
+import { LazyDetails } from "../ui/LazyDetails";
+
 function ToolDetails({ borderColor, textColor, statusIcon, toolName, filePath, children }: {
   borderColor: string; textColor: string; statusIcon: string; toolName: string; filePath: string; children: React.ReactNode;
 }) {
-  const [opened, setOpened] = useState(false);
   return (
-    <details className={cn("group my-1.5 rounded-md border", borderColor)} onToggle={(e) => setOpened((e.target as HTMLDetailsElement).open)}>
-      <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium overflow-hidden", textColor)}>
-        <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
-      </summary>
-      {opened && (
-        <div className="border-t border-inherit py-1 space-y-1 min-w-0 overflow-hidden">
-          {children}
-        </div>
-      )}
-    </details>
+    <LazyDetails
+      className={cn("my-1.5 rounded-md border", borderColor)}
+      contentClassName="border-t border-inherit py-1 space-y-1 min-w-0 overflow-hidden"
+      summary={
+        <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium overflow-hidden", textColor)}>
+          <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+          <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
+        </summary>
+      }
+    >
+      {children}
+    </LazyDetails>
   );
 }
 
