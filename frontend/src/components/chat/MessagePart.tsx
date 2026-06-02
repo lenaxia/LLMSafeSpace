@@ -41,6 +41,8 @@ function ToolDiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
           hideLineNumbers={false}
           styles={{
             contentText: { fontSize: "11px", lineHeight: "1.4" },
+            gutter: { minWidth: "20px", padding: "0 4px" },
+            lineNumber: { fontSize: "9px" },
           }}
         />
       </div>
