@@ -4,6 +4,7 @@
 package opencode
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -39,7 +40,7 @@ func TestPushCredentials_SingleProvider(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant-123"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
 	require.Len(t, received, 1)
 	require.Equal(t, "anthropic", received[0].providerID)
@@ -67,7 +68,7 @@ func TestPushCredentials_MultipleProviders(t *testing.T) {
 		{Provider: "google", APIKey: "sk-goog"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
 	require.Equal(t, int32(3), callCount.Load())
 }
@@ -91,7 +92,7 @@ func TestPushCredentials_WithMetadata_BaseURL(t *testing.T) {
 		{Provider: "openai", APIKey: "sk-oai", BaseURL: "https://custom.endpoint/v1"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
 	require.Equal(t, "sk-oai", received.Key)
 	require.NotNil(t, received.Metadata)
@@ -116,7 +117,7 @@ func TestPushCredentials_WithoutBaseURL_NoMetadata(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
 
 	var parsed map[string]interface{}
@@ -136,11 +137,11 @@ func TestPushCredentials_EmptyProviders_NoOp(t *testing.T) {
 
 	c := NewClient(srv.URL)
 
-	err := c.PushCredentials(nil)
+	err := c.PushCredentials(context.Background(), nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(0), callCount.Load())
 
-	err = c.PushCredentials([]secrets.LLMProviderData{})
+	err = c.PushCredentials(context.Background(), []secrets.LLMProviderData{})
 	require.NoError(t, err)
 	require.Equal(t, int32(0), callCount.Load())
 }
@@ -157,7 +158,7 @@ func TestPushCredentials_ServerError_ReturnsError(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "500")
 }
@@ -168,7 +169,7 @@ func TestPushCredentials_ConnectionRefused_ReturnsError(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.Error(t, err)
 }
 
@@ -193,7 +194,7 @@ func TestPushCredentials_PartialFailure_ReturnsFirstError(t *testing.T) {
 		{Provider: "openai", APIKey: "sk-oai"},
 	}
 
-	err := c.PushCredentials(providers)
+	err := c.PushCredentials(context.Background(), providers)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid")
 }
@@ -214,7 +215,7 @@ func TestDisposeInstance_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	err := c.DisposeInstance()
+	err := c.DisposeInstance(context.Background())
 	require.NoError(t, err)
 	require.True(t, called)
 }
@@ -226,14 +227,14 @@ func TestDisposeInstance_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	err := c.DisposeInstance()
+	err := c.DisposeInstance(context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "500")
 }
 
 func TestDisposeInstance_ConnectionRefused(t *testing.T) {
 	c := NewClient("http://127.0.0.1:1")
-	err := c.DisposeInstance()
+	err := c.DisposeInstance(context.Background())
 	require.Error(t, err)
 }
 
@@ -263,7 +264,7 @@ func TestRefreshCredentials_PushThenDispose(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.RefreshCredentials(providers)
+	err := c.RefreshCredentials(context.Background(), providers)
 	require.NoError(t, err)
 	require.Equal(t, []string{"auth:anthropic", "dispose"}, order)
 }
@@ -277,7 +278,7 @@ func TestRefreshCredentials_EmptyProviders_NoDispose(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	err := c.RefreshCredentials(nil)
+	err := c.RefreshCredentials(context.Background(), nil)
 	require.NoError(t, err)
 	require.False(t, called, "no calls should be made for empty providers")
 }
@@ -302,7 +303,7 @@ func TestRefreshCredentials_PushFails_NoDispose(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.RefreshCredentials(providers)
+	err := c.RefreshCredentials(context.Background(), providers)
 	require.Error(t, err)
 	require.False(t, disposeCalled, "dispose must NOT be called if push failed")
 }

@@ -215,7 +215,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 			staged := m.StagedProviders()
 			if len(staged) > 0 {
 				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort))
-				if err := oc.RefreshCredentials(staged); err != nil {
+				if err := oc.RefreshCredentials(r.Context(), staged); err != nil {
 					log.Warn("reload-secrets: opencode credential refresh failed, falling back to restart",
 						zap.Error(err))
 					if proc != nil {

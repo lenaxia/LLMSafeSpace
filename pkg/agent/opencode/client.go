@@ -40,13 +40,13 @@ func NewClient(baseURL string) *Client {
 //
 // Returns nil if providers is empty (no-op).
 // Returns the first error encountered; subsequent providers are not attempted.
-func (c *Client) PushCredentials(providers []secrets.LLMProviderData) error {
+func (c *Client) PushCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
 	if len(providers) == 0 {
 		return nil
 	}
 
 	for _, p := range providers {
-		if err := c.setAuth(p); err != nil {
+		if err := c.setAuth(ctx, p); err != nil {
 			return err
 		}
 	}
@@ -58,9 +58,9 @@ func (c *Client) PushCredentials(providers []secrets.LLMProviderData) error {
 // alive; the next request triggers a fresh instance load with updated auth.
 //
 // In-flight LLM calls are aborted. Sessions persist in SQLite.
-func (c *Client) DisposeInstance() error {
+func (c *Client) DisposeInstance(ctx context.Context) error {
 	url := c.baseURL + "/instance/dispose"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("POST /instance/dispose: %w", err)
 	}
@@ -87,23 +87,23 @@ func (c *Client) DisposeInstance() error {
 // disrupt the running instance).
 //
 // Returns nil if providers is empty (no-op, no dispose).
-func (c *Client) RefreshCredentials(providers []secrets.LLMProviderData) error {
+func (c *Client) RefreshCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
 	if len(providers) == 0 {
 		return nil
 	}
 
-	if err := c.PushCredentials(providers); err != nil {
+	if err := c.PushCredentials(ctx, providers); err != nil {
 		return fmt.Errorf("push credentials: %w", err)
 	}
 
-	if err := c.DisposeInstance(); err != nil {
+	if err := c.DisposeInstance(ctx); err != nil {
 		return fmt.Errorf("dispose instance: %w", err)
 	}
 	return nil
 }
 
 // setAuth sends PUT /auth/:providerID with the credential payload.
-func (c *Client) setAuth(p secrets.LLMProviderData) error {
+func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 	payload := authPayload{
 		Type: "api",
 		Key:  p.APIKey,
@@ -118,7 +118,7 @@ func (c *Client) setAuth(p secrets.LLMProviderData) error {
 	}
 
 	url := c.baseURL + "/auth/" + p.Provider
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create PUT request for %s: %w", p.Provider, err)
 	}
