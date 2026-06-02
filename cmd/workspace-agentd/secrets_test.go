@@ -204,7 +204,7 @@ func TestReloadSecretsHandler_HappyPath(t *testing.T) {
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
@@ -229,7 +229,7 @@ func TestReloadSecretsHandler_BadJSON(t *testing.T) {
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -243,7 +243,7 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
@@ -390,7 +390,7 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	// Handler should succeed (materializer and flush work in-process)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -432,7 +432,7 @@ func TestReloadSecretsHandler_LLMProvider_FlushFailure_Returns500(t *testing.T) 
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	var resp map[string]string
@@ -470,7 +470,7 @@ func TestReloadSecretsHandler_MixedBatch_LLMAndEnv(t *testing.T) {
 	log = zap.NewNop()
 	defer func() { log = prevLog }()
 
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -516,7 +516,7 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	defer func() { log = prevLog }()
 
 	// proc=nil means restart won't actually fire, but we can check the response
-	reloadSecretsHandler(cfg, nil)(rec, req)
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {

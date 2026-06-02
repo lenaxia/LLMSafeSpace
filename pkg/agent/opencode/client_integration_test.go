@@ -29,17 +29,17 @@ func TestRefreshCredentials_CorrectHTTPVerbs(t *testing.T) {
 		Method string
 		Path   string
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, struct {
 			Method string
 			Path   string
 		}{r.Method, r.URL.Path})
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{
 		{Provider: "anthropic", APIKey: "sk-1"},
 		{Provider: "openai", APIKey: "sk-2"},
@@ -60,17 +60,17 @@ func TestRefreshCredentials_CorrectHTTPVerbs(t *testing.T) {
 
 func TestRefreshCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 	var bodies []json.RawMessage
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			body, _ := io.ReadAll(r.Body)
 			bodies = append(bodies, body)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{
 		{Provider: "anthropic", APIKey: "sk-ant-api03-xyz", BaseURL: "https://proxy.example.com/v1"},
 	}
@@ -93,14 +93,14 @@ func TestRefreshCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 
 func TestRefreshCredentials_ContentTypeJSON(t *testing.T) {
 	var contentTypes []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentTypes = append(contentTypes, r.Header.Get("Content-Type"))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "x", APIKey: "k"}}
 
 	err := c.RefreshCredentials(context.Background(), providers)
@@ -117,19 +117,19 @@ func TestRefreshCredentials_ContentTypeJSON(t *testing.T) {
 
 func TestPushCredentials_ContextCancelled_Aborts(t *testing.T) {
 	var callCount atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 		// Slow response to give context time to cancel
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "x", APIKey: "k"}}
 
 	err := c.PushCredentials(ctx, providers)
@@ -137,15 +137,15 @@ func TestPushCredentials_ContextCancelled_Aborts(t *testing.T) {
 }
 
 func TestDisposeInstance_ContextTimeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond) // longer than context timeout
-	}))
+	})))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	err := c.DisposeInstance(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
@@ -156,12 +156,12 @@ func TestDisposeInstance_ContextTimeout(t *testing.T) {
 // ============================================================
 
 func TestPushCredentials_4xxError_IncludesProviderName(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "my-provider", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
@@ -171,12 +171,12 @@ func TestPushCredentials_4xxError_IncludesProviderName(t *testing.T) {
 }
 
 func TestPushCredentials_5xxError_IncludesProviderName(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "broken-provider", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
@@ -186,12 +186,12 @@ func TestPushCredentials_5xxError_IncludesProviderName(t *testing.T) {
 }
 
 func TestDisposeInstance_404_StillError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	err := c.DisposeInstance(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
@@ -203,14 +203,14 @@ func TestDisposeInstance_404_StillError(t *testing.T) {
 
 func TestPushCredentials_ProviderIDWithSlash(t *testing.T) {
 	var receivedPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	// opencode provider IDs like "google-vertex" are simple, but test edge case
 	providers := []secrets.LLMProviderData{{Provider: "custom-provider", APIKey: "k"}}
 
@@ -221,14 +221,14 @@ func TestPushCredentials_ProviderIDWithSlash(t *testing.T) {
 
 func TestPushCredentials_ProviderIDWithSpecialChars(t *testing.T) {
 	var receivedPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	// Provider IDs from opencode are typically simple strings, but verify no mangling
 	providers := []secrets.LLMProviderData{{Provider: "openai", APIKey: "k"}}
 
@@ -243,16 +243,16 @@ func TestPushCredentials_ProviderIDWithSpecialChars(t *testing.T) {
 
 func TestPushCredentials_EmptyBaseURL_OmitsMetadata(t *testing.T) {
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			body, _ = io.ReadAll(r.Body)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "anthropic", APIKey: "sk", BaseURL: ""}}
 
 	err := c.RefreshCredentials(context.Background(), providers)
@@ -267,16 +267,16 @@ func TestPushCredentials_EmptyBaseURL_OmitsMetadata(t *testing.T) {
 
 func TestPushCredentials_NonEmptyBaseURL_IncludesMetadata(t *testing.T) {
 	var body []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			body, _ = io.ReadAll(r.Body)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "openai", APIKey: "sk", BaseURL: "https://x.com"}}
 
 	err := c.RefreshCredentials(context.Background(), providers)
@@ -295,15 +295,15 @@ func TestPushCredentials_NonEmptyBaseURL_IncludesMetadata(t *testing.T) {
 
 func TestClient_ConcurrentRefreshCredentials(t *testing.T) {
 	var callCount atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 		time.Sleep(10 * time.Millisecond) // simulate latency
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "anthropic", APIKey: "sk"}}
 
 	var wg sync.WaitGroup
@@ -325,7 +325,7 @@ func TestClient_ConcurrentRefreshCredentials(t *testing.T) {
 // ============================================================
 
 func TestNewClient_HasReasonableTimeout(t *testing.T) {
-	c := NewClient("http://localhost:4096")
+	c := NewClient("http://localhost:4096", testPassword)
 	assert.Equal(t, 10*time.Second, c.httpClient.Timeout)
 }
 
@@ -336,13 +336,13 @@ func TestNewClient_HasReasonableTimeout(t *testing.T) {
 
 func TestRefreshCredentials_NilProviders_NoHTTPCalls(t *testing.T) {
 	var callCount atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 		w.WriteHeader(http.StatusOK)
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	require.NoError(t, c.RefreshCredentials(context.Background(), nil))
 	require.NoError(t, c.RefreshCredentials(context.Background(), []secrets.LLMProviderData{}))
 	assert.Equal(t, int32(0), callCount.Load())
@@ -355,7 +355,7 @@ func TestRefreshCredentials_NilProviders_NoHTTPCalls(t *testing.T) {
 
 func TestPushCredentials_StopsAtFirstFailure(t *testing.T) {
 	var paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		if r.URL.Path == "/auth/bad" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -363,10 +363,10 @@ func TestPushCredentials_StopsAtFirstFailure(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{
 		{Provider: "good1", APIKey: "k"},
 		{Provider: "bad", APIKey: "k"},
@@ -385,7 +385,7 @@ func TestPushCredentials_StopsAtFirstFailure(t *testing.T) {
 
 func TestPushCredentials_LargeAPIKey(t *testing.T) {
 	var receivedKey string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			body, _ := io.ReadAll(r.Body)
 			var p struct{ Key string }
@@ -394,7 +394,7 @@ func TestPushCredentials_LargeAPIKey(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("true"))
-	}))
+	})))
 	defer srv.Close()
 
 	// Some API keys (e.g. GCP service account JSON) can be very large
@@ -403,7 +403,7 @@ func TestPushCredentials_LargeAPIKey(t *testing.T) {
 		largeKey += "abcdefghij"
 	}
 
-	c := NewClient(srv.URL)
+	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "test", APIKey: largeKey}}
 
 	err := c.PushCredentials(context.Background(), providers)

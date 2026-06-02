@@ -214,7 +214,15 @@ func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.
 // proc may be nil (tests); in production it is a *managedProcess so the
 // handler can restart opencode after env/llm secret changes.
-func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.HandlerFunc {
+//
+// opencodePassword is the Basic-auth password every request to opencode
+// (PUT /auth/:providerID, POST /instance/dispose) must carry. Production
+// reads /sandbox-cfg/password at startup; tests pass "" since they
+// either skip the credential push (no llm-provider in the batch) or
+// stub the URL to a server that does not enforce auth. An empty
+// password produces 401 against real opencode and was the proximate
+// cause of Bug 1 (worklog 0125).
+func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodePassword string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodPost {
@@ -268,7 +276,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 		if hasLLMProviders(batch) {
 			staged := m.StagedProviders()
 			if len(staged) > 0 {
-				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort))
+				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort), opencodePassword)
 				if err := oc.RefreshCredentials(r.Context(), staged); err != nil {
 					log.Warn("reload-secrets: opencode credential refresh failed, falling back to restart",
 						zap.Error(err))
