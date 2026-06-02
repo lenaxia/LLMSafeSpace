@@ -116,7 +116,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach agent"})
 			return
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck // best-effort drain
 
 		body, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
 		if err != nil {
@@ -328,7 +328,7 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model strin
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort drain
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
@@ -347,7 +347,7 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model 
 	if err != nil {
 		return true // fail open
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort drain
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return true // fail open
