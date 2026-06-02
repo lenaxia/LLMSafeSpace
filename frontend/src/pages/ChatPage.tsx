@@ -74,9 +74,9 @@ export function ChatPage() {
   const history = useMemo(() => {
     if (!historyPages?.pages) return [];
     // Pages are fetched newest-page-first (cursor goes backwards), so reverse
-    // pages to get chronological order. Messages within each page are already
-    // chronological (oldest first) as returned by opencode.
-    return [...historyPages.pages].reverse().flatMap((p) => p.messages);
+    // pages to get chronological order. Messages within each page are newest-first
+    // (opencode orders by desc(time_created)), so reverse those too.
+    return [...historyPages.pages].reverse().flatMap((p) => [...p.messages].reverse());
   }, [historyPages?.pages]);
 
   // US-15.1: Derive serverBusy from workspace status
