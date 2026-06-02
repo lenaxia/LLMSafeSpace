@@ -289,7 +289,8 @@ var implOnlyAllowlist = map[route]bool{
 
 	// Workspace model selection. Ships in the handler but not yet in
 	// sdks/openapi.yaml. TODO: document in follow-up SDK pass.
-	{method: "PUT", path: "/api/v1/workspaces/:id/model"}: true,
+	{method: "PUT", path: "/api/v1/workspaces/:id/model"}:  true,
+	{method: "GET", path: "/api/v1/workspaces/:id/models"}: true,
 }
 
 // -----------------------------------------------------------------------------

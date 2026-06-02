@@ -113,6 +113,8 @@ func TestWorkspaceRoutes_Exist(t *testing.T) {
 				Return(assert.AnError).Maybe()
 			svc.workspace.On("RenameWorkspace", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
+			svc.workspace.On("RestartWorkspace", mock.Anything, mock.Anything, mock.Anything).
+				Return(assert.AnError).Maybe()
 
 			req, _ := http.NewRequest(rt.method, rt.path, nil)
 			req.Header.Set("Authorization", "Bearer testtoken")
