@@ -36,8 +36,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 )
 
