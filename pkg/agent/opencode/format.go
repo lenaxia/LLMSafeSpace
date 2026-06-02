@@ -6,7 +6,6 @@ package opencode
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
@@ -77,9 +76,9 @@ func endpointForProvider(provider, baseURL string) map[string]string {
 func marshalDeterministic(cfg opencodeConfig) ([]byte, error) {
 	// Build ordered output manually to guarantee key order in providers map.
 	type orderedOutput struct {
-		Schema    string                      `json:"$schema"`
+		Schema    string                       `json:"$schema"`
 		Providers map[string]*opencodeProvider `json:"providers"`
-		Model     string                      `json:"model,omitempty"`
+		Model     string                       `json:"model,omitempty"`
 	}
 
 	out := orderedOutput{
@@ -101,8 +100,8 @@ type opencodeConfig struct {
 }
 
 type opencodeProvider struct {
-	Endpoint map[string]string       `json:"endpoint,omitempty"`
-	Options  *opencodeOptions        `json:"options"`
+	Endpoint map[string]string         `json:"endpoint,omitempty"`
+	Options  *opencodeOptions          `json:"options"`
 	Models   map[string]*opencodeModel `json:"models,omitempty"`
 }
 
@@ -117,6 +116,3 @@ type opencodeAISDK struct {
 type opencodeModel struct {
 	Name string `json:"name,omitempty"`
 }
-
-// Ensure stable iteration order for deterministic output in tests.
-var _ = sort.Strings
