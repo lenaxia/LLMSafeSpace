@@ -5,6 +5,7 @@ package opencode
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,12 +60,18 @@ func (c *Client) PushCredentials(providers []secrets.LLMProviderData) error {
 // In-flight LLM calls are aborted. Sessions persist in SQLite.
 func (c *Client) DisposeInstance() error {
 	url := c.baseURL + "/instance/dispose"
-	resp, err := c.httpClient.Post(url, "application/json", http.NoBody)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("POST /instance/dispose: %w", err)
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /instance/dispose: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort drain
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("POST /instance/dispose returned %d", resp.StatusCode)
@@ -111,7 +118,7 @@ func (c *Client) setAuth(p secrets.LLMProviderData) error {
 	}
 
 	url := c.baseURL + "/auth/" + p.Provider
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create PUT request for %s: %w", p.Provider, err)
 	}
@@ -121,8 +128,8 @@ func (c *Client) setAuth(p secrets.LLMProviderData) error {
 	if err != nil {
 		return fmt.Errorf("PUT /auth/%s: %w", p.Provider, err)
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck // best-effort drain
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("PUT /auth/%s returned %d", p.Provider, resp.StatusCode)

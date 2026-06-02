@@ -81,14 +81,8 @@ func marshalDeterministic(cfg opencodeConfig) ([]byte, error) {
 		Model     string                       `json:"model,omitempty"`
 	}
 
-	out := orderedOutput{
-		Schema:    cfg.Schema,
-		Providers: cfg.Providers,
-		Model:     cfg.Model,
-	}
-
 	// json.Marshal uses sorted keys for maps by default in Go.
-	return json.MarshalIndent(out, "", "  ")
+	return json.MarshalIndent(orderedOutput(cfg), "", "  ")
 }
 
 // --- internal types (not exported) ---

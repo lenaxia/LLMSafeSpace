@@ -219,7 +219,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 					log.Warn("reload-secrets: opencode credential refresh failed, falling back to restart",
 						zap.Error(err))
 					if proc != nil {
-						proc.restart()
+						proc.restart() //nolint:contextcheck // restart() manages its own context
 					}
 				} else {
 					configReloaded = true
