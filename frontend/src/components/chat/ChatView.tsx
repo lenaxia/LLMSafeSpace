@@ -2,7 +2,6 @@ import type { Message, MessagePart } from "../../api/types";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
-import { AbortSessionButton } from "./AbortSessionButton";
 import { MessageBubble } from "./MessageBubble";
 
 interface StreamingPart {
@@ -59,15 +58,9 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
         {streaming && <StreamingIndicator />}
       </div>
 
-      {streaming && (
-        <div className="flex justify-center py-2">
-          <AbortSessionButton onAbort={onAbort} />
-        </div>
-      )}
-
       {prompts && <div className="px-4">{prompts}</div>}
 
-      <Composer onSend={onSend} disabled={disabled || streaming} />
+      <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} />
     </div>
   );
 }

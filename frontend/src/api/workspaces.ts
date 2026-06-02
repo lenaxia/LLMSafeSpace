@@ -42,4 +42,6 @@ export const workspacesApi = {
     api.put<void>(`/workspaces/${workspaceId}`, { name }),
   deleteWorkspace: (workspaceId: string) =>
     api.delete<void>(`/workspaces/${workspaceId}`),
+  abortSession: (workspaceId: string, sessionId: string) =>
+    api.post<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/abort`),
 };

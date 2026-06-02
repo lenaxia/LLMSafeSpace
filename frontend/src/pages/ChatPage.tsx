@@ -573,7 +573,12 @@ export function ChatPage() {
             streamParts={sseStreamParts}
             disabled={!workspaceId || !sessionId || isSuspended}
             onSend={handleSend}
-            onAbort={abort}
+            onAbort={() => {
+              if (workspaceId && sessionId) {
+                workspacesApi.abortSession(workspaceId, sessionId);
+              }
+              abort();
+            }}
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}
             loadingOlder={isFetchingNextPage}
