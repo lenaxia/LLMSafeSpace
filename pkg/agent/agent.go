@@ -33,7 +33,24 @@ type CredentialCheckResult struct {
 type AgentRuntime interface {
 	Type() AgentType
 	ValidateCredentials(rawConfig []byte) (*CredentialCheckResult, error)
-	FormatCredentials(rawConfig []byte) ([]byte, error)
+	FormatProviderConfig(providers []LLMProviderData) ([]byte, error)
+}
+
+// LLMProviderData is re-exported from pkg/secrets for use in the interface.
+// This avoids a circular import between pkg/agent and pkg/secrets.
+type LLMProviderData struct {
+	Provider   string           `json:"provider"`
+	APIKey     string           `json:"apiKey"`
+	BaseURL    string           `json:"baseURL,omitempty"`
+	Models     []LLMModelConfig `json:"models,omitempty"`
+	Default    string           `json:"default,omitempty"`
+	SmallModel string           `json:"smallModel,omitempty"`
+}
+
+// LLMModelConfig specifies a model identifier and optional display label.
+type LLMModelConfig struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 var (

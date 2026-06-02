@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 
 	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 type OpenCodeAgent struct{}
@@ -42,6 +43,22 @@ func (a *OpenCodeAgent) ValidateCredentials(rawConfig []byte) (*agent.Credential
 	}, nil
 }
 
-func (a *OpenCodeAgent) FormatCredentials(rawConfig []byte) ([]byte, error) {
-	return rawConfig, nil
+func (a *OpenCodeAgent) FormatProviderConfig(providers []agent.LLMProviderData) ([]byte, error) {
+	// Convert agent.LLMProviderData to secrets.LLMProviderData for the formatter.
+	secProviders := make([]secrets.LLMProviderData, len(providers))
+	for i, p := range providers {
+		models := make([]secrets.LLMModelConfig, len(p.Models))
+		for j, m := range p.Models {
+			models[j] = secrets.LLMModelConfig{ID: m.ID, Label: m.Label}
+		}
+		secProviders[i] = secrets.LLMProviderData{
+			Provider:   p.Provider,
+			APIKey:     p.APIKey,
+			BaseURL:    p.BaseURL,
+			Models:     models,
+			Default:    p.Default,
+			SmallModel: p.SmallModel,
+		}
+	}
+	return FormatOpenCodeConfig(secProviders)
 }

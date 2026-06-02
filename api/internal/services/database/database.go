@@ -404,6 +404,11 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID string, updat
 		query += fmt.Sprintf(", name = $%d", i)
 		args = append(args, *updates.Name)
 	}
+	if updates.DefaultModel != nil {
+		i++
+		query += fmt.Sprintf(", default_model = $%d", i)
+		args = append(args, *updates.DefaultModel)
+	}
 	if i == 0 {
 		return nil
 	}

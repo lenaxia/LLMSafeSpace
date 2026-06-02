@@ -31,6 +31,11 @@ func NewServer(client APIClient, defaultTimeout time.Duration) *server.MCPServer
 		server.ServerTool{Tool: sessionCreateTool, Handler: h.sessionCreate},
 		server.ServerTool{Tool: sessionMessageTool, Handler: h.sessionMessage},
 		server.ServerTool{Tool: sessionHistoryTool, Handler: h.sessionHistory},
+		server.ServerTool{Tool: credentialCreateTool, Handler: h.credentialCreate},
+		server.ServerTool{Tool: credentialListTool, Handler: h.credentialList},
+		server.ServerTool{Tool: credentialDeleteTool, Handler: h.credentialDelete},
+		server.ServerTool{Tool: modelListTool, Handler: h.modelList},
+		server.ServerTool{Tool: modelSetTool, Handler: h.modelSet},
 	)
 
 	return srv
@@ -197,4 +202,112 @@ func (h *handlers) sessionHistory(ctx context.Context, req mcp.CallToolRequest) 
 func strArg(args map[string]any, key string) string {
 	v, _ := args[key].(string)
 	return v
+}
+
+// --- Credential & Model Tool definitions ---
+
+var credentialCreateTool = mcp.NewTool("credential_create",
+	mcp.WithDescription("Create an LLM provider credential. Optionally bind to a workspace."),
+	mcp.WithString("provider", mcp.Required(), mcp.Description("Provider name (anthropic, openai, google, etc.)")),
+	mcp.WithString("api_key", mcp.Required(), mcp.Description("Provider API key")),
+	mcp.WithString("name", mcp.Description("Optional credential name (defaults to provider name)")),
+	mcp.WithString("base_url", mcp.Description("Optional custom base URL for the provider")),
+	mcp.WithString("default_model", mcp.Description("Optional default model ID (e.g. anthropic/claude-sonnet-4-5)")),
+	mcp.WithString("workspace_id", mcp.Description("If set, auto-binds the credential to this workspace")),
+)
+
+var credentialListTool = mcp.NewTool("credential_list",
+	mcp.WithDescription("List configured LLM provider credentials (names and IDs, never values)"),
+)
+
+var credentialDeleteTool = mcp.NewTool("credential_delete",
+	mcp.WithDescription("Delete an LLM provider credential"),
+	mcp.WithString("credential_id", mcp.Required(), mcp.Description("Credential ID to delete")),
+)
+
+var modelListTool = mcp.NewTool("model_list",
+	mcp.WithDescription("List available models for a workspace (requires workspace to be active)"),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+)
+
+var modelSetTool = mcp.NewTool("model_set",
+	mcp.WithDescription("Set the default model for a workspace"),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+	mcp.WithString("model", mcp.Required(), mcp.Description("Model ID (e.g. anthropic/claude-sonnet-4-5)")),
+)
+
+// --- Credential & Model handlers ---
+
+func (h *handlers) credentialCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	provider := strArg(args, "provider")
+	apiKey := strArg(args, "api_key")
+	if provider == "" || apiKey == "" {
+		return mcp.NewToolResultError("provider and api_key are required"), nil
+	}
+
+	resp, err := h.client.CreateCredential(ctx, CreateCredentialReq{
+		Name:        strArg(args, "name"),
+		Provider:    provider,
+		APIKey:      apiKey,
+		BaseURL:     strArg(args, "base_url"),
+		Default:     strArg(args, "default_model"),
+		WorkspaceID: strArg(args, "workspace_id"),
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create credential: %v", err)), nil
+	}
+
+	out, _ := json.Marshal(resp)
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func (h *handlers) credentialList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	creds, err := h.client.ListCredentials(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list credentials: %v", err)), nil
+	}
+	out, _ := json.Marshal(creds)
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func (h *handlers) credentialDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	credID := strArg(args, "credential_id")
+	if credID == "" {
+		return mcp.NewToolResultError("credential_id is required"), nil
+	}
+
+	if err := h.client.DeleteCredential(ctx, credID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete credential: %v", err)), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Credential %s deleted", credID)), nil
+}
+
+func (h *handlers) modelList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID := strArg(args, "workspace_id")
+	if workspaceID == "" {
+		return mcp.NewToolResultError("workspace_id is required"), nil
+	}
+
+	models, err := h.client.ListModels(ctx, workspaceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list models: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(models)), nil
+}
+
+func (h *handlers) modelSet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID := strArg(args, "workspace_id")
+	model := strArg(args, "model")
+	if workspaceID == "" || model == "" {
+		return mcp.NewToolResultError("workspace_id and model are required"), nil
+	}
+
+	if err := h.client.SetModel(ctx, workspaceID, model); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to set model: %v", err)), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Model set to %s", model)), nil
 }

@@ -95,7 +95,9 @@ func (m *mockAgent) Type() AgentType { return "test-agent" }
 func (m *mockAgent) ValidateCredentials(rawConfig []byte) (*CredentialCheckResult, error) {
 	return &CredentialCheckResult{State: CredentialStatePresent, Agent: "test-agent"}, nil
 }
-func (m *mockAgent) FormatCredentials(rawConfig []byte) ([]byte, error) { return rawConfig, nil }
+func (m *mockAgent) FormatProviderConfig(providers []LLMProviderData) ([]byte, error) {
+	return []byte("{}"), nil
+}
 
 type credentialTrackingAgent struct{}
 
@@ -103,6 +105,6 @@ func (c *credentialTrackingAgent) Type() AgentType { return "test-overwrite" }
 func (c *credentialTrackingAgent) ValidateCredentials(rawConfig []byte) (*CredentialCheckResult, error) {
 	return &CredentialCheckResult{State: CredentialStatePresent, Agent: "test-overwrite"}, nil
 }
-func (c *credentialTrackingAgent) FormatCredentials(rawConfig []byte) ([]byte, error) {
-	return rawConfig, nil
+func (c *credentialTrackingAgent) FormatProviderConfig(providers []LLMProviderData) ([]byte, error) {
+	return []byte("{}"), nil
 }

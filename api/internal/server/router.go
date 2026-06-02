@@ -193,6 +193,8 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
 		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
 		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
+		workspaceGroup.GET("/:id/models", cfg.SecretsHandler.ListModels)
+		workspaceGroup.PUT("/:id/model", cfg.SecretsHandler.SetModel)
 	}
 
 	// Key rotation endpoint (Epic 10)

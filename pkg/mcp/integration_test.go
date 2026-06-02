@@ -55,7 +55,7 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	// 1. List tools — verify all 6 are registered
 	toolsResp, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 	require.NoError(t, err)
-	assert.Len(t, toolsResp.Tools, 6)
+	assert.Len(t, toolsResp.Tools, 11)
 
 	toolNames := make(map[string]bool)
 	for _, tool := range toolsResp.Tools {

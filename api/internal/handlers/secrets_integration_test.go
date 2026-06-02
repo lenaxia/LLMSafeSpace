@@ -475,6 +475,10 @@ func (f *fakeManifestWriter) EnsureSecretsManifest(_ context.Context, workspaceI
 	return f.err
 }
 
+func (f *fakeManifestWriter) EnsureWorkspaceConfig(_ context.Context, _ string, _ WorkspaceConfig) error {
+	return f.err
+}
+
 // recordingLogger captures Warn calls so tests can verify Bug 2 — that
 // failures of the auto-push are no longer silently swallowed.
 type recordingLogger struct {

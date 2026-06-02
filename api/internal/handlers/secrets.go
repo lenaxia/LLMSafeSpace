@@ -25,6 +25,7 @@ type SecretsHandler struct {
 	manifestWriter   SecretsManifestWriter
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
+	wsUpdater        WorkspaceMetadataUpdater
 }
 
 // PodIPResolver looks up the pod IP for a workspace.
@@ -40,6 +41,12 @@ type PodIPResolver interface {
 // and for choosing the appropriate K8s namespace.
 type SecretsManifestWriter interface {
 	EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error
+	EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config WorkspaceConfig) error
+}
+
+// WorkspaceConfig is non-sensitive workspace metadata persisted for pod boot.
+type WorkspaceConfig struct {
+	DefaultModel string `json:"defaultModel,omitempty"`
 }
 
 // PasswordVerifier confirms a user's password against the stored bcrypt

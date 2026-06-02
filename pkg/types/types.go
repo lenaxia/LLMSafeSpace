@@ -504,7 +504,8 @@ type WorkspaceMetadata struct {
 
 // WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.
 type WorkspaceUpdates struct {
-	Name *string `json:"name,omitempty"`
+	Name         *string `json:"name,omitempty"`
+	DefaultModel *string `json:"defaultModel,omitempty"`
 }
 
 // WorkspaceNotFoundError is returned when a workspace cannot be found.

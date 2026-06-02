@@ -54,6 +54,16 @@ type APIClient interface {
 	CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error)
 	GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error)
 	SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error)
+
+	// Credential management
+	CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error)
+	ListCredentials(ctx context.Context) ([]CredentialResp, error)
+	DeleteCredential(ctx context.Context, credentialID string) error
+	BindCredential(ctx context.Context, workspaceID string, credentialIDs []string) error
+
+	// Model management
+	ListModels(ctx context.Context, workspaceID string) (json.RawMessage, error)
+	SetModel(ctx context.Context, workspaceID, model string) error
 }
 
 // CreateWorkspaceReq is the request body for workspace creation.
@@ -85,6 +95,23 @@ type SessionResp struct {
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+// CreateCredentialReq is the request for creating an LLM provider credential.
+type CreateCredentialReq struct {
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	APIKey      string `json:"apiKey"`
+	BaseURL     string `json:"baseURL,omitempty"`
+	Default     string `json:"default,omitempty"`
+	WorkspaceID string `json:"workspaceID,omitempty"` // if set, auto-binds after creation
+}
+
+// CredentialResp is the response from credential operations.
+type CredentialResp struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 // HTTPClient implements APIClient using HTTP calls to the LLMSafeSpace API.
@@ -350,4 +377,94 @@ func (c *HTTPClient) PermissionReply(ctx context.Context, workspaceID, requestID
 	}
 	path := fmt.Sprintf("/api/v1/workspaces/%s/permission/%s/reply", workspaceID, requestID)
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
+}
+
+// --- Credential management ---
+
+func (c *HTTPClient) CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error) {
+	providerData := map[string]any{"provider": req.Provider, "apiKey": req.APIKey}
+	if req.BaseURL != "" {
+		providerData["baseURL"] = req.BaseURL
+	}
+	if req.Default != "" {
+		providerData["default"] = req.Default
+	}
+	valueJSON, _ := json.Marshal(providerData)
+
+	name := req.Name
+	if name == "" {
+		name = req.Provider
+	}
+
+	body := map[string]any{
+		"name":     name,
+		"type":     "llm-provider",
+		"value":    string(valueJSON),
+		"metadata": map[string]string{},
+	}
+
+	var resp CredentialResp
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/secrets", body, &resp); err != nil {
+		return nil, err
+	}
+
+	// Auto-bind if workspace specified.
+	if req.WorkspaceID != "" {
+		if err := c.BindCredential(ctx, req.WorkspaceID, []string{resp.ID}); err != nil {
+			return &resp, fmt.Errorf("created credential %s but bind failed: %w", resp.ID, err)
+		}
+	}
+
+	return &resp, nil
+}
+
+func (c *HTTPClient) ListCredentials(ctx context.Context) ([]CredentialResp, error) {
+	var all []CredentialResp
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/secrets", nil, &all); err != nil {
+		return nil, err
+	}
+	// Filter to llm-provider type.
+	var filtered []CredentialResp
+	for _, cr := range all {
+		if cr.Type == "llm-provider" {
+			filtered = append(filtered, cr)
+		}
+	}
+	return filtered, nil
+}
+
+func (c *HTTPClient) DeleteCredential(ctx context.Context, credentialID string) error {
+	if err := validateID(credentialID, "credential_id"); err != nil {
+		return err
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/secrets/"+credentialID, nil, nil)
+}
+
+func (c *HTTPClient) BindCredential(ctx context.Context, workspaceID string, credentialIDs []string) error {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return err
+	}
+	body := map[string][]string{"secretIds": credentialIDs}
+	return c.doJSON(ctx, http.MethodPut, "/api/v1/workspaces/"+workspaceID+"/bindings", body, nil)
+}
+
+// --- Model management ---
+
+func (c *HTTPClient) ListModels(ctx context.Context, workspaceID string) (json.RawMessage, error) {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workspaces/"+workspaceID+"/models", nil, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (c *HTTPClient) SetModel(ctx context.Context, workspaceID, model string) error {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return err
+	}
+	body := map[string]string{"model": model}
+	return c.doJSON(ctx, http.MethodPut, "/api/v1/workspaces/"+workspaceID+"/model", body, nil)
 }

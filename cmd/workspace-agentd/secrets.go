@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
@@ -131,6 +132,19 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
 		return 3
 	}
+
+	// Flush staged llm-provider secrets to AgentConfigPath so opencode
+	// reads them at startup. Without this, the config file is empty and
+	// opencode boots with no provider credentials.
+	if flushErr := m.FlushProviders(opencode.FormatOpenCodeConfig); flushErr != nil {
+		_, _ = fmt.Fprintf(stderr, "materialize: flush providers: %vn", flushErr)
+		return 3
+	}
+
+	// Apply workspace-level default model if present. This file is
+	// written by the API server alongside secrets.json.
+	applyWorkspaceConfig(cfg.toPaths().AgentConfigPath, *from)
+
 	if result != nil && result.HasFailures() {
 		// Some I/O failure already logged via reportResult; exit 3 so the
 		// runtime entrypoint can surface this to kubelet (CrashLoopBackOff
@@ -155,6 +169,46 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 		}
 		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %sn", sr.Type, sr.Name, sr.Outcome, sr.Reason)
 	}
+}
+
+// applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
+// and merges the default model into the agent config file. This ensures the
+// workspace's model selection survives pod restarts.
+func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
+	// workspace-config.json lives alongside secrets.json in /sandbox-cfg/
+	dir := filepath.Dir(secretsPath)
+	configPath := filepath.Join(dir, "workspace-config.json")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return // absent = no workspace config to apply
+	}
+
+	var wsCfg struct {
+		DefaultModel string `json:"defaultModel"`
+	}
+	if json.Unmarshal(data, &wsCfg) != nil || wsCfg.DefaultModel == "" {
+		return
+	}
+
+	// Read existing agent config (written by FlushProviders above).
+	existing, err := os.ReadFile(agentConfigPath)
+	if err != nil || len(existing) == 0 {
+		// No agent config — write minimal config with just the model.
+		minimal := fmt.Sprintf(`{"$schema":"https://opencode.ai/config.json","model":%q}`, wsCfg.DefaultModel)
+		_ = os.WriteFile(agentConfigPath, []byte(minimal), 0o600)
+		return
+	}
+
+	// Merge model into existing config.
+	var cfg map[string]json.RawMessage
+	if json.Unmarshal(existing, &cfg) != nil {
+		return
+	}
+	modelJSON, _ := json.Marshal(wsCfg.DefaultModel)
+	cfg["model"] = modelJSON
+	merged, _ := json.MarshalIndent(cfg, "", "  ")
+	_ = os.WriteFile(agentConfigPath, merged, 0o600)
 }
 
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.

@@ -63,10 +63,13 @@ func TestOpenCodeAgent_ValidateCredentials_EmptyObjectAfterUnmarshal(t *testing.
 	assert.Equal(t, agent.CredentialStatePresent, result.State)
 }
 
-func TestOpenCodeAgent_FormatCredentials(t *testing.T) {
+func TestOpenCodeAgent_FormatProviderConfig(t *testing.T) {
 	a := &OpenCodeAgent{}
-	input := []byte(`{"apiKey":"test"}`)
-	output, err := a.FormatCredentials(input)
+	providers := []agent.LLMProviderData{
+		{Provider: "anthropic", APIKey: "sk-ant-123", Default: "anthropic/claude-sonnet-4-5"},
+	}
+	output, err := a.FormatProviderConfig(providers)
 	require.NoError(t, err)
-	assert.Equal(t, input, output)
+	assert.Contains(t, string(output), "sk-ant-123")
+	assert.Contains(t, string(output), "anthropic/claude-sonnet-4-5")
 }

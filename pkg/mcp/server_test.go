@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,42 @@ func (m *MockAPIClient) GetHistory(ctx context.Context, workspaceID, sessionID s
 func (m *MockAPIClient) SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error) {
 	args := m.Called(ctx, workspaceID, sessionID, message, timeout)
 	return args.String(0), args.Error(1)
+}
+
+func (m *MockAPIClient) CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*CredentialResp), args.Error(1)
+}
+
+func (m *MockAPIClient) ListCredentials(ctx context.Context) ([]CredentialResp, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]CredentialResp), args.Error(1)
+}
+
+func (m *MockAPIClient) DeleteCredential(ctx context.Context, credentialID string) error {
+	return m.Called(ctx, credentialID).Error(0)
+}
+
+func (m *MockAPIClient) BindCredential(ctx context.Context, workspaceID string, credentialIDs []string) error {
+	return m.Called(ctx, workspaceID, credentialIDs).Error(0)
+}
+
+func (m *MockAPIClient) ListModels(ctx context.Context, workspaceID string) (json.RawMessage, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(json.RawMessage), args.Error(1)
+}
+
+func (m *MockAPIClient) SetModel(ctx context.Context, workspaceID, model string) error {
+	return m.Called(ctx, workspaceID, model).Error(0)
 }
 
 func newTestHandlers() (*handlers, *MockAPIClient) {
