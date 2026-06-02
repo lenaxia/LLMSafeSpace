@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { messagesApi } from "../api/messages";
 import { ApiClientError } from "../api/client";
 import type { Message } from "../api/types";
@@ -13,6 +13,19 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const idleResolverRef = useRef<((sid: string) => void) | null>(null);
+
+  // Reset UI state when session changes — the in-flight send uses
+  // capturedSessionId internally and handles its own scoping, so we don't
+  // abort it. We just clear the visual indicators for the new session.
+  const prevSessionRef = useRef(sessionId);
+  useEffect(() => {
+    if (prevSessionRef.current !== sessionId) {
+      prevSessionRef.current = sessionId;
+      setLocalStreaming(false);
+      setError(null);
+      setAtCapRetryAfter(null);
+    }
+  }, [sessionId]);
 
   const notifySessionIdle = useCallback((idleSessionId: string) => {
     idleResolverRef.current?.(idleSessionId);
