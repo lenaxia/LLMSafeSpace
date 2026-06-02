@@ -208,3 +208,31 @@ tests cover the same scenarios in JSDOM.
 1. Deploy and verify against the live cluster: open a workspace with a known subagent session (e.g. `ses_17b15a359ffeUU611BeylVPZwB` under `ses_17b1f034cffeTysii4ZtwVBvWW`) and confirm the child renders nested.
 2. Backfill won't reach historical sessions on a Suspended workspace until the user resumes it. Acceptable per the design (no work happens for sessions the user isn't looking at), but worth noting if the user reports "missing parent" on a freshly-resumed workspace — it self-heals on the next sidebar refresh.
 3. Consider exposing `parentId` on the OpenAPI spec for any external SDK consumers. Out of scope for this change.
+
+---
+
+## Live verification (post-deploy)
+
+Deployed image `sha-9d801a2` (api) carrying my commits `4ba7a37` + `6cd9b23` plus follow-up CI/lint fixes from the team. After the helm upgrade applied migration `000012_session_index_parent`, the user reported sub-sessions rendering nested under their parent in the sidebar. End-to-end verified against the user's live session.
+
+### Commit / push notes
+
+- Two atomic commits, separated via temporary file moves so each commit stood on its own with a green build:
+  - `4ba7a37 feat(api,frontend): bubble subagent permission/question prompts to parent session`
+  - `6cd9b23 feat(api,frontend): nest subagent sessions under parents in sidebar nav`
+- Pre-commit caught a misspelling (`behaviour`/`analogue` → `behavior`/`analog`) and a pre-existing `staticcheck` finding in `pkg/agent/opencode/format.go` (struct conversion); both fixed inline.
+- One rebase conflict on `pkg/agent/opencode/format.go` against an interleaving team commit (`297310d style: Fix golangci-lint errors`) that fixed the same staticcheck independently — resolved by accepting the simpler upstream form (`json.MarshalIndent(orderedOutput(cfg), …)`).
+- The remote CI Lint job continued to fail on a separate, pre-existing `contextcheck` violation in `cmd/workspace-agentd/secrets.go:218` introduced by the team's prior commit. Out of scope; called out in the previous turn's summary.
+
+### Recovery footnote (revisited)
+
+The session-parent work I had thought lost in the previous turn turned out to live in dangling commit `f4a4c64`. Documenting it explicitly so future me has a runbook:
+
+```sh
+# When `git status` shows missing untracked files post-rebase/stash-pop:
+git fsck --lost-found            # lists dangling commits
+git show <sha> --stat            # find the one with your missing files
+git show <sha>:path/to/file > /tmp/recovered.go
+```
+
+Stashes that include untracked files (`git stash --include-untracked`, or `git stash` with `stash.includeUntracked = true`) save those untracked files as a third parent of the stash merge object. When the stash is popped and the worktree is later reset, that merge object becomes dangling — which is what happened the previous session. Worth noting that the `pre-pull stash for chat refresh investigation` Bash automation around `git pull` had an `--include-untracked` flag set; that's how the files got carried in and then lost.
