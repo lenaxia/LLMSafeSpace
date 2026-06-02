@@ -544,9 +544,15 @@ type EnsureSessionResponse struct {
 }
 
 // SessionListItem is sidebar metadata for a session (NOT message bodies).
+//
+// ParentID, when non-empty, is the session_id of the user-visible parent
+// session — typically populated for opencode subagent (subtask) sessions
+// spawned via the `task` tool. The sidebar nests children under their
+// parent for navigation. NULL/empty means the session is top-level.
 type SessionListItem struct {
 	ID            string     `json:"id"`
 	Title         string     `json:"title,omitempty"`
+	ParentID      string     `json:"parentId,omitempty"`
 	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
 	MessageCount  int        `json:"messageCount"`
 	Status        string     `json:"status"` // "active" | "idle"

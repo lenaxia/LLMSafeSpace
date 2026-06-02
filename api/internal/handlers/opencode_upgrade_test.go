@@ -82,9 +82,10 @@ func (m *mockSessionIndex) RecordMessage(_, _, _ string, _ time.Time) {}
 func (m *mockSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
-func (m *mockSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error { return nil }
-func (m *mockSessionIndex) Start() error                                        { return nil }
-func (m *mockSessionIndex) Stop() error                                         { return nil }
+func (m *mockSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error  { return nil }
+func (m *mockSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockSessionIndex) Start() error                                         { return nil }
+func (m *mockSessionIndex) Stop() error                                          { return nil }
 
 var _ interfaces.SessionIndexService = (*mockSessionIndex)(nil)
 

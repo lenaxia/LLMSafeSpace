@@ -85,6 +85,16 @@ func (s *Service) UpsertTitle(ctx context.Context, workspaceID, sessionID, title
 	return s.db.UpsertSessionTitle(ctx, workspaceID, sessionID, title)
 }
 
+// UpsertParent records the parent session of a (sub)session. Used by the
+// proxy to mirror opencode's session.parentID into the sidebar's
+// session_index so the sidebar can render hierarchy without round-tripping
+// the agent. Empty parentID is allowed (top-level session) but uncommon —
+// callers typically only invoke this when they have observed a non-empty
+// parentID on a session.
+func (s *Service) UpsertParent(ctx context.Context, workspaceID, sessionID, parentID string) error {
+	return s.db.UpsertSessionParent(ctx, workspaceID, sessionID, parentID)
+}
+
 func (s *Service) drain() {
 	defer s.wg.Done()
 	for {

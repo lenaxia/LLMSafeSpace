@@ -1,0 +1,102 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package database
+
+import (
+	"context"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestListSessionIndex_IncludesParentID verifies the SELECT statement
+// returns parent_session_id alongside the other fields, populating the
+// ParentID column on the result. This is the data path that the sidebar
+// hierarchy depends on — without ParentID the tree builder collapses all
+// sessions into roots.
+func TestListSessionIndex_IncludesParentID(t *testing.T) {
+	svc, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count"}).
+		AddRow("ses_root", "Root chat", nil, time.Now(), 5).
+		AddRow("ses_child", "Subagent task", "ses_root", time.Now(), 3)
+
+	mock.ExpectQuery(regexp.QuoteMeta(
+		`SELECT session_id, title, parent_session_id, last_message_at, message_count`,
+	)).
+		WithArgs("ws-1").
+		WillReturnRows(rows)
+
+	items, err := svc.ListSessionIndex(context.Background(), "ws-1")
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+
+	assert.Equal(t, "ses_root", items[0].ID)
+	assert.Equal(t, "", items[0].ParentID, "top-level session has empty ParentID")
+
+	assert.Equal(t, "ses_child", items[1].ID)
+	assert.Equal(t, "ses_root", items[1].ParentID, "child carries its parent")
+}
+
+// TestListSessionIndex_NullParentBecomesEmpty pins the conversion of a
+// SQL NULL parent_session_id to an empty Go string. If we ever switch to a
+// pointer/optional representation in the type, the sidebar tree builder
+// must be updated to match — this test fails loudly in that case.
+func TestListSessionIndex_NullParentBecomesEmpty(t *testing.T) {
+	svc, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count"}).
+		AddRow("ses_solo", "Standalone", nil, time.Now(), 1)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).
+		WithArgs("ws-1").
+		WillReturnRows(rows)
+
+	items, err := svc.ListSessionIndex(context.Background(), "ws-1")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "", items[0].ParentID)
+}
+
+// TestUpsertSessionParent_WritesExpectedColumns verifies that the upsert
+// statement writes parent_session_id into the right column with the right
+// args. Catches accidental column-rename / arg-order drift.
+func TestUpsertSessionParent_WritesExpectedColumns(t *testing.T) {
+	svc, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectExec(regexp.QuoteMeta(
+		`INSERT INTO session_index (workspace_id, session_id, parent_session_id, updated_at)`,
+	)).
+		WithArgs("ws-1", "ses_child", "ses_parent").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := svc.UpsertSessionParent(context.Background(), "ws-1", "ses_child", "ses_parent")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestUpsertSessionParent_OnConflictUpdatesParent verifies the
+// ON CONFLICT clause refreshes parent_session_id rather than inserting a
+// duplicate row. The SQL is asserted by string match on the upsert clause.
+func TestUpsertSessionParent_OnConflictUpdatesParent(t *testing.T) {
+	svc, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectExec(regexp.QuoteMeta(
+		`ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   parent_session_id = EXCLUDED.parent_session_id`,
+	)).
+		WithArgs("ws-1", "ses_child", "ses_parent_new").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := svc.UpsertSessionParent(context.Background(), "ws-1", "ses_child", "ses_parent_new")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

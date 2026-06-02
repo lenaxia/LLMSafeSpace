@@ -123,7 +123,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
-	registerWorkspaceRoutes(workspaceGroup, services)
+	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler)
 
 	// Sessions/active endpoint — needs proxyHandler for active session data
 	if proxyHandler != nil {
@@ -468,7 +468,10 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 
 // registerWorkspaceRoutes adds all /api/v1/workspaces routes to the given group.
 // All routes require authentication (the group already has auth middleware applied).
-func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) {
+//
+// proxyHandler may be nil; it is only used to trigger the optional
+// session-parent backfill on the /sessions endpoint and is otherwise unused.
+func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, proxyHandler *handlers.ProxyHandler) {
 	wsSvc := services.GetWorkspace()
 	authSvc := services.GetAuth()
 
@@ -663,10 +666,20 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services) 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		sessions, err := wsSvc.ListWorkspaceSessions(c.Request.Context(), userID, c.Param("id"))
+		workspaceID := c.Param("id")
+		sessions, err := wsSvc.ListWorkspaceSessions(c.Request.Context(), userID, workspaceID)
 		if err != nil {
 			respondWithError(c, err)
 			return
+		}
+		// Trigger a one-shot async backfill of parent_session_id from the
+		// authoritative opencode /session list. No-op when the workspace
+		// has already been backfilled this process lifetime, so the steady-
+		// state cost is a single map lookup per request. Useful for
+		// sessions that pre-date the parent_session_id migration.
+		// Skipped when proxyHandler is nil (router built without proxy).
+		if proxyHandler != nil {
+			proxyHandler.BackfillSessionParents(workspaceID)
 		}
 		c.JSON(http.StatusOK, sessions)
 	})

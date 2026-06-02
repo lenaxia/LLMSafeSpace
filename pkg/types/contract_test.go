@@ -34,6 +34,7 @@ func TestGenerateContractFixtures(t *testing.T) {
 		"SessionListItem": SessionListItem{
 			ID:            "sess-1",
 			Title:         "Chat about auth",
+			ParentID:      "sess-root",
 			LastMessageAt: &now,
 			MessageCount:  12,
 			Status:        "active",

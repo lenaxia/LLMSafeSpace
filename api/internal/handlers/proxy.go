@@ -78,6 +78,13 @@ type ProxyHandler struct {
 	broker          *WorkspaceEventBroker
 	sessionParents  *sessionParentCache
 
+	// parentBackfilled tracks workspaces whose session_index has been
+	// reconciled with opencode's /session list at least once this process
+	// lifetime. Set membership is cleared by invalidateCaches so a workspace
+	// suspend/restart cycle re-runs the backfill against the new pod.
+	parentBackfilled   map[string]struct{}
+	parentBackfilledMu sync.Mutex
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 }
@@ -116,16 +123,17 @@ func NewProxyHandler(
 		}
 	}
 	return &ProxyHandler{
-		k8sClient:  k8sClient,
-		httpClient: httpClient,
-		logger:     logger,
-		namespace:  namespace,
-		dialect:    dialect,
-		pwCache:    make(map[string]string),
-		wsConfig:   make(map[string]workspaceConfig),
-		priorPhase: make(map[string]string),
-		activeSess: make(map[string]map[string]bool),
-		connCount:  make(map[string]int),
+		k8sClient:        k8sClient,
+		httpClient:       httpClient,
+		logger:           logger,
+		namespace:        namespace,
+		dialect:          dialect,
+		pwCache:          make(map[string]string),
+		wsConfig:         make(map[string]workspaceConfig),
+		priorPhase:       make(map[string]string),
+		activeSess:       make(map[string]map[string]bool),
+		connCount:        make(map[string]int),
+		parentBackfilled: make(map[string]struct{}),
 	}, nil
 }
 
@@ -780,6 +788,10 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 	if h.sessionParents != nil {
 		h.sessionParents.invalidate(workspaceID)
 	}
+
+	h.parentBackfilledMu.Lock()
+	delete(h.parentBackfilled, workspaceID)
+	h.parentBackfilledMu.Unlock()
 }
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
@@ -899,14 +911,123 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	defer func() { _ = resp.Body.Close() }()
 
 	var session struct {
-		Title string `json:"title"`
+		Title    string `json:"title"`
+		ParentID string `json:"parentID"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil || session.Title == "" {
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
 		return
 	}
 
-	if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, sessionID, session.Title); err != nil {
-		h.logger.Error("Failed to persist session title", err, "workspaceID", workspaceID, "sessionID", sessionID)
+	if session.Title != "" {
+		if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, sessionID, session.Title); err != nil {
+			h.logger.Error("Failed to persist session title", err, "workspaceID", workspaceID, "sessionID", sessionID)
+		}
+	}
+	// Mirror parentID to the session index so the sidebar can render the
+	// hierarchy. opencode subagent (subtask) sessions have parentID set;
+	// top-level sessions don't, and we leave the column NULL for those.
+	if session.ParentID != "" {
+		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, sessionID, session.ParentID); err != nil {
+			h.logger.Error("Failed to persist session parent", err, "workspaceID", workspaceID, "sessionID", sessionID)
+		}
+	}
+}
+
+// BackfillSessionParents reconciles session_index.parent_session_id with the
+// authoritative parentID values from opencode's GET /session list. Used to
+// catch sessions that pre-date the parent_session_id migration (or that
+// missed the SSE session.updated stream during a restart). Idempotent and
+// per-process: subsequent calls for the same workspace are no-ops until
+// invalidateCaches drops the marker (e.g. on workspace suspend/restart).
+//
+// Non-blocking: the caller (typically the sidebar's session-list endpoint)
+// gets a fast response from the DB and the backfill runs in the background.
+// Failures are logged at debug, never surfaced — the worst outcome of a
+// failed backfill is that subagent sessions render at the top level until
+// the next opportunity refreshes them.
+func (h *ProxyHandler) BackfillSessionParents(workspaceID string) {
+	if h.sessionIndex == nil || h.dialect == nil {
+		return
+	}
+	h.parentBackfilledMu.Lock()
+	if _, done := h.parentBackfilled[workspaceID]; done {
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+	// Mark BEFORE the goroutine fires so concurrent callers don't queue
+	// duplicate backfills. If the goroutine fails, invalidateCaches will
+	// reset this on the next workspace lifecycle event.
+	h.parentBackfilled[workspaceID] = struct{}{}
+	h.parentBackfilledMu.Unlock()
+
+	go h.runParentBackfill(workspaceID)
+}
+
+func (h *ProxyHandler) runParentBackfill(workspaceID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		// Pod not reachable — drop the marker so the next call retries.
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	url := fmt.Sprintf("http://%s:%d%s", workspace.Status.PodIP, opencodePort, h.dialect.SessionListPath())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Debug("Backfill: session list fetch failed", "workspaceID", workspaceID, "error", err)
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	var sessions []struct {
+		ID       string `json:"id"`
+		ParentID string `json:"parentID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return
+	}
+
+	written := 0
+	for _, s := range sessions {
+		if s.ID == "" || s.ParentID == "" {
+			continue
+		}
+		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, s.ID, s.ParentID); err != nil {
+			h.logger.Debug("Backfill: upsert parent failed", "workspaceID", workspaceID, "sessionID", s.ID, "error", err)
+			continue
+		}
+		written++
+	}
+	if written > 0 {
+		h.logger.Info("Backfilled session parents", "workspaceID", workspaceID, "count", written)
 	}
 }
 
@@ -1130,24 +1251,38 @@ func (h *ProxyHandler) autoApprovePermission(workspaceID, requestID string) {
 		"workspaceID", workspaceID, "requestID", requestID)
 }
 
-// persistTitleFromEvent extracts the session title from a session.updated SSE
-// event and writes it to the session index. This ensures PostgreSQL always has
-// the latest title without requiring a separate fetch from opencode.
+// persistTitleFromEvent extracts the session title and parentID from a
+// session.updated SSE event and writes them to the session index. This
+// ensures PostgreSQL always has the latest title and the
+// (sessionID → parentID) mapping needed for the sidebar hierarchy without
+// requiring a separate fetch from opencode.
 func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 	// opencode session.updated event shape (both v1.2 and v1.15):
-	//   {"type":"session.updated","properties":{"sessionID":"ses_...","info":{"id":"ses_...","title":"..."}}}
+	//   {"type":"session.updated","properties":{"sessionID":"ses_...","info":{"id":"ses_...","title":"...","parentID":"ses_..."}}}
 	// v1.15 also has a top-level "id" field (ignored by Go JSON decoder).
+	// parentID is omitted on top-level sessions; present on subagent (subtask) sessions.
 	var evt struct {
 		Properties struct {
 			SessionID string `json:"sessionID"`
 			Info      struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
+				ID       string `json:"id"`
+				Title    string `json:"title"`
+				ParentID string `json:"parentID"`
 			} `json:"info"`
 		} `json:"properties"`
 	}
-	if json.Unmarshal([]byte(rawData), &evt) == nil && evt.Properties.Info.ID != "" && evt.Properties.Info.Title != "" {
-		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, evt.Properties.Info.ID, evt.Properties.Info.Title)
+	if json.Unmarshal([]byte(rawData), &evt) != nil {
+		return
+	}
+	id := evt.Properties.Info.ID
+	if id == "" {
+		return
+	}
+	if evt.Properties.Info.Title != "" {
+		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, id, evt.Properties.Info.Title)
+	}
+	if evt.Properties.Info.ParentID != "" {
+		_ = h.sessionIndex.UpsertParent(context.Background(), workspaceID, id, evt.Properties.Info.ParentID)
 	}
 }
 

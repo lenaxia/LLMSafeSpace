@@ -239,9 +239,12 @@ func (m *fullMockDB) UpsertSessionMessage(context.Context, string, string, time.
 	return nil
 }
 func (m *fullMockDB) UpsertSessionTitle(context.Context, string, string, string) error { return nil }
-func (m *fullMockDB) Ping(context.Context) error                                       { return nil }
-func (m *fullMockDB) Start() error                                                     { return nil }
-func (m *fullMockDB) Stop() error                                                      { return nil }
+func (m *fullMockDB) UpsertSessionParent(context.Context, string, string, string) error {
+	return nil
+}
+func (m *fullMockDB) Ping(context.Context) error { return nil }
+func (m *fullMockDB) Start() error               { return nil }
+func (m *fullMockDB) Stop() error                { return nil }
 
 // --- In-memory secrets mocks ---
 

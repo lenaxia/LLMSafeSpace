@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
@@ -23,6 +23,8 @@ import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
 import { formatRelativeTime } from "../../lib/time";
 import { cn } from "../../lib/utils";
+import { buildSessionTree, ancestorChain } from "../../lib/sessionTree";
+import type { SessionTreeNode } from "../../lib/sessionTree";
 
 interface Props {
   onNavigate?: () => void;
@@ -416,11 +418,55 @@ function WorkspaceSessionList({
     queryKey: ["sessions", workspaceId],
     queryFn: async () => {
       const result = await workspacesApi.getSessions(workspaceId);
-      console.log("[Sessions] fetched for", workspaceId, "titles:", result?.map(s => ({ id: s.id.slice(0, 8), title: s.title })));
       return result;
     },
     enabled: !!workspaceId,
   });
+
+  // Tree shape: roots + orphans, where roots/orphans contain children of
+  // arbitrary depth. Recomputed only when the session list changes.
+  const tree = useMemo(() => buildSessionTree(sessions ?? []), [sessions]);
+
+  // Collapsed-by-default; auto-expand the chain of ancestors from the
+  // active session so the user always sees where they are in the tree.
+  // Per-workspace state so collapsing one workspace doesn't bleed into
+  // another, but in practice this component instance is per-workspace.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Whenever the selected session changes (or sessions load), make sure
+  // its ancestor chain is expanded. We don't collapse what was already
+  // open — that would yank the user's view out from under them.
+  useEffect(() => {
+    if (!sessions || !selectedSessionId) return;
+    const chain = ancestorChain(sessions, selectedSessionId);
+    if (chain.length <= 1) return; // top-level session has nothing to expand
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      // chain includes the active session itself; we only need to expand
+      // its ancestors so the active row is visible.
+      for (let i = 0; i < chain.length - 1; i++) {
+        next.add(chain[i]!);
+      }
+      return next;
+    });
+  }, [sessions, selectedSessionId]);
+
+  // The synthetic "Orphaned subtasks" group is also collapsible, but
+  // tracked separately from real session IDs to avoid any chance of
+  // collision with a real ses_orphans-like ID.
+  const [orphansExpanded, setOrphansExpanded] = useState(false);
+
+  const toggleExpanded = (sessionId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  };
 
   if (isSuspended && isLoading) {
     return (
@@ -442,72 +488,258 @@ function WorkspaceSessionList({
 
       {sessions && sessions.length > 0 && (
         <div className="flex flex-col gap-0.5">
-          {sessions.map((s) => {
-            const title = sessionDisplayTitle(s.title, s.lastMessageAt);
-            const isRenaming = renamingSession?.sessionId === s.id;
+          {tree.roots.map((node) => (
+            <SessionTreeRow
+              key={node.session.id}
+              node={node}
+              depth={0}
+              workspaceId={workspaceId}
+              selectedSessionId={selectedSessionId}
+              expanded={expanded}
+              onToggleExpand={toggleExpanded}
+              onSelectSession={onSelectSession}
+              onRenameSession={onRenameSession}
+              onDeleteSession={onDeleteSession}
+              renamingSession={renamingSession}
+              onRenameSessionCancel={onRenameSessionCancel}
+              onRenameSessionConfirm={onRenameSessionConfirm}
+            />
+          ))}
 
-            if (isRenaming) {
-              return (
-                <div key={s.id} className="border rounded-md border-border ml-2">
-                  <RenameSessionDialog
-                    currentTitle={s.title ?? ""}
-                    onRename={(newTitle) => onRenameSessionConfirm(s.id, newTitle)}
-                    onCancel={onRenameSessionCancel}
-                  />
-                </div>
-              );
-            }
-
-            const kebabItems: KebabMenuItem[] = [
-              {
-                label: "Copy link",
-                onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspaceId}/${s.id}`),
-              },
-              {
-                label: "Rename",
-                onClick: () => onRenameSession(s.id, s.title ?? ""),
-              },
-              {
-                label: "Delete",
-                onClick: () => onDeleteSession(s.id),
-                destructive: true,
-              },
-            ];
-
-            return (
-              <div
-                key={s.id}
-                className={cn(
-                  "group flex items-center rounded-md transition-colors hover:bg-accent/50",
-                  s.id === selectedSessionId && "bg-accent",
-                )}
-              >
-                <button
-                  onClick={() => onSelectSession(s.id)}
-                  className={cn(
-                    "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors overflow-hidden",
-                    s.id === selectedSessionId
-                      ? "text-accent-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span className="flex-1 truncate">{title}</span>
-                  {s.lastMessageAt && (
-                    <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
-                  )}
-                  {s.status === "active" && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-                  )}
-                </button>
-                <div className="mr-1 flex-shrink-0">
-                  <KebabMenu items={kebabItems} align="left" />
-                </div>
-              </div>
-            );
-          })}
+          {tree.orphans.length > 0 && (
+            <OrphansGroup
+              orphans={tree.orphans}
+              expanded={orphansExpanded}
+              onToggleExpand={() => setOrphansExpanded((v) => !v)}
+              workspaceId={workspaceId}
+              selectedSessionId={selectedSessionId}
+              childExpanded={expanded}
+              onChildToggleExpand={toggleExpanded}
+              onSelectSession={onSelectSession}
+              onRenameSession={onRenameSession}
+              onDeleteSession={onDeleteSession}
+              renamingSession={renamingSession}
+              onRenameSessionCancel={onRenameSessionCancel}
+              onRenameSessionConfirm={onRenameSessionConfirm}
+            />
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+interface SessionTreeRowProps {
+  node: SessionTreeNode;
+  depth: number;
+  workspaceId: string;
+  selectedSessionId?: string;
+  expanded: Set<string>;
+  onToggleExpand: (sessionId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  renamingSession: { wsId: string; sessionId: string; title: string } | null;
+  onRenameSessionCancel: () => void;
+  onRenameSessionConfirm: (sessionId: string, title: string) => void;
+}
+
+/** Single row in the session tree. Renders its children recursively when
+ *  expanded, with progressive left padding to show depth. */
+function SessionTreeRow({
+  node,
+  depth,
+  workspaceId,
+  selectedSessionId,
+  expanded,
+  onToggleExpand,
+  onSelectSession,
+  onRenameSession,
+  onDeleteSession,
+  renamingSession,
+  onRenameSessionCancel,
+  onRenameSessionConfirm,
+}: SessionTreeRowProps) {
+  const s = node.session;
+  const isRenaming = renamingSession?.sessionId === s.id;
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expanded.has(s.id);
+  const title = sessionDisplayTitle(s.title, s.lastMessageAt);
+
+  if (isRenaming) {
+    return (
+      <div className="border rounded-md border-border ml-2">
+        <RenameSessionDialog
+          currentTitle={s.title ?? ""}
+          onRename={(newTitle) => onRenameSessionConfirm(s.id, newTitle)}
+          onCancel={onRenameSessionCancel}
+        />
+      </div>
+    );
+  }
+
+  const kebabItems: KebabMenuItem[] = [
+    {
+      label: "Copy link",
+      onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspaceId}/${s.id}`),
+    },
+    {
+      label: "Rename",
+      onClick: () => onRenameSession(s.id, s.title ?? ""),
+    },
+    {
+      label: "Delete",
+      onClick: () => onDeleteSession(s.id),
+      destructive: true,
+    },
+  ];
+
+  // Each depth level adds a small indent so the tree shape is visually
+  // obvious even with long titles. Capped implicitly by MAX_DEPTH in the
+  // tree builder.
+  const indentStyle = { paddingLeft: `${depth * 0.75}rem` };
+
+  return (
+    <>
+      <div
+        className={cn(
+          "group flex items-center rounded-md transition-colors hover:bg-accent/50",
+          s.id === selectedSessionId && "bg-accent",
+        )}
+        style={indentStyle}
+      >
+        {hasChildren ? (
+          <button
+            onClick={() => onToggleExpand(s.id)}
+            className="rounded p-0.5 text-muted-foreground hover:bg-accent flex-shrink-0"
+            aria-label={isExpanded ? "Collapse subtasks" : "Expand subtasks"}
+            aria-expanded={isExpanded}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+          </button>
+        ) : (
+          // Spacer so titles align between rows that do/don't have children.
+          <span className="inline-block w-4 flex-shrink-0" aria-hidden="true" />
+        )}
+        <button
+          onClick={() => onSelectSession(s.id)}
+          className={cn(
+            "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors overflow-hidden",
+            s.id === selectedSessionId
+              ? "text-accent-foreground"
+              : "text-muted-foreground",
+          )}
+        >
+          <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
+          <span className="flex-1 truncate">{title}</span>
+          {s.lastMessageAt && (
+            <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
+          )}
+          {s.status === "active" && (
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
+          )}
+        </button>
+        <div className="mr-1 flex-shrink-0">
+          <KebabMenu items={kebabItems} align="left" />
+        </div>
+      </div>
+      {hasChildren && isExpanded &&
+        node.children.map((child) => (
+          <SessionTreeRow
+            key={child.session.id}
+            node={child}
+            depth={depth + 1}
+            workspaceId={workspaceId}
+            selectedSessionId={selectedSessionId}
+            expanded={expanded}
+            onToggleExpand={onToggleExpand}
+            onSelectSession={onSelectSession}
+            onRenameSession={onRenameSession}
+            onDeleteSession={onDeleteSession}
+            renamingSession={renamingSession}
+            onRenameSessionCancel={onRenameSessionCancel}
+            onRenameSessionConfirm={onRenameSessionConfirm}
+          />
+        ))}
+    </>
+  );
+}
+
+interface OrphansGroupProps {
+  orphans: SessionTreeNode[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  workspaceId: string;
+  selectedSessionId?: string;
+  childExpanded: Set<string>;
+  onChildToggleExpand: (sessionId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  renamingSession: { wsId: string; sessionId: string; title: string } | null;
+  onRenameSessionCancel: () => void;
+  onRenameSessionConfirm: (sessionId: string, title: string) => void;
+}
+
+/** Synthetic top-level entry that collects all sessions whose parent is
+ *  no longer in the workspace (e.g. the parent session was deleted).
+ *  Renders as a non-clickable header row with a chevron, mirroring the
+ *  collapsed/expanded behaviour of a real parent. */
+function OrphansGroup({
+  orphans,
+  expanded,
+  onToggleExpand,
+  workspaceId,
+  selectedSessionId,
+  childExpanded,
+  onChildToggleExpand,
+  onSelectSession,
+  onRenameSession,
+  onDeleteSession,
+  renamingSession,
+  onRenameSessionCancel,
+  onRenameSessionConfirm,
+}: OrphansGroupProps) {
+  return (
+    <>
+      <div className="group flex items-center rounded-md transition-colors hover:bg-accent/50">
+        <button
+          onClick={onToggleExpand}
+          className="flex flex-1 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground italic"
+          aria-label={expanded ? "Collapse orphaned subtasks" : "Expand orphaned subtasks"}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3 w-3 flex-shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 flex-shrink-0" />
+          )}
+          <span className="flex-1 truncate">Orphaned subtasks</span>
+          <span className="flex-shrink-0 text-xs text-muted-foreground/60">{orphans.length}</span>
+        </button>
+      </div>
+      {expanded &&
+        orphans.map((node) => (
+          <SessionTreeRow
+            key={node.session.id}
+            node={node}
+            depth={1}
+            workspaceId={workspaceId}
+            selectedSessionId={selectedSessionId}
+            expanded={childExpanded}
+            onToggleExpand={onChildToggleExpand}
+            onSelectSession={onSelectSession}
+            onRenameSession={onRenameSession}
+            onDeleteSession={onDeleteSession}
+            renamingSession={renamingSession}
+            onRenameSessionCancel={onRenameSessionCancel}
+            onRenameSessionConfirm={onRenameSessionConfirm}
+          />
+        ))}
+    </>
   );
 }

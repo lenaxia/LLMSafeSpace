@@ -79,6 +79,7 @@
   "SessionListItem": {
     "id": "sess-1",
     "title": "Chat about auth",
+    "parentId": "sess-root",
     "lastMessageAt": "2026-05-24T12:00:00Z",
     "messageCount": 12,
     "status": "active"

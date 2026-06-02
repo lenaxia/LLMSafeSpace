@@ -61,6 +61,12 @@ export interface ActivateWorkspaceResponse {
 export interface SessionListItem {
   id: string;
   title?: string;
+  /**
+   * Session ID of the user-visible parent. Populated for opencode subagent
+   * (subtask) sessions spawned via the `task` tool. The sidebar nests
+   * children under this parent. Empty/undefined for top-level sessions.
+   */
+  parentId?: string;
   lastMessageAt?: string;
   messageCount: number;
   status: string; // "active" | "idle"

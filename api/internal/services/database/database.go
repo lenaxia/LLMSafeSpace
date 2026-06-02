@@ -643,7 +643,7 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 
 func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT session_id, title, last_message_at, message_count
+		`SELECT session_id, title, parent_session_id, last_message_at, message_count
 		 FROM session_index WHERE workspace_id = $1
 		 ORDER BY last_message_at DESC NULLS LAST LIMIT 100`, workspaceID)
 	if err != nil {
@@ -655,12 +655,16 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 	for rows.Next() {
 		var item types.SessionListItem
 		var title sql.NullString
+		var parentID sql.NullString
 		var lastMsg sql.NullTime
-		if err := rows.Scan(&item.ID, &title, &lastMsg, &item.MessageCount); err != nil {
+		if err := rows.Scan(&item.ID, &title, &parentID, &lastMsg, &item.MessageCount); err != nil {
 			return nil, err
 		}
 		if title.Valid {
 			item.Title = title.String
+		}
+		if parentID.Valid {
+			item.ParentID = parentID.String
 		}
 		if lastMsg.Valid {
 			t := lastMsg.Time
@@ -695,5 +699,24 @@ func (s *Service) UpsertSessionTitle(ctx context.Context, workspaceID, sessionID
 		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
 		   title = EXCLUDED.title,
 		   updated_at = NOW()`, workspaceID, sessionID, title)
+	return err
+}
+
+// UpsertSessionParent records (or refreshes) the parent_session_id for a
+// session. Used to mirror opencode subagent (subtask) parent links into the
+// sidebar's session_index so the UI can render the hierarchy without
+// round-tripping the agent.
+//
+// Idempotent: passing the same parentID is a no-op. We deliberately do not
+// guard against parentID changes — opencode never re-parents a session in
+// practice, and an UPDATE-on-conflict path costs less than a SELECT-then-
+// UPDATE round trip.
+func (s *Service) UpsertSessionParent(ctx context.Context, workspaceID, sessionID, parentID string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO session_index (workspace_id, session_id, parent_session_id, updated_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   parent_session_id = EXCLUDED.parent_session_id,
+		   updated_at = NOW()`, workspaceID, sessionID, parentID)
 	return err
 }
