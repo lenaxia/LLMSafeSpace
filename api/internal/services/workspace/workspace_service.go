@@ -32,6 +32,10 @@ func init() {
 	opencode.Register()
 }
 
+// WorkspaceConfig is non-sensitive workspace metadata persisted for pod boot.
+// Re-exported from pkg/types to avoid requiring callers to import both.
+type WorkspaceConfig = types.WorkspaceConfig
+
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
 	logger           pkginterfaces.LoggerInterface
@@ -1129,5 +1133,36 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 			return fmt.Errorf("create secrets manifest: %w", err)
 		}
 		return nil
+	})
+}
+
+// EnsureWorkspaceConfig writes workspace-level configuration (non-sensitive
+// metadata like default model) to the same K8s Secret used for secrets.
+// This is read by the agentd at boot to configure the agent.
+func (s *Service) EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config WorkspaceConfig) error {
+	if workspaceID == "" {
+		return fmt.Errorf("workspaceID is required")
+	}
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshal workspace config: %w", err)
+	}
+
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
+	clientset := s.k8sClient.Clientset()
+	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			// Secret doesn't exist yet — no-op; it'll be created on next bind.
+			return nil
+		}
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data["workspace-config.json"] = configJSON
+		_, err = secretClient.Update(ctx, existing, metav1.UpdateOptions{})
+		return err
 	})
 }
