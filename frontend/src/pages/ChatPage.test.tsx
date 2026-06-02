@@ -100,6 +100,40 @@ describe("ChatPage", () => {
     await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
   });
 
+  it("renders messages in chronological order regardless of API response order", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    // API returns newest-first (as opencode does with paginated queries)
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "cc0000000003abcdef", role: "assistant", parts: [{ type: "text", text: "Third" }] },
+      { id: "bb0000000002abcdef", role: "user", parts: [{ type: "text", text: "Second" }] },
+      { id: "aa0000000001abcdef", role: "user", parts: [{ type: "text", text: "First" }] },
+    ]);
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => {
+      const bubbles = screen.getAllByText(/First|Second|Third/);
+      expect(bubbles[0]).toHaveTextContent("First");
+      expect(bubbles[1]).toHaveTextContent("Second");
+      expect(bubbles[2]).toHaveTextContent("Third");
+    });
+  });
+
+  it("renders messages in chronological order when API returns oldest-first", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    // API returns oldest-first (possible in some opencode versions)
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "aa0000000001abcdef", role: "user", parts: [{ type: "text", text: "First" }] },
+      { id: "bb0000000002abcdef", role: "user", parts: [{ type: "text", text: "Second" }] },
+      { id: "cc0000000003abcdef", role: "assistant", parts: [{ type: "text", text: "Third" }] },
+    ]);
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => {
+      const bubbles = screen.getAllByText(/First|Second|Third/);
+      expect(bubbles[0]).toHaveTextContent("First");
+      expect(bubbles[1]).toHaveTextContent("Second");
+      expect(bubbles[2]).toHaveTextContent("Third");
+    });
+  });
+
   it("auto-creates session when workspace Active and no sessionId", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
     (sessionsApi.create as ReturnType<typeof vi.fn>).mockResolvedValue({ sessionId: "new-sess" });
