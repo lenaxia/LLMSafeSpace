@@ -59,13 +59,15 @@ auth. Likewise `DisposeInstance` (line 63-79).
 
 **Verified manually against the live pod's opencode:**
 
-    curl -u 'opencode:<password>' -X PUT http://localhost:4096/auth/openai \
-        -H 'Content-Type: application/json' \
-        -d '{"type":"api","key":"test"}'
-    HTTP/1.1 200 OK             ← with auth
-    
-    curl                -X PUT http://localhost:4096/auth/openai …
-    HTTP/1.1 401 Unauthorized   ← without auth (current agentd behaviour)
+A `curl -X PUT http://localhost:4096/auth/openai` request, sending the
+JSON body `{"type":"api","key":"test"}` and the `Content-Type:
+application/json` header, returns `HTTP/1.1 200 OK` ONLY when the
+request also carries HTTP Basic auth using username
+`agentd.AuthUsername` (`opencode`) and the password mounted at
+`/sandbox-cfg/password`. Without the auth header (the pre-fix client
+behavior), the same request returns:
+
+    HTTP/1.1 401 Unauthorized
     www-authenticate: Basic realm="Secure Area"
 
 **Required fix:**

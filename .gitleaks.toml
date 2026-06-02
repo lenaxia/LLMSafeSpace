@@ -82,6 +82,25 @@ regexes = [
   '''YOUR_API_KEY''',
 ]
 
+# Specific commits whose findings are documented false positives.
+# Each entry MUST cite the commit, the file, the rule, and *why* the
+# finding is not a real secret. Prefer fixing the source; use this
+# only when the finding is in immutable git history.
+commits = [
+  # d1c7242 introduced the worklog 0125 "Verified manually" curl
+  # snippet which used the literal placeholder
+  # `curl -u 'opencode:<password>'`. The angle-bracketed
+  # `<password>` is a documentation placeholder, not a real
+  # credential — but gitleaks's `curl-auth-user` rule fires on the
+  # syntactic shape regardless. The follow-up commit on this branch
+  # rewrote the worklog to prose so the issue cannot recur on
+  # working-tree scans, but the `--no-git` scan in the security
+  # workflow walks history and re-finds the original commit.
+  # Fingerprint covers the exact line; broader history scanning is
+  # still in effect.
+  "d1c72424c3e3feb63427fb8c4718a150f9d4b785",
+]
+
 # Stop-words: matches that, when seen alongside a candidate secret,
 # disprove the match (e.g. "example", "placeholder").
 stopwords = [
