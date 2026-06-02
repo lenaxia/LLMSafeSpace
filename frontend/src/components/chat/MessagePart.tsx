@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -27,6 +27,25 @@ function ToolInput({ input }: { input: unknown }) {
   }
   // Fallback: compact JSON
   return <pre className="text-xs text-muted-foreground font-mono whitespace-pre-wrap max-h-20 overflow-y-auto">{JSON.stringify(input, null, 2)}</pre>;
+}
+
+function ToolDetails({ borderColor, textColor, statusIcon, toolName, filePath, children }: {
+  borderColor: string; textColor: string; statusIcon: string; toolName: string; filePath: string; children: React.ReactNode;
+}) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details className={cn("group my-1.5 rounded-md border", borderColor)} onToggle={(e) => setOpened((e.target as HTMLDetailsElement).open)}>
+      <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium overflow-hidden", textColor)}>
+        <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
+      </summary>
+      {opened && (
+        <div className="border-t border-inherit py-1 space-y-1 min-w-0 overflow-hidden">
+          {children}
+        </div>
+      )}
+    </details>
+  );
 }
 
 function ToolDiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
@@ -147,42 +166,36 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     }
 
     return (
-      <details className={cn("group my-1.5 rounded-md border", borderColor)}>
-        <summary className={cn("flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium overflow-hidden", textColor)}>
-          <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
-          <span className="truncate">{statusIcon} {toolName || "tool"}{filePath ? ` — ${filePath}` : ""}</span>
-        </summary>
-        <div className="border-t border-inherit py-1 space-y-1 min-w-0 overflow-hidden">
-          {isFileEdit ? (
-            <ToolDiffView
-              oldStr={String((input as Record<string, unknown>).oldString ?? (input as Record<string, unknown>).oldStr ?? "")}
-              newStr={String((input as Record<string, unknown>).newString ?? (input as Record<string, unknown>).newStr ?? "")}
-            />
-          ) : isFileWrite ? (
-            <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
-              {String((input as Record<string, unknown>).content ?? "")}
-            </pre>
-          ) : (
-            <>
-              {part.input != null && (
-                <div className="px-3 py-1">
-                  <ToolInput input={part.input} />
-                </div>
-              )}
-              {part.toolOutput && (
-                <details className="border-t border-muted">
-                  <summary className="px-3 py-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                    Output ({part.toolOutput.length > 200 ? `${Math.ceil(part.toolOutput.length / 1024)}KB` : `${part.toolOutput.length} chars`})
-                  </summary>
-                  <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
-                    {part.toolOutput}
-                  </pre>
-                </details>
-              )}
-            </>
-          )}
-        </div>
-      </details>
+      <ToolDetails borderColor={borderColor} textColor={textColor} statusIcon={statusIcon} toolName={toolName} filePath={filePath}>
+        {isFileEdit ? (
+          <ToolDiffView
+            oldStr={String((input as Record<string, unknown>).oldString ?? (input as Record<string, unknown>).oldStr ?? "")}
+            newStr={String((input as Record<string, unknown>).newString ?? (input as Record<string, unknown>).newStr ?? "")}
+          />
+        ) : isFileWrite ? (
+          <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+            {String((input as Record<string, unknown>).content ?? "")}
+          </pre>
+        ) : (
+          <>
+            {part.input != null && (
+              <div className="px-3 py-1">
+                <ToolInput input={part.input} />
+              </div>
+            )}
+            {part.toolOutput && (
+              <details className="border-t border-muted">
+                <summary className="px-3 py-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                  Output ({part.toolOutput.length > 200 ? `${Math.ceil(part.toolOutput.length / 1024)}KB` : `${part.toolOutput.length} chars`})
+                </summary>
+                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+                  {part.toolOutput}
+                </pre>
+              </details>
+            )}
+          </>
+        )}
+      </ToolDetails>
     );
   }
 

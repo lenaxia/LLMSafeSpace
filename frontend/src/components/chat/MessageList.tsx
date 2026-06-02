@@ -23,15 +23,19 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   const [showJumpButton, setShowJumpButton] = useState(false);
   const stickToBottom = useRef(true);
 
+  const rafId = useRef(0);
   const checkIfAtBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
-    stickToBottom.current = atBottom;
-    // Only trigger re-render when button visibility actually changes
-    setShowJumpButton((prev) => {
-      const shouldShow = !atBottom;
-      return prev === shouldShow ? prev : shouldShow;
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = 0;
+      const el = scrollRef.current;
+      if (!el) return;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
+      stickToBottom.current = atBottom;
+      setShowJumpButton((prev) => {
+        const shouldShow = !atBottom;
+        return prev === shouldShow ? prev : shouldShow;
+      });
     });
   }, []);
 
@@ -39,7 +43,10 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     const el = scrollRef.current;
     if (!el) return;
     el.addEventListener("scroll", checkIfAtBottom, { passive: true });
-    return () => el.removeEventListener("scroll", checkIfAtBottom);
+    return () => {
+      el.removeEventListener("scroll", checkIfAtBottom);
+      if (rafId.current) cancelAnimationFrame(rafId.current);
+    };
   }, [checkIfAtBottom]);
 
   const scrollToBottom = useCallback(() => {
