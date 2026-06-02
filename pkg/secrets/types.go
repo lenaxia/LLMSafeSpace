@@ -23,7 +23,7 @@ const (
 	// its API key, optional base URL, model visibility allowlist, and
 	// default model selection. Multiple llm-provider secrets bound to
 	// the same workspace are merged by the agent's FormatCredentials.
-	SecretTypeLLMProvider  SecretType = "llm-provider"
+	SecretTypeLLMProvider   SecretType = "llm-provider"
 	SecretTypeSSHKey        SecretType = "ssh-key"
 	SecretTypeGitCredential SecretType = "git-credential"
 	SecretTypeSecretFile    SecretType = "secret-file"

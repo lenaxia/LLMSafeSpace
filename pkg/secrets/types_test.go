@@ -13,7 +13,7 @@ func TestLLMProviderData_MarshalUnmarshal(t *testing.T) {
 		Default:    "anthropic/claude-sonnet-4-5-20250929",
 		SmallModel: "anthropic/claude-haiku-4-5-20250929",
 		Models: []LLMModelConfig{
-			{ID: "claude-sonnet-4-5-20250929", Name: "Claude Sonnet 4.5"},
+			{ID: "claude-sonnet-4-5-20250929", Label: "Claude Sonnet 4.5"},
 			{ID: "claude-haiku-4-5-20250929"},
 		},
 	}
@@ -49,8 +49,8 @@ func TestLLMProviderData_MarshalUnmarshal(t *testing.T) {
 	if dst.Models[0].ID != "claude-sonnet-4-5-20250929" {
 		t.Errorf("Models[0].ID: got %q", dst.Models[0].ID)
 	}
-	if dst.Models[0].Name != "Claude Sonnet 4.5" {
-		t.Errorf("Models[0].Name: got %q", dst.Models[0].Name)
+	if dst.Models[0].Label != "Claude Sonnet 4.5" {
+		t.Errorf("Models[0].Label: got %q", dst.Models[0].Label)
 	}
 }
 
@@ -152,8 +152,9 @@ func TestLLMProvider_MetadataRequirements(t *testing.T) {
 	if !ok {
 		t.Fatal("MetadataRequirementsBySecretType should have entry for llm-provider")
 	}
-	// llm-provider metadata is optional; only the "provider" key is suggested
-	if len(reqs) < 1 {
-		t.Error("llm-provider should have at least 'provider' in metadata requirements")
+	// llm-provider stores all config in the value JSON; metadata is optional,
+	// so the requirements list is empty.
+	if len(reqs) != 0 {
+		t.Errorf("llm-provider should have no required metadata keys, got %v", reqs)
 	}
 }
