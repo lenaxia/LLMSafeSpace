@@ -152,4 +152,84 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
     await expect(page.getByText("Dismiss me")).not.toBeVisible({ timeout: 5_000 });
     expect(rejectCalled).toBe(true);
   });
+
+  // Subtask bubbling: opencode's `task` tool spawns a subagent session whose
+  // permission/question events carry the subtask's session_id, not the
+  // user-visible parent. The backend stamps root_session_id with the parent
+  // so the chat UI can bubble the prompt into the right view.
+  // Without this fix the prompt was silently dropped — see worklog 0121.
+  test("subtask permission bubbles to parent session via root_session_id", async ({ page }) => {
+    const SUBTASK_ID = "ses_subtask_xyz";
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+      const event = {
+        type: "agent.permission",
+        data: {
+          id: "per_subtask_e2e",
+          session_id: SUBTASK_ID,         // subtask's session
+          root_session_id: SESSION_ID,    // parent session — what the user is viewing
+          permission: "shell",
+          patterns: ["ls /workspace"],
+        },
+      };
+      await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
+    });
+
+    let replyCalled = false;
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/permission/per_subtask_e2e/reply`, async (route: Route) => {
+      replyCalled = true;
+      await route.fulfill({ status: 200, contentType: "application/json", body: "true" });
+    });
+
+    // Navigate to the PARENT session — without root_session_id support the
+    // prompt would never appear here.
+    await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
+    await expect(page.getByText("Run shell command")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("ls /workspace")).toBeVisible();
+
+    await page.getByText("Allow always").click();
+    await expect(page.getByText("Run shell command")).not.toBeVisible({ timeout: 5_000 });
+    expect(replyCalled).toBe(true);
+  });
+
+  test("subtask question bubbles to parent session via root_session_id", async ({ page }) => {
+    const SUBTASK_ID = "ses_subtask_q";
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+      const event = {
+        type: "agent.question",
+        data: {
+          id: "que_subtask_e2e",
+          session_id: SUBTASK_ID,
+          root_session_id: SESSION_ID,
+          questions: [{ header: "Subagent confirm", question: "Proceed with refactor?", options: [{ label: "Yes", description: "go" }, { label: "No", description: "stop" }] }],
+        },
+      };
+      await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
+    });
+
+    await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
+    await expect(page.getByText("Proceed with refactor?")).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("subtask permission for a different parent tree is NOT shown", async ({ page }) => {
+    // Two subtask trees coexist in the same workspace. The user is viewing
+    // tree A (SESSION_ID); the event is for tree B. Must NOT render.
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+      const event = {
+        type: "agent.permission",
+        data: {
+          id: "per_other_tree",
+          session_id: "ses_other_subtask",
+          root_session_id: "ses_other_parent", // different parent
+          permission: "shell",
+          patterns: ["echo hi"],
+        },
+      };
+      await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
+    });
+
+    await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
+    // Wait long enough that any erroneous render would have happened.
+    await page.waitForTimeout(2000);
+    await expect(page.getByText("Run shell command")).not.toBeVisible();
+  });
 });

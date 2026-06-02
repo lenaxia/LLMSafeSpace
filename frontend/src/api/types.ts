@@ -201,6 +201,14 @@ export interface QuestionInfo {
 export interface QuestionRequest {
   id: string;
   session_id: string;
+  /**
+   * Top-level session in the parent chain. Equals session_id for top-level
+   * sessions; for subagent/subtask sessions (e.g. opencode `task` tool spawning
+   * child sessions) it points at the user-visible ancestor session. The chat
+   * UI matches incoming prompts against this so subtask prompts bubble up to
+   * the parent session view.
+   */
+  root_session_id?: string;
   questions: QuestionInfo[];
   tool?: { message_id: string; call_id: string };
 }
@@ -208,6 +216,8 @@ export interface QuestionRequest {
 export interface PermissionRequest {
   id: string;
   session_id: string;
+  /** See {@link QuestionRequest.root_session_id}. */
+  root_session_id?: string;
   permission: string;
   patterns: string[];
   metadata?: Record<string, unknown>;

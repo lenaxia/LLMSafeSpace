@@ -396,8 +396,12 @@ export function ChatPage() {
       }
     } else if (event.type === "agent.question") {
       // US-16.11: Agent question event
+      // Match against root_session_id (subtask/subagent prompts bubble up to
+      // the parent session view) and fall back to session_id for top-level
+      // sessions and for backward compatibility with older API replicas.
       const req = event.data as QuestionRequest;
-      if (req.session_id === sessionId) {
+      const eventRoot = req.root_session_id ?? req.session_id;
+      if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingQuestions((prev) => prev.some((q) => q.id === req.id) ? prev : [...prev, req]);
       }
     } else if (event.type === "agent.question.resolved") {
@@ -405,7 +409,8 @@ export function ChatPage() {
       setPendingQuestions((prev) => prev.filter((q) => q.id !== request_id));
     } else if (event.type === "agent.permission") {
       const req = event.data as PermissionRequest;
-      if (req.session_id === sessionId) {
+      const eventRoot = req.root_session_id ?? req.session_id;
+      if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingPermissions((prev) => prev.some((p) => p.id === req.id) ? prev : [...prev, req]);
       }
     } else if (event.type === "agent.permission.resolved") {

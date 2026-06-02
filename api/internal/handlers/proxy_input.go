@@ -103,6 +103,11 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 	// Fetch and emit pending questions
 	if body, err := h.fetchFromPod(ctx, podIP, password, h.dialect.QuestionListPath()); err == nil {
 		for _, req := range h.parseQuestionList(body) {
+			if h.sessionParents != nil {
+				req.RootSessionID = h.sessionParents.resolveRoot(ctx, workspaceID, req.SessionID)
+			} else {
+				req.RootSessionID = req.SessionID
+			}
 			h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.question", Data: req})
 		}
 	}
@@ -111,6 +116,11 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 	if !h.shouldAutoApprovePermissions(workspaceID) {
 		if body, err := h.fetchFromPod(ctx, podIP, password, h.dialect.PermissionListPath()); err == nil {
 			for _, req := range h.parsePermissionList(body) {
+				if h.sessionParents != nil {
+					req.RootSessionID = h.sessionParents.resolveRoot(ctx, workspaceID, req.SessionID)
+				} else {
+					req.RootSessionID = req.SessionID
+				}
 				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.permission", Data: req})
 			}
 		}

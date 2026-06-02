@@ -71,6 +71,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
 	}
 
+	// Resolve subagent (subtask) sessions back to their root user-visible
+	// session, so permission/question events from child sessions bubble up
+	// to the chat view of the active parent session.
+	proxyHandler.EnableSessionParentResolution()
+
 	// Wire session index so sessions are tracked and listable.
 	sessionIndexSvc := sessionindex.New(svc.Database, log)
 	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {

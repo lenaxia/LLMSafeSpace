@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/lenaxia/llmsafespace/pkg/agent"
 )
 
 // TestGenerateContractFixtures outputs JSON fixtures that the frontend
@@ -60,6 +62,37 @@ func TestGenerateContractFixtures(t *testing.T) {
 				Role:     "user",
 				Active:   true,
 			},
+		},
+		// QuestionRequest / PermissionRequest live in pkg/agent because they
+		// are agent-protocol payloads, not API response types. We include
+		// them here because the frontend's contract.test.ts asserts the
+		// JSON shape and needs a single fixtures.json to read from.
+		"QuestionRequest": agent.QuestionRequest{
+			ID:            "que_18b28260affeoxXrX1iwPH8wFg",
+			SessionID:     "ses_18b28260affeoxXrX1iwPH8wFg",
+			RootSessionID: "ses_18b28260affeoxXrX1iwPH8wFg",
+			Questions: []agent.QuestionInfo{
+				{
+					Question: "What programming language do you want to use?",
+					Header:   "Choose language",
+					Options: []agent.QuestionOption{
+						{Label: "Go", Description: "Fast compiled language"},
+						{Label: "Python", Description: "Easy scripting"},
+					},
+					Multiple: false,
+				},
+			},
+			Tool: &agent.ToolRef{MessageID: "msg_abc", CallID: "call_xyz"},
+		},
+		"PermissionRequest": agent.PermissionRequest{
+			ID:            "per_18b28260affeoxXrX1iwPH8wFg",
+			SessionID:     "ses_18b28260affeoxXrX1iwPH8wFg",
+			RootSessionID: "ses_18b28260affeoxXrX1iwPH8wFg",
+			Permission:    "shell",
+			Patterns:      []string{"/workspace/src/main.go"},
+			Metadata:      map[string]interface{}{"command": "go build"},
+			Always:        []string{"/workspace/*"},
+			Tool:          &agent.ToolRef{MessageID: "msg_abc", CallID: "call_xyz"},
 		},
 	}
 

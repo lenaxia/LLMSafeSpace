@@ -253,4 +253,90 @@ describe("ChatPage agent input requests (US-16.11, US-16.12)", () => {
     // Prompt from ses_1 should not be visible
     expect(screen.queryByText("Pick one")).not.toBeInTheDocument();
   });
+
+  // Subtask/subagent prompts (e.g. opencode `task` tool spawning a child
+  // session) emit events with the SUBTASK's session_id. The backend
+  // populates root_session_id with the user-visible parent session so the
+  // chat UI can bubble the prompt into the parent view rather than dropping
+  // it. See worklog (subtask permission bubbling).
+  it("agent.permission from a subtask bubbles to parent session via root_session_id", async () => {
+    const qc = makeQueryClient();
+    renderChat(qc, "/chat/ws-1/ses_parent");
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+
+    const subtaskPermission: WorkspaceStreamEvent = {
+      type: "agent.permission",
+      data: {
+        id: "per_subtask",
+        session_id: "ses_child",       // subagent's own session
+        root_session_id: "ses_parent", // user-visible parent
+        permission: "shell",
+        patterns: ["ls"],
+      },
+    } as unknown as WorkspaceStreamEvent;
+
+    sendSSE(subtaskPermission);
+    expect(screen.getByText("Run shell command")).toBeInTheDocument();
+  });
+
+  it("agent.question from a subtask bubbles to parent session via root_session_id", async () => {
+    const qc = makeQueryClient();
+    renderChat(qc, "/chat/ws-1/ses_parent");
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+
+    const subtaskQuestion: WorkspaceStreamEvent = {
+      type: "agent.question",
+      data: {
+        id: "que_subtask",
+        session_id: "ses_child",
+        root_session_id: "ses_parent",
+        questions: [{ header: "Language", question: "Pick one", options: [{ label: "Go", description: "fast" }] }],
+      },
+    } as unknown as WorkspaceStreamEvent;
+
+    sendSSE(subtaskQuestion);
+    expect(screen.getByText("Pick one")).toBeInTheDocument();
+  });
+
+  it("agent.permission with root_session_id pointing at a different parent is ignored", async () => {
+    const qc = makeQueryClient();
+    renderChat(qc, "/chat/ws-1/ses_parent");
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+
+    const otherTreePermission: WorkspaceStreamEvent = {
+      type: "agent.permission",
+      data: {
+        id: "per_other",
+        session_id: "ses_other_child",
+        root_session_id: "ses_other_parent", // different tree
+        permission: "shell",
+        patterns: ["ls"],
+      },
+    } as unknown as WorkspaceStreamEvent;
+
+    sendSSE(otherTreePermission);
+    expect(screen.queryByText("Run shell command")).not.toBeInTheDocument();
+  });
+
+  it("backward compat: event without root_session_id falls back to session_id match", async () => {
+    // Older API replicas without root resolution still emit events with only
+    // session_id. The frontend must match those when session_id === URL session.
+    const qc = makeQueryClient();
+    renderChat(qc, "/chat/ws-1/ses_1");
+    await waitFor(() => expect(screen.getByTestId("chat-view")).toBeInTheDocument());
+
+    const legacyEvent: WorkspaceStreamEvent = {
+      type: "agent.permission",
+      data: {
+        id: "per_legacy",
+        session_id: "ses_1",
+        // no root_session_id
+        permission: "shell",
+        patterns: ["ls"],
+      },
+    } as unknown as WorkspaceStreamEvent;
+
+    sendSSE(legacyEvent);
+    expect(screen.getByText("Run shell command")).toBeInTheDocument();
+  });
 });

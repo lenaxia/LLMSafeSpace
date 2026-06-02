@@ -76,6 +76,7 @@ type ProxyHandler struct {
 	sseTracker      *SSETracker
 	sessionIndex    interfaces.SessionIndexService
 	broker          *WorkspaceEventBroker
+	sessionParents  *sessionParentCache
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -126,6 +127,22 @@ func NewProxyHandler(
 		activeSess: make(map[string]map[string]bool),
 		connCount:  make(map[string]int),
 	}, nil
+}
+
+// EnableSessionParentResolution wires up the session-parent cache used to
+// resolve subagent sessions back to their root user-visible session. When
+// disabled (the default), the agent.permission/agent.question events emit
+// with RootSessionID == SessionID, which means subtask prompts will not
+// bubble up to the parent session view in the chat UI.
+//
+// Production callers (cmd/api) MUST enable this. Unit tests that exercise
+// the synchronous publish path can leave it disabled to avoid having to
+// mock the workspace-pod HTTP round-trip.
+func (h *ProxyHandler) EnableSessionParentResolution() {
+	if h.sessionParents != nil {
+		return
+	}
+	h.sessionParents = newSessionParentCache(h.fetchSessionParent)
 }
 
 func (h *ProxyHandler) Start() error {
@@ -759,6 +776,10 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 	h.activeMu.Lock()
 	delete(h.activeSess, workspaceID)
 	h.activeMu.Unlock()
+
+	if h.sessionParents != nil {
+		h.sessionParents.invalidate(workspaceID)
+	}
 }
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
@@ -972,6 +993,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			h.logger.Warn("Failed to parse question event", "error", err, "workspaceID", workspaceID)
 			return
 		}
+		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type: "agent.question",
 			Data: req,
@@ -1002,6 +1024,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			return
 		}
 
+		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type: "agent.permission",
 			Data: req,
@@ -1022,6 +1045,23 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			},
 		})
 	}
+}
+
+// resolveRootSessionID returns the top-level (root) session for a sessionID
+// by walking the parent chain. Falls back to sessionID itself if resolution
+// fails (e.g. workspace pod unreachable, password unavailable, or sessionParents
+// cache is not configured). The fallback ensures top-level sessions and any
+// transient lookup failure still produce a usable event for the frontend.
+//
+// Resolution uses a short context timeout so a stalled pod cannot block the
+// SSE event loop.
+func (h *ProxyHandler) resolveRootSessionID(workspaceID, sessionID string) string {
+	if h.sessionParents == nil || sessionID == "" {
+		return sessionID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return h.sessionParents.resolveRoot(ctx, workspaceID, sessionID)
 }
 
 // shouldAutoApprovePermissions checks the workspace CRD for the auto-approve setting.
