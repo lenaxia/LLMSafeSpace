@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // SecretsHandler handles HTTP requests for the secrets API.
@@ -41,12 +42,7 @@ type PodIPResolver interface {
 // and for choosing the appropriate K8s namespace.
 type SecretsManifestWriter interface {
 	EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error
-	EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config WorkspaceConfig) error
-}
-
-// WorkspaceConfig is non-sensitive workspace metadata persisted for pod boot.
-type WorkspaceConfig struct {
-	DefaultModel string `json:"defaultModel,omitempty"`
+	EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config types.WorkspaceConfig) error
 }
 
 // PasswordVerifier confirms a user's password against the stored bcrypt

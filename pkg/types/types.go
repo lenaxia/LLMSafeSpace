@@ -508,6 +508,12 @@ type WorkspaceUpdates struct {
 	DefaultModel *string `json:"defaultModel,omitempty"`
 }
 
+// WorkspaceConfig is non-sensitive workspace metadata persisted to K8s Secret
+// for pod boot. Read by agentd's applyWorkspaceConfig at startup.
+type WorkspaceConfig struct {
+	DefaultModel string `json:"defaultModel,omitempty"`
+}
+
 // WorkspaceNotFoundError is returned when a workspace cannot be found.
 type WorkspaceNotFoundError struct {
 	ID string

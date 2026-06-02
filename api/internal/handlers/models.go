@@ -105,7 +105,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	body := getCachedModels(workspaceID)
 	if body == nil {
 		url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil) //nolint:gosec // G107: URL constructed from trusted podIP (internal cluster network)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
 			return
@@ -293,7 +293,7 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 
 	// Also persist to K8s Secret so the next pod boot picks it up.
 	if h.manifestWriter != nil {
-		_ = h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, WorkspaceConfig{
+		_ = h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
 			DefaultModel: req.Model,
 		})
 	}
@@ -319,7 +319,7 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model string) error {
 	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
 	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: URL to internal pod
 	if err != nil {
 		return err
 	}
@@ -339,7 +339,7 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model strin
 // modelExistsInCatalog checks if a model ID exists in the running agent's catalog.
 func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model string) bool {
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: URL to internal pod
 	if err != nil {
 		return true // fail open — don't block on validation infrastructure failure
 	}

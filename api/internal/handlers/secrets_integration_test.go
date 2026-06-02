@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // TestHandler_E2E_CreateListGetDeleteRoundTrip tests the full CRUD cycle via HTTP
@@ -475,7 +476,7 @@ func (f *fakeManifestWriter) EnsureSecretsManifest(_ context.Context, workspaceI
 	return f.err
 }
 
-func (f *fakeManifestWriter) EnsureWorkspaceConfig(_ context.Context, _ string, _ WorkspaceConfig) error {
+func (f *fakeManifestWriter) EnsureWorkspaceConfig(_ context.Context, _ string, _ types.WorkspaceConfig) error {
 	return f.err
 }
 

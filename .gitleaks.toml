@@ -54,6 +54,16 @@ paths = [
   # are format templates, not actual secrets. No real key material is
   # stored in this file.
   '''frontend/src/components/settings/SecretsTab\.tsx''',
+  # LLM provider format tests use synthetic "sk-ant-123" / "sk-oai-456"
+  # test keys. Never real credentials (verified by inspection 2026-06-02).
+  '''pkg/agent/opencode/format_test\.go''',
+  # LLM provider E2E handler tests use synthetic test keys for
+  # encrypt/decrypt round-trip validation.
+  '''api/internal/handlers/secrets_llmprovider_test\.go''',
+  '''api/internal/handlers/models_test\.go''',
+  # Epic 10 design docs contain example API key patterns in code
+  # snippets and architecture diagrams. Never real credentials.
+  '''design/stories/epic-10-multi-tenant-trust/.*''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
