@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +42,44 @@ func (h *SecretsHandler) SetWorkspaceMetadataUpdater(u WorkspaceMetadataUpdater)
 
 var modelHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
+// modelCache is a brief per-workspace cache for model catalog responses
+// to avoid re-fetching on rapid page loads.
+type modelCacheEntry struct {
+	data      []byte
+	expiresAt time.Time
+}
+
+var (
+	modelCacheMu sync.Mutex
+	modelCacheMap = make(map[string]*modelCacheEntry)
+)
+
+func getCachedModels(workspaceID string) []byte {
+	modelCacheMu.Lock()
+	defer modelCacheMu.Unlock()
+	entry := modelCacheMap[workspaceID]
+	if entry == nil || time.Now().After(entry.expiresAt) {
+		return nil
+	}
+	return entry.data
+}
+
+func setCachedModels(workspaceID string, data []byte) {
+	modelCacheMu.Lock()
+	defer modelCacheMu.Unlock()
+	modelCacheMap[workspaceID] = &modelCacheEntry{
+		data:      data,
+		expiresAt: time.Now().Add(5 * time.Second),
+	}
+}
+
+// clearModelCache removes all cached entries. Exported for testing.
+func clearModelCache() {
+	modelCacheMu.Lock()
+	defer modelCacheMu.Unlock()
+	modelCacheMap = make(map[string]*modelCacheEntry)
+}
+
 // ListModels handles GET /api/v1/workspaces/:id/models.
 // Proxies to the running opencode instance's model catalog.
 func (h *SecretsHandler) ListModels(c *gin.Context) {
@@ -62,29 +101,35 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
-		return
-	}
+	// Check cache first (5s TTL, avoids repeated catalog fetches on page loads).
+	body := getCachedModels(workspaceID)
+	if body == nil {
+		url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
+			return
+		}
 
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach agent"})
-		return
-	}
-	defer resp.Body.Close()
+		resp, err := modelHTTPClient.Do(req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach agent"})
+			return
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read agent response"})
-		return
-	}
+		body, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read agent response"})
+			return
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(resp.StatusCode, gin.H{"error": "agent returned error"})
-		return
+		if resp.StatusCode != http.StatusOK {
+			c.JSON(resp.StatusCode, gin.H{"error": "agent returned error"})
+			return
+		}
+
+		setCachedModels(workspaceID, body)
 	}
 
 	// Annotate models with tier information.
@@ -104,6 +149,15 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		}
 	}
 
+	// Mark the selected model in the array.
+	if currentModel != "" {
+		for i := range annotated {
+			if annotated[i].ID == currentModel {
+				annotated[i].Selected = true
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"models":       annotated,
 		"currentModel": currentModel,
@@ -120,6 +174,7 @@ type annotatedModel struct {
 	Status     string          `json:"status,omitempty"`
 	Tier       string          `json:"tier"`     // "free" or "paid"
 	FreeTier   bool            `json:"freeTier"` // convenience boolean
+	Selected   bool            `json:"selected"` // true if this is the workspace's current default
 	Details    json.RawMessage `json:"details"`  // full opencode model object (unstable schema)
 }
 

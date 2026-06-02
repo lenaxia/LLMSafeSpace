@@ -39,6 +39,7 @@ func (m *mockWSUpdater) UpdateWorkspace(_ context.Context, _ string, updates typ
 // --- ListModels Tests ---
 
 func TestListModels_HappyPath(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
 	// Mock opencode model endpoint on port 4096.
@@ -118,6 +119,7 @@ func TestListModels_NoPodIPResolver(t *testing.T) {
 }
 
 func TestListModels_AgentUnreachable(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
 	handler := NewSecretsHandler(nil)
@@ -407,6 +409,7 @@ func TestAnnotateModels_PreservesDetails(t *testing.T) {
 }
 
 func TestListModels_ResponseAnnotated(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
@@ -464,6 +467,7 @@ func (m *mockModelReader) GetDefaultModel(_ context.Context, _ string) (string, 
 }
 
 func TestListModels_IncludesCurrentModel(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
