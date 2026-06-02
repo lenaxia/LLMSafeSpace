@@ -108,7 +108,7 @@ func TestMaterializeSubcommand_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(envContent), "export FOO=")
 	// api-key type writes to env path (not agent-config.json)
-	require.Contains(t, string(envContent), "API_KEY_p=")
+	require.Contains(t, string(envContent), "API_KEY_P=")
 
 	st, err := os.Stat(envPath)
 	require.NoError(t, err)
