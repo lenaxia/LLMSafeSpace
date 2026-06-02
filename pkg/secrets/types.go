@@ -5,6 +5,7 @@ package secrets
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -13,10 +14,16 @@ import (
 type SecretType string
 
 const (
-	// SecretTypeAPIKey is for LLM-provider / generic API-key secrets
-	// (OpenAI, Anthropic, etc.). Renamed from "llm-provider" in
-	// migration 000010 to match the threat model and SDK examples.
-	SecretTypeAPIKey        SecretType = "api-key"
+	// SecretTypeAPIKey is for generic API-key secrets (legacy).
+	// New code should use SecretTypeLLMProvider for structured provider
+	// credentials. Kept for backward compatibility with existing secrets.
+	SecretTypeAPIKey SecretType = "api-key"
+	// SecretTypeLLMProvider is for structured LLM provider credentials
+	// (Anthropic, OpenAI, etc.). Each secret holds one provider with
+	// its API key, optional base URL, model visibility allowlist, and
+	// default model selection. Multiple llm-provider secrets bound to
+	// the same workspace are merged by the agent's FormatCredentials.
+	SecretTypeLLMProvider  SecretType = "llm-provider"
 	SecretTypeSSHKey        SecretType = "ssh-key"
 	SecretTypeGitCredential SecretType = "git-credential"
 	SecretTypeSecretFile    SecretType = "secret-file"
@@ -26,6 +33,7 @@ const (
 // ValidSecretTypes is the set of allowed secret types.
 var ValidSecretTypes = map[SecretType]bool{
 	SecretTypeAPIKey:        true,
+	SecretTypeLLMProvider:   true,
 	SecretTypeSSHKey:        true,
 	SecretTypeGitCredential: true,
 	SecretTypeSecretFile:    true,
@@ -38,6 +46,7 @@ var ValidSecretTypes = map[SecretType]bool{
 func ValidSecretTypesList() []SecretType {
 	return []SecretType{
 		SecretTypeAPIKey,
+		SecretTypeLLMProvider,
 		SecretTypeSSHKey,
 		SecretTypeGitCredential,
 		SecretTypeSecretFile,
@@ -51,6 +60,7 @@ func ValidSecretTypesList() []SecretType {
 // schema from 400s.
 var MetadataRequirementsBySecretType = map[SecretType][]string{
 	SecretTypeAPIKey:        {}, // optional: provider, model
+	SecretTypeLLMProvider:   {}, // all config in value JSON, metadata optional
 	SecretTypeSSHKey:        {"key_type"},
 	SecretTypeGitCredential: {}, // optional: host
 	SecretTypeSecretFile:    {"mount_path"},
@@ -149,4 +159,43 @@ type AuditQuery struct {
 	Until       *time.Time
 	Limit       int
 	Offset      int
+}
+
+// LLMModelConfig specifies a model identifier and optional display label
+// for model visibility allowlisting.
+type LLMModelConfig struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+}
+
+// LLMProviderData holds structured credentials for one LLM provider.
+// The Plaintext value of an "llm-provider" secret is the JSON encoding of this struct.
+//
+// Provider is required (e.g. "anthropic", "openai", "google").
+// APIKey is required.
+// BaseURL is optional; when empty the provider's default endpoint is used.
+// Models is an optional allowlist. When empty or nil all models from the
+// provider are visible (no filtering). When non-empty only the listed
+// models are shown.
+// Default is the model ID to use when no per-session model is specified.
+// SmallModel is the model ID used for lightweight/cheap operations
+// (e.g. summarization).
+type LLMProviderData struct {
+	Provider   string           `json:"provider"`
+	APIKey     string           `json:"apiKey"`
+	BaseURL    string           `json:"baseURL,omitempty"`
+	Models     []LLMModelConfig `json:"models,omitempty"`
+	Default    string           `json:"default,omitempty"`
+	SmallModel string           `json:"smallModel,omitempty"`
+}
+
+// Validate checks that required fields are set in LLMProviderData.
+func (d LLMProviderData) Validate() error {
+	if d.Provider == "" {
+		return fmt.Errorf("%w: provider is required", ErrInvalidLLMProvider)
+	}
+	if d.APIKey == "" {
+		return fmt.Errorf("%w: apiKey is required", ErrInvalidLLMProvider)
+	}
+	return nil
 }

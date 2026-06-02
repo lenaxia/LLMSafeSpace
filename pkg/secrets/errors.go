@@ -52,6 +52,10 @@ var (
 	// knows to re-run InitializeUserKeys (re-login).
 	ErrUserKeysMissing = errors.New("user key material not found")
 
+	// ErrInvalidLLMProvider is returned when LLMProviderData validation
+	// fails (missing provider, missing API key, etc.).
+	ErrInvalidLLMProvider = errors.New("invalid LLM provider data")
+
 	// ErrWorkspaceNotOwned is returned by binding operations when
 	// the caller does not own the target workspace. Both
 	// "workspace doesn't exist" and "workspace owned by someone

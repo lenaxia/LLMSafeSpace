@@ -33,6 +33,7 @@ import (
 	"sync"
 	"testing"
 
+	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/require"
 )
 
@@ -660,6 +661,244 @@ func TestRealFS_OpenForCreate_EnforcesMode(t *testing.T) {
 	// world-readable bits must be off.
 	require.Zero(t, st.Mode().Perm()&0o077,
 		"file must not have group or other permission bits; got %v", st.Mode())
+}
+
+// LLM Provider tests --------------------------------------------------------
+
+// TestLLMProvider_Valid materializes a well-formed llm-provider secret.
+func TestLLMProvider_Valid(t *testing.T) {
+	m, fs := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "anthropic",
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
+	}})
+	require.NoError(t, err)
+	require.Len(t, res.Results, 1)
+	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
+
+	// Provider should be staged, not yet written to AgentConfigPath
+	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+		"provider must not be written until FlushProviders is called")
+	require.Len(t, m.stagedProviders, 1)
+	require.Equal(t, "anthropic", m.stagedProviders[0].Provider)
+}
+
+// TestLLMProvider_Valid_Minimal materializes a minimal llm-provider (just provider + apiKey).
+func TestLLMProvider_Valid_Minimal(t *testing.T) {
+	m, fs := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "openai",
+		Plaintext: `{"provider":"openai","apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
+	require.Len(t, m.stagedProviders, 1)
+	require.Empty(t, fs.contents["/tmp/agent-config.json"])
+}
+
+// TestLLMProvider_EmptyPlaintext is rejected.
+func TestLLMProvider_EmptyPlaintext(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "x",
+		Plaintext: "",
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
+	require.Contains(t, res.Results[0].Reason, "empty")
+}
+
+// TestLLMProvider_MissingProviderField is rejected.
+func TestLLMProvider_MissingProviderField(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "x",
+		Plaintext: `{"apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
+	require.Contains(t, res.Results[0].Reason, "provider")
+}
+
+// TestLLMProvider_MissingAPIKey is rejected.
+func TestLLMProvider_MissingAPIKey(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "x",
+		Plaintext: `{"provider":"anthropic"}`,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
+	require.Contains(t, res.Results[0].Reason, "apiKey")
+}
+
+// TestLLMProvider_InvalidJSON is rejected.
+func TestLLMProvider_InvalidJSON(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "x",
+		Plaintext: "not json",
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
+	require.Contains(t, res.Results[0].Reason, "invalid")
+}
+
+// TestLLMProvider_BadNameIsAllowed ensures llm-provider follows the same
+// relaxed name policy as api-key (meaningful names are not required).
+func TestLLMProvider_BadNameIsAllowed(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "", // empty name would fail validateName
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome,
+		"llm-provider with empty name should be allowed like api-key")
+}
+
+// TestLLMProvider_MultipleProviders_AllStaged verifies multiple llm-provider
+// secrets are all collected in stagedProviders.
+func TestLLMProvider_MultipleProviders_AllStaged(t *testing.T) {
+	m, _ := newFixture(t)
+	res, err := m.Materialize([]Secret{
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123"}`},
+		{Type: "llm-provider", Name: "openai", Plaintext: `{"provider":"openai","apiKey":"sk-openai-456"}`},
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Results, 2)
+	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
+	require.Equal(t, OutcomeMaterialized, res.Results[1].Outcome)
+	require.Len(t, m.stagedProviders, 2)
+}
+
+// TestLLMProvider_MixedWithOtherTypes verifies llm-provider secrets coexist
+// with other secret types and don't interfere.
+func TestLLMProvider_MixedWithOtherTypes(t *testing.T) {
+	m, fs := newFixture(t)
+	res, err := m.Materialize([]Secret{
+		{Type: "llm-provider", Name: "p1", Plaintext: `{"provider":"anthropic","apiKey":"sk-1"}`},
+		{Type: "env-secret", Name: "e1", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "val"},
+		{Type: "llm-provider", Name: "p2", Plaintext: `{"provider":"openai","apiKey":"sk-2"}`},
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Results, 3)
+	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
+	require.Equal(t, OutcomeMaterialized, res.Results[1].Outcome)
+	require.Equal(t, OutcomeMaterialized, res.Results[2].Outcome)
+	require.Len(t, m.stagedProviders, 2)
+
+	// Env file should still be written
+	require.Contains(t, string(fs.contents["/tmp/secrets-env"]), "export VAR=")
+}
+
+// TestLLMProvider_FlushProviders_CallsFormatter writes staged providers
+// through the formatter and writes result to AgentConfigPath.
+func TestLLMProvider_FlushProviders_CallsFormatter(t *testing.T) {
+	m, fs := newFixture(t)
+	_, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "anthropic",
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
+	}})
+	require.NoError(t, err)
+	require.Len(t, m.stagedProviders, 1)
+
+	formatter := LLMProviderFormatter(func(providers []sec.LLMProviderData) ([]byte, error) {
+		if len(providers) != 1 {
+			t.Fatalf("expected 1 provider, got %d", len(providers))
+		}
+		if providers[0].Provider != "anthropic" {
+			t.Errorf("expected provider 'anthropic', got %q", providers[0].Provider)
+		}
+		return []byte(`{"formatted":true}`), nil
+	})
+
+	require.NoError(t, m.FlushProviders(formatter))
+	require.Equal(t, `{"formatted":true}`, string(fs.contents["/tmp/agent-config.json"]))
+}
+
+// TestLLMProvider_FlushProviders_NoStagedProviders is a no-op.
+func TestLLMProvider_FlushProviders_NoStagedProviders(t *testing.T) {
+	m, fs := newFixture(t)
+	_, err := m.Materialize([]Secret{
+		{Type: "env-secret", Name: "e", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "v"},
+	})
+	require.NoError(t, err)
+	require.Empty(t, m.stagedProviders)
+
+	formatter := LLMProviderFormatter(func(providers []sec.LLMProviderData) ([]byte, error) {
+		t.Fatal("formatter should not be called with no staged providers")
+		return nil, nil
+	})
+
+	require.NoError(t, m.FlushProviders(formatter))
+	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+		"no agent config should be written when no providers staged")
+}
+
+// TestLLMProvider_FlushProviders_NilFormatter is a no-op.
+func TestLLMProvider_FlushProviders_NilFormatter(t *testing.T) {
+	m, fs := newFixture(t)
+	_, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "anthropic",
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+	require.Len(t, m.stagedProviders, 1)
+
+	require.NoError(t, m.FlushProviders(nil))
+	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+		"no agent config should be written when formatter is nil")
+}
+
+// TestLLMProvider_FlushProviders_FormatterError is propagated.
+func TestLLMProvider_FlushProviders_FormatterError(t *testing.T) {
+	m, _ := newFixture(t)
+	_, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "anthropic",
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+
+	formatter := LLMProviderFormatter(func(providers []sec.LLMProviderData) ([]byte, error) {
+		return nil, errors.New("simulated formatter error")
+	})
+
+	err = m.FlushProviders(formatter)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "simulated formatter error")
+}
+
+// TestG20_LLMProvider_Mode0600 ensures flushed provider config is written
+// with mode 0600.
+func TestG20_LLMProvider_Mode0600(t *testing.T) {
+	m, fs := newFixture(t)
+	_, err := m.Materialize([]Secret{{
+		Type:      "llm-provider",
+		Name:      "anthropic",
+		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+	}})
+	require.NoError(t, err)
+
+	formatter := LLMProviderFormatter(func(providers []sec.LLMProviderData) ([]byte, error) {
+		return []byte(`{"config":true}`), nil
+	})
+	require.NoError(t, m.FlushProviders(formatter))
+
+	mode, ok := fs.modes["/tmp/agent-config.json"]
+	require.True(t, ok, "mode should be recorded for agent-config.json")
+	require.Equal(t, os.FileMode(0o600), mode,
+		"agent config must be written with mode 0600 (G20)")
 }
 
 // HasFailures / Counts ------------------------------------------------------

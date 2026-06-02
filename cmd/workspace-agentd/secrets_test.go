@@ -30,6 +30,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -245,6 +246,46 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 
 	reloadSecretsHandler(cfg, nil)(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+// TestShouldRestart_LLMProvider triggers restart like api-key.
+func TestShouldRestart_LLMProvider(t *testing.T) {
+	batch := []secrets.Secret{
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`},
+	}
+	if !shouldRestart(batch) {
+		t.Error("shouldRestart must return true for llm-provider secrets")
+	}
+}
+
+// TestShouldRestart_LLMProviderMixed triggers restart when any secret is llm-provider.
+func TestShouldRestart_LLMProviderMixed(t *testing.T) {
+	batch := []secrets.Secret{
+		{Type: "ssh-key", Name: "k", Metadata: map[string]string{"key_type": "ed25519"}, Plaintext: "key"},
+		{Type: "llm-provider", Name: "p", Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`},
+		{Type: "env-secret", Name: "e", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "v"},
+	}
+	if !shouldRestart(batch) {
+		t.Error("shouldRestart must return true when batch contains llm-provider")
+	}
+}
+
+// TestShouldRestart_NoLLMProvider does not trigger restart for non-credential types.
+func TestShouldRestart_NoLLMProvider(t *testing.T) {
+	batch := []secrets.Secret{
+		{Type: "ssh-key", Name: "k", Metadata: map[string]string{"key_type": "ed25519"}, Plaintext: "key"},
+		{Type: "secret-file", Name: "f", Metadata: map[string]string{"mount_path": "x.txt"}, Plaintext: "data"},
+	}
+	if shouldRestart(batch) {
+		t.Error("shouldRestart must return false for non-credential types")
+	}
+}
+
+// TestShouldRestart_EmptyBatch does not trigger restart.
+func TestShouldRestart_EmptyBatch(t *testing.T) {
+	if shouldRestart(nil) {
+		t.Error("shouldRestart must return false for empty batch")
+	}
 }
 
 // TestBuildEnv_RoundTripsValuesWithMetacharacters confirms the buildEnv()

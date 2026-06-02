@@ -219,7 +219,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess) http.Hand
 
 func shouldRestart(batch []secrets.Secret) bool {
 	for _, s := range batch {
-		if s.Type == "env-secret" || s.Type == "api-key" {
+		if s.Type == "env-secret" || s.Type == "api-key" || s.Type == "llm-provider" {
 			return true
 		}
 	}

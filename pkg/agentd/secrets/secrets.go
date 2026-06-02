@@ -63,6 +63,7 @@ import (
 	"strings"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/validation"
 )
 
@@ -322,12 +323,18 @@ func FormatEnvLine(varName, value string) string {
 	return "export " + varName + "=" + shellSingleQuote(value) + "\n"
 }
 
+// LLMProviderFormatter is a callback that renders staged LLM provider
+// data into the agent-specific config format. Each agent type (opencode,
+// Claude Code, Codex) provides its own implementation.
+type LLMProviderFormatter func(providers []sec.LLMProviderData) ([]byte, error)
+
 // Materializer holds dependencies for materialization. Construct with
 // NewMaterializer or pass a Materializer{} with field defaults filled in
 // by the caller.
 type Materializer struct {
-	FS    Filesystem
-	Paths Paths
+	FS              Filesystem
+	Paths           Paths
+	stagedProviders []sec.LLMProviderData
 }
 
 // NewMaterializer returns a Materializer using the production filesystem
@@ -367,6 +374,8 @@ func (m *Materializer) Materialize(secrets []Secret) (*MaterializeResult, error)
 }
 
 func (m *Materializer) reset() error {
+	m.stagedProviders = nil
+
 	if err := m.FS.RemoveAll(m.Paths.SecretsBaseDir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -392,8 +401,8 @@ func (m *Materializer) applyOne(s Secret) SecretResult {
 	r := SecretResult{Type: s.Type, Name: s.Name}
 
 	if err := validateName(s.Name); err != nil {
-		// api-key does not require a meaningful name; allow it.
-		if s.Type != "api-key" {
+		// api-key and llm-provider do not require a meaningful name.
+		if s.Type != "api-key" && s.Type != "llm-provider" {
 			r.Outcome = OutcomeSkipped
 			r.Reason = err.Error()
 			return r
@@ -404,6 +413,8 @@ func (m *Materializer) applyOne(s Secret) SecretResult {
 	switch s.Type {
 	case "api-key":
 		err = m.applyAPIKey(s)
+	case "llm-provider":
+		err = m.applyLLMProvider(s)
 	case "ssh-key":
 		err = m.applySSHKey(s)
 	case "git-credential":
@@ -545,6 +556,39 @@ func (m *Materializer) applyEnvSecret(s Secret) error {
 	}
 	line := FormatEnvLine(varName, s.Plaintext)
 	return appendFile(m.FS, m.Paths.SecretsEnvPath, []byte(line), 0o600)
+}
+
+func (m *Materializer) applyLLMProvider(s Secret) error {
+	if s.Plaintext == "" {
+		return newValidationError("llm-provider plaintext is empty")
+	}
+	var data sec.LLMProviderData
+	if err := json.Unmarshal([]byte(s.Plaintext), &data); err != nil {
+		return newValidationError("llm-provider plaintext: %v", err)
+	}
+	if err := data.Validate(); err != nil {
+		return newValidationError("%s", err.Error())
+	}
+	m.stagedProviders = append(m.stagedProviders, data)
+	return nil
+}
+
+// FlushProviders calls the formatter with all staged LLM provider data and
+// writes the result to AgentConfigPath. Must be called after Materialize
+// returns if llm-provider secrets were in the batch.
+//
+// When formatter is nil, FlushProviders is a no-op (no agent config is
+// written). This allows callers to conditionally skip agent-specific
+// rendering.
+func (m *Materializer) FlushProviders(formatter LLMProviderFormatter) error {
+	if formatter == nil || len(m.stagedProviders) == 0 {
+		return nil
+	}
+	cfg, err := formatter(m.stagedProviders)
+	if err != nil {
+		return fmt.Errorf("llm-provider formatter: %w", err)
+	}
+	return atomicWrite(m.FS, m.Paths.AgentConfigPath, cfg, 0o600)
 }
 
 // --- file-write helpers ---------------------------------------------------
