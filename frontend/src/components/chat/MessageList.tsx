@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Message } from "../../api/types";
 import { MessageBubble } from "./MessageBubble";
@@ -19,12 +19,15 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  // Track intent to stay at bottom across renders (survives content changes)
+  const stickToBottom = useRef(true);
 
   const checkIfAtBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
     setIsAtBottom(atBottom);
+    stickToBottom.current = atBottom;
   }, []);
 
   useEffect(() => {
@@ -35,16 +38,19 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   }, [checkIfAtBottom]);
 
   const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
     setIsAtBottom(true);
+    stickToBottom.current = true;
   }, []);
 
-  // Scroll to bottom when new messages arrive (if already at bottom)
-  useEffect(() => {
-    if (isAtBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Snap to bottom synchronously before paint when content changes (if sticky)
+  useLayoutEffect(() => {
+    if (stickToBottom.current) {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [messages.length, streamingBubble, isAtBottom]);
+  }, [messages, streamingBubble]);
 
   // Auto-scroll when streaming starts
   useEffect(() => {
@@ -55,17 +61,17 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
 
   // Keep pinned to bottom during streaming content growth
   useEffect(() => {
-    if (!streaming || !isAtBottom) return;
+    if (!streaming || !stickToBottom.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const observer = new MutationObserver(() => {
-      if (isAtBottom) {
+      if (stickToBottom.current) {
         el.scrollTop = el.scrollHeight;
       }
     });
     observer.observe(el, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
-  }, [streaming, isAtBottom]);
+  }, [streaming]);
 
   if (messages.length === 0 && !streamingBubble) {
     return (
