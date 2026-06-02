@@ -304,8 +304,8 @@ describe("US-15.3: History Fetch on Busy Reconnect", () => {
       sessions: [{ id: "sess-1", status: "busy" }],
     });
     (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "msg-2", role: "assistant", parts: [{ id: "p2", type: "text", text: "Hi there" }] },
       { id: "msg-1", role: "user", parts: [{ id: "p1", type: "text", text: "Hello" }] },
+      { id: "msg-2", role: "assistant", parts: [{ id: "p2", type: "text", text: "Hi there" }] },
     ]);
 
     renderChat(qc, "/chat/ws-1/sess-1");

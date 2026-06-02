@@ -73,7 +73,10 @@ export function ChatPage() {
   const { data: historyPages, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
   const history = useMemo(() => {
     if (!historyPages?.pages) return [];
-    return [...historyPages.pages].reverse().flatMap((p) => [...p.messages].reverse());
+    // Pages are fetched newest-page-first (cursor goes backwards), so reverse
+    // pages to get chronological order. Messages within each page are already
+    // chronological (oldest first) as returned by opencode.
+    return [...historyPages.pages].reverse().flatMap((p) => p.messages);
   }, [historyPages?.pages]);
 
   // US-15.1: Derive serverBusy from workspace status
