@@ -248,17 +248,18 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
-// TestShouldRestart_LLMProvider triggers restart like api-key.
+// TestShouldRestart_LLMProvider — llm-provider no longer triggers restart
+// (handled by PATCH /global/config instead).
 func TestShouldRestart_LLMProvider(t *testing.T) {
 	batch := []secrets.Secret{
 		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`},
 	}
-	if !shouldRestart(batch) {
-		t.Error("shouldRestart must return true for llm-provider secrets")
+	if shouldRestart(batch) {
+		t.Error("shouldRestart must return false for llm-provider (handled by PATCH)")
 	}
 }
 
-// TestShouldRestart_LLMProviderMixed triggers restart when any secret is llm-provider.
+// TestShouldRestart_LLMProviderMixed — restart only triggered by env-secret, not llm-provider.
 func TestShouldRestart_LLMProviderMixed(t *testing.T) {
 	batch := []secrets.Secret{
 		{Type: "ssh-key", Name: "k", Metadata: map[string]string{"key_type": "ed25519"}, Plaintext: "key"},
@@ -266,7 +267,7 @@ func TestShouldRestart_LLMProviderMixed(t *testing.T) {
 		{Type: "env-secret", Name: "e", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "v"},
 	}
 	if !shouldRestart(batch) {
-		t.Error("shouldRestart must return true when batch contains llm-provider")
+		t.Error("shouldRestart must return true when batch contains env-secret")
 	}
 }
 
@@ -285,6 +286,19 @@ func TestShouldRestart_NoLLMProvider(t *testing.T) {
 func TestShouldRestart_EmptyBatch(t *testing.T) {
 	if shouldRestart(nil) {
 		t.Error("shouldRestart must return false for empty batch")
+	}
+}
+
+// TestHasLLMProviders detects llm-provider in batch.
+func TestHasLLMProviders(t *testing.T) {
+	if !hasLLMProviders([]secrets.Secret{{Type: "llm-provider", Name: "p", Plaintext: "{}"}}) {
+		t.Error("hasLLMProviders must return true for llm-provider")
+	}
+	if hasLLMProviders([]secrets.Secret{{Type: "env-secret", Name: "e", Plaintext: "v"}}) {
+		t.Error("hasLLMProviders must return false for non-llm-provider")
+	}
+	if hasLLMProviders(nil) {
+		t.Error("hasLLMProviders must return false for nil batch")
 	}
 }
 
