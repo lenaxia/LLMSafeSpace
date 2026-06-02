@@ -10,7 +10,7 @@
 #   - drift between Go CRD struct fields and chart CRD schema (repolint)
 #   - un-gofmt'd Go source                              (fmt-check)
 #   - missing/wrong Go imports (goimports)              (imports-check)
-#   - golangci-lint findings (errcheck, bodyclose, …)   (lint)
+#   - golangci-lint findings (errcheck, bodyclose, …)   (lint, NEW issues only)
 #   - broken Helm templates / undefined values          (helm-render)
 #   - secrets accidentally committed                    (gitleaks, optional)
 #
@@ -20,14 +20,54 @@
 # Performance: the heaviest gate is golangci-lint at ~30s on a cold cache,
 # ~5s warm. Skip via `git commit --no-verify` only as a true emergency
 # escape hatch — CI runs the same gates and will reject the PR.
+#
+# Smart-skip optimizations (see pickStagedKinds + the if-blocks below):
+#
+#   1. Doc-only commits (.md / worklog) skip ALL Go gates. Saves ~30s
+#      and prevents the team's pre-existing lint findings from blocking
+#      worklog commits.
+#   2. Helm-render only runs when chart/ files are staged. Saves ~5s
+#      on most commits.
+#   3. golangci-lint runs with --new-from-merge-base=origin/main so it
+#      reports only NEW findings introduced by your branch — pre-existing
+#      issues from earlier commits are no longer your problem to fix.
+#      (CI runs the full lint, so escapes are still caught at PR time.)
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+# pickStagedKinds: classify the staged files so we can skip irrelevant
+# gates. Sets the GO_STAGED, SQL_STAGED, CHART_STAGED, NON_DOC_STAGED env
+# vars based on what's in `git diff --cached --name-only`.
+GO_STAGED=0
+SQL_STAGED=0
+CHART_STAGED=0
+NON_DOC_STAGED=0
+while IFS= read -r f; do
+    case "$f" in
+        *.go)        GO_STAGED=1; NON_DOC_STAGED=1 ;;
+        *.sql)       SQL_STAGED=1; NON_DOC_STAGED=1 ;;
+        charts/*)    CHART_STAGED=1; NON_DOC_STAGED=1 ;;
+        api/migrations/*) NON_DOC_STAGED=1 ;;
+        # Worklogs and other docs do not flip NON_DOC_STAGED.
+        worklogs/*.md|*.md|design/*) ;;
+        # Anything else is potentially impactful (yaml, ts/tsx, etc).
+        *)           NON_DOC_STAGED=1 ;;
+    esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+# show_skip prints a uniform "skipped" banner so the user can audit which
+# gates ran.
+show_skip() {
+    echo "== pre-commit: $1 (skipped — $2) =="
+}
+
 # Run a Make target with a clear banner. On failure, echo the recovery
 # hint and exit; we don't want to surface raw Make errors to the user.
+# All failures suggest 'make pre-commit-fix' as a one-shot remedy for the
+# mechanically-fixable subset (gofmt/goimports/misspell/chart-drift).
 run_gate() {
     local name="$1"
     local target="$2"
@@ -38,7 +78,10 @@ run_gate() {
 
 Pre-commit blocked: ${name} failed (see above).
 
-Fix:
+Quick fix (handles most mechanical issues automatically):
+  make pre-commit-fix && git commit ...
+
+Manual fix:
   ${hint}
 
 To bypass in an emergency: git commit --no-verify
@@ -47,7 +90,7 @@ EOF
     fi
 }
 
-# Cheap gates first, fail fast.
+# Cheap, always-on gates first, fail fast.
 run_gate "repolint" "repolint" \
     "duplicate migration: rename to next 6-digit number (ls api/migrations/).
   chart migrations drift: run 'make chart-sync-migrations' and stage the result.
@@ -55,30 +98,74 @@ run_gate "repolint" "repolint" \
   CRD drift: read the failure message; align chart CRD properties with Go
     JSON tags (see pkg/repolint/crd_drift.go and worklog 0119)."
 
-run_gate "gofmt" "fmt-check" \
-    "Run 'make fmt' to format Go files."
+# Go gates: skip entirely on doc-only commits.
+if [ "$GO_STAGED" -eq 1 ]; then
+    run_gate "gofmt" "fmt-check" \
+        "Run 'make fmt' to format Go files."
 
-run_gate "goimports" "imports-check" \
-    "Run 'make imports' to fix Go import grouping."
+    run_gate "goimports" "imports-check" \
+        "Run 'make imports' to fix Go import grouping."
 
-# Slower gates last.
-run_gate "golangci-lint" "lint" \
-    "Read the lint output above. Most common fixes:
+    # golangci-lint with --new-from-merge-base reports ONLY findings
+    # introduced by this branch; pre-existing issues from upstream
+    # commits don't block your work. CI runs the unfiltered lint
+    # against the merged tree, so any genuine new findings are still
+    # caught at PR time.
+    #
+    # Scope to packages touched by staged files. This is critical because
+    # golangci-lint cannot run any analyzers on a package whose typecheck
+    # is broken — even if the breakage is in an unstaged orphan file the
+    # team left in your tree (see worklog 0126). Scoping prevents one
+    # broken upstream package from blocking commits in unrelated areas.
+    packages=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' \
+        | xargs -r -n1 dirname | sort -u | sed 's|^|./|; s|$|/...|')
+    if [ -z "$packages" ]; then
+        packages="./..."
+    fi
+    echo "== pre-commit: golangci-lint (new-only, scoped to changed packages) =="
+    if ! golangci-lint run --new-from-merge-base=origin/main $packages 2>&1; then
+        cat >&2 <<EOF
+
+Pre-commit blocked: golangci-lint failed on NEW findings (see above).
+
+Quick fix:
+  make pre-commit-fix && git commit ...
+
+Manual fix:
+  Read the lint output above. Most common fixes:
     - errcheck:    discard with '_ =' or check the error
     - bodyclose:   add 'defer func() { _ = resp.Body.Close() }()'
     - sqlclosecheck: add 'defer func() { _ = rows.Close() }()'
-    - gosec/G117:  if false positive, suppress with //nolint:gosec // explanation"
+    - gosec/G117:  if false positive, suppress with //nolint:gosec // explanation
 
-run_gate "helm-render" "helm-render" \
-    "helm template failed. Check the chart for:
+Note: only NEW findings (vs origin/main) in changed packages are gated
+locally. CI runs the full lint and may surface additional pre-existing
+issues you'll need to fix in a follow-up.
+
+To bypass in an emergency: git commit --no-verify
+EOF
+        exit 1
+    fi
+else
+    show_skip "gofmt"        "no .go files staged"
+    show_skip "goimports"    "no .go files staged"
+    show_skip "golangci-lint" "no .go files staged"
+fi
+
+# Helm-render: only when chart files are staged. Other commits don't
+# affect the chart's renderability.
+if [ "$CHART_STAGED" -eq 1 ]; then
+    run_gate "helm-render" "helm-render" \
+        "helm template failed. Check the chart for:
     - undefined values referenced via .Values.X
     - syntax errors in templates/*.yaml
     - missing required fields in Chart.yaml"
+else
+    show_skip "helm-render" "no charts/ files staged"
+fi
 
-# Gitleaks (secrets in working tree). Cheap (~3s) so it runs locally;
-# the full git-history scan and govulncheck/trivy run in CI to keep
-# pre-commit fast. If gitleaks is not installed locally, the gate is
-# skipped with a hint — CI will still catch any escapes.
+# Gitleaks (secrets in working tree). Always runs — cheap (~3s) and a
+# secret can be introduced by ANY filetype, including markdown.
 if command -v gitleaks >/dev/null 2>&1; then
     run_gate "gitleaks" "gitleaks" \
         "Possible secret detected in your changes. Either:

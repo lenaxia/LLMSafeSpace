@@ -176,9 +176,10 @@ install-hooks:
 # per fresh clone, or after a Go-toolchain upgrade. Idempotent.
 tools-install:
 	$(GOCMD) install golang.org/x/tools/cmd/goimports@latest
+	$(GOCMD) install github.com/client9/misspell/cmd/misspell@latest
 	@which golangci-lint >/dev/null 2>&1 || \
 		$(GOCMD) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-	@echo "Tools installed: goimports, golangci-lint"
+	@echo "Tools installed: goimports, misspell, golangci-lint"
 	@echo "Other tools (helm, gitleaks, govulncheck, trivy) are checked"
 	@echo "by the relevant gates and installed on demand."
 
@@ -193,6 +194,82 @@ tools-install:
 check: fmt-check imports-check vet lint helm-render repolint
 	@echo ""
 	@echo "All quality gates passed."
+
+# pre-commit-fix: auto-fix the mechanical issues that pre-commit blocks on,
+# and re-stage the modified files so the next `git commit` succeeds.
+#
+# Use this when pre-commit fails on:
+#   - gofmt           (alignment, indentation)
+#   - goimports       (import grouping / unused imports)
+#   - misspell        (US-locale spelling: "behaviour" → "behavior", etc)
+#   - chart drift     (api/migrations/ ↔ charts/llmsafespace/migrations/)
+#   - staticcheck S1016 (struct → struct conversion idiom)
+#
+# Does NOT auto-fix:
+#   - errcheck / bodyclose / sqlclosecheck (semantic; need code changes)
+#   - duplicate worklog / migration numbers (need rename decision)
+#   - CRD drift (need Go ↔ chart schema reconciliation)
+#   - gitleaks findings (rotate the secret + remove from diff)
+#
+# After running, only the staged files that pre-commit had complained about
+# are added back; we DO NOT touch unstaged user changes.
+pre-commit-fix:
+	@echo "== pre-commit-fix: snapshot staged files =="
+	@staged=$$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(go|sql)$$' || true); \
+	if [ -z "$$staged" ]; then \
+		echo "No Go/SQL files staged; only chart-drift will run."; \
+	fi; \
+	echo "== gofmt =="; \
+	$(GOCMD) fmt ./... >/dev/null; \
+	echo "== goimports =="; \
+	$(MAKE) -s imports >/dev/null; \
+	echo "== misspell =="; \
+	which misspell >/dev/null 2>&1 || $(GOCMD) install github.com/client9/misspell/cmd/misspell@latest; \
+	misspell -w -locale US $$(find . -name '*.go' -not -path './frontend/node_modules/*' -not -path './sdks/*/node_modules/*') >/dev/null 2>&1 || true; \
+	echo "== chart-sync-migrations =="; \
+	$(MAKE) -s chart-sync-migrations >/dev/null; \
+	echo "== restage modified files =="; \
+	if [ -n "$$staged" ]; then \
+		echo "$$staged" | xargs -r git add; \
+	fi; \
+	git add charts/llmsafespace/migrations/ 2>/dev/null || true; \
+	echo ""; \
+	echo "Auto-fixes applied and re-staged. Re-run 'git commit' to retry."
+
+# pre-commit-fix-strict: like pre-commit-fix but ALSO runs the gates after
+# fixing, so you can confirm the commit will now go through. Slower (~30s
+# golangci-lint run) but no surprises.
+pre-commit-fix-strict: pre-commit-fix
+	@echo ""
+	@echo "== verifying gates =="
+	@$(MAKE) -s repolint
+	@$(MAKE) -s fmt-check
+	@$(MAKE) -s imports-check
+	@$(MAKE) -s lint
+	@echo ""
+	@echo "All gates pass. 'git commit' should succeed now."
+
+# recover-stash: dig dangling commits out of git's lost-and-found and
+# print which ones contain Go/SQL/worklog/markdown files. Used when a
+# rebase + stash dance lost untracked files (the failure mode in
+# worklog 0123). Read-only — never modifies anything.
+#
+# Once you find the SHA, recover individual files with:
+#   git show <sha>:path/to/file > path/to/file
+recover-stash:
+	@echo "Scanning git fsck --lost-found for dangling commits..."
+	@for sha in $$(git fsck --lost-found 2>/dev/null | grep "dangling commit" | awk '{print $$3}'); do \
+		files=$$(git show --stat $$sha 2>/dev/null | grep -E '\.(go|sql|md|tsx?|yaml)$$' | head -8 || true); \
+		if [ -n "$$files" ]; then \
+			echo ""; \
+			echo "=== $$sha ==="; \
+			git log --oneline -1 $$sha 2>/dev/null; \
+			echo "$$files"; \
+		fi; \
+	done
+	@echo ""
+	@echo "To recover a file from a SHA above:"
+	@echo "  git show <sha>:path/to/file > path/to/file"
 
 # ---------------------------------------------------------------------------
 # Security scanners (Epic 19, PR B)

@@ -66,6 +66,29 @@ jobs:
           curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           make helm-render
 
+      # Smoke-test the developer ergonomics targets so they don't bit-rot.
+      # `make pre-commit-fix` and `make recover-stash` exist to keep
+      # contributor velocity high (worklog 0126); silently breaking them
+      # would defeat the purpose. Both targets are idempotent and
+      # read-only enough to run in CI without polluting the working tree.
+      - name: pre-commit-fix smoke test
+        run: |
+          # Should run successfully on a clean tree, applying no changes.
+          make pre-commit-fix
+          # Verify we didn't accidentally modify anything.
+          if ! git diff --quiet; then
+            echo "FAIL: pre-commit-fix mutated the tree on a clean checkout"
+            git diff --stat
+            exit 1
+          fi
+
+      - name: recover-stash smoke test
+        run: |
+          # Should run without error even when there are no dangling commits
+          # (which is normal in a fresh checkout). We only care that the
+          # target itself doesn't have a syntax error.
+          make recover-stash
+
   test:
     name: Test (-short, with coverage)
     runs-on: ubuntu-latest
