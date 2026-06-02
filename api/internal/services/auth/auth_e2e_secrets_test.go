@@ -92,7 +92,9 @@ func TestE2E_RealAuth_SecretCRUD(t *testing.T) {
 	defer srv.Close()
 
 	base := "http://" + ln.Addr().String()
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Generous timeout: under -race the back-to-back register+login pair runs
+	// two cost-12 bcrypts which can exceed a small budget on CI runners.
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// === Register ===
 	resp := doPost(t, client, base+"/api/v1/auth/register",

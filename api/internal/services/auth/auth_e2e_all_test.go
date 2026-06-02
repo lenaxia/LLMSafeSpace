@@ -27,7 +27,7 @@ func TestE2E_RealAuth_WorkspaceEnv(t *testing.T) {
 	ln := startServer(t, router)
 	defer ln.Close()
 	base := "http://" + ln.Addr().String()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Set env vars
 	resp := doPut(t, c, base+"/api/v1/workspaces/ws-env-test/env",
@@ -75,7 +75,7 @@ func TestE2E_RealAuth_ChangePassword(t *testing.T) {
 	ln := startServer(t, router)
 	defer ln.Close()
 	base := "http://" + ln.Addr().String()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Change password
 	resp := doPost(t, c, base+"/api/v1/account/change-password",
@@ -122,7 +122,7 @@ func TestE2E_RealAuth_ChangePassword_WrongOld(t *testing.T) {
 	ln := startServer(t, router)
 	defer ln.Close()
 	base := "http://" + ln.Addr().String()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := &http.Client{Timeout: 30 * time.Second}
 
 	resp := doPost(t, c, base+"/api/v1/account/change-password",
 		`{"oldPassword":"wrong-password","newPassword":"doesnt-matter"}`, token)
@@ -139,7 +139,7 @@ func TestE2E_RealAuth_Recover(t *testing.T) {
 	ln := startServer(t, router)
 	defer ln.Close()
 	base := "http://" + ln.Addr().String()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Get the recovery key (stored during registration in the key store)
 	// We need to access it from the test setup — it's returned by InitializeUserKeys
@@ -190,7 +190,7 @@ func TestE2E_RealAuth_RotateKey_ThenSecrets(t *testing.T) {
 	ln := startServer(t, router)
 	defer ln.Close()
 	base := "http://" + ln.Addr().String()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Create a secret before rotation
 	resp := doPost(t, c, base+"/api/v1/secrets",
