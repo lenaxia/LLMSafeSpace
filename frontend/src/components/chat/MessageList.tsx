@@ -56,13 +56,13 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     setShowJumpButton(false);
   }, []);
 
-  // Snap to bottom synchronously before paint when content changes (if sticky)
+  // Snap to bottom synchronously before paint when message count changes (if sticky)
   useLayoutEffect(() => {
     if (stickToBottom.current) {
       const el = scrollRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [messages, streamingBubble]);
+  }, [messages.length]);
 
   // Auto-scroll when streaming starts
   useEffect(() => {
@@ -72,17 +72,27 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   }, [streaming, scrollToBottom]);
 
   // Keep pinned to bottom during streaming content growth
+  // Throttled via rAF to avoid layout thrashing — MutationObserver fires on
+  // every character change, but we only need one scrollTop write per frame.
   useEffect(() => {
     if (!streaming || !stickToBottom.current) return;
     const el = scrollRef.current;
     if (!el) return;
+    let frameId = 0;
     const observer = new MutationObserver(() => {
-      if (stickToBottom.current) {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (!stickToBottom.current || frameId) return;
+      frameId = requestAnimationFrame(() => {
+        frameId = 0;
+        if (stickToBottom.current && el) {
+          el.scrollTop = el.scrollHeight;
+        }
+      });
     });
     observer.observe(el, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frameId) cancelAnimationFrame(frameId);
+    };
   }, [streaming]);
 
   if (messages.length === 0 && !streamingBubble) {
