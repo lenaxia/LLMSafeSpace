@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Message } from "../../api/types";
 import { MessageBubble } from "./MessageBubble";
@@ -15,19 +15,24 @@ interface Props {
 
 const SCROLL_THRESHOLD = 60;
 
+const MemoizedBubble = memo(MessageBubble);
+
 export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  // Track intent to stay at bottom across renders (survives content changes)
+  const [showJumpButton, setShowJumpButton] = useState(false);
   const stickToBottom = useRef(true);
 
   const checkIfAtBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
-    setIsAtBottom(atBottom);
     stickToBottom.current = atBottom;
+    // Only trigger re-render when button visibility actually changes
+    setShowJumpButton((prev) => {
+      const shouldShow = !atBottom;
+      return prev === shouldShow ? prev : shouldShow;
+    });
   }, []);
 
   useEffect(() => {
@@ -40,8 +45,8 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-    setIsAtBottom(true);
     stickToBottom.current = true;
+    setShowJumpButton(false);
   }, []);
 
   // Snap to bottom synchronously before paint when content changes (if sticky)
@@ -107,7 +112,7 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
           )}
 
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MemoizedBubble key={msg.id} message={msg} />
           ))}
 
           {streamingBubble && streamingBubble}
@@ -116,7 +121,7 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
         </div>
       </div>
 
-      {!isAtBottom && (
+      {showJumpButton && (
         <button
           onClick={scrollToBottom}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-opacity"
