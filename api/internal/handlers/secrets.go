@@ -27,6 +27,19 @@ type SecretsHandler struct {
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
 	wsUpdater        WorkspaceMetadataUpdater
+	credStateWriter  CredentialStateWriter
+}
+
+// CredentialStateWriter records that workspace credentials have changed.
+// Satisfied by *database.Service.
+type CredentialStateWriter interface {
+	MarkCredentialChanged(ctx context.Context, workspaceID string) error
+}
+
+// SetCredentialStateWriter installs the writer. If nil, MarkCredentialChanged
+// is silently skipped (banner won't appear but no crash).
+func (h *SecretsHandler) SetCredentialStateWriter(w CredentialStateWriter) {
+	h.credStateWriter = w
 }
 
 // PodIPResolver looks up the pod IP for a workspace.
@@ -284,9 +297,19 @@ func (h *SecretsHandler) SetBindings(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.svc.SetBindings(c.Request.Context(), userID, workspaceID, req.SecretIDs); err != nil {
+	result, err := h.svc.SetBindings(c.Request.Context(), userID, workspaceID, req.SecretIDs)
+	if err != nil {
 		handleSecretError(c, err)
 		return
+	}
+
+	if result.LLMProviderAffected && h.credStateWriter != nil {
+		if err := h.credStateWriter.MarkCredentialChanged(c.Request.Context(), workspaceID); err != nil {
+			if h.logger != nil {
+				h.logger.Warn("mark credential changed failed; banner may not appear",
+					"workspaceID", workspaceID, "error", err.Error())
+			}
+		}
 	}
 
 	h.pushSecretsToAgent(c, userID, workspaceID)

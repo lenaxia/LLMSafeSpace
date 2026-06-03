@@ -161,6 +161,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			log,
 		))
 		secretsHandler.SetLogger(log)
+		secretsHandler.SetCredentialStateWriter(dbSvc)
 		// Wire the manifest writer so SetBindings persists a K8s Secret
 		// (`workspace-secrets-<id>`) read by the pod init container on
 		// every start. The live HTTP push alone is not durable; see
