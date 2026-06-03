@@ -437,16 +437,16 @@ type WorkspaceListItem struct {
 
 // WorkspaceStatusResult carries the status fields read from the Workspace CRD.
 type WorkspaceStatusResult struct {
-	Phase           string                     `json:"phase"`
-	PVCName         string                     `json:"pvcName,omitempty"`
-	ActiveSessions  int                        `json:"activeSessions"`
-	LastActivityAt  *time.Time                 `json:"lastActivityAt,omitempty"`
-	Message         string                     `json:"message,omitempty"`
-	Conditions      []WorkspaceConditionResult `json:"conditions,omitempty"`
-	CredentialState CredentialStateResult      `json:"credentialState"`
-	AgentHealth     AgentHealthResult          `json:"agentHealth"`
-	Sessions        []SessionStatusItem        `json:"sessions,omitempty"`
-	ImageTag        string                     `json:"imageTag,omitempty"`
+	Phase            string                     `json:"phase"`
+	PVCName          string                     `json:"pvcName,omitempty"`
+	ActiveSessions   int                        `json:"activeSessions"`
+	LastActivityAt   *time.Time                 `json:"lastActivityAt,omitempty"`
+	Message          string                     `json:"message,omitempty"`
+	Conditions       []WorkspaceConditionResult `json:"conditions,omitempty"`
+	CredentialState  CredentialStateResult      `json:"credentialState"`
+	AgentHealth      AgentHealthResult          `json:"agentHealth"`
+	Sessions         []SessionStatusItem        `json:"sessions,omitempty"`
+	ImageTag         string                     `json:"imageTag,omitempty"`
 	DiskUsedBytes    int64                      `json:"diskUsedBytes,omitempty"`
 	DiskTotalBytes   int64                      `json:"diskTotalBytes,omitempty"`
 	MemoryUsedBytes  int64                      `json:"memoryUsedBytes,omitempty"`

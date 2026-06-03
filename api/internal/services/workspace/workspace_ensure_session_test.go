@@ -166,3 +166,4 @@ func TestEnsureSession_ActiveWorkspace_ReturnsSession(t *testing.T) {
 }
 
 
+

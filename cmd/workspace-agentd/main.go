@@ -165,10 +165,10 @@ func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo
 		ID     string `json:"id"`
 		Title  string `json:"title"`
 		Tokens *struct {
-			Input      int64 `json:"input"`
-			Output     int64 `json:"output"`
-			Reasoning  int64 `json:"reasoning"`
-			Cache      struct {
+			Input     int64 `json:"input"`
+			Output    int64 `json:"output"`
+			Reasoning int64 `json:"reasoning"`
+			Cache     struct {
 				Read  int64 `json:"read"`
 				Write int64 `json:"write"`
 			} `json:"cache"`
