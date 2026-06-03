@@ -164,6 +164,3 @@ func TestEnsureSession_ActiveWorkspace_ReturnsSession(t *testing.T) {
 	assert.Equal(t, "Active", resp.WorkspacePhase)
 	assert.False(t, resp.Resumed)
 }
-
-
-
