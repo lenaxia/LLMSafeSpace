@@ -323,21 +323,19 @@ func TestDisposeInstance_UnauthenticatedClient_Returns401(t *testing.T) {
 	require.Contains(t, err.Error(), "401")
 }
 
-// --- RefreshCredentials (combined operation) tests ---
+// --- StageCredentials tests ---
 
-func TestRefreshCredentials_PushThenDispose(t *testing.T) {
-	var order []string
+func TestStageCredentials_DoesNotCallDispose(t *testing.T) {
+	var disposeCalled bool
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/auth/") {
-			order = append(order, "auth:"+strings.TrimPrefix(r.URL.Path, "/auth/"))
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("true"))
 			return
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/instance/dispose" {
-			order = append(order, "dispose")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("true"))
+		if r.URL.Path == "/instance/dispose" {
+			disposeCalled = true
+			t.Fatal("DisposeInstance must NOT be called by StageCredentials")
 			return
 		}
 		http.NotFound(w, r)
@@ -349,12 +347,12 @@ func TestRefreshCredentials_PushThenDispose(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
-	require.Equal(t, []string{"auth:anthropic", "dispose"}, order)
+	require.False(t, disposeCalled, "StageCredentials must not call dispose")
 }
 
-func TestRefreshCredentials_EmptyProviders_NoDispose(t *testing.T) {
+func TestStageCredentials_EmptyProviders_NoOp(t *testing.T) {
 	var called bool
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -363,12 +361,12 @@ func TestRefreshCredentials_EmptyProviders_NoDispose(t *testing.T) {
 	defer srv.Close()
 
 	c := newClientForTest(srv.URL)
-	err := c.RefreshCredentials(context.Background(), nil)
+	err := c.StageCredentials(context.Background(), nil)
 	require.NoError(t, err)
 	require.False(t, called, "no calls should be made for empty providers")
 }
 
-func TestRefreshCredentials_PushFails_NoDispose(t *testing.T) {
+func TestStageCredentials_PushFailure_NoSideEffects(t *testing.T) {
 	var disposeCalled bool
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
@@ -388,9 +386,26 @@ func TestRefreshCredentials_PushFails_NoDispose(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant"},
 	}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.Error(t, err)
 	require.False(t, disposeCalled, "dispose must NOT be called if push failed")
+}
+
+func TestStageCredentials_BasicAuth_Required(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("true"))
+	})))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "wrong-password")
+	providers := []secrets.LLMProviderData{
+		{Provider: "anthropic", APIKey: "sk-ant"},
+	}
+
+	err := c.StageCredentials(context.Background(), providers)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "401")
 }
 
 // --- authSetRequest helper for test assertions ---

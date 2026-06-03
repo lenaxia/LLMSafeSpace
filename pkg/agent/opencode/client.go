@@ -97,27 +97,15 @@ func (c *Client) DisposeInstance(ctx context.Context) error {
 	return nil
 }
 
-// RefreshCredentials is the combined operation for Step 2:
-// 1. Push all provider credentials to auth.json (PUT /auth/:providerID)
-// 2. Dispose the instance so it picks up the new keys on next access
+// StageCredentials writes provider credentials to opencode's auth.json
+// (via PUT /auth/:providerID) but does NOT trigger provider-state refresh.
+// The credentials are "staged" — they exist on disk but opencode's
+// in-memory provider state is unchanged until DisposeInstance is called
+// separately by the caller (typically via POST /api/v1/workspaces/:id/agent/reload).
 //
-// If push fails, dispose is NOT called (credentials unchanged, no reason to
-// disrupt the running instance).
-//
-// Returns nil if providers is empty (no-op, no dispose).
-func (c *Client) RefreshCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
-	if len(providers) == 0 {
-		return nil
-	}
-
-	if err := c.PushCredentials(ctx, providers); err != nil {
-		return fmt.Errorf("push credentials: %w", err)
-	}
-
-	if err := c.DisposeInstance(ctx); err != nil {
-		return fmt.Errorf("dispose instance: %w", err)
-	}
-	return nil
+// Returns nil if providers is empty (no-op).
+func (c *Client) StageCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
+	return c.PushCredentials(ctx, providers)
 }
 
 // setAuth sends PUT /auth/:providerID with the credential payload.

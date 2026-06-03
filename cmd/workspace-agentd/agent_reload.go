@@ -1,0 +1,58 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+)
+
+// agentReloadHandler triggers an opencode instance dispose. This is the
+// only path in the system that calls dispose after Epic 27a ships.
+// In-flight LLM streams are aborted; sessions persist in SQLite.
+//
+// Authentication: none at the application layer. The trust boundary is
+// the Kubernetes NetworkPolicy which allows only the API server pod to
+// reach the workspace pod on port agentd.AgentdPort (4097).
+//
+// Idempotent: opencode's InstanceStore short-circuits on already-disposed
+// entries; concurrent calls are safe.
+func agentReloadHandler(opencodePassword string, log *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		oc := opencode.NewClient(
+			fmt.Sprintf("http://localhost:%d", agentd.AgentPort),
+			opencodePassword,
+		)
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		if err := oc.DisposeInstance(ctx); err != nil {
+			log.Error("agent reload: dispose failed", zap.Error(err))
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "dispose failed: " + err.Error(),
+			})
+			return
+		}
+
+		log.Info("agent reload: dispose succeeded")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"disposed": true})
+	}
+}

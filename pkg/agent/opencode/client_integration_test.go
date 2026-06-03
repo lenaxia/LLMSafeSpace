@@ -20,11 +20,11 @@ import (
 )
 
 // ============================================================
-// Integration tests: verify the full RefreshCredentials flow
-// exercises the correct HTTP verbs, paths, and ordering.
+// Integration tests: verify StageCredentials writes credentials
+// to opencode's auth store without triggering dispose.
 // ============================================================
 
-func TestRefreshCredentials_CorrectHTTPVerbs(t *testing.T) {
+func TestStageCredentials_CorrectHTTPVerbs(t *testing.T) {
 	var requests []struct {
 		Method string
 		Path   string
@@ -45,20 +45,18 @@ func TestRefreshCredentials_CorrectHTTPVerbs(t *testing.T) {
 		{Provider: "openai", APIKey: "sk-2"},
 	}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
 
-	// Expect: PUT /auth/anthropic, PUT /auth/openai, POST /instance/dispose
-	require.Len(t, requests, 3)
+	// StageCredentials only pushes to auth store — no dispose call
+	require.Len(t, requests, 2)
 	assert.Equal(t, "PUT", requests[0].Method)
 	assert.Equal(t, "/auth/anthropic", requests[0].Path)
 	assert.Equal(t, "PUT", requests[1].Method)
 	assert.Equal(t, "/auth/openai", requests[1].Path)
-	assert.Equal(t, "POST", requests[2].Method)
-	assert.Equal(t, "/instance/dispose", requests[2].Path)
 }
 
-func TestRefreshCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
+func TestStageCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 	var bodies []json.RawMessage
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
@@ -75,7 +73,7 @@ func TestRefreshCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 		{Provider: "anthropic", APIKey: "sk-ant-api03-xyz", BaseURL: "https://proxy.example.com/v1"},
 	}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
 	require.Len(t, bodies, 1)
 
@@ -91,7 +89,7 @@ func TestRefreshCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 	assert.Equal(t, "https://proxy.example.com/v1", payload.Metadata["baseURL"])
 }
 
-func TestRefreshCredentials_ContentTypeJSON(t *testing.T) {
+func TestStageCredentials_ContentTypeJSON(t *testing.T) {
 	var contentTypes []string
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentTypes = append(contentTypes, r.Header.Get("Content-Type"))
@@ -103,7 +101,7 @@ func TestRefreshCredentials_ContentTypeJSON(t *testing.T) {
 	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "x", APIKey: "k"}}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
 
 	for i, ct := range contentTypes {
@@ -255,7 +253,7 @@ func TestPushCredentials_EmptyBaseURL_OmitsMetadata(t *testing.T) {
 	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "anthropic", APIKey: "sk", BaseURL: ""}}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
 
 	// JSON should NOT contain "metadata" key when BaseURL is empty
@@ -279,7 +277,7 @@ func TestPushCredentials_NonEmptyBaseURL_IncludesMetadata(t *testing.T) {
 	c := NewClient(srv.URL, testPassword)
 	providers := []secrets.LLMProviderData{{Provider: "openai", APIKey: "sk", BaseURL: "https://x.com"}}
 
-	err := c.RefreshCredentials(context.Background(), providers)
+	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
 
 	var raw map[string]interface{}
@@ -293,7 +291,7 @@ func TestPushCredentials_NonEmptyBaseURL_IncludesMetadata(t *testing.T) {
 // Concurrency safety: verify client is safe for concurrent use
 // ============================================================
 
-func TestClient_ConcurrentRefreshCredentials(t *testing.T) {
+func TestClient_ConcurrentStageCredentials(t *testing.T) {
 	var callCount atomic.Int32
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
@@ -311,13 +309,13 @@ func TestClient_ConcurrentRefreshCredentials(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = c.RefreshCredentials(context.Background(), providers)
+			_ = c.StageCredentials(context.Background(), providers)
 		}()
 	}
 	wg.Wait()
 
-	// 5 concurrent refreshes × (1 PUT + 1 POST) = 10 calls
-	assert.Equal(t, int32(10), callCount.Load())
+	// 5 concurrent stages × 1 PUT each = 5 calls (no dispose)
+	assert.Equal(t, int32(5), callCount.Load())
 }
 
 // ============================================================
@@ -331,10 +329,10 @@ func TestNewClient_HasReasonableTimeout(t *testing.T) {
 
 // ============================================================
 // Regression: dispose is NOT called if credentials are empty
-// (even if RefreshCredentials is called with empty slice)
+// (even if StageCredentials is called with empty slice)
 // ============================================================
 
-func TestRefreshCredentials_NilProviders_NoHTTPCalls(t *testing.T) {
+func TestStageCredentials_NilProviders_NoHTTPCalls(t *testing.T) {
 	var callCount atomic.Int32
 	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
@@ -343,8 +341,8 @@ func TestRefreshCredentials_NilProviders_NoHTTPCalls(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword)
-	require.NoError(t, c.RefreshCredentials(context.Background(), nil))
-	require.NoError(t, c.RefreshCredentials(context.Background(), []secrets.LLMProviderData{}))
+	require.NoError(t, c.StageCredentials(context.Background(), nil))
+	require.NoError(t, c.StageCredentials(context.Background(), []secrets.LLMProviderData{}))
 	assert.Equal(t, int32(0), callCount.Load())
 }
 
