@@ -46,6 +46,8 @@ export interface WorkspaceListItem {
   imageTag?: string;
   agentVersion?: string;
   maxActiveSessions?: number;
+  agentNeedsRefresh?: boolean;
+  credentialsPendingSince?: string;
 }
 
 export interface WorkspaceListResponse {

@@ -13,6 +13,7 @@ import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
+import { AgentReloadBanner } from "../components/workspace/AgentReloadBanner";
 import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
 import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
@@ -49,6 +50,12 @@ export function ChatPage() {
       const ws = data.items?.find((w) => w.id === workspaceId);
       return ws?.name ?? (workspaceId ? `workspace-${workspaceId.slice(0, 8)}` : "");
     },
+  });
+
+  const { data: activeWorkspaceData } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: () => workspacesApi.list(),
+    select: (data) => data.items?.find((w) => w.id === workspaceId),
   });
 
   const activateMutation = useActivateWorkspace();
@@ -555,6 +562,17 @@ export function ChatPage() {
             activateMutation.mutate(workspaceId);
           }}
           activating={activateMutation.isPending}
+        />
+      )}
+
+      {isReady && activeWorkspaceData?.agentNeedsRefresh && (
+        <AgentReloadBanner
+          workspaceId={workspaceId!}
+          workspaceName={workspaceName || "this workspace"}
+          credentialsPendingSince={activeWorkspaceData.credentialsPendingSince}
+          onReloaded={() => {
+            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+          }}
         />
       )}
 
