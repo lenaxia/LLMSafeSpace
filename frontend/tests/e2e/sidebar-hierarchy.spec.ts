@@ -58,16 +58,19 @@ test.describe("Sidebar hierarchy", () => {
     await setupAPIMocks(page);
   });
 
-  test("subtask child is hidden by default and revealed by clicking the parent's chevron", async ({ page }) => {
+  test("subtask child is auto-expanded when navigating to parent; chevron collapses and re-expands it", async ({ page }) => {
     await page.goto(`/chat/${WORKSPACE_ID}/${ROOT_SESSION}`);
 
     await expect(page.getByText("Main task")).toBeVisible({ timeout: 10_000 });
-    // Subtask is collapsed-by-default.
+    // autoExpandChildren=true (default): navigating to a parent auto-expands its children.
+    await expect(page.getByText("Find files (@explore)")).toBeVisible();
+
+    // Click the chevron to collapse the subtree.
+    await page.getByLabel("Collapse subtasks").first().click();
     await expect(page.getByText("Find files (@explore)")).not.toBeVisible();
 
-    // Click the chevron next to "Main task" to expand its subtasks.
+    // Click again to expand.
     await page.getByLabel("Expand subtasks").first().click();
-
     await expect(page.getByText("Find files (@explore)")).toBeVisible();
   });
 
