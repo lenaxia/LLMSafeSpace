@@ -13,6 +13,9 @@ spec:
     runAsUser: 65534  # nobody
     seccompProfile:
       type: RuntimeDefault
+  volumes:
+  - name: tmp
+    emptyDir: {}
   containers:
   - name: runner
     image: alpine/k8s:1.31.0
@@ -29,7 +32,10 @@ spec:
       limits:
         memory: 256Mi
     securityContext:
-      readOnlyRootFilesystem: false  # benchmark scripts write to /tmp
+      readOnlyRootFilesystem: true
       allowPrivilegeEscalation: false
       capabilities:
         drop: ["ALL"]
+    volumeMounts:
+    - name: tmp
+      mountPath: /tmp
