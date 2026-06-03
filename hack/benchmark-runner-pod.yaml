@@ -8,6 +8,11 @@ metadata:
 spec:
   serviceAccountName: llmsafespace-controller  # reuse existing SA for kubectl access
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534  # nobody
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: runner
     image: alpine/k8s:1.31.0
@@ -23,3 +28,8 @@ spec:
         memory: 128Mi
       limits:
         memory: 256Mi
+    securityContext:
+      readOnlyRootFilesystem: false  # benchmark scripts write to /tmp
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
