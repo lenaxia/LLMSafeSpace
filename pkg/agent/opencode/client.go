@@ -108,6 +108,40 @@ func (c *Client) StageCredentials(ctx context.Context, providers []secrets.LLMPr
 	return c.PushCredentials(ctx, providers)
 }
 
+// GetSessionStatuses calls GET /session/status on opencode and returns
+// the current status of all known sessions. The map key is the session ID;
+// the value is the status type string: "idle", "busy", or "retry".
+func (c *Client) GetSessionStatuses(ctx context.Context) (map[string]string, error) {
+	url := c.baseURL + "/session/status"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build session/status request: %w", err)
+	}
+	req.SetBasicAuth(agentd.AuthUsername, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET /session/status: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GET /session/status returned %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var raw map[string]struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode session/status: %w", err)
+	}
+	result := make(map[string]string, len(raw))
+	for id, info := range raw {
+		result[id] = info.Type
+	}
+	return result, nil
+}
+
 // setAuth sends PUT /auth/:providerID with the credential payload.
 func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 	payload := authPayload{

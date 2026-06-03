@@ -45,6 +45,15 @@ type SSETracker struct {
 	subMu           sync.Mutex
 	passwordGetter  func(ctx context.Context, workspaceID string) (string, error)
 	podIPResolver   func(workspaceID string) string
+	// Drain subscribers (Epic 27b)
+	drainMu         sync.Mutex
+	drainSubs       map[string]map[uint64]*drainSub
+	drainSubCounter uint64
+}
+
+type drainSub struct {
+	onIdle   func(workspaceID, sessionID string)
+	onActive func(workspaceID, sessionID string)
 }
 
 func NewSSETracker(
@@ -118,6 +127,37 @@ func (t *SSETracker) SubscriptionCount() int {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 	return len(t.subscriptions)
+}
+
+// SubscribeDrain registers callbacks for session-status events in the given
+// workspace. Multiple concurrent drain subscriptions per workspace are supported.
+// Returns a cancel function the caller MUST invoke when done.
+func (t *SSETracker) SubscribeDrain(
+	workspaceID string,
+	onIdle func(workspaceID, sessionID string),
+	onActive func(workspaceID, sessionID string),
+) (cancel func()) {
+	t.drainMu.Lock()
+	defer t.drainMu.Unlock()
+
+	if t.drainSubs == nil {
+		t.drainSubs = make(map[string]map[uint64]*drainSub)
+	}
+	if t.drainSubs[workspaceID] == nil {
+		t.drainSubs[workspaceID] = make(map[uint64]*drainSub)
+	}
+	t.drainSubCounter++
+	id := t.drainSubCounter
+	t.drainSubs[workspaceID][id] = &drainSub{onIdle: onIdle, onActive: onActive}
+
+	return func() {
+		t.drainMu.Lock()
+		defer t.drainMu.Unlock()
+		delete(t.drainSubs[workspaceID], id)
+		if len(t.drainSubs[workspaceID]) == 0 {
+			delete(t.drainSubs, workspaceID)
+		}
+	}
 }
 
 func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
@@ -263,9 +303,27 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 		if t.onSessionIdle != nil {
 			t.onSessionIdle(workspaceID, p.SessionID)
 		}
-	case "busy":
+		t.drainMu.Lock()
+		subs := make([]*drainSub, 0, len(t.drainSubs[workspaceID]))
+		for _, s := range t.drainSubs[workspaceID] {
+			subs = append(subs, s)
+		}
+		t.drainMu.Unlock()
+		for _, s := range subs {
+			s.onIdle(workspaceID, p.SessionID)
+		}
+	case "busy", "retry":
 		if t.onSessionActive != nil {
 			t.onSessionActive(workspaceID, p.SessionID)
+		}
+		t.drainMu.Lock()
+		subs := make([]*drainSub, 0, len(t.drainSubs[workspaceID]))
+		for _, s := range t.drainSubs[workspaceID] {
+			subs = append(subs, s)
+		}
+		t.drainMu.Unlock()
+		for _, s := range subs {
+			s.onActive(workspaceID, p.SessionID)
 		}
 	}
 }
