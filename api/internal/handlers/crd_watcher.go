@@ -33,6 +33,7 @@ type WorkspaceWatcher struct {
 	logger               pkginterfaces.LoggerInterface
 	namespace            string
 	onPhaseChange        PhaseChangeCallback
+	userBroker           *UserEventBroker
 	stopCh               chan struct{}
 	stopOnce             sync.Once
 	knownPhases          map[string]string
@@ -64,6 +65,12 @@ func NewWorkspaceWatcher(
 	}, nil
 }
 
+// SetUserBroker sets the user event broker for ownership tracking.
+// Must be called before Start().
+func (w *WorkspaceWatcher) SetUserBroker(broker *UserEventBroker) {
+	w.userBroker = broker
+}
+
 func (w *WorkspaceWatcher) Start() error {
 	go w.runWatchLoop()
 	return nil
@@ -80,6 +87,18 @@ func (w *WorkspaceWatcher) GetKnownPhase(name string) (string, bool) {
 	defer w.knownPhasesMu.RUnlock()
 	phase, ok := w.knownPhases[name]
 	return phase, ok
+}
+
+// GetAllKnownPhases returns a copy of the full known phases map.
+// One RLock acquisition for the entire read — O(N) with a single lock (G8).
+func (w *WorkspaceWatcher) GetAllKnownPhases() map[string]string {
+	w.knownPhasesMu.RLock()
+	defer w.knownPhasesMu.RUnlock()
+	result := make(map[string]string, len(w.knownPhases))
+	for k, v := range w.knownPhases {
+		result[k] = v
+	}
+	return result
 }
 
 // runWatchLoop drives the Watch lifecycle: List once to seed
@@ -122,16 +141,29 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 	}
 }
 
-// seedResourceVersion does an initial List to populate lastResourceVersion so
-// the first Watch starts from a known position instead of replaying the world.
-// Failures here are non-fatal: a Watch with empty resourceVersion will still
-// work, it will just return an initial Added event for every existing object.
+// seedResourceVersion does an initial List to populate lastResourceVersion and
+// knownPhases so the first Watch starts from a known position. Also records
+// workspace ownership in the user broker for snapshot delivery (FM3, FM7).
 func (w *WorkspaceWatcher) seedResourceVersion() error {
 	list, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).List(metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
 	w.setResourceVersion(list.ResourceVersion)
+
+	w.knownPhasesMu.Lock()
+	for i := range list.Items {
+		ws := &list.Items[i]
+		phase := string(ws.Status.Phase)
+		if phase != "" {
+			w.knownPhases[ws.Name] = phase
+		}
+		if w.userBroker != nil && ws.Spec.Owner.UserID != "" {
+			w.userBroker.RecordWorkspaceOwner(ws.Name, ws.Spec.Owner.UserID)
+		}
+	}
+	w.knownPhasesMu.Unlock()
+
 	return nil
 }
 
@@ -210,7 +242,24 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	}
 
 	name := workspace.Name
+
+	// C5: handle deletion — remove from knownPhases and clean up broker ownership
+	if event.Type == watch.Deleted {
+		w.knownPhasesMu.Lock()
+		delete(w.knownPhases, name)
+		w.knownPhasesMu.Unlock()
+		if w.userBroker != nil {
+			w.userBroker.CleanupWorkspace(name)
+		}
+		return
+	}
+
 	newPhase := string(workspace.Status.Phase)
+
+	// FM7: record workspace ownership on every event
+	if w.userBroker != nil && workspace.Spec.Owner.UserID != "" {
+		w.userBroker.RecordWorkspaceOwner(name, workspace.Spec.Owner.UserID)
+	}
 
 	w.knownPhasesMu.Lock()
 	oldPhase, existed := w.knownPhases[name]

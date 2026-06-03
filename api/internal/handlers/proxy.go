@@ -76,6 +76,7 @@ type ProxyHandler struct {
 	sseTracker      *SSETracker
 	sessionIndex    interfaces.SessionIndexService
 	broker          *WorkspaceEventBroker
+	userBroker      *UserEventBroker
 	sessionParents  *sessionParentCache
 
 	// parentBackfilled tracks workspaces whose session_index has been
@@ -157,6 +158,7 @@ func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
 		h.broker = NewWorkspaceEventBroker()
+		h.userBroker = NewUserEventBroker()
 
 		h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
 		if err := h.activityTracker.Start(); err != nil {
@@ -176,6 +178,7 @@ func (h *ProxyHandler) Start() error {
 			startErr = fmt.Errorf("creating CRD watcher: %w", err)
 			return
 		}
+		watcher.SetUserBroker(h.userBroker)
 		if err := watcher.Start(); err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
@@ -806,8 +809,19 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	// Publish the phase change to all browser SSE subscribers.
 	if h.broker != nil {
 		h.broker.Publish(workspace.Name, WorkspaceSSEEvent{
-			Type:  "workspace.phase",
-			Phase: string(phase),
+			Type:        "workspace.phase",
+			Phase:       string(phase),
+			WorkspaceID: workspace.Name,
+		})
+	}
+
+	// S28.4: Publish to user-scoped stream for cross-workspace visibility.
+	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
+		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
+		h.userBroker.PublishToUser(workspace.Spec.Owner.UserID, WorkspaceSSEEvent{
+			Type:        "workspace.phase",
+			WorkspaceID: workspace.Name,
+			Phase:       string(phase),
 		})
 	}
 
