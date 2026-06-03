@@ -129,7 +129,7 @@ describe("AdminCredentialsTab", () => {
     render(<AdminCredentialsTab />);
     await waitFor(() => screen.getByText("Production"));
 
-    fireEvent.click(screen.getAllByText("Production")[0]);
+    const el = screen.getAllByText("Production")[0]!; fireEvent.click(el);
 
     await waitFor(() => {
       // Drawer contains 3 tabs
@@ -147,7 +147,7 @@ describe("AdminCredentialsTab", () => {
     render(<AdminCredentialsTab />);
     await waitFor(() => screen.getByText("Old Name"));
 
-    fireEvent.click(screen.getAllByText("Old Name")[0]);
+    const el = screen.getAllByText("Old Name")[0]!; fireEvent.click(el);
     await waitFor(() => screen.getByText("details"));
 
     const nameInput = screen.getByDisplayValue("Old Name");
@@ -167,7 +167,7 @@ describe("AdminCredentialsTab", () => {
     render(<AdminCredentialsTab />);
     await waitFor(() => screen.getByText("Set1"));
 
-    fireEvent.click(screen.getAllByText("Set1")[0]);
+    const el = screen.getAllByText("Set1")[0]!; fireEvent.click(el);
     await waitFor(() => screen.getByText("models"));
     fireEvent.click(screen.getByText("models"));
 
@@ -198,7 +198,7 @@ describe("AdminCredentialsTab", () => {
     render(<AdminCredentialsTab />);
     await waitFor(() => screen.getByText("ToClose"));
 
-    fireEvent.click(screen.getAllByText("ToClose")[0]);
+    const el = screen.getAllByText("ToClose")[0]!; fireEvent.click(el);
     await waitFor(() => screen.getByText("details"));
 
     // Close via Escape key
