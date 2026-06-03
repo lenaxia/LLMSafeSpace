@@ -249,6 +249,14 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 		ws.Status.DiskUsedBytes = status.Disk.UsedBytes
 		ws.Status.DiskTotalBytes = status.Disk.TotalBytes
 	}
+	if status.Memory != nil {
+		ws.Status.MemoryUsedBytes = status.Memory.UsedBytes
+		ws.Status.MemoryTotalBytes = status.Memory.TotalBytes
+	}
+	if status.Context != nil {
+		ws.Status.ContextUsed = status.Context.UsedTokens
+		ws.Status.ContextTotal = status.Context.TotalTokens
+	}
 
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
 		v1.ReasonAgentHealthy, fmt.Sprintf("connected=%v sessions=%d version=%s",

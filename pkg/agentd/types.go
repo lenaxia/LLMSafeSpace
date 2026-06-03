@@ -39,17 +39,40 @@ type ReadyzResponse struct {
 	AgentType           string   `json:"agent_type"`
 }
 
+// SessionTokens describes token usage for a session.
+type SessionTokens struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	Reasoning  int64 `json:"reasoning"`
+	CacheRead  int64 `json:"cache_read"`
+	CacheWrite int64 `json:"cache_write"`
+}
+
 // SessionInfo describes a single opencode session.
 type SessionInfo struct {
-	ID     string `json:"id"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status"` // "idle" | "busy"
+	ID     string         `json:"id"`
+	Title  string         `json:"title,omitempty"`
+	Status string         `json:"status"` // "idle" | "busy"
+	Tokens *SessionTokens `json:"tokens,omitempty"`
+	Model  string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
 }
 
 // DiskUsage reports workspace filesystem usage.
 type DiskUsage struct {
 	UsedBytes  int64 `json:"used_bytes"`
 	TotalBytes int64 `json:"total_bytes"`
+}
+
+// MemoryUsage reports workspace memory usage.
+type MemoryUsage struct {
+	UsedBytes  int64 `json:"used_bytes"`
+	TotalBytes int64 `json:"total_bytes"`
+}
+
+// ContextUsage reports LLM context window usage across active sessions.
+type ContextUsage struct {
+	UsedTokens  int64 `json:"used_tokens"`
+	TotalTokens int64 `json:"total_tokens"`
 }
 
 // StatuszResponse is the response for GET /v1/statusz.
@@ -66,4 +89,6 @@ type StatuszResponse struct {
 	AgentVersion        string        `json:"agent_version"`
 	UptimeSeconds       int           `json:"uptime_seconds"`
 	Disk                *DiskUsage    `json:"disk,omitempty"`
+	Memory              *MemoryUsage  `json:"memory,omitempty"`
+	Context             *ContextUsage `json:"context,omitempty"`
 }

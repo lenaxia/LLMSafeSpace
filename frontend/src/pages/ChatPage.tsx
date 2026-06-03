@@ -458,6 +458,8 @@ export function ChatPage() {
     }
   }, [queryClient, workspaceId]);
 
+  // Connect SSE unconditionally (even before workspace is Active) so we can
+  // detect the Pending→Active phase transition and auto-create a session.
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
   const allMessages = [...(history ?? []), ...localMessages];
@@ -576,8 +578,15 @@ export function ChatPage() {
         />
       )}
 
-      {isReady && status?.diskTotalBytes && (
-        <DiskUsageBar usedBytes={status.diskUsedBytes} totalBytes={status.diskTotalBytes} />
+      {isReady && (
+        <DiskUsageBar
+          diskUsedBytes={status?.diskUsedBytes}
+          diskTotalBytes={status?.diskTotalBytes}
+          memoryUsedBytes={status?.memoryUsedBytes}
+          memoryTotalBytes={status?.memoryTotalBytes}
+          contextUsed={status?.contextUsed}
+          contextTotal={status?.contextTotal}
+        />
       )}
 
       {atCapRetryAfter !== null && (

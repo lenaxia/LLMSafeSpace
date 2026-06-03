@@ -597,6 +597,10 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	}
 	result.DiskUsedBytes = crd.Status.DiskUsedBytes
 	result.DiskTotalBytes = crd.Status.DiskTotalBytes
+	result.MemoryUsedBytes = crd.Status.MemoryUsedBytes
+	result.MemoryTotalBytes = crd.Status.MemoryTotalBytes
+	result.ContextUsed = crd.Status.ContextUsed
+	result.ContextTotal = crd.Status.ContextTotal
 
 	// Persist version info to DB so it's available in workspace list without extra K8s calls
 	if result.ImageTag != "" || result.AgentHealth.AgentVersion != "" {

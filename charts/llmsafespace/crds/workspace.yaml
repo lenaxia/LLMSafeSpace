@@ -290,6 +290,22 @@ spec:
                   type: integer
                   format: int64
                   description: "Total bytes available on the workspace PVC, reported by agentd."
+                memoryUsedBytes:
+                  type: integer
+                  format: int64
+                  description: "Memory bytes consumed by the workspace, reported by agentd."
+                memoryTotalBytes:
+                  type: integer
+                  format: int64
+                  description: "Total memory available to the workspace, reported by agentd."
+                contextUsed:
+                  type: integer
+                  format: int64
+                  description: "LLM context tokens consumed across active sessions, reported by agentd."
+                contextTotal:
+                  type: integer
+                  format: int64
+                  description: "Total LLM context window tokens available, reported by agentd."
       additionalPrinterColumns:
         - name: Phase
           type: string

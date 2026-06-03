@@ -54,6 +54,8 @@ func TestStatuszResponse_JSON(t *testing.T) {
 		AgentVersion:   "1.2.27",
 		UptimeSeconds:  7200,
 		Disk:           &DiskUsage{UsedBytes: 1024 * 1024 * 50, TotalBytes: 1024 * 1024 * 1024},
+		Memory:         &MemoryUsage{UsedBytes: 256 * 1024 * 1024, TotalBytes: 1024 * 1024 * 1024},
+		Context:        &ContextUsage{UsedTokens: 25000, TotalTokens: 128000},
 	}
 	data, err := json.Marshal(resp)
 	assert.NoError(t, err)
@@ -70,6 +72,12 @@ func TestStatuszResponse_JSON(t *testing.T) {
 	assert.NotNil(t, decoded.Disk)
 	assert.Equal(t, int64(1024*1024*50), decoded.Disk.UsedBytes)
 	assert.Equal(t, int64(1024*1024*1024), decoded.Disk.TotalBytes)
+	assert.NotNil(t, decoded.Memory)
+	assert.Equal(t, int64(256*1024*1024), decoded.Memory.UsedBytes)
+	assert.Equal(t, int64(1024*1024*1024), decoded.Memory.TotalBytes)
+	assert.NotNil(t, decoded.Context)
+	assert.Equal(t, int64(25000), decoded.Context.UsedTokens)
+	assert.Equal(t, int64(128000), decoded.Context.TotalTokens)
 }
 
 func TestStatuszResponse_NilDisk(t *testing.T) {

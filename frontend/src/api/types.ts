@@ -102,6 +102,10 @@ export interface WorkspaceStatus {
   imageTag?: string;
   diskUsedBytes?: number;
   diskTotalBytes?: number;
+  memoryUsedBytes?: number;
+  memoryTotalBytes?: number;
+  contextUsed?: number;
+  contextTotal?: number;
 }
 
 export interface AgentSessionInfo {

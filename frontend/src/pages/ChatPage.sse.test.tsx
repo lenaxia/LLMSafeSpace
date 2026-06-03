@@ -59,6 +59,7 @@ vi.mock("../components/chat/ChatView", () => ({
 
 import { workspacesApi } from "../api/workspaces";
 import { messagesApi } from "../api/messages";
+import { sessionsApi } from "../api/sessions";
 
 // --- Helpers ---
 
@@ -168,6 +169,71 @@ describe("ChatPage SSE event handler", () => {
         return Array.isArray(key) && key[0] === "sessions";
       });
       expect(sessionCalls).toHaveLength(0);
+    });
+
+    it("auto-creates session when workspace transitions Pending→Active via SSE", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Pending" });
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      // Session should NOT be created yet (workspace is Pending)
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+
+      // Update the mock so the refetch returns Active
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      sendSSEEvent({ type: "workspace.phase", phase: "Active" });
+
+      await waitFor(() => {
+        expect(sessionsApi.create).toHaveBeenCalledWith("ws-1", "New chat");
+      });
+    });
+
+    it("does NOT auto-create session when workspace transitions to Suspended (not Active)", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Pending" });
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Suspended" });
+      sendSSEEvent({ type: "workspace.phase", phase: "Suspended" });
+
+      // Wait a tick to let any effects settle
+      await new Promise((r) => setTimeout(r, 100));
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+    });
+
+    it("does NOT auto-create session when workspace is Active but sessionId already in URL", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Pending" });
+      const qc = makeQueryClient();
+      // Path includes sessionId → auto-create should be skipped
+      renderChat(qc, "/chat/ws-1/sess-existing");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      sendSSEEvent({ type: "workspace.phase", phase: "Active" });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+    });
+
+    it("only creates one session even with multiple workspace.phase=Active events", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Pending" });
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+      expect(sessionsApi.create).not.toHaveBeenCalled();
+
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      // Send multiple Active phase events in succession
+      sendSSEEvent({ type: "workspace.phase", phase: "Active" });
+      sendSSEEvent({ type: "workspace.phase", phase: "Active" });
+      sendSSEEvent({ type: "workspace.phase", phase: "Active" });
+
+      await waitFor(() => {
+        expect(sessionsApi.create).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

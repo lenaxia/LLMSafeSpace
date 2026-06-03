@@ -5,12 +5,19 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
@@ -108,3 +115,54 @@ func TestEnsureSession_WorkspaceNotFound_ReturnsError(t *testing.T) {
 	_, err := f.svc.EnsureSession(context.Background(), "user-1", "ws-1")
 	assert.Error(t, err)
 }
+
+func TestEnsureSession_ActiveWorkspace_ReturnsSession(t *testing.T) {
+	fakeBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/session", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		user, pass, ok := r.BasicAuth()
+		assert.True(t, ok)
+		assert.Equal(t, "opencode", user)
+		assert.Equal(t, "test-password", pass)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "sess-abc-123"})
+	}))
+	defer fakeBackend.Close()
+
+	backendURL, _ := url.Parse(fakeBackend.URL)
+	_, portStr, _ := net.SplitHostPort(backendURL.Host)
+	port, _ := strconv.Atoi(portStr)
+
+	f := newEnsureFixture(t)
+	ctx := context.Background()
+
+	crd := &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
+		Spec:       v1.WorkspaceSpec{Runtime: "python:3.11", Owner: v1.WorkspaceOwner{UserID: "user-1"}},
+		Status: v1.WorkspaceStatus{
+			Phase: v1.WorkspacePhaseActive,
+			PodIP: "127.0.0.1",
+		},
+	}
+	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{UserID: "user-1"}, nil)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-pw-ws-1", Namespace: "default"},
+		Data:       map[string][]byte{"password": []byte("test-password")},
+	}
+	_, err := f.clientset.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	f.svc.config.OpencodePort = port
+
+	resp, err := f.svc.EnsureSession(ctx, "user-1", "ws-1")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "ws-1", resp.WorkspaceID)
+	assert.Equal(t, "sess-abc-123", resp.SessionID)
+	assert.Equal(t, "Active", resp.WorkspacePhase)
+	assert.False(t, resp.Resumed)
+}
+
+

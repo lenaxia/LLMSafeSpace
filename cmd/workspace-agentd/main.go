@@ -116,6 +116,45 @@ func (c *OpenCodeClient) ConfiguredProviderCount(ctx context.Context) (int, erro
 	return len(result.Providers), nil
 }
 
+// ModelContextLimit queries /config/providers for the context window limit of a given model.
+// Returns 0 if the model or limit cannot be found.
+func (c *OpenCodeClient) ModelContextLimit(ctx context.Context, modelID, providerID string) int64 {
+	resp, err := c.doRequest(ctx, "/config/providers")
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var result struct {
+		Providers []struct {
+			ID     string `json:"id"`
+			Models map[string]struct {
+				ID    string `json:"id"`
+				Limit struct {
+					Context int64 `json:"context"`
+				} `json:"limit"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0
+	}
+	for _, p := range result.Providers {
+		if providerID != "" && p.ID != providerID {
+			continue
+		}
+		if m, ok := p.Models[modelID]; ok && m.Limit.Context > 0 {
+			return m.Limit.Context
+		}
+		// Fallback: search all models in this provider
+		for _, m := range p.Models {
+			if m.ID == modelID && m.Limit.Context > 0 {
+				return m.Limit.Context
+			}
+		}
+	}
+	return 0
+}
+
 func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo, error) {
 	resp, err := c.doRequest(ctx, "/session")
 	if err != nil {
@@ -123,18 +162,46 @@ func (c *OpenCodeClient) ListSessions(ctx context.Context) ([]agentd.SessionInfo
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var sessions []struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Tokens *struct {
+			Input      int64 `json:"input"`
+			Output     int64 `json:"output"`
+			Reasoning  int64 `json:"reasoning"`
+			Cache      struct {
+				Read  int64 `json:"read"`
+				Write int64 `json:"write"`
+			} `json:"cache"`
+		} `json:"tokens"`
+		Model *struct {
+			ID string `json:"id"`
+		} `json:"model"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
 		return nil, err
 	}
 	result := make([]agentd.SessionInfo, len(sessions))
 	for i, s := range sessions {
-		result[i] = agentd.SessionInfo{ID: s.ID, Status: "idle"}
-		// Fetch title from individual session endpoint (GET /session list doesn't include it)
-		if title := c.fetchSessionTitle(ctx, s.ID); title != "" {
-			result[i].Title = title
+		info := agentd.SessionInfo{ID: s.ID, Title: s.Title, Status: "idle"}
+		if s.Tokens != nil {
+			info.Tokens = &agentd.SessionTokens{
+				Input:      s.Tokens.Input,
+				Output:     s.Tokens.Output,
+				Reasoning:  s.Tokens.Reasoning,
+				CacheRead:  s.Tokens.Cache.Read,
+				CacheWrite: s.Tokens.Cache.Write,
+			}
 		}
+		if s.Model != nil {
+			info.Model = s.Model.ID
+		}
+		// If title wasn't in list, fetch it individually
+		if info.Title == "" {
+			if title := c.fetchSessionTitle(ctx, s.ID); title != "" {
+				info.Title = title
+			}
+		}
+		result[i] = info
 	}
 	return result, nil
 }
@@ -365,6 +432,50 @@ func cachedState(ctx context.Context, client *OpenCodeClient, cache *providerCac
 
 var workspacePath = agentd.WorkspacePath
 
+func getMemoryUsage() *agentd.MemoryUsage {
+	// Read container memory from cgroup v2 (fallback to /proc/meminfo)
+	memTotal := int64(0)
+	memUsed := int64(0)
+
+	// Try cgroup v2 first
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
+		fmt.Sscanf(string(data), "%d", &memUsed)
+	}
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		max := strings.TrimSpace(string(data))
+		if max != "max" {
+			fmt.Sscanf(max, "%d", &memTotal)
+		}
+	}
+	if memTotal == 0 {
+		// Fallback to /proc/meminfo
+		if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+			var totalKB, availKB int64
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "MemTotal:") {
+					fmt.Sscanf(line, "MemTotal: %d kB", &totalKB)
+				} else if strings.HasPrefix(line, "MemAvailable:") {
+					fmt.Sscanf(line, "MemAvailable: %d kB", &availKB)
+				}
+			}
+			if totalKB > 0 {
+				memTotal = totalKB * 1024
+				if availKB > 0 {
+					memUsed = (totalKB - availKB) * 1024
+				}
+			}
+		}
+	}
+
+	if memTotal <= 0 {
+		return nil
+	}
+	return &agentd.MemoryUsage{
+		UsedBytes:  memUsed,
+		TotalBytes: memTotal,
+	}
+}
+
 func getDiskUsage() *agentd.DiskUsage {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(workspacePath, &stat); err != nil {
@@ -514,6 +625,34 @@ func main() {
 			}
 		}
 
+		// Context usage: sum token usage across all sessions and
+		// use the active model's context window limit as the total.
+		var contextUsage *agentd.ContextUsage
+		{
+			var totalTokens int64
+			var modelID, providerID string
+			for _, s := range sessions {
+				if s.Tokens != nil {
+					totalTokens += s.Tokens.Input + s.Tokens.Output + s.Tokens.Reasoning
+				}
+				if modelID == "" && s.Model != "" {
+					modelID = s.Model
+				}
+			}
+			// Try to get context limit from active model's config
+			contextLimit := c.ModelContextLimit(r.Context(), modelID, providerID)
+			if contextLimit == 0 {
+				// Fallback: 128K per session
+				contextLimit = int64(max(len(sessions), 1)) * 128000
+			}
+			if totalTokens > 0 || len(sessions) > 0 {
+				contextUsage = &agentd.ContextUsage{
+					UsedTokens:  totalTokens,
+					TotalTokens: contextLimit,
+				}
+			}
+		}
+
 		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
 			Healthy:             healthy,
 			Ready:               ready,
@@ -527,6 +666,8 @@ func main() {
 			AgentVersion:        version,
 			UptimeSeconds:       int(time.Since(startedAt).Seconds()),
 			Disk:                getDiskUsage(),
+			Memory:              getMemoryUsage(),
+			Context:             contextUsage,
 		})
 	})
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))

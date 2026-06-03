@@ -274,9 +274,13 @@ type WorkspaceStatus struct {
 	ConsecutiveHealthFailures int32        `json:"consecutiveHealthFailures,omitempty"`
 
 	// Agent-reported fields (populated from agentd /v1/statusz scrape):
-	Sessions       []AgentSessionStatus `json:"sessions,omitempty"`
-	DiskUsedBytes  int64                `json:"diskUsedBytes,omitempty"`
-	DiskTotalBytes int64                `json:"diskTotalBytes,omitempty"`
+	Sessions         []AgentSessionStatus `json:"sessions,omitempty"`
+	DiskUsedBytes    int64                `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
+	MemoryUsedBytes  int64                `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes int64                `json:"memoryTotalBytes,omitempty"`
+	ContextUsed      int64                `json:"contextUsed,omitempty"`
+	ContextTotal     int64                `json:"contextTotal,omitempty"`
 
 	// ---- Startup latency measurement anchors (S18.10) ----
 	//

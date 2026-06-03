@@ -193,6 +193,18 @@ Key documents by area:
 - Provide honest and critical feedback
 - Validate claims with evidence before stating them
 
+### 10. Never Force Push Without Explicit Permission
+
+**NEVER use `git push --force` or `git push --force-with-lease` unless the user has explicitly told you it is okay to force push.**
+
+Force pushing rewrites shared history and can destroy a collaborator's work. The only acceptable scenarios are:
+
+1. The user directly instructs you: "force push" or "push --force"
+2. You are fixing a CI-rejected commit (e.g. repolint worklog numbering) and no other collaborator has pulled the broken commit
+3. You are working on a private branch that no one else has ever pushed to
+
+**Always prefer `git pull --rebase` + normal `git push` over force pushing.** If you pushed a broken commit, first ask the user if force push is acceptable, describe why it's needed, and wait for confirmation.
+
 ---
 
 ## Repository Structure

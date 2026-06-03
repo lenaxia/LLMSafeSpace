@@ -1,4 +1,50 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+async function setupMockWorkspace(page: Page, workspaceId: string) {
+  // Intercept workspace list to return one workspace
+  await page.route("**/api/v1/workspaces", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{ id: workspaceId, name: "test-ws", phase: "Active", userId: "test" }],
+          pagination: { limit: 20, offset: 0, total: 1 },
+        }),
+      });
+    } else {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: workspaceId }) });
+    }
+  });
+  // Intercept status endpoint — return Active
+  await page.route(`**/api/v1/workspaces/${workspaceId}/status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ phase: "Active" }),
+    });
+  });
+  // Intercept session creation
+  await page.route(`**/api/v1/workspaces/${workspaceId}/sessions/new`, async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ workspaceId, sessionId: "sess-auto-1", resumed: false, workspacePhase: "Active" }),
+      });
+    } else {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+    }
+  });
+  // Intercept SSE events — immediately send workspace.phase=Active
+  await page.route(`**/api/v1/workspaces/${workspaceId}/events`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: `data: ${JSON.stringify({ type: "workspace.phase", phase: "Active" })}\n\n`,
+    });
+  });
+}
 
 async function loginAs(page: import("@playwright/test").Page, username: string, password: string) {
   await page.goto("/login");
@@ -54,5 +100,52 @@ test.describe("Chat page (authenticated)", () => {
   test("logout clears session and redirects to login", async ({ page }) => {
     await page.getByLabel("Log out").click();
     await expect(page).toHaveURL(/\/login/);
+  });
+
+  test.describe("session auto-creation", () => {
+    test("navigating to workspace with Active status auto-creates a session", async ({ page }) => {
+      test.setTimeout(15000);
+      const wsId = "test-e2e-auto-1";
+      await setupMockWorkspace(page, wsId);
+      // Navigate to workspace page
+      await page.goto(`/chat?workspace=${wsId}`);
+      // Wait for session to appear in URL
+      await expect(page).toHaveURL(/session=/, { timeout: 10000 });
+      // Verify the auto-created session ID is present
+      const url = page.url();
+      expect(url).toContain("session=sess-auto-1");
+    });
+
+    test("workspace without Active phase does not auto-create session", async ({ page }) => {
+      test.setTimeout(15000);
+      const wsId = "test-e2e-auto-2";
+      await page.route(`**/api/v1/workspaces/${wsId}/status`, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ phase: "Pending" }),
+        });
+      });
+      await page.route("**/api/v1/workspaces", async (route) => {
+        if (route.request().method() === "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              items: [{ id: wsId, name: "test-ws", phase: "Pending", userId: "test" }],
+              pagination: { limit: 20, offset: 0, total: 1 },
+            }),
+          });
+        } else {
+          await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: wsId }) });
+        }
+      });
+      // Navigate to workspace page — session should NOT be created
+      await page.goto(`/chat?workspace=${wsId}`);
+      // Give it time to potentially create a session
+      await page.waitForTimeout(3000);
+      // URL should not contain session=
+      expect(page.url()).not.toContain("session=");
+    });
   });
 });

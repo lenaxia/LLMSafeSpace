@@ -447,8 +447,12 @@ type WorkspaceStatusResult struct {
 	AgentHealth     AgentHealthResult          `json:"agentHealth"`
 	Sessions        []SessionStatusItem        `json:"sessions,omitempty"`
 	ImageTag        string                     `json:"imageTag,omitempty"`
-	DiskUsedBytes   int64                      `json:"diskUsedBytes,omitempty"`
-	DiskTotalBytes  int64                      `json:"diskTotalBytes,omitempty"`
+	DiskUsedBytes    int64                      `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes   int64                      `json:"diskTotalBytes,omitempty"`
+	MemoryUsedBytes  int64                      `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes int64                      `json:"memoryTotalBytes,omitempty"`
+	ContextUsed      int64                      `json:"contextUsed,omitempty"`
+	ContextTotal     int64                      `json:"contextTotal,omitempty"`
 }
 
 // SessionStatusItem describes a session reported by the workspace agent.
