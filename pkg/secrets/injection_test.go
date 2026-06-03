@@ -45,7 +45,7 @@ func TestSecretService_PrepareSecretsForInjection_MultipleTypes(t *testing.T) {
 	})
 
 	// Bind all to workspace
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID, s3.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID, s3.ID})
 
 	// Prepare injection
 	data, err := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
@@ -105,7 +105,7 @@ func TestSecretService_PrepareSecretsForInjection_AuditLogged(t *testing.T) {
 		Name: "audited-inject", Type: SecretTypeAPIKey, Value: "val",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
 	// Clear audit from create/bind
 	store.mu.Lock()
@@ -137,7 +137,7 @@ func TestSecretService_PrepareSecretsForInjection_PreservesMetadata(t *testing.T
 		Name: "file-secret", Type: SecretTypeSecretFile, Value: "cert-content",
 		Metadata: json.RawMessage(`{"mount_path":"cert.pem"}`),
 	})
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
 	data, _ := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
 
@@ -183,7 +183,7 @@ func TestSecretService_PrepareSecretsForInjection_CrossTenantIsolation(t *testin
 		Name: "private", Type: SecretTypeAPIKey, Value: "user1-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
-	svc.SetBindings(ctx, "user-1", "ws-user1", []string{s1.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-user1", []string{s1.ID})
 
 	// User 2 tries to inject from user 1's workspace (should get nothing)
 	data, err := svc.PrepareSecretsForInjection(ctx, "user-2", "sess-2", "ws-user1")

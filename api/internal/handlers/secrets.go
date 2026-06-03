@@ -284,7 +284,7 @@ func (h *SecretsHandler) SetBindings(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.SetBindings(c.Request.Context(), userID, workspaceID, req.SecretIDs); err != nil {
+	if _, err := h.svc.SetBindings(c.Request.Context(), userID, workspaceID, req.SecretIDs); err != nil {
 		handleSecretError(c, err)
 		return
 	}
@@ -551,7 +551,7 @@ func (h *SecretsHandler) SetWorkspaceEnv(c *gin.Context) {
 	// concurrent SetWorkspaceEnv calls on the same workspace
 	// serialize at this step rather than racing on a Get-then-Set
 	// snapshot (worklog 0094 pass-2 finding O1).
-	if err := h.svc.AddBindings(ctx, userID, workspaceID, newBindings); err != nil {
+	if _, err := h.svc.AddBindings(ctx, userID, workspaceID, newBindings); err != nil {
 		h.warn("SetWorkspaceEnv: AddBindings failed",
 			"workspaceID", workspaceID, "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit workspace bindings"})

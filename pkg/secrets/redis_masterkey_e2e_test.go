@@ -110,7 +110,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 	}
 
 	// === Phase 5: Prepare injection (proves full flow works) ===
-	secretSvc.SetBindings(ctx, userID, "ws-mk-test", []string{created.ID})
+	_, _ = secretSvc.SetBindings(ctx, userID, "ws-mk-test", []string{created.ID})
 	injData, err := secretSvc.PrepareSecretsForInjection(ctx, userID, sessionID, "ws-mk-test")
 	if err != nil {
 		t.Fatalf("PrepareSecretsForInjection: %v", err)

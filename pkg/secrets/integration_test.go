@@ -96,7 +96,7 @@ func TestIntegration_BindingLifecycle(t *testing.T) {
 	}
 
 	// Bind all 3 to workspace
-	err := svc.SetBindings(ctx, "user-1", "ws-1", ids)
+	_, err := svc.SetBindings(ctx, "user-1", "ws-1", ids)
 	if err != nil {
 		t.Fatalf("SetBindings: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestIntegration_BindingLifecycle(t *testing.T) {
 	}
 
 	// Rebind with empty list
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{})
 	resp, _ = svc.GetBindings(ctx, "user-1", "ws-1")
 	if len(resp.Bindings) != 0 {
 		t.Errorf("Expected 0 bindings after clear, got %d", len(resp.Bindings))
@@ -173,7 +173,7 @@ func TestIntegration_InjectionAfterUpdate(t *testing.T) {
 		Name: "mutable", Type: SecretTypeEnvSecret, Value: "original",
 		Metadata: json.RawMessage(`{"var_name":"MY_VAR"}`),
 	})
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject — should get "original"
 	data, _ := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
@@ -214,7 +214,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 	svc.UpdateSecret(ctx, "user-1", sessionID, s.ID, UpdateSecretRequest{Value: "v2"})
 
 	// Bind
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject (read)
 	svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")

@@ -498,18 +498,18 @@ func TestSecretService_SetBindings_RejectsForeignWorkspace(t *testing.T) {
 	}
 
 	// Owned workspace: SetBindings succeeds.
-	if err := svc.SetBindings(ctx, "user-1", "ws-mine", []string{created.ID}); err != nil {
+	if _, err := svc.SetBindings(ctx, "user-1", "ws-mine", []string{created.ID}); err != nil {
 		t.Fatalf("SetBindings on owned workspace: %v", err)
 	}
 
 	// Foreign workspace: must reject with ErrWorkspaceNotOwned.
-	err = svc.SetBindings(ctx, "user-1", "ws-other", []string{created.ID})
+	_, err = svc.SetBindings(ctx, "user-1", "ws-other", []string{created.ID})
 	if !errors.Is(err, ErrWorkspaceNotOwned) {
 		t.Errorf("SO-1: SetBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
 	}
 
 	// AddBindings must also reject.
-	err = svc.AddBindings(ctx, "user-1", "ws-other", []string{created.ID})
+	_, err = svc.AddBindings(ctx, "user-1", "ws-other", []string{created.ID})
 	if !errors.Is(err, ErrWorkspaceNotOwned) {
 		t.Errorf("SO-1: AddBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
 	}
@@ -536,7 +536,7 @@ func TestSecretService_RequireOwnerVerification_FailsClosed(t *testing.T) {
 
 	// Default service: no verifier wired, requireWsVerifier=false.
 	// SetBindings should succeed (test ergonomics).
-	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
+	if _, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
 		t.Fatalf("default SecretService: SetBindings should succeed without verifier: %v", err)
 	}
 
@@ -549,10 +549,12 @@ func TestSecretService_RequireOwnerVerification_FailsClosed(t *testing.T) {
 		fn   func() error
 	}{
 		{"SetBindings", func() error {
-			return svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
+			_, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
+			return err
 		}},
 		{"AddBindings", func() error {
-			return svc.AddBindings(ctx, "user-1", "ws-1", []string{created.ID})
+			_, err := svc.AddBindings(ctx, "user-1", "ws-1", []string{created.ID})
+			return err
 		}},
 		{"GetBindings", func() error {
 			_, err := svc.GetBindings(ctx, "user-1", "ws-1")
@@ -764,7 +766,7 @@ func TestSecretService_SetAndGetBindings(t *testing.T) {
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"X"}`),
 	})
 
-	err := svc.SetBindings(ctx, "user-1", "workspace-1", []string{s1.ID, s2.ID})
+	_, err := svc.SetBindings(ctx, "user-1", "workspace-1", []string{s1.ID, s2.ID})
 	if err != nil {
 		t.Fatalf("SetBindings failed: %v", err)
 	}
@@ -782,7 +784,7 @@ func TestSecretService_SetBindings_NonexistentSecret(t *testing.T) {
 	svc, _, _ := setupSecretService(t)
 	ctx := context.Background()
 
-	err := svc.SetBindings(ctx, "user-1", "workspace-1", []string{"nonexistent-id"})
+	_, err := svc.SetBindings(ctx, "user-1", "workspace-1", []string{"nonexistent-id"})
 	if err == nil {
 		t.Error("Binding nonexistent secret should fail")
 	}
@@ -834,7 +836,7 @@ func TestSecretService_DeleteSecret_CascadesBindings(t *testing.T) {
 	})
 
 	// Bind to workspace
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
 
 	// Delete secret
 	svc.DeleteSecret(ctx, "user-1", created.ID)
@@ -881,12 +883,12 @@ func TestSecretService_AddBindings_HappyPath_AppendsAndAudits(t *testing.T) {
 	})
 
 	// Pre-existing binding (e.g. from an earlier SetBindings call).
-	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{pre.ID}); err != nil {
+	if _, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{pre.ID}); err != nil {
 		t.Fatalf("setbindings pre: %v", err)
 	}
 
 	// AddBindings must merge add1+add2 with the pre-existing binding.
-	if err := svc.AddBindings(ctx, "user-1", "ws-1", []string{add1.ID, add2.ID}); err != nil {
+	if _, err := svc.AddBindings(ctx, "user-1", "ws-1", []string{add1.ID, add2.ID}); err != nil {
 		t.Fatalf("AddBindings: %v", err)
 	}
 
@@ -944,7 +946,7 @@ func TestSecretService_AddBindings_Idempotent(t *testing.T) {
 		Metadata: json.RawMessage(`{"var_name":"S"}`),
 	})
 	for i := 0; i < 3; i++ {
-		if err := svc.AddBindings(ctx, "user-1", "ws-1", []string{s.ID}); err != nil {
+		if _, err := svc.AddBindings(ctx, "user-1", "ws-1", []string{s.ID}); err != nil {
 			t.Fatalf("AddBindings call %d: %v", i, err)
 		}
 	}
@@ -1020,7 +1022,7 @@ func TestSecretService_GetBindingsForSecret_OwnershipEnforced(t *testing.T) {
 		Name: "lookup-me", Type: SecretTypeEnvSecret, Value: "v",
 		Metadata: json.RawMessage(`{"var_name":"X"}`),
 	})
-	if err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
+	if _, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
 		t.Fatalf("SetBindings: %v", err)
 	}
 

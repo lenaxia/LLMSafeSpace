@@ -396,7 +396,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 
 	// Bind
 	wsID := fmt.Sprintf("ws-e2e-%d", time.Now().UnixNano())
-	err = svc.SetBindings(ctx, userID, wsID, []string{created.ID})
+	_, err = svc.SetBindings(ctx, userID, wsID, []string{created.ID})
 	if err != nil {
 		t.Fatalf("SetBindings: %v", err)
 	}
