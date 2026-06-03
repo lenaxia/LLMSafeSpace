@@ -164,7 +164,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	req, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, agentdURL, nil)
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		h.logger.Error("agent reload: agentd unreachable", err)
+		if h.logger != nil { h.logger.Error("agent reload: agentd unreachable", err) }
 		respondWithAPIError(c, apierrors.NewInternalError("agent_unreachable", err))
 		return
 	}
@@ -180,7 +180,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	// Dispose succeeded. Update agent state.
 	tx, err := h.db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
-		h.logger.Warn("agent reload: tx begin failed; dispose done, banner may persist", "error", err.Error())
+		if h.logger != nil { h.logger.Warn("agent reload: tx begin failed; dispose done, banner may persist", "error", err.Error()) }
 		c.JSON(http.StatusOK, gin.H{
 			"disposed":       true,
 			"lastDisposedAt": time.Now().UTC().Format(time.RFC3339),
@@ -188,7 +188,11 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		})
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() {
+		if tx != nil {
+			tx.Rollback() //nolint:errcheck
+		}
+	}()
 
 	disposedAt, err := h.db.MarkAgentReloaded(c.Request.Context(), tx, workspaceID, priorChangedAt)
 	if err != nil {
@@ -196,7 +200,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "workspace has no pending credentials to reload"})
 			return
 		}
-		h.logger.Warn("agent reload: MarkAgentReloaded failed", "error", err.Error())
+		if h.logger != nil { h.logger.Warn("agent reload: MarkAgentReloaded failed", "error", err.Error()) }
 		c.JSON(http.StatusOK, gin.H{
 			"disposed":       true,
 			"lastDisposedAt": time.Now().UTC().Format(time.RFC3339),
@@ -205,7 +209,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		h.logger.Warn("agent reload: tx commit failed", "error", err.Error())
+		if h.logger != nil { h.logger.Warn("agent reload: tx commit failed", "error", err.Error()) }
 		c.JSON(http.StatusOK, gin.H{
 			"disposed":       true,
 			"lastDisposedAt": time.Now().UTC().Format(time.RFC3339),

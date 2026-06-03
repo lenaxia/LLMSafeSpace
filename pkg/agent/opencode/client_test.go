@@ -417,3 +417,83 @@ type authSetRequest struct {
 	// not serialized — set by test handler from URL path
 	providerID string
 }
+
+// --- GetSessionStatuses tests ---
+
+func TestGetSessionStatuses_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/status" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sess-1":{"type":"idle"},"sess-2":{"type":"busy"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	})))
+	defer srv.Close()
+
+	c := newClientForTest(srv.URL)
+	statuses, err := c.GetSessionStatuses(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 2)
+	require.Equal(t, "idle", statuses["sess-1"])
+	require.Equal(t, "busy", statuses["sess-2"])
+}
+
+func TestGetSessionStatuses_EmptyMap(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})))
+	defer srv.Close()
+
+	c := newClientForTest(srv.URL)
+	statuses, err := c.GetSessionStatuses(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, statuses)
+}
+
+func TestGetSessionStatuses_RequiresBasicAuth(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "wrong-password")
+	_, err := c.GetSessionStatuses(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "401")
+}
+
+func TestGetSessionStatuses_ServerError(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"disk full"}`))
+	})))
+	defer srv.Close()
+
+	c := newClientForTest(srv.URL)
+	_, err := c.GetSessionStatuses(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "500")
+	require.Contains(t, err.Error(), "disk full")
+}
+
+func TestGetSessionStatuses_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(requireAuth(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`not json`))
+	})))
+	defer srv.Close()
+
+	c := newClientForTest(srv.URL)
+	_, err := c.GetSessionStatuses(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode")
+}
+
+func TestGetSessionStatuses_ConnectionRefused(t *testing.T) {
+	c := newClientForTest("http://127.0.0.1:1")
+	_, err := c.GetSessionStatuses(context.Background())
+	require.Error(t, err)
+}
