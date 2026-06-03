@@ -216,21 +216,20 @@ $ golangci-lint run --timeout 120s ./pkg/agent/...
 
 Bound `litellm-openai` LLM-provider secret to a fresh workspace running
 `sha-d1c7242` (Bug 1+2 fixes). Wrote the new shape to
-`/tmp/agent-config.json`, restarted opencode:
+`/tmp/agent-config.json`, restarted opencode, then queried opencode's
+`/provider` endpoint with HTTP Basic auth (username
+`agentd.AuthUsername`, password from `/sandbox-cfg/password`):
 
 ```
-$ curl -u 'opencode:<password>' http://localhost:4096/provider | jq .connected
 [
   "opencode",
   "openai"             ← present!
 ]
 ```
 
-Sent a prompt:
-
-```
-$ curl -u 'opencode:<password>' -X POST .../session/<id>/message \
-    -d '{"providerID":"openai","modelID":"deepseek-v3-chat","parts":[{"type":"text","text":"Say PONG only."}]}'
+Sent a chat prompt to `/session/<id>/message` (same Basic auth) with
+the JSON body
+`{"providerID":"openai","modelID":"deepseek-v3-chat","parts":[{"type":"text","text":"Say PONG only."}]}`:
 {
   "info": {
     "modelID":    "deepseek-v3-chat",

@@ -99,6 +99,14 @@ commits = [
   # Fingerprint covers the exact line; broader history scanning is
   # still in effect.
   "d1c72424c3e3feb63427fb8c4718a150f9d4b785",
+  # fec3363 (Bug 3 fix worklog 0128) repeated the same pattern:
+  # `curl -u 'opencode:<password>'` placeholder in the
+  # "Live cluster (manual probe of the new shape)" section.
+  # Same rationale as d1c7242 — opencode is the well-known Basic-auth
+  # username in our system, <password> is a literal placeholder.
+  # The follow-up commit rewrote the worklog to prose; this entry
+  # silences history scans of the original commit.
+  "fec33638b931175136a04a42285b97cb33be901b",
 ]
 
 # Stop-words: matches that, when seen alongside a candidate secret,
