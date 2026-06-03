@@ -439,12 +439,12 @@ func getMemoryUsage() *agentd.MemoryUsage {
 
 	// Try cgroup v2 first
 	if data, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
-		fmt.Sscanf(string(data), "%d", &memUsed)
+		_, _ = fmt.Sscanf(string(data), "%d", &memUsed)
 	}
 	if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
 		max := strings.TrimSpace(string(data))
 		if max != "max" {
-			fmt.Sscanf(max, "%d", &memTotal)
+			_, _ = fmt.Sscanf(max, "%d", &memTotal)
 		}
 	}
 	if memTotal == 0 {
@@ -453,9 +453,9 @@ func getMemoryUsage() *agentd.MemoryUsage {
 			var totalKB, availKB int64
 			for _, line := range strings.Split(string(data), "\n") {
 				if strings.HasPrefix(line, "MemTotal:") {
-					fmt.Sscanf(line, "MemTotal: %d kB", &totalKB)
+					_, _ = fmt.Sscanf(line, "MemTotal: %d kB", &totalKB)
 				} else if strings.HasPrefix(line, "MemAvailable:") {
-					fmt.Sscanf(line, "MemAvailable: %d kB", &availKB)
+					_, _ = fmt.Sscanf(line, "MemAvailable: %d kB", &availKB)
 				}
 			}
 			if totalKB > 0 {
