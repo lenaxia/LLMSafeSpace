@@ -170,13 +170,12 @@ func TestCredService_Get_NotFound(t *testing.T) {
 }
 
 func TestCredService_Delete_NotFound(t *testing.T) {
-	svc, store := newTestCredService()
-	store.refCount = 0
+	svc, _ := newTestCredService()
 
 	err := svc.Delete(context.Background(), "nonexistent-id")
-	// Should succeed (delete of non-existent is idempotent in mock)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+	// Non-existent → GetCredentialSet returns nil → "not found" error
+	if err == nil {
+		t.Error("expected error for nonexistent credential set")
 	}
 }
 
@@ -284,7 +283,7 @@ func TestCredService_RotateKey_NoRows(t *testing.T) {
 
 func TestCredService_FullLifecycle(t *testing.T) {
 	svc, store := newTestCredService()
-	store.refCount = 0
+
 	ctx := context.Background()
 
 	// Create

@@ -6,6 +6,7 @@ const mockList = vi.fn();
 const mockDelete = vi.fn();
 const mockSetDefault = vi.fn();
 const mockRotate = vi.fn();
+const mockUpdate = vi.fn();
 
 vi.mock("../../api/credentials", () => ({
   credentialsApi: {
@@ -13,6 +14,7 @@ vi.mock("../../api/credentials", () => ({
     delete: (id: string) => mockDelete(id),
     setDefault: (id: string) => mockSetDefault(id),
     rotateKey: () => mockRotate(),
+    update: (id: string, req: unknown) => mockUpdate(id, req),
   },
 }));
 
@@ -20,6 +22,204 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.confirm = vi.fn(() => true);
   window.alert = vi.fn();
+});
+
+describe("AdminCredentialsTab", () => {
+  it("shows spinner while loading", () => {
+    mockList.mockReturnValue(new Promise(() => {}));
+    render(<AdminCredentialsTab />);
+    expect(document.querySelector(".animate-spin")).toBeInTheDocument();
+  });
+
+  it("shows empty state when no credential sets", async () => {
+    mockList.mockResolvedValue([]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => {
+      expect(screen.getByText("No credential sets configured.")).toBeInTheDocument();
+    });
+  });
+
+  it("renders credential sets", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "Production", isDefault: true, providers: ["openai"], modelAllowlist: ["gpt-4"], assignedTo: "all", keyVersion: 1 },
+      { id: "2", name: "Dev", isDefault: false, providers: ["anthropic"], modelAllowlist: [], assignedTo: "all", keyVersion: 1 },
+    ]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => {
+      expect(screen.getByText("Production")).toBeInTheDocument();
+      expect(screen.getByText("Dev")).toBeInTheDocument();
+      expect(screen.getByText("default")).toBeInTheDocument();
+    });
+  });
+
+  // Regression guard: a CredentialSet returned by the backend with
+  // null arrays (Bug filed against `b54621a`: backend serialised
+  // modelAllowlist:null when no allowlist was provided at create
+  // time; the frontend's `cs.modelAllowlist.length` then crashed with
+  // `Cannot read properties of null (reading 'length')`).
+  it("tolerates null arrays (provider response regression guard)", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "NullArrays", isDefault: false, providers: null as unknown as string[], modelAllowlist: null as unknown as string[], assignedTo: "all", keyVersion: 1 },
+    ]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => {
+      expect(screen.getByText("NullArrays")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Providers: none/)).toBeInTheDocument();
+    expect(screen.getByText(/Models: all/)).toBeInTheDocument();
+  });
+
+  it("deletes a credential set", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "ToDelete", isDefault: false, providers: [], modelAllowlist: [], assignedTo: "all", keyVersion: 1 },
+    ]);
+    mockDelete.mockResolvedValue(undefined);
+    render(<AdminCredentialsTab />);
+
+    await waitFor(() => screen.getByText("ToDelete"));
+    fireEvent.click(screen.getByTitle("Delete"));
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith("1");
+    });
+  });
+
+  it("sets a credential set as default", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "NotDefault", isDefault: false, providers: ["x"], modelAllowlist: [], assignedTo: "all", keyVersion: 1 },
+    ]);
+    mockSetDefault.mockResolvedValue(undefined);
+    render(<AdminCredentialsTab />);
+
+    await waitFor(() => screen.getByText("NotDefault"));
+    fireEvent.click(screen.getByTitle("Set as default"));
+
+    await waitFor(() => {
+      expect(mockSetDefault).toHaveBeenCalledWith("1");
+    });
+  });
+
+  it("rotates encryption key", async () => {
+    mockList.mockResolvedValue([]);
+    mockRotate.mockResolvedValue({ rotated: 3, alreadyCurrent: 1, errors: 0 });
+    render(<AdminCredentialsTab />);
+
+    await waitFor(() => screen.getByText("Rotate Encryption Key"));
+    fireEvent.click(screen.getByText("Rotate Encryption Key"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/3 rotated/)).toBeInTheDocument();
+    });
+  });
+
+  it("hides for non-admin (404)", async () => {
+    mockList.mockRejectedValue(new Error("404 Not Found"));
+    const { container } = render(<AdminCredentialsTab />);
+    await waitFor(() => {
+      expect(container.innerHTML).toBe("");
+    });
+  });
+
+  // Drawer tests
+
+  it("opens drawer on row click", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "Production", isDefault: true, providers: ["openai"], modelAllowlist: ["gpt-4"], assignedTo: "all", keyVersion: 1, createdAt: "", updatedAt: "" },
+    ]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("Production"));
+
+    fireEvent.click(screen.getAllByText("Production")[0]);
+
+    await waitFor(() => {
+      // Drawer contains 3 tabs
+      expect(screen.getByText("details")).toBeInTheDocument();
+      expect(screen.getByText("providers")).toBeInTheDocument();
+      expect(screen.getByText("models")).toBeInTheDocument();
+    });
+  });
+
+  it("drawer: saves updated name", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "Old Name", isDefault: false, providers: ["openai"], modelAllowlist: [], assignedTo: "all", keyVersion: 1, createdAt: "", updatedAt: "" },
+    ]);
+    mockUpdate.mockResolvedValue({ status: "updated" });
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("Old Name"));
+
+    fireEvent.click(screen.getAllByText("Old Name")[0]);
+    await waitFor(() => screen.getByText("details"));
+
+    const nameInput = screen.getByDisplayValue("Old Name");
+    fireEvent.change(nameInput, { target: { value: "New Name" } });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith("1", { name: "New Name" });
+    });
+  });
+
+  it("drawer: switches to models tab and saves allowlist", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "Set1", isDefault: false, providers: ["openai"], modelAllowlist: ["gpt-4"], assignedTo: "all", keyVersion: 1, createdAt: "", updatedAt: "" },
+    ]);
+    mockUpdate.mockResolvedValue({ status: "updated" });
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("Set1"));
+
+    fireEvent.click(screen.getAllByText("Set1")[0]);
+    await waitFor(() => screen.getByText("models"));
+    fireEvent.click(screen.getByText("models"));
+
+    await waitFor(() => screen.getByText("gpt-4"));
+
+    // Add a new model
+    const input = screen.getByPlaceholderText("e.g. openai/gpt-4o");
+    fireEvent.change(input, { target: { value: "openai/gpt-4o" } });
+    // Use the button within the models tab (there's only one "Add" button in this context)
+    const addBtn = screen.getAllByText("Add").find(btn => (btn as HTMLElement).closest(".space-y-4"));
+    fireEvent.click(addBtn!);
+
+    await waitFor(() => screen.getByText("openai/gpt-4o"));
+
+    fireEvent.click(screen.getByText("Save model allowlist"));
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith("1", {
+        modelAllowlist: ["gpt-4", "openai/gpt-4o"],
+      });
+    });
+  });
+
+  it("drawer: closes on X button", async () => {
+    mockList.mockResolvedValue([
+      { id: "1", name: "ToClose", isDefault: false, providers: [], modelAllowlist: [], assignedTo: "all", keyVersion: 1, createdAt: "", updatedAt: "" },
+    ]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("ToClose"));
+
+    fireEvent.click(screen.getAllByText("ToClose")[0]);
+    await waitFor(() => screen.getByText("details"));
+
+    // Close via Escape key
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByText("details")).not.toBeInTheDocument();
+    });
+  });
+
+  it("provider input row wraps on narrow screens with min-width constraints", async () => {
+    mockList.mockResolvedValue([]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => screen.getByText("Credential Sets"));
+    fireEvent.click(screen.getByText("Add"));
+
+    const providerInput = screen.getByPlaceholderText("Provider (e.g. openai)");
+    const row = providerInput.closest("div[class*='flex']");
+    expect(row?.className).toContain("flex-wrap");
+    expect(providerInput.className).toContain("min-w-[8rem]");
+  });
 });
 
 describe("AdminCredentialsTab", () => {

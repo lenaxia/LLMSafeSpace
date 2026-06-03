@@ -9,14 +9,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
 type mockCredStore struct {
-	sets     map[string]*CredentialSetRow
-	nextID   int
-	delErr   error
-	refCount int
+	sets   map[string]*CredentialSetRow
+	nextID int
+	delErr error
 }
 
 func newMockCredStore() *mockCredStore {
@@ -121,10 +121,6 @@ func (m *mockCredStore) UpdateEncrypted(_ context.Context, id string, encrypted 
 	return nil
 }
 
-func (m *mockCredStore) CountWorkspacesUsingCredentialSet(_ context.Context, _ string) (int, error) {
-	return m.refCount, nil
-}
-
 func newTestCredService() (*Service, *mockCredStore) {
 	key := make([]byte, 32)
 	rand.Read(key)
@@ -184,27 +180,33 @@ func TestCredService_List(t *testing.T) {
 	}
 }
 
-func TestCredService_Delete_NoReferences_Succeeds(t *testing.T) {
-	svc, store := newTestCredService()
-	store.refCount = 0
+func TestCredService_Delete_NonDefault_Succeeds(t *testing.T) {
+	svc, _ := newTestCredService()
 
 	cs, _ := svc.Create(context.Background(), CreateCredentialSetRequest{Name: "del", Providers: ProviderConfig{"x": {APIKey: "k"}}})
 
 	err := svc.Delete(context.Background(), cs.ID)
 	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+		t.Errorf("unexpected error deleting non-default set: %v", err)
 	}
 }
 
-func TestCredService_Delete_WithReferences_Fails(t *testing.T) {
-	svc, store := newTestCredService()
-	store.refCount = 3
+func TestCredService_Delete_Default_Fails(t *testing.T) {
+	svc, _ := newTestCredService()
 
-	cs, _ := svc.Create(context.Background(), CreateCredentialSetRequest{Name: "ref", Providers: ProviderConfig{"x": {APIKey: "k"}}})
+	// Create as default — cannot delete while it's the default.
+	cs, _ := svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "default-set",
+		Providers: ProviderConfig{"x": {APIKey: "k"}},
+		IsDefault: true,
+	})
 
 	err := svc.Delete(context.Background(), cs.ID)
 	if err == nil {
-		t.Error("expected error when credential set is referenced")
+		t.Error("expected error when deleting the default credential set")
+	}
+	if err != nil && !strings.Contains(err.Error(), "default") {
+		t.Errorf("expected 'default' in error, got: %v", err)
 	}
 }
 

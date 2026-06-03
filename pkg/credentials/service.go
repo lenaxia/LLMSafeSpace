@@ -22,7 +22,6 @@ type Store interface {
 	GetDefault(ctx context.Context) (*CredentialSetRow, error)
 	ListByKeyVersionBelow(ctx context.Context, version int) ([]*CredentialSetRow, error)
 	UpdateEncrypted(ctx context.Context, id string, encrypted []byte, keyVersion int) error
-	CountWorkspacesUsingCredentialSet(ctx context.Context, credSetID string) (int, error)
 }
 
 // CredentialSetRow is the raw DB row representation.
@@ -133,14 +132,29 @@ func (s *Service) List(ctx context.Context) ([]*CredentialSet, error) {
 	return result, nil
 }
 
-// Delete deletes a credential set. Returns error if referenced by workspaces.
+// Delete deletes a credential set.
+//
+// Guard: refuses to delete the current default set — doing so would
+// leave the system with no credentials for users assigned "all", which
+// would silently break every workspace. The caller must first assign
+// another set as default or re-assign this set's users.
+//
+// Note: there is no `credential_set_id` FK column on the `workspaces`
+// table; credential sets are assigned via the `assigned_to` JSONB field
+// on the credential_set itself. The earlier implementation tried to
+// `SELECT COUNT(*) FROM workspaces WHERE credential_set_id = $1` which
+// always failed with `column does not exist`. That check is replaced
+// by the isDefault guard above.
 func (s *Service) Delete(ctx context.Context, id string) error {
-	count, err := s.store.CountWorkspacesUsingCredentialSet(ctx, id)
+	row, err := s.store.GetCredentialSet(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to check references: %w", err)
+		return fmt.Errorf("failed to fetch credential set: %w", err)
 	}
-	if count > 0 {
-		return fmt.Errorf("credential set is referenced by %d workspace(s)", count)
+	if row == nil {
+		return fmt.Errorf("credential set %q not found", id)
+	}
+	if row.IsDefault {
+		return fmt.Errorf("cannot delete the default credential set; assign another set as default first")
 	}
 	return s.store.DeleteCredentialSet(ctx, id)
 }

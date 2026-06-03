@@ -233,14 +233,3 @@ func (s *Service) UpdateEncrypted(ctx context.Context, id string, encrypted []by
 	}
 	return nil
 }
-
-func (s *Service) CountWorkspacesUsingCredentialSet(ctx context.Context, credSetID string) (int, error) {
-	var count int
-	err := s.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM workspaces WHERE credential_set_id = $1`, credSetID,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("count workspaces using credential set: %w", err)
-	}
-	return count, nil
-}
