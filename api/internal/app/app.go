@@ -243,6 +243,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create terminal handler (Epic 14 — WebSocket terminal proxy).
 	terminalHandler := handlers.NewTerminalHandler(svc.Cache, &k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace}, cfg.Kubernetes.Namespace, log)
 
+	// Epic 27a: Agent reload handler.
+	var agentReloadHandler *handlers.AgentReloadHandler
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		agentReloadHandler = handlers.NewAgentReloadHandler(
+			wsSvc,
+			dbSvc,
+			newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc,
+				log,
+			),
+			&http.Client{Timeout: 15 * time.Second},
+			log,
+		)
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
@@ -256,6 +272,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecretsHandler:          secretsHandler,
 		RotateKeyHandler:        rotateKeyHandler,
 		TerminalHandler:         terminalHandler,
+		AgentReloadHandler:      agentReloadHandler,
 	})
 
 	httpServer := &http.Server{

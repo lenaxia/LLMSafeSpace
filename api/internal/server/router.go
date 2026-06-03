@@ -60,6 +60,9 @@ type RouterConfig struct {
 
 	// TerminalHandler is the handler for WebSocket terminal proxy (optional)
 	TerminalHandler *handlers.TerminalHandler
+
+	// AgentReloadHandler handles POST /api/v1/workspaces/:id/agent/reload (optional)
+	AgentReloadHandler *handlers.AgentReloadHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -124,7 +127,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
-	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler)
+	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler, cfg)
 
 	// Sessions/active endpoint — needs proxyHandler for active session data
 	if proxyHandler != nil {
@@ -479,7 +482,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 //
 // proxyHandler may be nil; it is only used to trigger the optional
 // session-parent backfill on the /sessions endpoint and is otherwise unused.
-func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, proxyHandler *handlers.ProxyHandler) {
+func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, proxyHandler *handlers.ProxyHandler, cfg RouterConfig) {
 	wsSvc := services.GetWorkspace()
 	authSvc := services.GetAuth()
 
@@ -635,6 +638,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		}
 		c.Status(http.StatusAccepted)
 	})
+
+	// Epic 27a: explicit agent reload (disposes opencode without pod restart).
+	if cfg.AgentReloadHandler != nil {
+		rg.POST("/:id/agent/reload", cfg.AgentReloadHandler.Reload)
+	}
 
 	rg.GET("/:id/status", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
