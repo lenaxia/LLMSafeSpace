@@ -9,10 +9,33 @@ import (
 	"fmt"
 
 	"github.com/lenaxia/llmsafespace/pkg/credentials"
+	"github.com/lib/pq"
 )
 
 // Compile-time interface check.
 var _ credentials.Store = (*Service)(nil)
+
+// Why pq.Array everywhere []string crosses the SQL boundary
+// --------------------------------------------------------
+// `model_allowlist` is `TEXT[]` in Postgres (migration 000006). The
+// pgx-stdlib driver (database/sql interface) does not natively bind
+// or scan a Go `[]string` to/from a Postgres array column. A bare
+// scan produces:
+//
+//   sql: Scan error on column index 5, name "model_allowlist":
+//   unsupported Scan, storing driver.Value type string into type *[]string
+//
+// `pq.Array` from github.com/lib/pq is the standard adapter. It
+// implements driver.Valuer for binds and sql.Scanner for scans, and
+// is compatible with both lib/pq and pgx-stdlib drivers (it formats
+// to/from the textual `{a,b,c}` representation that both speak).
+//
+// Why we don't use the native pgx interface here
+// ----------------------------------------------
+// The rest of api/internal/services/database/ uses `database/sql` via
+// pgx-stdlib (see database.go:12). Switching to the native pgx
+// interface for one type would split the codebase and require a much
+// bigger refactor. pq.Array is drop-in.
 
 func (s *Service) CreateCredentialSet(ctx context.Context, name string, encrypted []byte, keyVersion int, modelAllowlist []string, assignedTo json.RawMessage, isDefault bool) (string, error) {
 	var id string
@@ -20,7 +43,7 @@ func (s *Service) CreateCredentialSet(ctx context.Context, name string, encrypte
 		`INSERT INTO credential_sets (name, providers_encrypted, key_version, model_allowlist, assigned_to, is_default)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id`,
-		name, encrypted, keyVersion, modelAllowlist, assignedTo, isDefault,
+		name, encrypted, keyVersion, pq.Array(modelAllowlist), assignedTo, isDefault,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("insert credential_set: %w", err)
@@ -34,7 +57,7 @@ func (s *Service) GetCredentialSet(ctx context.Context, id string) (*credentials
 		 FROM credential_sets WHERE id = $1`, id,
 	)
 	var r credentials.CredentialSetRow
-	err := row.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, &r.ModelAllowlist, &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, pq.Array(&r.ModelAllowlist), &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -57,7 +80,7 @@ func (s *Service) ListCredentialSets(ctx context.Context) ([]*credentials.Creden
 	var result []*credentials.CredentialSetRow
 	for rows.Next() {
 		var r credentials.CredentialSetRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, &r.ModelAllowlist, &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, pq.Array(&r.ModelAllowlist), &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan credential_set: %w", err)
 		}
 		result = append(result, &r)
@@ -88,7 +111,7 @@ func (s *Service) UpdateCredentialSet(ctx context.Context, id string, updates cr
 	}
 	if updates.ModelAllowlist != nil {
 		setClauses = append(setClauses, fmt.Sprintf("model_allowlist = $%d", argIdx))
-		args = append(args, *updates.ModelAllowlist)
+		args = append(args, pq.Array(*updates.ModelAllowlist))
 		argIdx++
 	}
 	if updates.AssignedTo != nil {
@@ -169,7 +192,7 @@ func (s *Service) GetDefault(ctx context.Context) (*credentials.CredentialSetRow
 		 FROM credential_sets WHERE is_default = true`,
 	)
 	var r credentials.CredentialSetRow
-	err := row.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, &r.ModelAllowlist, &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, pq.Array(&r.ModelAllowlist), &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -192,7 +215,7 @@ func (s *Service) ListByKeyVersionBelow(ctx context.Context, version int) ([]*cr
 	var result []*credentials.CredentialSetRow
 	for rows.Next() {
 		var r credentials.CredentialSetRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, &r.ModelAllowlist, &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.IsDefault, &r.ProvidersEncrypted, &r.KeyVersion, pq.Array(&r.ModelAllowlist), &r.AssignedTo, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan credential_set: %w", err)
 		}
 		result = append(result, &r)
