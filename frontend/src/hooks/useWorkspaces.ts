@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
-import { wsLog } from "./useEventStream";
+import { wsLog } from "../lib/wsLog";
 
 export function useWorkspaces() {
   return useQuery({

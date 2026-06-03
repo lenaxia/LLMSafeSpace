@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
-import { wsLog } from "./useEventStream";
+import { wsLog } from "../lib/wsLog";
 
 export function useActivateWorkspace() {
   const queryClient = useQueryClient();
