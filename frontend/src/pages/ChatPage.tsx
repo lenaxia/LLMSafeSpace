@@ -87,7 +87,21 @@ export function ChatPage() {
     }
   }, [isReady, workspaceId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // activeWorkspaceId gates history fetching, chat, and session hooks on the
+  // workspace being Active — these all require a reachable pod.
+  //
+  // sseWorkspaceId is NOT gated on isReady. SSE connects as soon as the
+  // workspace page loads so that workspace.phase events (including the
+  // Creating→Active transition) are received and drive the status invalidation
+  // that dismisses the spinner. The backend SSE endpoint accepts connections
+  // for non-Active workspaces (verified: returns 200 for Suspended).
+  //
+  // Without this separation, the SSE connection only opens after the workspace
+  // is already Active, making the transition detection entirely dependent on
+  // polling. See worklog 0132 and the frontend timing analysis for the full
+  // root-cause trace.
   const activeWorkspaceId = isReady ? workspaceId : undefined;
+  const sseWorkspaceId = workspaceId;
   const { data: history, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
 
   // US-15.1: Derive serverBusy from workspace status
@@ -444,7 +458,7 @@ export function ChatPage() {
     }
   }, [queryClient, workspaceId]);
 
-  useEventStream(activeWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
+  useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
   const allMessages = [...(history ?? []), ...localMessages];
 

@@ -9,12 +9,24 @@ export function useWorkspaces() {
   });
 }
 
+// Phases that indicate the workspace is transitioning and not yet usable.
+const transitioningPhases = new Set(["Pending", "Creating", "Resuming", "Suspending"]);
+
 /**
- * Fetches the current workspace status once. Does not poll.
+ * Fetches the current workspace status.
  *
- * Updates are driven by SSE: when the backend emits a workspace.phase event,
- * ChatPage invalidates ["workspace-status", workspaceId], which triggers a
- * fresh fetch. staleTime: 0 ensures invalidation always causes a re-fetch.
+ * Primary update path: SSE workspace.phase events (from useEventStream in
+ * ChatPage) invalidate ["workspace-status", workspaceId], triggering a fresh
+ * fetch. staleTime: 0 ensures invalidation always causes a re-fetch.
+ *
+ * Belt-and-suspenders: while the workspace is in a transitioning phase, a
+ * 3-second refetchInterval is active. This covers the narrow window between
+ * an SSE connect and a phase event that already fired before the connection
+ * was established (e.g. API server restart followed immediately by a resume),
+ * as well as any SSE reconnect backoff delay (2s initial, doubles to 30s).
+ *
+ * Once Active (or Suspended/terminal), the interval is disabled and updates
+ * are purely SSE-driven.
  */
 export function useWorkspaceStatus(workspaceId: string | undefined) {
   return useQuery({
@@ -27,5 +39,12 @@ export function useWorkspaceStatus(workspaceId: string | undefined) {
     },
     enabled: !!workspaceId,
     staleTime: 0,
+    // Poll every 3 s while transitioning; disabled once stable.
+    // This is intentionally conservative — SSE should deliver the Active event
+    // within 1-2 s of the transition; the poll is a fallback, not the primary path.
+    refetchInterval: (query) => {
+      const phase = query.state.data?.phase;
+      return phase && transitioningPhases.has(phase) ? 3_000 : false;
+    },
   });
 }
