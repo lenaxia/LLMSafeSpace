@@ -81,7 +81,12 @@ func (s *Service) Create(ctx context.Context, req CreateCredentialSetRequest) (*
 		assignedTo = []byte(`"all"`)
 	}
 
-	id, err := s.store.CreateCredentialSet(ctx, req.Name, encrypted, keyVersion, req.ModelAllowlist, assignedTo, req.IsDefault)
+	modelAllowlist := req.ModelAllowlist
+	if modelAllowlist == nil {
+		modelAllowlist = []string{}
+	}
+
+	id, err := s.store.CreateCredentialSet(ctx, req.Name, encrypted, keyVersion, modelAllowlist, assignedTo, req.IsDefault)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create credential set: %w", err)
 	}
