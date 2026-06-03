@@ -181,6 +181,12 @@ spec:
                 suspendedAt:
                   type: string
                   format: date-time
+                pendingAt:
+                  type: string
+                  format: date-time
+                resumedAt:
+                  type: string
+                  format: date-time
                 conditions:
                   type: array
                   items:

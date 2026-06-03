@@ -3,9 +3,11 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -84,6 +86,20 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 	if err := r.ensurePasswordSecret(ctx, workspace); err != nil {
 		logger.Error(err, "Failed to ensure password secret")
 		return ctrl.Result{}, err
+	}
+
+	// Set the PendingAt anchor on first entry so the controller can measure
+	// end-to-end create latency. Prefer the AnnotationRequestedAt written by
+	// the API (user-perceived start time); fall back to now (controller-first-
+	// reconcile) if the annotation is absent or unparseable.
+	if workspace.Status.PendingAt == nil {
+		anchor := metav1.Now()
+		if raw, ok := workspace.Annotations[v1.AnnotationRequestedAt]; ok {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				anchor = metav1.NewTime(t)
+			}
+		}
+		workspace.Status.PendingAt = &anchor
 	}
 
 	workspace.Status.PVCName = pvcName

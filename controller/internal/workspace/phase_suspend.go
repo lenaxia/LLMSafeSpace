@@ -55,5 +55,8 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *v1.
 	// re-suspend the workspace.
 	now := metav1.Now()
 	workspace.Status.LastActivityAt = &now
+	// Set the resume anchor so handleCreating can measure end-to-end
+	// resume latency via WorkspaceResumeDurationSeconds.
+	workspace.Status.ResumedAt = &now
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)
 }

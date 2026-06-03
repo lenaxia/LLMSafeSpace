@@ -35,6 +35,8 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 23 | Controller Race Hardening — Stories 1+4 **Complete**, Stories 2+3 deferred | None |
 | 24 | **Self-Healing Workspace Lifecycle** — burstable QoS, failure classification, per-class recovery, remove terminal Failed from transient causes, controller file split | Epics 22, 23 Story 1 |
 | 25 | **API Server Robustness & Correctness** — fix double-release/double-write bugs, proxy decomposition, body size limits, SSE write deadlines, session cleanup, context propagation | Epics 22, 23 Story 1 |
+| 27a | **Credential Reload Foundation** — explicit user-driven `agent/reload` endpoint replaces auto-dispose; `workspace_agent_state` schema with `pending_refresh` flag; banner UI; Bug 11 type-mismatch fix | Epic 10 |
+| 27b | **Credential Reload Polish** — drain mode (event-driven via existing SSETracker), bulk reload (streaming NDJSON), chat-proxy error enrichment with refresh hints, SDK ergonomics, Prometheus metrics | Epic 27a |
 
 ## V2.1 (Deferred)
 

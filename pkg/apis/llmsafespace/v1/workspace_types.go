@@ -12,6 +12,15 @@ type WorkspaceOwner struct {
 	UserID string `json:"userID"`
 }
 
+// Annotation keys written by the API server and read by the controller.
+const (
+	// AnnotationRequestedAt is set by the API at POST /workspaces time
+	// (RFC3339Nano). The controller uses it as the start anchor for
+	// WorkspaceCreateDurationSeconds so the measurement covers the full
+	// user-perceived latency, not just the controller reconcile latency.
+	AnnotationRequestedAt = "llmsafespace.dev/requested-at"
+)
+
 // WorkspaceStorageConfig defines PVC configuration for a Workspace.
 type WorkspaceStorageConfig struct {
 	// +kubebuilder:validation:Pattern=^[0-9]+(Gi|Mi)$
@@ -268,6 +277,25 @@ type WorkspaceStatus struct {
 	Sessions       []AgentSessionStatus `json:"sessions,omitempty"`
 	DiskUsedBytes  int64                `json:"diskUsedBytes,omitempty"`
 	DiskTotalBytes int64                `json:"diskTotalBytes,omitempty"`
+
+	// ---- Startup latency measurement anchors (S18.10) ----
+	//
+	// PendingAt is set by the controller on the first Pending-phase reconcile.
+	// The controller prefers the llmsafespace.dev/requested-at annotation
+	// written by the API at POST /workspaces time (so the measurement starts
+	// from the user request, not the controller reconcile). Cleared by the
+	// controller after WorkspaceCreateDurationSeconds is recorded.
+	//
+	// Stale-anchor protection: if more than maxStartupAnchorAge elapses
+	// between PendingAt and the Active transition (e.g. after a controller
+	// restart), the observation is dropped and the field cleared to avoid
+	// inflating the histogram with multi-hour values.
+	PendingAt *metav1.Time `json:"pendingAt,omitempty"`
+
+	// ResumedAt is set by the controller when the workspace enters Resuming
+	// phase. Cleared after WorkspaceResumeDurationSeconds is recorded.
+	// Same stale-anchor protection as PendingAt.
+	ResumedAt *metav1.Time `json:"resumedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

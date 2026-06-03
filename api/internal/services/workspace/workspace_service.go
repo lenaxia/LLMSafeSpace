@@ -653,6 +653,11 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 			Annotations: map[string]string{
 				"llmsafespace.dev/created-by": userID,
 				"llmsafespace.dev/name":       req.Name,
+				// AnnotationRequestedAt records the exact moment the API
+				// received the create request. The controller reads this to
+				// anchor WorkspaceCreateDurationSeconds from the user's
+				// perspective rather than the controller's first reconcile.
+				v1.AnnotationRequestedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			},
 		},
 		Spec: spec,

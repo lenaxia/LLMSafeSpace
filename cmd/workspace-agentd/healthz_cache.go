@@ -51,19 +51,23 @@ func (c *healthzCache) Snapshot() healthzCacheSnapshot {
 // It refreshes the cache every readinessRefreshInterval by calling
 // client.IsHealthy. An immediate refresh fires on boot so /v1/readyz
 // has a meaningful answer within seconds of startup.
-func refreshIsHealthyLoop(ctx context.Context, client *OpenCodeClient, cache *healthzCache, logger *zap.Logger) {
+//
+// gr, if non-nil, receives MaybeRecord("opencode_up") the first time
+// IsHealthy returns true. Passing nil disables gate recording (used by
+// tests that don't care about gate metrics).
+func refreshIsHealthyLoop(ctx context.Context, client *OpenCodeClient, cache *healthzCache, logger *zap.Logger, gr *gateRecorder) {
 	tick := time.NewTicker(readinessRefreshInterval)
 	defer tick.Stop()
 
 	// Immediate first refresh on boot.
-	refreshOnce(ctx, client, cache, logger)
+	refreshOnce(ctx, client, cache, logger, gr)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			refreshOnce(ctx, client, cache, logger)
+			refreshOnce(ctx, client, cache, logger, gr)
 		}
 	}
 }
@@ -71,7 +75,7 @@ func refreshIsHealthyLoop(ctx context.Context, client *OpenCodeClient, cache *he
 // refreshOnce performs a single IsHealthy call with a timeout and updates
 // the cache atomically. Panics in the opencode client are recovered to
 // prevent the refresher goroutine from dying.
-func refreshOnce(ctx context.Context, client *OpenCodeClient, cache *healthzCache, logger *zap.Logger) {
+func refreshOnce(ctx context.Context, client *OpenCodeClient, cache *healthzCache, logger *zap.Logger, gr *gateRecorder) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in readiness refresh", zap.Any("recover", r))
@@ -120,6 +124,10 @@ func refreshOnce(ctx context.Context, client *OpenCodeClient, cache *healthzCach
 		next.Version = version
 		next.ConsecutiveFailures = 0
 		next.LastError = ""
+		// Record opencode_up gate on first successful health check.
+		if healthy && gr != nil {
+			gr.MaybeRecord(gateOpencodeUp)
+		}
 	}
 
 	cache.snapshot.Store(&next)

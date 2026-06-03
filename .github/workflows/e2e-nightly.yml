@@ -96,6 +96,49 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: bash local/test.sh
 
+      - name: Run startup latency benchmarks (S18.10)
+        # Benchmarks require LLM credentials so workspaces can reach Active.
+        # Conservative CI thresholds catch gross regressions (e.g. re-adding
+        # the provider-connectivity readyz gate) without being sensitive to
+        # kind cluster resource noise. Tighten after S18.11 baseline is set.
+        if: ${{ secrets.LLM_API_KEY != '' }}
+        env:
+          NS: ${{ env.NS }}
+          API_URL: http://localhost:30080
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          echo "=== Resume benchmark ==="
+          bash hack/benchmark-resume.sh \
+            --iterations 3 \
+            --namespace "$NS" \
+            --api-url "$API_URL" \
+            --api-key "$LLM_API_KEY" \
+            --assert \
+            --max-p99-total 180 \
+            --max-p99-pod-to-readyz 30 \
+            2>&1 | tee /tmp/bench-resume.txt
+
+          echo ""
+          echo "=== Create benchmark (no packages) ==="
+          bash hack/benchmark-create.sh \
+            --iterations 3 \
+            --namespace "$NS" \
+            --api-url "$API_URL" \
+            --api-key "$LLM_API_KEY" \
+            --assert \
+            --max-p99-total 180 \
+            2>&1 | tee /tmp/bench-create.txt
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_id }}
+          path: |
+            /tmp/bench-resume.txt
+            /tmp/bench-create.txt
+          retention-days: 90
+
       - name: Dump cluster state on failure
         if: failure()
         run: |

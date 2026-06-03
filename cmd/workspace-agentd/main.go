@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
@@ -421,11 +422,15 @@ func main() {
 	sseTracker := newSessionStatusTracker()
 	go sseTracker.subscribe(context.Background(), client)
 
+	// S18.10: Gate recorder measures time-to-each-startup-milestone from boot.
+	// Gates: opencode_up, providers_connected, readyz_first_200.
+	gr := newGateRecorder(startedAt, agentdGateDurationSeconds, log)
+
 	// US-22.2: Eager-refresh readiness cache. Background goroutine refreshes
 	// opencode's IsHealthy every 5s; /v1/readyz reads from this cache without
 	// making inline opencode calls.
 	healthCache := newHealthzCache()
-	go refreshIsHealthyLoop(context.Background(), client, healthCache, log)
+	go refreshIsHealthyLoop(context.Background(), client, healthCache, log, gr)
 
 	// US-22.8: Two separate http.Server instances eliminate listener-layer
 	// head-of-line blocking. Admin port serves health probes (kubelet,
@@ -451,12 +456,18 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		snap := healthCache.Snapshot()
 
-		// Ready requires: cache initialized + opencode healthy + at least one provider connected.
-		// Provider info comes from the existing providerCache (cachedState) which is also
-		// used by /v1/statusz. We read it here for the providers_connected field but the
-		// ready decision is driven primarily by the healthzCache's IsHealthy observation.
+		// Ready requires: cache initialized + opencode healthy.
+		// Provider connectivity is no longer a readiness gate (S18.11):
+		// it is surfaced separately via WorkspaceConditionProviderReady on
+		// the Workspace CRD. Provider info is still included in the response
+		// body for observability.
 		connected, configured, _ := cachedState(r.Context(), client, cache, sseTracker)
-		ready := snap.Initialized && snap.Healthy && len(connected) > 0
+		ready := snap.Initialized && snap.Healthy
+
+		// S18.10: Record providers_connected gate on first non-empty connected list.
+		if len(connected) > 0 {
+			gr.MaybeRecord(gateProvidersConnected)
+		}
 
 		status := http.StatusOK
 		if !ready {
@@ -470,6 +481,11 @@ func main() {
 			AgentVersion:        snap.Version,
 			AgentType:           "opencode",
 		})
+
+		// S18.10: Record readyz_first_200 gate on first 200 response.
+		if ready {
+			gr.MaybeRecord(gateReadyzFirst200)
+		}
 	})
 	adminMux.Handle("/v1/readyz", requireBearerToken(adminToken, readyzHandler))
 
@@ -514,6 +530,10 @@ func main() {
 		})
 	})
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
+
+	// S18.10: Expose Prometheus metrics on admin port so the cluster-level
+	// Prometheus scraper can collect per-pod agentd gate timings.
+	adminMux.Handle("/metrics", promhttp.Handler())
 
 	// User endpoints (reload-secrets) — user port.
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password))

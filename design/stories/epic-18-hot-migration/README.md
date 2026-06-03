@@ -133,6 +133,47 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 
 ## Stories
 
+### S18.10 — Workspace Startup Latency Benchmarking
+
+**Goal:** Instrument and measure both the first-create and resume startup paths end-to-end. Produces a per-gate baseline before any optimisation work begins.
+
+See full spec: [`S18.10-resume-latency-benchmark.md`](S18.10-resume-latency-benchmark.md)
+
+**Summary of scope:**
+- `llmsafespace_workspace_create_duration_seconds` histogram (controller) — Pending→Active with `has_packages`, `has_init_script` labels
+- `llmsafespace_workspace_resume_duration_seconds` histogram (controller) — Resuming→Active with `resume_type` label
+- `llmsafespace_agentd_gate_duration_seconds` histogram (agentd) — per-gate: `opencode_up`, `providers_connected`, `readyz_first_200`
+- `status.pendingAt` and `status.resumedAt` timestamp anchors on `WorkspaceStatus`
+- agentd `/metrics` endpoint on admin port
+- Per-gate structured log lines from agentd on every boot
+- `hack/benchmark-resume.sh` and `hack/benchmark-create.sh` — run against live cluster; p50/p90/p99 per gate
+- Worklog entry with baseline measurements for both paths
+
+**Acceptance Criteria:** See story file.
+
+**Estimated Effort:** 4 points
+
+---
+
+### S18.11 — Decouple readyz from Provider Connectivity
+
+**Goal:** Remove provider connectivity from the pod readiness gate. Expected to cut p99 resume latency from 90–140s to 15–25s.
+
+See full spec: [`S18.11-decouple-readyz-from-provider.md`](S18.11-decouple-readyz-from-provider.md)
+
+**Summary of scope:**
+- `readyz` returns 200 as soon as `snap.Initialized && snap.Healthy` (opencode process up) — provider connectivity no longer required
+- Add `WorkspaceConditionProviderReady` condition to workspace CRD
+- `checkAgentHealth` sets `ProviderReady` condition from statusz `connected` field
+- Frontend: amber banner when `phase=Active && ProviderReady=False`
+- Benchmark re-run (S18.10 script) to validate improvement
+
+**Acceptance Criteria:** See story file.
+
+**Estimated Effort:** 3 points
+
+---
+
 ### S18.1 — RWX Storage & Pod Lookup Refactor
 
 **Goal:** Switch default storage to RWX and refactor workspace reconciler to use `Status.PodName` for pod lookup (prerequisite for migration).
@@ -384,6 +425,10 @@ status:
 ## Implementation Order
 
 ```
+Phase 0 (Observability — runs against current cluster, no prerequisites):
+  S18.10 (Resume latency benchmarking + instrumentation)
+  S18.11 (Decouple readyz from provider — immediate latency win)
+
 Phase A (Foundation — local testable):
   S18.1 (RWX + reconciler refactor + BuildPod extraction)
   S18.3 (Snapshot/Restore endpoints)
@@ -402,10 +447,14 @@ Phase D (Multi-tenancy):
   S18.8 (Capsule + proxy namespace refactor)
 ```
 
-Phase A delivers a working migration system testable on any multi-node cluster with RWX storage.
-Phase B adds automated triggers. Phase C/D are production-only.
+Phase 0 requires no infrastructure changes — S18.10 runs against the live cluster
+today and S18.11 is a 3-point logic change. Both unblock Phase A by establishing
+a latency baseline and removing the worst resume bottleneck before migration work begins.
 
-**Total: 44 points (~3.5 sprints)**
+Phase A delivers a working migration system testable on any multi-node cluster with
+RWX storage. Phase B adds automated triggers. Phase C/D are production-only.
+
+**Total: 50 points (~4 sprints)**
 
 ---
 
@@ -451,19 +500,25 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | Q8 | Pod conflict with workspace reconciler? | ✅ | Direct creation + `Status.PodName` adoption |
 | Q9 | Concurrent PVC writes? | ✅ | SQLite WAL over NFS = corruption. Solved by sequential opencode handoff (stop source → start target). |
 | Q10 | User-visible disruption during migration? | ✅ | 5-10s of `503 Retry-After` during opencode handoff. SDK retries transparently. vs 22s hard downtime with RWO. |
+| Q11 | What is the dominant gate in 2-min resume? | 🔶 | Hypothesis: Gate 5 (provider connectivity in readyz). S18.10 benchmark will confirm. S18.11 addresses it. |
+| Q12 | What is the remaining latency floor after S18.11? | 🔶 | Expected ~15–25s: 10s InitialDelaySeconds + 5–10s opencode startup + 5s requeueCreating. Addressable in future story (startup probe tuning, probe interval reduction). |
+| Q13 | gVisor checkpoint/restore for sub-10s resume? | 🔶 | Requires S18.7 (gVisor) complete first. Checkpoint taken post-startup, stored on PVC. SQLite WAL safety: SIGTERM opencode before checkpoint. Design in S18.12 (future story). |
 
 ---
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| Opencode handoff gap (p99) | < 15s |
-| Total migration (p99) | < 30s |
-| Spot reclamation success | > 95% |
-| Requests dropped (not retried) | 0 |
-| Cost per workspace/month | < $25 |
-| gVisor I/O overhead | < 20% |
+| Metric | Baseline (observed) | Target | Story |
+|--------|--------------------|---------|----|
+| Resume latency p99 (Resuming → proxy ok) | ~120s | < 25s | S18.10 measures, S18.11 fixes dominant gate |
+| First-create latency p99, no packages (Pending → proxy ok) | unknown | < 30s | S18.10 measures |
+| First-create latency p99, with packages | unknown | baseline + package install time only | S18.10 measures |
+| Opencode handoff gap (p99) | — | < 15s | S18.2/S18.3 |
+| Total migration time (p99) | — | < 30s | S18.2/S18.3 |
+| Spot reclamation success | — | > 95% | S18.5 |
+| Requests dropped (not retried) | — | 0 | S18.4 |
+| Cost per workspace/month | ~$28 | < $25 | S18.9 |
+| gVisor I/O overhead | — | < 20% | S18.7 |
 
 ---
 

@@ -6,7 +6,7 @@ import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
-import { useEventStream } from "../hooks/useEventStream";
+import { useEventStream, wsLog } from "../hooks/useEventStream";
 import { useSessionTitle } from "../hooks/useSessionTitle";
 import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
@@ -53,6 +53,22 @@ export function ChatPage() {
   const activateMutation = useActivateWorkspace();
 
   const isReady = status?.phase === "Active";
+
+  // [ws-timing] Log every phase change and the moment isReady flips true.
+  // prevPhaseRef tracks the last seen phase so we only log on actual changes.
+  const prevPhaseRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const phase = status?.phase;
+    if (phase !== prevPhaseRef.current) {
+      wsLog("ui.phase_changed", workspaceId,
+        `prev=${prevPhaseRef.current ?? "none"} → next=${phase ?? "none"}`);
+      if (phase === "Active" && prevPhaseRef.current !== "Active") {
+        wsLog("ui.workspace_ready", workspaceId,
+          "spinner dismissed — chat UI now visible");
+      }
+      prevPhaseRef.current = phase;
+    }
+  }, [status?.phase, workspaceId]);
 
   const createSessionMutation = useMutation({
     mutationFn: (wsId: string) => sessionsApi.create(wsId, "New chat"),
@@ -520,7 +536,10 @@ export function ChatPage() {
       {isSuspended && (
         <SuspendedBanner
           workspaceName={workspaceId}
-          onActivate={() => activateMutation.mutate(workspaceId)}
+          onActivate={() => {
+            wsLog("ui.user_clicked_activate", workspaceId);
+            activateMutation.mutate(workspaceId);
+          }}
           activating={activateMutation.isPending}
         />
       )}

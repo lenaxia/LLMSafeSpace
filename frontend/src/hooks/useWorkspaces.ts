@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
+import { wsLog } from "./useEventStream";
 
 export function useWorkspaces() {
   return useQuery({
@@ -18,7 +19,12 @@ export function useWorkspaces() {
 export function useWorkspaceStatus(workspaceId: string | undefined) {
   return useQuery({
     queryKey: ["workspace-status", workspaceId],
-    queryFn: () => workspacesApi.getStatus(workspaceId!),
+    queryFn: async () => {
+      wsLog("status.fetch_start", workspaceId);
+      const result = await workspacesApi.getStatus(workspaceId!);
+      wsLog("status.fetch_done", workspaceId, `phase=${result.phase}`);
+      return result;
+    },
     enabled: !!workspaceId,
     staleTime: 0,
   });

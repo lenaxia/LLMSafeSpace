@@ -4,6 +4,31 @@ import { getEnv } from "../env";
 const MIN_RECONNECT_MS = 2_000;
 const MAX_RECONNECT_MS = 30_000;
 
+// ---------------------------------------------------------------------------
+// [ws-timing] console logger
+//
+// All timing lines are prefixed with "[ws-timing]" so they can be isolated
+// in the browser DevTools console using the filter box.
+//
+// Format:
+//   [ws-timing] <event> | ws=<id_short> | t=<perf_ms>ms | wall=<iso> | <extra>
+//
+// t=  is performance.now() relative to page load — sub-millisecond precision,
+//     monotonic, not affected by system clock changes.
+// wall= is Date.toISOString() for correlation with backend / benchmark logs.
+// ---------------------------------------------------------------------------
+function wsTs(): string {
+  return `t=${performance.now().toFixed(1)}ms | wall=${new Date().toISOString()}`;
+}
+
+function wsLog(event: string, workspaceId: string | undefined, extra?: string) {
+  const short = workspaceId ? workspaceId.slice(0, 8) : "?";
+  // eslint-disable-next-line no-console
+  console.log(`[ws-timing] ${event} | ws=${short} | ${wsTs()}${extra ? ` | ${extra}` : ""}`);
+}
+
+export { wsLog };
+
 export function useEventStream(
   workspaceId: string | undefined,
   onEvent: (data: unknown) => void,
@@ -28,6 +53,8 @@ export function useEventStream(
       const { apiBaseUrl } = getEnv();
       const url = `${apiBaseUrl}/workspaces/${workspaceId}/events`;
 
+      wsLog("sse.connecting", workspaceId, `url=${url}`);
+
       try {
         const res = await fetch(url, {
           credentials: "include",
@@ -36,6 +63,7 @@ export function useEventStream(
         });
 
         if (!res.ok || !res.body) {
+          wsLog("sse.connect_failed", workspaceId, `http_status=${res.status}`);
           // Back off on errors (including 429)
           scheduleReconnect();
           return;
@@ -46,7 +74,10 @@ export function useEventStream(
 
         // Fire onReconnect on subsequent connections (not the first)
         if (hasConnectedOnce) {
+          wsLog("sse.reconnected", workspaceId);
           onReconnectRef.current?.();
+        } else {
+          wsLog("sse.connected", workspaceId);
         }
         hasConnectedOnce = true;
 
@@ -67,7 +98,14 @@ export function useEventStream(
             for (const line of part.split("\n")) {
               if (line.startsWith("data: ")) {
                 try {
-                  onEventRef.current(JSON.parse(line.slice(6)));
+                  const parsed = JSON.parse(line.slice(6));
+                  // Log workspace phase change events — primary signal for
+                  // UX latency measurement.
+                  if (parsed?.type === "workspace.phase") {
+                    wsLog("sse.workspace_phase", workspaceId,
+                      `phase=${parsed.phase}`);
+                  }
+                  onEventRef.current(parsed);
                 } catch {
                   // ignore malformed
                 }
@@ -79,8 +117,10 @@ export function useEventStream(
         if (cancelled) return;
         // AbortError = intentional close, not an error
         if (err instanceof DOMException && err.name === "AbortError") return;
+        wsLog("sse.error", workspaceId, `err=${String(err)}`);
       }
 
+      wsLog("sse.disconnected", workspaceId, `will_retry=${!cancelled}`);
       scheduleReconnect();
     }
 
@@ -100,6 +140,7 @@ export function useEventStream(
       cancelled = true;
       if (retryTimer !== null) clearTimeout(retryTimer);
       abortCtrl.abort();
+      wsLog("sse.teardown", workspaceId);
     };
   }, [workspaceId]);
 }

@@ -1,11 +1,12 @@
 package workspace
 
 import (
-	"fmt"
-
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,8 +15,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
+
+// maxStartupAnchorAge is the upper bound on a valid PendingAt or ResumedAt
+// anchor. If more than this has elapsed when the workspace reaches Active
+// (e.g. after a controller restart that left the anchor in etcd), the
+// observation is silently dropped and the anchor cleared. This prevents
+// multi-hour spurious values from inflating the histograms.
+const maxStartupAnchorAge = 10 * time.Minute
 
 func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -95,6 +104,10 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 
 	if existingPod.Status.Phase == corev1.PodRunning && existingPod.Status.PodIP != "" {
 		now := metav1.Now()
+
+		// Record startup latency metrics and clear anchors.
+		recordStartupMetrics(workspace, existingPod)
+
 		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.PodName = existingPod.Name
 		workspace.Status.PodNamespace = existingPod.Namespace
@@ -112,4 +125,91 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	}
 
 	return ctrl.Result{RequeueAfter: requeueCreating}, nil
+}
+
+// recordStartupMetrics fires once when a workspace pod first reaches Running.
+// It records create or resume latency from the appropriate anchor, measures
+// workspace-setup init container duration, and clears both anchors so they
+// are not double-counted on the next reconcile.
+//
+// Stale-anchor protection: anchors older than maxStartupAnchorAge are silently
+// dropped (not observed) to prevent controller-restart artifacts from inflating
+// the histograms with multi-hour values.
+func recordStartupMetrics(workspace *v1.Workspace, pod *corev1.Pod) {
+	recordStartupMetricsInto(workspace, pod,
+		metrics.WorkspaceCreateDurationSeconds,
+		metrics.WorkspaceResumeDurationSeconds,
+		metrics.WorkspaceInitContainerDurationSeconds,
+	)
+}
+
+// recordStartupMetricsInto is the testable core of recordStartupMetrics.
+// Callers inject metric objects so tests can use fresh, isolated instances.
+func recordStartupMetricsInto(
+	workspace *v1.Workspace,
+	pod *corev1.Pod,
+	createHist *prometheus.HistogramVec,
+	resumeHist *prometheus.HistogramVec,
+	initHist prometheus.Histogram,
+) {
+	// ---- init container duration ----
+	if d := initContainerDuration(pod, "workspace-setup"); d > 0 {
+		initHist.Observe(d.Seconds())
+	}
+
+	// ---- create vs resume path ----
+	switch {
+	case workspace.Status.ResumedAt != nil:
+		// Resume path: anchor was set by handleResuming.
+		elapsed := time.Since(workspace.Status.ResumedAt.Time)
+		if elapsed <= maxStartupAnchorAge {
+			resumeType := "subsequent_resume"
+			if workspace.Status.RestartCount == 0 {
+				resumeType = "first_resume"
+			}
+			resumeHist.WithLabelValues(resumeType).Observe(elapsed.Seconds())
+		}
+		// Clear both anchors: if PendingAt is also set (unexpected state),
+		// clearing it here prevents a spurious create observation on the
+		// next reconcile.
+		workspace.Status.ResumedAt = nil
+		workspace.Status.PendingAt = nil
+
+	case workspace.Status.PendingAt != nil:
+		// Create path: anchor was set by handlePending.
+		elapsed := time.Since(workspace.Status.PendingAt.Time)
+		if elapsed <= maxStartupAnchorAge {
+			hasPackages := strconv.FormatBool(len(workspace.Spec.Packages) > 0)
+			hasInit := strconv.FormatBool(workspace.Spec.InitScript != "")
+			createHist.WithLabelValues(hasPackages, hasInit).Observe(elapsed.Seconds())
+		}
+		workspace.Status.PendingAt = nil
+	}
+}
+
+// initContainerDuration returns the wall-clock duration of the named init
+// container, derived from its StartedAt / FinishedAt timestamps. Returns 0
+// if the container did not run or timestamps are unavailable.
+func initContainerDuration(pod *corev1.Pod, name string) time.Duration {
+	if pod == nil {
+		return 0
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name != name {
+			continue
+		}
+		t := cs.State.Terminated
+		if t == nil {
+			return 0
+		}
+		if t.StartedAt.IsZero() || t.FinishedAt.IsZero() {
+			return 0
+		}
+		d := t.FinishedAt.Sub(t.StartedAt.Time)
+		if d < 0 {
+			return 0
+		}
+		return d
+	}
+	return 0
 }

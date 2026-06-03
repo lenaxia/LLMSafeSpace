@@ -48,7 +48,7 @@ func TestRefreshOnce_SuccessfulRefresh(t *testing.T) {
 	client := &OpenCodeClient{password: "test", client: &http.Client{Timeout: 2 * time.Second}}
 	cache := newHealthzCache()
 
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 
 	snap := cache.Snapshot()
 	assert.True(t, snap.Initialized)
@@ -72,7 +72,7 @@ func TestRefreshOnce_FailedRefresh_IncrementCounter(t *testing.T) {
 	client := &OpenCodeClient{password: "test", client: &http.Client{Timeout: 2 * time.Second}}
 	cache := newHealthzCache()
 
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 
 	snap := cache.Snapshot()
 	assert.True(t, snap.Initialized)
@@ -101,20 +101,20 @@ func TestRefreshOnce_FailureThreshold_PreservesHealthyUntilThreshold(t *testing.
 	cache := newHealthzCache()
 
 	// First call succeeds — healthy=true
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.True(t, cache.Snapshot().Healthy)
 
 	// Failures 1 and 2 — healthy stays true (threshold=3)
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.True(t, cache.Snapshot().Healthy, "1 failure: healthy preserved")
 	assert.Equal(t, 1, cache.Snapshot().ConsecutiveFailures)
 
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.True(t, cache.Snapshot().Healthy, "2 failures: healthy preserved")
 	assert.Equal(t, 2, cache.Snapshot().ConsecutiveFailures)
 
 	// Failure 3 — threshold reached, healthy flips to false
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.False(t, cache.Snapshot().Healthy, "3 failures: healthy must flip to false")
 	assert.Equal(t, 3, cache.Snapshot().ConsecutiveFailures)
 }
@@ -140,12 +140,12 @@ func TestRefreshOnce_Recovery_AfterThresholdFlip(t *testing.T) {
 
 	// 3 failures → unhealthy
 	for i := 0; i < 3; i++ {
-		refreshOnce(context.Background(), client, cache, testLogger())
+		refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	}
 	assert.False(t, cache.Snapshot().Healthy)
 
 	// Single success → recovery
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	snap := cache.Snapshot()
 	assert.True(t, snap.Healthy, "single success must recover from unhealthy")
 	assert.Equal(t, 0, snap.ConsecutiveFailures)
@@ -167,7 +167,7 @@ func TestRefreshOnce_OpencodeReportsUnhealthy(t *testing.T) {
 	client := &OpenCodeClient{password: "test", client: &http.Client{Timeout: 2 * time.Second}}
 	cache := newHealthzCache()
 
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 
 	snap := cache.Snapshot()
 	assert.True(t, snap.Initialized)
@@ -192,7 +192,7 @@ func TestRefreshOnce_Timeout_TreatedAsFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), readinessRefreshTimeout+time.Second)
 	defer cancel()
 
-	refreshOnce(ctx, client, cache, testLogger())
+	refreshOnce(ctx, client, cache, testLogger(), nil)
 
 	snap := cache.Snapshot()
 	assert.True(t, snap.Initialized)
@@ -216,7 +216,7 @@ func TestRefreshOnce_PanicRecovery(t *testing.T) {
 
 	// Should not panic — recovered internally
 	assert.NotPanics(t, func() {
-		refreshOnce(context.Background(), client, cache, testLogger())
+		refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	})
 
 	snap := cache.Snapshot()
@@ -246,7 +246,7 @@ func TestHealthzCache_ConcurrentReads_RaceFree(t *testing.T) {
 			case <-ctx.Done():
 				return
 			default:
-				refreshOnce(ctx, client, cache, testLogger())
+				refreshOnce(ctx, client, cache, testLogger(), nil)
 				time.Sleep(time.Millisecond)
 			}
 		}
@@ -286,7 +286,7 @@ func TestRefreshIsHealthyLoop_ExitsOnContextCancel(t *testing.T) {
 
 	var done atomic.Bool
 	go func() {
-		refreshIsHealthyLoop(ctx, client, cache, testLogger())
+		refreshIsHealthyLoop(ctx, client, cache, testLogger(), nil)
 		done.Store(true)
 	}()
 
@@ -315,7 +315,7 @@ func TestRefreshIsHealthyLoop_ImmediateFirstRefresh(t *testing.T) {
 	cache := newHealthzCache()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go refreshIsHealthyLoop(ctx, client, cache, testLogger())
+	go refreshIsHealthyLoop(ctx, client, cache, testLogger(), nil)
 
 	// The immediate refresh should fire within 100ms (not waiting for the 5s tick)
 	time.Sleep(200 * time.Millisecond)
@@ -344,7 +344,7 @@ func TestRefreshIsHealthyLoop_RefreshesOnTick(t *testing.T) {
 	cache := newHealthzCache()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go refreshIsHealthyLoop(ctx, client, cache, testLogger())
+	go refreshIsHealthyLoop(ctx, client, cache, testLogger(), nil)
 
 	// Wait for 2 ticks (5s each) + immediate = at least 3 calls
 	time.Sleep(11 * time.Second)
@@ -374,11 +374,11 @@ func TestRefreshOnce_VersionPreservedOnFailure(t *testing.T) {
 	cache := newHealthzCache()
 
 	// Success sets version
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.Equal(t, "v3.0", cache.Snapshot().Version)
 
 	// Failure preserves version
-	refreshOnce(context.Background(), client, cache, testLogger())
+	refreshOnce(context.Background(), client, cache, testLogger(), nil)
 	assert.Equal(t, "v3.0", cache.Snapshot().Version, "version must be preserved on failure")
 }
 
