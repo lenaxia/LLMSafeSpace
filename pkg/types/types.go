@@ -387,16 +387,18 @@ type Message struct {
 
 // Workspace is the API transfer object for a workspace resource.
 type Workspace struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	UserID      string            `json:"userId"`
-	Runtime     string            `json:"runtime"`
-	StorageSize string            `json:"storageSize"`
-	Phase       string            `json:"phase"`
-	PVCName     string            `json:"pvcName,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	CreatedAt   time.Time         `json:"createdAt"`
-	UpdatedAt   time.Time         `json:"updatedAt"`
+	ID                      string            `json:"id"`
+	Name                    string            `json:"name"`
+	UserID                  string            `json:"userId"`
+	Runtime                 string            `json:"runtime"`
+	StorageSize             string            `json:"storageSize"`
+	Phase                   string            `json:"phase"`
+	PVCName                 string            `json:"pvcName,omitempty"`
+	Labels                  map[string]string `json:"labels,omitempty"`
+	CreatedAt               time.Time         `json:"createdAt"`
+	UpdatedAt               time.Time         `json:"updatedAt"`
+	AgentNeedsRefresh       bool              `json:"agentNeedsRefresh"`
+	CredentialsPendingSince *time.Time        `json:"credentialsPendingSince,omitempty"`
 }
 
 // CreateWorkspaceRequest is the request body for creating a workspace.
@@ -422,17 +424,19 @@ type WorkspaceListResult struct {
 
 // WorkspaceListItem is a lightweight workspace representation for list responses.
 type WorkspaceListItem struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	UserID            string    `json:"userId"`
-	Runtime           string    `json:"runtime"`
-	StorageSize       string    `json:"storageSize"`
-	Phase             string    `json:"phase,omitempty"`
-	ImageTag          string    `json:"imageTag,omitempty"`
-	AgentVersion      string    `json:"agentVersion,omitempty"`
-	MaxActiveSessions int       `json:"maxActiveSessions,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                      string     `json:"id"`
+	Name                    string     `json:"name"`
+	UserID                  string     `json:"userId"`
+	Runtime                 string     `json:"runtime"`
+	StorageSize             string     `json:"storageSize"`
+	Phase                   string     `json:"phase,omitempty"`
+	ImageTag                string     `json:"imageTag,omitempty"`
+	AgentVersion            string     `json:"agentVersion,omitempty"`
+	MaxActiveSessions       int        `json:"maxActiveSessions,omitempty"`
+	CreatedAt               time.Time  `json:"createdAt"`
+	UpdatedAt               time.Time  `json:"updatedAt"`
+	AgentNeedsRefresh       bool       `json:"agentNeedsRefresh"`
+	CredentialsPendingSince *time.Time `json:"credentialsPendingSince,omitempty"`
 }
 
 // WorkspaceStatusResult carries the status fields read from the Workspace CRD.
@@ -504,6 +508,9 @@ type WorkspaceMetadata struct {
 	AgentVersion string    `json:"agentVersion" db:"agent_version"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
+	// Epic 27a: agent credential state (LEFT JOIN workspace_agent_state)
+	AgentNeedsRefresh       bool       `json:"agentNeedsRefresh" db:"agent_needs_refresh"`
+	CredentialsPendingSince *time.Time `json:"credentialsPendingSince,omitempty" db:"credentials_pending_since"`
 }
 
 // WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.

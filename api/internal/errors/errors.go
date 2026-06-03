@@ -4,9 +4,16 @@
 package errors
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 )
+
+// ErrNoAgentStateRow is returned by MarkAgentReloaded when the
+// workspace_agent_state row does not exist for the given workspace.
+// Both database.go (returns it) and handler code (checks via errors.Is)
+// import this shared package — neither imports the other.
+var ErrNoAgentStateRow = errors.New("workspace_agent_state row not found for workspace")
 
 // ErrorType defines the type of error
 type ErrorType string
