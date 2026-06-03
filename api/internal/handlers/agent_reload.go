@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -53,6 +54,8 @@ type AgentReloadHandler struct {
 	podResolver  PodIPResolver
 	httpClient   *http.Client
 	logger       pkginterfaces.LoggerInterface
+	sseTracker   *SSETracker
+	getPassword  func(ctx context.Context, workspaceID string) (string, error)
 }
 
 // NewAgentReloadHandler constructs the handler with all dependencies.
@@ -70,6 +73,14 @@ func NewAgentReloadHandler(
 		httpClient:   httpClient,
 		logger:       logger,
 	}
+}
+
+// SetSSETracker injects the tracker for drain mode support.
+func (h *AgentReloadHandler) SetSSETracker(t *SSETracker) { h.sseTracker = t }
+
+// SetPasswordGetter injects the password getter for drain mode (needs opencode client).
+func (h *AgentReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
+	h.getPassword = getter
 }
 
 // Reload handles POST /api/v1/workspaces/:id/agent/reload.
@@ -100,6 +111,46 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 			"error": "cannot reload agent: workspace pod is not reachable",
 		})
 		return
+	}
+
+	// Drain mode: wait for all sessions to become idle before disposing.
+	drain := c.Query("drain") == "true"
+	drainTimeout := 5 * time.Minute
+	if v := c.Query("drainTimeoutSeconds"); v != "" {
+		if t, _ := fmt.Sscanf(v, "%d", new(int)); t == 1 {
+			var secs int
+			fmt.Sscanf(v, "%d", &secs)
+			if secs > 0 && secs <= 600 {
+				drainTimeout = time.Duration(secs) * time.Second
+			}
+		}
+	}
+
+	if drain && h.sseTracker != nil && h.getPassword != nil {
+		pw, err := h.getPassword(c.Request.Context(), workspaceID)
+		if err != nil {
+			respondWithAPIError(c, apierrors.NewInternalError("get_opencode_password_failed", err))
+			return
+		}
+		opencodeCl := opencode.NewClient(
+			fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort),
+			pw,
+		)
+		if err := WaitUntilIdle(c.Request.Context(), workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
+			var drainErr *ErrDrainTimeout
+			if errors.As(err, &drainErr) {
+				c.JSON(http.StatusRequestTimeout, gin.H{
+					"error": gin.H{
+						"code":           "drain_timeout",
+						"message":        fmt.Sprintf("workspace did not become idle within %s", drainTimeout),
+						"busySessionIDs": drainErr.BusySessions,
+					},
+				})
+				return
+			}
+			respondWithAPIError(c, apierrors.NewInternalError("drain_failed", err))
+			return
+		}
 	}
 
 	priorChangedAt, err := h.db.GetLastCredentialChangedAt(c.Request.Context(), workspaceID)
