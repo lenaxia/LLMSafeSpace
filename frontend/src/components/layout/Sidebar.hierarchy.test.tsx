@@ -10,6 +10,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Sidebar } from "./Sidebar";
 import { AuthProvider } from "../../providers/AuthProvider";
 
+const STORAGE_KEY = "llmsafespace_user_settings";
+
 vi.mock("../../api/auth", () => ({
   authApi: {
     me: vi.fn().mockResolvedValue({ id: "u1", username: "alice", email: "a@b.com", role: "user", active: true }),
@@ -37,6 +39,7 @@ describe("Sidebar — session hierarchy", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem(STORAGE_KEY);
     qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [{ id: "ws-1", name: "My Workspace", phase: "Active", userId: "u1", runtime: "base", storageSize: "5Gi", createdAt: "", updatedAt: "" }],
@@ -217,5 +220,134 @@ describe("Sidebar — session hierarchy", () => {
     // user's manual expand state must persist.
     qc.invalidateQueries({ queryKey: ["sessions", "ws-1"] });
     await waitFor(() => expect(screen.getByText("Manual expand")).toBeInTheDocument());
+  });
+});
+
+describe("Sidebar — auto-expand/collapse setting", () => {
+  let qc: QueryClient;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    localStorage.removeItem(STORAGE_KEY);
+    const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+    _resetStoreFromStorage();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Workspace", phase: "Active", userId: "u1", runtime: "base", storageSize: "5Gi", createdAt: "", updatedAt: "" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+  });
+
+  function renderSidebarAtPath(path: string) {
+    return render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/chat/:workspaceId" element={<Sidebar />} />
+              <Route path="/chat/:workspaceId/:sessionId" element={<Sidebar />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("auto-expands parent children when navigating to a parent session (setting on by default)", async () => {
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "parent", title: "Parent task", messageCount: 1, status: "idle" },
+      { id: "child", title: "Child session", parentId: "parent", messageCount: 1, status: "idle" },
+      { id: "sibling", title: "Sibling session", messageCount: 1, status: "idle" },
+    ]);
+
+    // Navigate directly to the parent session — children should auto-expand.
+    renderSidebarAtPath("/chat/ws-1/parent");
+
+    await waitFor(() => {
+      expect(screen.getByText("Parent task")).toBeInTheDocument();
+      expect(screen.getByText("Child session")).toBeInTheDocument();
+    });
+  });
+
+  it("does NOT auto-expand parent children when setting is off", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ autoExpandChildren: false }));
+    const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+    _resetStoreFromStorage();
+
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "parent", title: "Parent task", messageCount: 1, status: "idle" },
+      { id: "child", title: "Child session", parentId: "parent", messageCount: 1, status: "idle" },
+    ]);
+
+    // Navigate to parent — children should stay collapsed when setting is off.
+    renderSidebarAtPath("/chat/ws-1/parent");
+
+    await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+    expect(screen.queryByText("Child session")).not.toBeInTheDocument();
+  });
+
+  it("auto-expands ancestor chain even when autoExpandChildren is off", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ autoExpandChildren: false }));
+    const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+    _resetStoreFromStorage();
+
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "parent", title: "Parent task", messageCount: 1, status: "idle" },
+      { id: "child", title: "Child session", parentId: "parent", messageCount: 1, status: "idle" },
+    ]);
+
+    // Navigate to child — ancestor chain must still expand so child is visible.
+    renderSidebarAtPath("/chat/ws-1/child");
+
+    await waitFor(() => {
+      expect(screen.getByText("Parent task")).toBeInTheDocument();
+      expect(screen.getByText("Child session")).toBeInTheDocument();
+    });
+  });
+
+  it("auto-collapses previous parent subtree when navigating to a sibling (setting on)", async () => {
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "parent-a", title: "Parent A", messageCount: 1, status: "idle" },
+      { id: "child-a", title: "Child of A", parentId: "parent-a", messageCount: 1, status: "idle" },
+      { id: "parent-b", title: "Parent B", messageCount: 1, status: "idle" },
+      { id: "child-b", title: "Child of B", parentId: "parent-b", messageCount: 1, status: "idle" },
+    ]);
+
+    // Start at parent-a — its children should auto-expand.
+    renderSidebarAtPath("/chat/ws-1/parent-a");
+
+    await waitFor(() => expect(screen.getByText("Child of A")).toBeInTheDocument());
+
+    // Click parent-b to navigate away from parent-a's subtree.
+    fireEvent.click(screen.getByText("Parent B"));
+
+    // After navigating to parent-b, parent-a's children should collapse and
+    // parent-b's children should expand.
+    await waitFor(() => expect(screen.getByText("Child of B")).toBeInTheDocument());
+    expect(screen.queryByText("Child of A")).not.toBeInTheDocument();
+  });
+
+  it("does NOT auto-collapse previous subtree when setting is off", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ autoExpandChildren: false }));
+    const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
+    _resetStoreFromStorage();
+
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "parent-a", title: "Parent A", messageCount: 1, status: "idle" },
+      { id: "child-a", title: "Child of A", parentId: "parent-a", messageCount: 1, status: "idle" },
+      { id: "parent-b", title: "Parent B", messageCount: 1, status: "idle" },
+    ]);
+
+    // Navigate to child-a — ancestor chain should expand even with setting off.
+    renderSidebarAtPath("/chat/ws-1/child-a");
+
+    await waitFor(() => expect(screen.getByText("Child of A")).toBeInTheDocument());
+
+    // Click parent-b to navigate away — with setting off, child-a should NOT collapse.
+    fireEvent.click(screen.getByText("Parent B"));
+
+    await waitFor(() => expect(screen.getByText("Parent B")).toBeInTheDocument());
+    // Child of A should still be visible (not auto-collapsed when setting is off).
+    expect(screen.getByText("Child of A")).toBeInTheDocument();
   });
 });

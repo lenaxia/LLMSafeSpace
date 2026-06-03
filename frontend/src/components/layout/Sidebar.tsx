@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
@@ -25,6 +25,7 @@ import { formatRelativeTime } from "../../lib/time";
 import { cn } from "../../lib/utils";
 import { buildSessionTree, ancestorChain } from "../../lib/sessionTree";
 import type { SessionTreeNode } from "../../lib/sessionTree";
+import { useUserSetting } from "../../hooks/useUserSettings";
 
 interface Props {
   onNavigate?: () => void;
@@ -433,23 +434,76 @@ function WorkspaceSessionList({
   // another, but in practice this component instance is per-workspace.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Whenever the selected session changes (or sessions load), make sure
-  // its ancestor chain is expanded. We don't collapse what was already
-  // open — that would yank the user's view out from under them.
+  // Whether to auto-expand/collapse children when navigating between sessions.
+  const autoExpandChildren = useUserSetting<boolean>("autoExpandChildren", true);
+
+  // Track the previously selected session so we can collapse its subtree
+  // when the user navigates away to a session outside that subtree.
+  const prevSelectedRef = useRef<string | undefined>(undefined);
+
+  // Whenever the selected session changes (or sessions load), apply
+  // auto-expand/collapse logic when the setting is enabled.
+  // When disabled, still auto-expand ancestors so the active session is
+  // always visible (existing behaviour).
   useEffect(() => {
-    if (!sessions || !selectedSessionId) return;
-    const chain = ancestorChain(sessions, selectedSessionId);
-    if (chain.length <= 1) return; // top-level session has nothing to expand
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      // chain includes the active session itself; we only need to expand
-      // its ancestors so the active row is visible.
-      for (let i = 0; i < chain.length - 1; i++) {
-        next.add(chain[i]!);
+    if (!sessions) return;
+
+    const prev = prevSelectedRef.current;
+    const next = selectedSessionId;
+
+    if (autoExpandChildren) {
+      // --- Auto-collapse previous subtree root when leaving it ---
+      if (prev && prev !== next) {
+        const prevChain = ancestorChain(sessions, prev);
+        const nextChain = next ? ancestorChain(sessions, next) : [];
+        const prevRoot = prevChain[0];
+        const nextRoot = nextChain[0];
+
+        // Only collapse when the user actually moved to a different subtree.
+        if (prevRoot && prevRoot !== nextRoot) {
+          setExpanded((current) => {
+            const updated = new Set(current);
+            // Remove every node in the previous subtree from expanded set.
+            // We do this by walking the prevChain ancestors and any session
+            // whose root ancestor is prevRoot.
+            for (const id of prevChain) {
+              updated.delete(id);
+            }
+            return updated;
+          });
+        }
       }
-      return next;
-    });
-  }, [sessions, selectedSessionId]);
+
+      // --- Auto-expand the active session if it has children ---
+      if (next) {
+        const chain = ancestorChain(sessions, next);
+        setExpanded((current) => {
+          const updated = new Set(current);
+          // Expand the full ancestor chain (existing behaviour).
+          for (let i = 0; i < chain.length - 1; i++) {
+            updated.add(chain[i]!);
+          }
+          // Also expand the active session itself if it has children.
+          updated.add(next);
+          return updated;
+        });
+      }
+    } else {
+      // Setting off: only ensure ancestor chain is visible (existing behaviour).
+      if (!next) return;
+      const chain = ancestorChain(sessions, next);
+      if (chain.length <= 1) return;
+      setExpanded((prev) => {
+        const next2 = new Set(prev);
+        for (let i = 0; i < chain.length - 1; i++) {
+          next2.add(chain[i]!);
+        }
+        return next2;
+      });
+    }
+
+    prevSelectedRef.current = next;
+  }, [sessions, selectedSessionId, autoExpandChildren]);
 
   // The synthetic "Orphaned subtasks" group is also collapsible, but
   // tracked separately from real session IDs to avoid any chance of
