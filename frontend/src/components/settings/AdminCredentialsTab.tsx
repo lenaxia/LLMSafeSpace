@@ -107,7 +107,19 @@ export function AdminCredentialsTab() {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Providers: {cs.providers.join(", ") || "none"} · Models: {cs.modelAllowlist.length || "all"}
+                  {/*
+                    Defence-in-depth: TypeScript declares `providers:
+                    string[]` and `modelAllowlist: string[]`, but the
+                    JSON wire format has historically returned `null`
+                    for these fields when the underlying Go []string
+                    was nil (see service.go rowToCredentialSet, fixed
+                    backend-side, but kept defensive here against
+                    future regressions and rows persisted before the
+                    fix). `(arr ?? []).join(...)` and `.length` on a
+                    safe array prevent the React error overlay even
+                    if the backend slips back to `null`.
+                  */}
+                  Providers: {(cs.providers ?? []).join(", ") || "none"} · Models: {(cs.modelAllowlist ?? []).length || "all"}
                 </p>
               </div>
               <div className="flex gap-1 shrink-0">

@@ -4,6 +4,7 @@
 package credentials
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -445,5 +446,172 @@ func TestCredService_GetDecryptedProviders_NotFound(t *testing.T) {
 	_, err := svc.GetDecryptedProviders(context.Background(), "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent credential set")
+	}
+}
+
+// --- Null-slice regression guards ---
+//
+// Why these tests exist
+// ---------------------
+// A user reported a frontend crash:
+//
+//   Cannot read properties of null (reading 'length')
+//   at Array.map -> sets.map(cs => ... cs.modelAllowlist.length ...)
+//
+// Root cause: the Go API returned a CredentialSet whose ModelAllowlist
+// was a nil []string. encoding/json renders nil slices as `null`, NOT
+// `[]`. The frontend's TypeScript types declare `modelAllowlist:
+// string[]`, so calling `.length` on `null` crashes when re-rendering
+// after a successful create.
+//
+// Two paths produced nil slices:
+//
+//   1. Create response: `ModelAllowlist: req.ModelAllowlist` literally
+//      copied the request's nil through to the response, even though
+//      the DB write was correctly defaulted to []string{} by an
+//      earlier fix (commit b7548de).
+//   2. rowToCredentialSet (used by Get/List): if the encrypted
+//      Providers field failed to decrypt OR the row's ModelAllowlist
+//      came back as a nil from the DB driver, both fields stayed nil.
+//
+// These tests pin the contract: every API-returned CredentialSet MUST
+// have non-nil Providers and ModelAllowlist slices, AND when JSON-
+// marshaled they MUST appear as `[]`, never `null`.
+
+// TestCredService_Create_ResponseHasNonNilSlices is the regression
+// guard for the Create path. The user's repro: POST with no
+// ModelAllowlist → response had ModelAllowlist null → frontend crashed.
+func TestCredService_Create_ResponseHasNonNilSlices(t *testing.T) {
+	svc, _ := newTestCredService()
+
+	cs, err := svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "no-allowlist",
+		Providers: ProviderConfig{"openai": {APIKey: "sk-test"}},
+		// NO ModelAllowlist — simulates the frontend's CreateCredentialForm
+		// which currently does not surface a model-allowlist input.
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cs.ModelAllowlist == nil {
+		t.Error("ModelAllowlist must NOT be nil on Create response (frontend assumes string[])")
+	}
+	if cs.Providers == nil {
+		t.Error("Providers must NOT be nil on Create response")
+	}
+
+	// Cross-check: JSON marshaling must produce `[]`, never `null`.
+	body, err := json.Marshal(cs)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(raw["modelAllowlist"]) == "null" {
+		t.Errorf("modelAllowlist serialized as `null`; frontend.cs.modelAllowlist.length will throw\nbody: %s", body)
+	}
+	if string(raw["providers"]) == "null" {
+		t.Errorf("providers serialized as `null`; frontend.cs.providers.join will throw\nbody: %s", body)
+	}
+}
+
+// TestCredService_Get_ResponseHasNonNilSlices is the regression guard
+// for the Get path (rowToCredentialSet). Even on rows where decrypt
+// fails, providers must be `[]` not `nil`.
+func TestCredService_Get_ResponseHasNonNilSlices(t *testing.T) {
+	svc, _ := newTestCredService()
+	created, err := svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "g",
+		Providers: ProviderConfig{"openai": {APIKey: "sk"}},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.ModelAllowlist == nil {
+		t.Error("Get returned ModelAllowlist=nil; frontend will crash on .length")
+	}
+	if got.Providers == nil {
+		t.Error("Get returned Providers=nil; frontend will crash on .join")
+	}
+
+	body, _ := json.Marshal(got)
+	if bytes.Contains(body, []byte(`"modelAllowlist":null`)) {
+		t.Errorf("Get response serializes modelAllowlist as null: %s", body)
+	}
+	if bytes.Contains(body, []byte(`"providers":null`)) {
+		t.Errorf("Get response serializes providers as null: %s", body)
+	}
+}
+
+// TestCredService_List_ResponseHasNonNilSlices guards the List path.
+// This is the EXACT path that crashed the user's UI — sets.map() on
+// the List response, then .modelAllowlist.length on each.
+func TestCredService_List_ResponseHasNonNilSlices(t *testing.T) {
+	svc, _ := newTestCredService()
+	_, _ = svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "a",
+		Providers: ProviderConfig{"openai": {APIKey: "sk"}},
+	})
+	_, _ = svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "b",
+		Providers: ProviderConfig{"anthropic": {APIKey: "sk"}},
+	})
+
+	list, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for i, cs := range list {
+		if cs.ModelAllowlist == nil {
+			t.Errorf("list[%d].ModelAllowlist is nil; frontend will crash", i)
+		}
+		if cs.Providers == nil {
+			t.Errorf("list[%d].Providers is nil; frontend will crash", i)
+		}
+	}
+
+	body, _ := json.Marshal(list)
+	if bytes.Contains(body, []byte(`"modelAllowlist":null`)) {
+		t.Errorf("List response contains modelAllowlist:null — frontend will crash on .length\nbody: %s", body)
+	}
+	if bytes.Contains(body, []byte(`"providers":null`)) {
+		t.Errorf("List response contains providers:null — frontend will crash on .join\nbody: %s", body)
+	}
+}
+
+// TestCredService_RowToCredentialSet_DecryptFailure_ProvidersNotNil
+// is the deep regression guard. If decrypt fails for any reason
+// (corrupt row, key rotation mid-flight), providers becomes nil at
+// line 311 of service.go ("var providers []string"). This test pins
+// the invariant that even in the failure path, the field is `[]`.
+func TestCredService_RowToCredentialSet_DecryptFailure_ProvidersNotNil(t *testing.T) {
+	svc, store := newTestCredService()
+
+	// Corrupt the encrypted blob so decrypt fails.
+	created, _ := svc.Create(context.Background(), CreateCredentialSetRequest{
+		Name:      "corrupt-me",
+		Providers: ProviderConfig{"openai": {APIKey: "sk"}},
+	})
+	store.sets[created.ID].ProvidersEncrypted = []byte("not-a-valid-ciphertext")
+
+	got, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Get must succeed even when decrypt fails (got error: %v)", err)
+	}
+	if got.Providers == nil {
+		t.Error("Providers must be []string{} (not nil) when decrypt fails")
+	}
+	body, _ := json.Marshal(got)
+	if bytes.Contains(body, []byte(`"providers":null`)) {
+		t.Errorf("decrypt-failure path still emits providers:null: %s", body)
 	}
 }

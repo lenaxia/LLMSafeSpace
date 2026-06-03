@@ -50,6 +50,33 @@ describe("AdminCredentialsTab", () => {
     });
   });
 
+  // Regression guard: a CredentialSet returned by the backend with
+  // null arrays (Bug filed against `b54621a`: backend serialised
+  // modelAllowlist:null when no allowlist was provided at create
+  // time; the frontend's `cs.modelAllowlist.length` then crashed with
+  // `Cannot read properties of null (reading 'length')`).
+  //
+  // The backend was fixed to always return [] (commit ${THIS_COMMIT}).
+  // This test pins defence-in-depth: even if a future regression in
+  // the backend returns null again, the component must NOT crash —
+  // it should render a sensible "all" / "none" placeholder.
+  it("tolerates null arrays (provider response regression guard)", async () => {
+    mockList.mockResolvedValue([
+      // Both fields null — the exact shape the backend returned in the
+      // bug report. TypeScript types claim string[] but runtime can
+      // legitimately differ.
+      { id: "1", name: "NullArrays", isDefault: false, providers: null as unknown as string[], modelAllowlist: null as unknown as string[], assignedTo: "all", keyVersion: 1 },
+    ]);
+    render(<AdminCredentialsTab />);
+    await waitFor(() => {
+      expect(screen.getByText("NullArrays")).toBeInTheDocument();
+    });
+    // Sanity: rendering completed (component did not throw). The
+    // exact placeholder text is part of the contract.
+    expect(screen.getByText(/Providers: none/)).toBeInTheDocument();
+    expect(screen.getByText(/Models: all/)).toBeInTheDocument();
+  });
+
   it("deletes a credential set", async () => {
     mockList.mockResolvedValue([
       { id: "1", name: "ToDelete", isDefault: false, providers: [], modelAllowlist: [], assignedTo: "all", keyVersion: 1 },

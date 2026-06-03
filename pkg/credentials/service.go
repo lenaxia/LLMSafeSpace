@@ -92,11 +92,17 @@ func (s *Service) Create(ctx context.Context, req CreateCredentialSetRequest) (*
 	}
 
 	return &CredentialSet{
-		ID:             id,
-		Name:           req.Name,
-		IsDefault:      req.IsDefault,
-		Providers:      providerNames(req.Providers),
-		ModelAllowlist: req.ModelAllowlist,
+		ID:        id,
+		Name:      req.Name,
+		IsDefault: req.IsDefault,
+		Providers: providerNames(req.Providers),
+		// Use the defaulted modelAllowlist (always non-nil) so the JSON
+		// response is always `[]`, never `null`. The frontend's
+		// CredentialSet TypeScript type declares `modelAllowlist:
+		// string[]` and rendering code calls `.length` directly; nil
+		// here marshals to JSON `null` and crashes the UI with
+		// `Cannot read properties of null (reading 'length')`.
+		ModelAllowlist: modelAllowlist,
 		AssignedTo:     req.AssignedTo,
 		KeyVersion:     keyVersion,
 	}, nil
@@ -307,8 +313,16 @@ func (s *Service) RotateEncryptionKey(ctx context.Context) (*RotateKeyResult, er
 }
 
 func rowToCredentialSet(row *CredentialSetRow, keySet *EncryptionKeySet) *CredentialSet {
-	// Extract provider names by decrypting
-	var providers []string
+	// Extract provider names by decrypting.
+	//
+	// providers MUST always be non-nil for the response: encoding/json
+	// serializes a nil slice as `null`, and the frontend assumes
+	// `string[]` (e.g. `cs.providers.join(", ")` in
+	// AdminCredentialsTab). A `null` here crashes the UI on the next
+	// render. If decryption fails, we still return `[]` — better an
+	// empty list than a hard frontend crash; the operator will see
+	// "Providers: none" rather than the React error overlay.
+	providers := []string{}
 	if plaintext, err := Decrypt(keySet, row.ProvidersEncrypted, []byte(row.Name)); err == nil {
 		if config, err := UnmarshalProviders(plaintext); err == nil {
 			for name := range config {
@@ -320,12 +334,22 @@ func rowToCredentialSet(row *CredentialSetRow, keySet *EncryptionKeySet) *Creden
 	var assignedTo any
 	_ = json.Unmarshal(row.AssignedTo, &assignedTo)
 
+	// Same null-safety contract for ModelAllowlist: any pq driver path
+	// (or older row written before commit b7548de) that returns nil
+	// must be normalized to `[]` before serializing. The frontend's
+	// `cs.modelAllowlist.length` (line 110 of AdminCredentialsTab.tsx)
+	// crashes on null.
+	modelAllowlist := row.ModelAllowlist
+	if modelAllowlist == nil {
+		modelAllowlist = []string{}
+	}
+
 	return &CredentialSet{
 		ID:             row.ID,
 		Name:           row.Name,
 		IsDefault:      row.IsDefault,
 		Providers:      providers,
-		ModelAllowlist: row.ModelAllowlist,
+		ModelAllowlist: modelAllowlist,
 		AssignedTo:     assignedTo,
 		KeyVersion:     row.KeyVersion,
 	}
