@@ -640,7 +640,7 @@ func main() {
 				}
 			}
 			// Try to get context limit from active model's config
-			contextLimit := c.ModelContextLimit(r.Context(), modelID, providerID)
+			contextLimit := client.ModelContextLimit(r.Context(), modelID, providerID)
 			if contextLimit == 0 {
 				// Fallback: 128K per session
 				contextLimit = int64(max(len(sessions), 1)) * 128000
