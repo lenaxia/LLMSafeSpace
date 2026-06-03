@@ -11,31 +11,53 @@ import (
 )
 
 // FormatOpenCodeConfig renders a slice of validated LLMProviderData into
-// opencode's config JSON format. The output is deterministic: provider
-// keys are sorted alphabetically.
+// the JSON shape opencode 1.15.12 accepts.
+//
+// **Schema** (evidence-driven; established by live cluster probe in
+// worklog 0128. Do NOT change without re-validating against a running
+// opencode):
+//
+//	{
+//	  "$schema": "https://opencode.ai/config.json",
+//	  "provider": {                          <-- SINGULAR (not "providers")
+//	    "<id>": {
+//	      "options": {                       <-- direct, NO aisdk wrapper
+//	        "apiKey":  "...",                <-- the credential
+//	        "baseURL": "..."                 <-- in options, NOT in a
+//	      },                                     separate `endpoint` object
+//	      "models": { "<id>": { "name": "..." } }
+//	    }
+//	  },
+//	  "model": "<id>/<modelID>"
+//	}
+//
+// What pre-fix code generated, and why opencode rejected it:
+//   - top-level key was `providers` (plural) → ConfigInvalidError
+//   - apiKey lived at options.aisdk.provider.apiKey → ConfigInvalidError
+//   - baseURL lived at endpoint.url → silently ignored (chat requests
+//     went to api.openai.com instead of the operator's endpoint)
 //
 // The function is pure — no side effects, no filesystem access.
+//
+// Returns an error if providers is empty (callers MUST check for this
+// — opencode treats an empty config differently and a "no-op write of
+// an empty config" is a bug).
 func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 	if len(providers) == 0 {
 		return nil, fmt.Errorf("FormatOpenCodeConfig: no providers to render")
 	}
 
 	cfg := opencodeConfig{
-		Schema:    "https://opencode.ai/config.json",
-		Providers: make(map[string]*opencodeProvider, len(providers)),
+		Schema:   "https://opencode.ai/config.json",
+		Provider: make(map[string]*opencodeProvider, len(providers)),
 	}
 
 	for _, p := range providers {
 		op := &opencodeProvider{
-			Options: &opencodeOptions{
-				AISDK: &opencodeAISDK{
-					Provider: map[string]string{"apiKey": p.APIKey},
-				},
+			Options: opencodeOptions{
+				APIKey:  p.APIKey,
+				BaseURL: p.BaseURL, // empty string is omitted via omitempty
 			},
-		}
-
-		if p.BaseURL != "" {
-			op.Endpoint = endpointForProvider(p.Provider, p.BaseURL)
 		}
 
 		if len(p.Models) > 0 {
@@ -49,7 +71,7 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 			}
 		}
 
-		cfg.Providers[p.Provider] = op
+		cfg.Provider[p.Provider] = op
 
 		// First provider with a Default wins.
 		if cfg.Model == "" && p.Default != "" {
@@ -57,54 +79,30 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 		}
 	}
 
-	return marshalDeterministic(cfg)
-}
-
-// endpointForProvider returns the correct endpoint object based on provider name.
-func endpointForProvider(provider, baseURL string) map[string]string {
-	switch provider {
-	case "anthropic":
-		return map[string]string{"type": "anthropic/messages", "url": baseURL}
-	case "openai":
-		return map[string]string{"type": "openai/responses", "url": baseURL}
-	default:
-		return map[string]string{"type": "aisdk", "package": "@ai-sdk/openai-compatible", "url": baseURL}
-	}
-}
-
-// marshalDeterministic produces JSON with sorted map keys for reproducible output.
-func marshalDeterministic(cfg opencodeConfig) ([]byte, error) {
-	// Build ordered output manually to guarantee key order in providers map.
-	type orderedOutput struct {
-		Schema    string                       `json:"$schema"`
-		Providers map[string]*opencodeProvider `json:"providers"`
-		Model     string                       `json:"model,omitempty"`
-	}
-
-	// json.Marshal uses sorted keys for maps by default in Go.
-	return json.MarshalIndent(orderedOutput(cfg), "", "  ")
+	// json.Marshal is deterministic for maps (sorted keys) since Go 1.12.
+	return json.MarshalIndent(cfg, "", "  ")
 }
 
 // --- internal types (not exported) ---
+//
+// JSON tag ordering matters for the snapshot test. Go's json package
+// emits fields in struct-declaration order (NOT alphabetical), so the
+// field order below is the wire-format order.
 
 type opencodeConfig struct {
-	Schema    string
-	Providers map[string]*opencodeProvider
-	Model     string
+	Schema   string                       `json:"$schema"`
+	Provider map[string]*opencodeProvider `json:"provider"`
+	Model    string                       `json:"model,omitempty"`
 }
 
 type opencodeProvider struct {
-	Endpoint map[string]string         `json:"endpoint,omitempty"`
-	Options  *opencodeOptions          `json:"options"`
-	Models   map[string]*opencodeModel `json:"models,omitempty"`
+	Options opencodeOptions           `json:"options"`
+	Models  map[string]*opencodeModel `json:"models,omitempty"`
 }
 
 type opencodeOptions struct {
-	AISDK *opencodeAISDK `json:"aisdk"`
-}
-
-type opencodeAISDK struct {
-	Provider map[string]string `json:"provider"`
+	APIKey  string `json:"apiKey,omitempty"`
+	BaseURL string `json:"baseURL,omitempty"`
 }
 
 type opencodeModel struct {
