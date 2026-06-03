@@ -205,6 +205,25 @@ Force pushing rewrites shared history and can destroy a collaborator's work. The
 
 **Always prefer `git pull --rebase` + normal `git push` over force pushing.** If you pushed a broken commit, first ask the user if force push is acceptable, describe why it's needed, and wait for confirmation.
 
+### 11. Adversarial Self-Review
+
+After implementing any non-trivial change, **before marking it complete**, explicitly ask:
+
+1. **Where are the gaps?** What did the design not cover? What edge cases are unhandled?
+2. **Where is it weak?** Which parts are fragile, tightly coupled, or depend on implicit ordering?
+3. **Where will it fail?** Under what conditions (concurrency, partial failure, invalid state, resource exhaustion) will the implementation behave unexpectedly?
+4. **What did I assume without verifying?** Re-read the assumptions list. For each one, ask: "Did I actually validate this, or did I just believe it?"
+5. **What would a skeptical reviewer reject?** If someone with no context read this diff, what would they flag?
+
+After generating these criticisms, **assess each one for validity**:
+
+- Is it a real bug, a design flaw, or a false alarm?
+- If real: fix it before proceeding.
+- If a false alarm: document why it is not a real issue (one sentence is enough).
+- If uncertain: escalate to the user rather than dismissing it.
+
+This is not optional introspection — it is a mandatory validation gate. Code that has not survived its own adversarial review is not ready for commit.
+
 ---
 
 ## Repository Structure
