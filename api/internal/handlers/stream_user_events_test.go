@@ -27,28 +27,6 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// setupUserStreamTest creates a gin context with the necessary middleware for testing StreamUserEvents.
-func setupUserStreamTest(t *testing.T, userID string, lastEventID string) (*gin.Engine, *ProxyHandler, *httptest.ResponseRecorder) {
-	t.Helper()
-
-	broker := NewUserEventBroker()
-
-	h := &ProxyHandler{
-		logger:     &testLogger{},
-		namespace:  "default",
-		userBroker: broker,
-	}
-
-	router := gin.New()
-	router.GET("/api/v1/events", func(c *gin.Context) {
-		c.Set("userID", userID)
-		h.StreamUserEvents(c)
-	})
-
-	w := httptest.NewRecorder()
-	return router, h, w
-}
-
 func TestStreamUserEvents_Unauthenticated_Returns401(t *testing.T) {
 	broker := NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}

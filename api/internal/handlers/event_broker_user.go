@@ -35,7 +35,7 @@ func (s *subscriber) send(evt WorkspaceSSEEvent) {
 	if s.closed.Load() {
 		return
 	}
-	defer func() { recover() }()
+	defer func() { _ = recover() }()
 	if s.missedEvent.Load() {
 		resync := WorkspaceSSEEvent{Type: "resync"}
 		select {
@@ -95,7 +95,7 @@ func (rb *replayBuffer) sinceLocked(lastID uint64) ([]replayEntry, bool) {
 		return nil, false
 	}
 
-	oldestID := rb.nextID - uint64(rb.count)
+	oldestID := rb.nextID - uint64(rb.count) //nolint:gosec // count is always [0, replayBufferSize]
 	gapDetected := lastID > 0 && lastID < oldestID
 
 	var result []replayEntry

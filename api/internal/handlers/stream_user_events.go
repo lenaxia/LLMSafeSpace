@@ -207,7 +207,7 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 }
 
 // heartbeatLoop sends heartbeat sentinels into s.ch every heartbeatInterval.
-// Exits when ctx is cancelled.
+// Exits when ctx is canceled.
 func heartbeatLoop(ctx context.Context, s *subscriber) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
