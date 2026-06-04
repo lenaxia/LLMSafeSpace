@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	numShards              = 16
-	userChannelBuffer      = 128
-	replayBufferSize       = 128
-	maxSubscribersPerUser  = 20
-	heartbeatSentinelType  = "_heartbeat"
+	numShards             = 16
+	userChannelBuffer     = 128
+	replayBufferSize      = 128
+	maxSubscribersPerUser = 20
+	heartbeatSentinelType = "_heartbeat"
 )
 
 // ErrTooManySubscribers is returned when a user has reached the max connection limit.

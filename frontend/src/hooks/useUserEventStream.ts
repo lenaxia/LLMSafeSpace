@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getEnv } from "../api/env";
+import { getEnv } from "../env";
 import { wsLog } from "../lib/wsLog";
 
 const MIN_RECONNECT_MS = 1000;

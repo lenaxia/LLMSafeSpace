@@ -806,16 +806,8 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	h.priorPhase[workspace.Name] = string(phase)
 	h.priorPhaseMu.Unlock()
 
-	// Publish the phase change to all browser SSE subscribers.
-	if h.broker != nil {
-		h.broker.Publish(workspace.Name, WorkspaceSSEEvent{
-			Type:        "workspace.phase",
-			Phase:       string(phase),
-			WorkspaceID: workspace.Name,
-		})
-	}
-
-	// S28.4: Publish to user-scoped stream for cross-workspace visibility.
+	// S28.4: Publish workspace.phase to user-scoped stream only (hard cutover).
+	// The workspace session stream no longer carries phase events.
 	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
 		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
 		h.userBroker.PublishToUser(workspace.Spec.Owner.UserID, WorkspaceSSEEvent{
