@@ -143,7 +143,7 @@ func TestReconcile_Pending_PVCBound_TransitionsToCreating(t *testing.T) {
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase)
 }
 
-func TestReconcile_Pending_Timeout_TransitionsToFailed(t *testing.T) {
+func TestReconcile_Pending_Timeout_EntersRecovery(t *testing.T) {
 	ws := makeWorkspace("ws-timeout", "default", v1.WorkspacePhasePending)
 	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	r := reconcilerFor(t, ws)
@@ -153,7 +153,9 @@ func TestReconcile_Pending_Timeout_TransitionsToFailed(t *testing.T) {
 
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase,
+		"pending timeout enters recovery (Creating with backoff), not terminal Failed")
+	assert.Equal(t, int32(1), updated.Status.ConsecutiveFailures)
 }
 
 // --- Creating Phase Tests ---
@@ -280,7 +282,6 @@ func TestReconcile_Active_PodRunning_RequeuesAfter30s(t *testing.T) {
 func TestReconcile_Active_PodMissing_TransientRecovery(t *testing.T) {
 	ws := makeWorkspace("ws-lost", "default", v1.WorkspacePhaseActive)
 	ws.Status.PodIP = "10.0.0.1"
-	ws.Spec.MaxRetries = 3
 	pwSecret := makePasswordSecret("ws-lost", "default")
 	r := reconcilerFor(t, ws, pwSecret) // no pod
 
@@ -290,13 +291,12 @@ func TestReconcile_Active_PodMissing_TransientRecovery(t *testing.T) {
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-lost", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "should self-heal to Creating")
-	assert.Equal(t, int32(1), updated.Status.TransientFailureCount)
+	assert.Equal(t, int32(1), updated.Status.ConsecutiveFailures)
 }
 
-func TestReconcile_Active_PodMissing_MaxRetries_Failed(t *testing.T) {
+func TestReconcile_Active_PodMissing_EntersRecoveryWithBackoff(t *testing.T) {
 	ws := makeWorkspace("ws-exhausted", "default", v1.WorkspacePhaseActive)
-	ws.Status.TransientFailureCount = 2
-	ws.Spec.MaxRetries = 3
+	ws.Status.ConsecutiveFailures = 5
 	pwSecret := makePasswordSecret("ws-exhausted", "default")
 	r := reconcilerFor(t, ws, pwSecret) // no pod
 
@@ -305,7 +305,10 @@ func TestReconcile_Active_PodMissing_MaxRetries_Failed(t *testing.T) {
 
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-exhausted", Namespace: "default"}, updated))
-	assert.Equal(t, v1.WorkspacePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase,
+		"pod loss enters recovery (Creating with backoff), never terminal Failed")
+	assert.Equal(t, int32(6), updated.Status.ConsecutiveFailures)
+	assert.NotNil(t, updated.Status.NextRetryAt)
 }
 
 func TestReconcile_Active_Timeout_Suspends(t *testing.T) {

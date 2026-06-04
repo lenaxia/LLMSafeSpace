@@ -62,8 +62,8 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		// Pod missing — transient recovery.
-		return r.recoverFromTransientPodLoss(ctx, workspace)
+		// Pod missing — classify as infrastructure (external deletion/eviction).
+		return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
 	}
 
 	// US-23.1: A pod with DeletionTimestamp set is being terminated by the
@@ -79,7 +79,9 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
-		return r.recoverFromTransientPodLoss(ctx, workspace)
+		obs := observePod(pod)
+		class := classifyFailure(obs)
+		return r.enterRecovery(ctx, workspace, class)
 	}
 
 	// Detect architecture drift: if the running pod's nodeSelector doesn't
@@ -101,7 +103,9 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
-			return r.recoverFromTransientPodLoss(ctx, workspace)
+			obs := observePod(pod)
+			class := classifyFailure(obs)
+			return r.enterRecovery(ctx, workspace, class)
 		}
 	}
 
@@ -142,8 +146,8 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		}
 	}
 
-	// Reset transient failure counter if stable long enough.
-	r.maybeResetTransientCounter(workspace)
+	// Reset failure counter if stable long enough (2 min).
+	maybeResetConsecutiveFailures(workspace)
 	// Check agent liveness (HTTP to /v1/healthz — rate-limited, cheap).
 	r.checkAgentHealth(ctx, workspace)
 	// US-22.6: Deep-status enrichment on a slower cadence (60s).

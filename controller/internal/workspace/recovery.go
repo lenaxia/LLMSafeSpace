@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -15,42 +14,10 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
-func (r *WorkspaceReconciler) recoverFromTransientPodLoss(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
-	workspace.Status.TransientFailureCount++
-	now := metav1.Now()
-	workspace.Status.LastTransientFailureAt = &now
-
-	maxRetries := int32(MaxTransientFailures)
-	if workspace.Spec.MaxRetries > 0 {
-		maxRetries = workspace.Spec.MaxRetries
-	}
-
-	if workspace.Status.TransientFailureCount >= maxRetries {
-		markFailed(workspace, v1.FailureReasonTransientPodLoss, "pod lost %d times; marking failed", workspace.Status.TransientFailureCount)
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
-	}
-
-	// Self-heal: revert to Creating.
-	workspace.Status.Phase = v1.WorkspacePhaseCreating
-	workspace.Status.PodIP = ""
-	workspace.Status.Endpoint = ""
-	return ctrl.Result{}, r.Status().Update(ctx, workspace)
-}
-
-func (r *WorkspaceReconciler) maybeResetTransientCounter(workspace *v1.Workspace) {
-	if workspace.Status.TransientFailureCount == 0 {
-		return
-	}
-	if workspace.Status.LastTransientFailureAt == nil {
-		return
-	}
-	elapsed := time.Since(workspace.Status.LastTransientFailureAt.Time)
-	if elapsed > time.Duration(TransientFailureResetWindow)*time.Second {
-		workspace.Status.TransientFailureCount = 0
-		workspace.Status.LastTransientFailureAt = nil
-	}
-}
-
+// handleFailed handles workspaces that are in the legacy Failed phase.
+// With Epic 24's recovery system, no new workspaces should enter this phase.
+// This handler exists to self-heal any workspace that was in Failed before
+// the recovery system was deployed (or from a future bug).
 func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 

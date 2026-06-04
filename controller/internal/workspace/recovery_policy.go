@@ -46,11 +46,41 @@ func shouldEnterSafeMode(consecutiveFailures int32, policy RecoveryPolicy) bool 
 	return policy.SafeModeAfter > 0 && consecutiveFailures >= policy.SafeModeAfter
 }
 
-// enterRecovery is wired up by the failure-class dispatch in US-24.6.
-// Suppressing the unused warning until the call site lands; the function
-// is exercised by recovery_policy_test.go in the meantime.
-//
-//nolint:unused // wired up by US-24.6 follow-up commit
+func timeUntilNextRetry(ws *v1.Workspace) time.Duration {
+	if ws.Status.NextRetryAt == nil {
+		return 0
+	}
+	remaining := time.Until(ws.Status.NextRetryAt.Time)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+// maybeResetConsecutiveFailures clears recovery state after the workspace
+// has been healthy for the stability window (2 min). If LastStableAt is nil
+// and there are outstanding failures, it starts the clock.
+func maybeResetConsecutiveFailures(ws *v1.Workspace) {
+	if ws.Status.ConsecutiveFailures == 0 {
+		return
+	}
+	if ws.Status.LastStableAt == nil {
+		now := metav1.Now()
+		ws.Status.LastStableAt = &now
+		return
+	}
+	elapsed := time.Since(ws.Status.LastStableAt.Time)
+	if elapsed >= stabilityResetWindow {
+		ws.Status.ConsecutiveFailures = 0
+		ws.Status.LastFailureClass = ""
+		ws.Status.LastFailureAt = nil
+		ws.Status.NextRetryAt = nil
+		ws.Status.LastStableAt = nil
+	}
+}
+
+const stabilityResetWindow = 2 * time.Minute
+
 func (r *WorkspaceReconciler) enterRecovery(ctx context.Context, ws *v1.Workspace, class FailureClass) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 

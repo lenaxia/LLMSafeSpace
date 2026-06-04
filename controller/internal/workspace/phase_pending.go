@@ -46,8 +46,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, err
 		}
 		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPendingTimeout, "workspace timed out in Pending phase")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
 		}
 		newPVC := r.buildPVC(workspace, pvcName)
 		if err := controllerutil.SetControllerReference(workspace, newPVC, r.Scheme); err != nil {
@@ -76,8 +75,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPVCBindTimeout, "PVC not bound after timeout")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
 		}
 		return ctrl.Result{RequeueAfter: requeueActive}, nil
 	}
