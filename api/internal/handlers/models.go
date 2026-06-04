@@ -169,6 +169,23 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
+	// Filter to only usable models:
+	// - Free-tier models always work (public key)
+	// - Models from non-opencode providers work (they only appear if the
+	//   provider was enabled via real credentials injected by AccountPlugin)
+	// - Paid opencode models do NOT work with the public key — exclude them
+	usable := make([]annotatedModel, 0, len(annotated))
+	for _, m := range annotated {
+		if !m.Enabled {
+			continue
+		}
+		if m.ProviderID == "opencode" && !m.FreeTier {
+			continue // paid opencode model — won't work with public key
+		}
+		usable = append(usable, m)
+	}
+	annotated = usable
+
 	// Include current workspace model selection for convenience.
 	var currentModel string
 	if h.wsUpdater != nil {
