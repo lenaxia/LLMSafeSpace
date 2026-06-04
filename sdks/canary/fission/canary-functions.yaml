@@ -1,0 +1,394 @@
+# Fission function manifests for SDK canaries
+# Deploy with: kubectl apply -f sdks/canary/fission/
+#
+# Prerequisites:
+#   1. Fission installed (https://fission.io)
+#   2. Go environment "go-env" created:
+#      fission env create --name go-env --image fission/go-env:latest --builder fission/go-builder:latest
+#   3. Canary binary container image built and pushed to registry (see Makefile)
+#   4. Secret "llmsafespace-canary-secrets" containing env vars
+#
+# Test user accounts (non-admin) must be provisioned before deploying.
+# See sdks/canary/README.md for bootstrap instructions.
+
+---
+# ── Shallow canaries (every 1 minute) ────────────────────────────────────────
+
+apiVersion: fission.io/v1
+kind: Package
+metadata:
+  name: canary-go-shallow
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  source:
+    type: url
+    url: ""  # set via CI deployment: fission pkg update --src canary-go-shallow.zip
+  deployment:
+    type: url
+    url: ""
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-health
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-health
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-auth
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-auth
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-auth-config
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-auth-config
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-logout
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-logout
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-apikey
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-apikey
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-ws-crud
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-ws-crud
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-secret-crud
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-secret-crud
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-s-error-format
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/s-error-format
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+
+---
+# ── TimeTriggers (1-minute schedule for shallow canaries) ──────────────────
+
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-health
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-health
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-auth
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-auth
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-auth-config
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-auth-config
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-logout
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-logout
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-apikey
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-apikey
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-ws-crud
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-ws-crud
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-secret-crud
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-secret-crud
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-s-error-format
+  namespace: fission
+spec:
+  cron: "* * * * *"
+  functionref:
+    type: name
+    name: canary-s-error-format
+
+---
+# ── Deep canaries (every 5 minutes) ──────────────────────────────────────────
+
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-d-ws-lifecycle
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/d-ws-lifecycle
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+  timeout: 360
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-d-cred-model-flow
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/d-cred-model-flow
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+  timeout: 660
+
+---
+apiVersion: fission.io/v1
+kind: Function
+metadata:
+  name: canary-d-suspend-resume-session
+  namespace: fission
+spec:
+  environment:
+    name: go-env
+    namespace: fission
+  package:
+    packageref:
+      name: canary-go-shallow
+      namespace: fission
+    functionName: scenarios/d-suspend-resume-session
+  resources: {}
+  secretmaps:
+    - name: llmsafespace-canary-secrets
+  timeout: 660
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-d-ws-lifecycle
+  namespace: fission
+spec:
+  cron: "*/5 * * * *"
+  functionref:
+    type: name
+    name: canary-d-ws-lifecycle
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-d-cred-model-flow
+  namespace: fission
+spec:
+  cron: "*/10 * * * *"
+  functionref:
+    type: name
+    name: canary-d-cred-model-flow
+
+---
+apiVersion: fission.io/v1
+kind: TimeTrigger
+metadata:
+  name: tt-canary-d-suspend-resume-session
+  namespace: fission
+spec:
+  cron: "*/10 * * * *"
+  functionref:
+    type: name
+    name: canary-d-suspend-resume-session
+
+---
+# ── Secret (template — fill in values) ───────────────────────────────────────
+
+# Create with:
+#   kubectl create secret generic llmsafespace-canary-secrets \
+#     --namespace fission \
+#     --from-literal=LLMSAFESPACE_URL=https://your.instance.example.com \
+#     --from-literal=LLMSAFESPACE_API_KEY=lsp_... \
+#     --from-literal=LLMSAFESPACE_EMAIL=canary1@llmsafespace.test \
+#     --from-literal=LLMSAFESPACE_PASSWORD=... \
+#     --from-literal=LLMSAFESPACE_API_KEY_USER2=lsp_... \
+#     --from-literal=LLMSAFESPACE_LLM_PROVIDER=anthropic \
+#     --from-literal=LLMSAFESPACE_LLM_API_KEY=sk-... \
+#     --from-literal=LLMSAFESPACE_LLM_MODEL=anthropic/claude-haiku-4-5

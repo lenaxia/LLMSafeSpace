@@ -42,6 +42,68 @@ func (s *WorkspacesService) Resume(ctx context.Context, id string) error {
 	return s.c.do(ctx, "POST", "/workspaces/"+id+"/resume", nil, nil)
 }
 
+func (s *WorkspacesService) Restart(ctx context.Context, id string) error {
+	return s.c.do(ctx, "POST", "/workspaces/"+id+"/restart", nil, nil)
+}
+
+func (s *WorkspacesService) Rename(ctx context.Context, id, name string) error {
+	return s.c.do(ctx, "PUT", "/workspaces/"+id, map[string]string{"name": name}, nil)
+}
+
+func (s *WorkspacesService) Activate(ctx context.Context, id string) (*ActivateWorkspaceResponse, error) {
+	var resp ActivateWorkspaceResponse
+	err := s.c.do(ctx, "POST", "/workspaces/"+id+"/activate", nil, &resp)
+	return &resp, err
+}
+
+func (s *WorkspacesService) GetStatus(ctx context.Context, id string) (*WorkspaceStatus, error) {
+	var st WorkspaceStatus
+	err := s.c.do(ctx, "GET", "/workspaces/"+id+"/status", nil, &st)
+	return &st, err
+}
+
+func (s *WorkspacesService) SetBindings(ctx context.Context, id string, secretIDs []string) error {
+	body := map[string][]string{"secretIds": secretIDs}
+	return s.c.do(ctx, "PUT", "/workspaces/"+id+"/bindings", body, nil)
+}
+
+func (s *WorkspacesService) GetBindings(ctx context.Context, id string) (*BindingsResponse, error) {
+	var resp BindingsResponse
+	err := s.c.do(ctx, "GET", "/workspaces/"+id+"/bindings", nil, &resp)
+	return &resp, err
+}
+
+func (s *WorkspacesService) ReloadSecrets(ctx context.Context, id string) (*ReloadResult, error) {
+	var result ReloadResult
+	err := s.c.do(ctx, "POST", "/workspaces/"+id+"/reload-secrets", nil, &result)
+	return &result, err
+}
+
+func (s *WorkspacesService) SetEnv(ctx context.Context, id string, vars map[string]string) error {
+	body := map[string]any{"vars": vars}
+	return s.c.do(ctx, "PUT", "/workspaces/"+id+"/env", body, nil)
+}
+
+func (s *WorkspacesService) GetEnv(ctx context.Context, id string) (map[string]any, error) {
+	var result map[string]any
+	err := s.c.do(ctx, "GET", "/workspaces/"+id+"/env", nil, &result)
+	return result, err
+}
+
+func (s *WorkspacesService) DeleteEnv(ctx context.Context, id, varName string) error {
+	return s.c.do(ctx, "DELETE", "/workspaces/"+id+"/env/"+varName, nil, nil)
+}
+
+func (s *WorkspacesService) GetModels(ctx context.Context, id string) (*ModelListResponse, error) {
+	var resp ModelListResponse
+	err := s.c.do(ctx, "GET", "/workspaces/"+id+"/models", nil, &resp)
+	return &resp, err
+}
+
+func (s *WorkspacesService) SetModel(ctx context.Context, id, model string) error {
+	return s.c.do(ctx, "PUT", "/workspaces/"+id+"/model", map[string]string{"model": model}, nil)
+}
+
 // SessionsService handles session operations.
 type SessionsService struct{ c *Client }
 
@@ -75,6 +137,35 @@ func (s *SessionsService) Abort(ctx context.Context, workspaceID, sessionID stri
 	return s.c.do(ctx, "POST", fmt.Sprintf("/workspaces/%s/sessions/%s/abort", workspaceID, sessionID), nil, nil)
 }
 
+func (s *SessionsService) List(ctx context.Context, workspaceID string) ([]SessionListItem, error) {
+	var result []SessionListItem
+	err := s.c.do(ctx, "GET", "/workspaces/"+workspaceID+"/sessions", nil, &result)
+	return result, err
+}
+
+func (s *SessionsService) GetActive(ctx context.Context, workspaceID string) (*ActiveSessionsResponse, error) {
+	var resp ActiveSessionsResponse
+	err := s.c.do(ctx, "GET", "/workspaces/"+workspaceID+"/sessions/active", nil, &resp)
+	return &resp, err
+}
+
+func (s *SessionsService) Rename(ctx context.Context, workspaceID, sessionID, title string) error {
+	return s.c.do(ctx, "PUT",
+		fmt.Sprintf("/workspaces/%s/sessions/%s/title", workspaceID, sessionID),
+		map[string]string{"title": title}, nil)
+}
+
+func (s *SessionsService) Get(ctx context.Context, workspaceID, sessionID string) (map[string]any, error) {
+	var result map[string]any
+	err := s.c.do(ctx, "GET", fmt.Sprintf("/workspaces/%s/sessions/%s", workspaceID, sessionID), nil, &result)
+	return result, err
+}
+
+func (s *SessionsService) SendPromptAsync(ctx context.Context, workspaceID, sessionID, message string) error {
+	body := map[string]string{"message": message}
+	return s.c.do(ctx, "POST", fmt.Sprintf("/workspaces/%s/sessions/%s/prompt", workspaceID, sessionID), body, nil)
+}
+
 // AuthService handles authentication operations.
 type AuthService struct{ c *Client }
 
@@ -82,6 +173,22 @@ func (s *AuthService) Me(ctx context.Context) (map[string]any, error) {
 	var result map[string]any
 	err := s.c.do(ctx, "GET", "/auth/me", nil, &result)
 	return result, err
+}
+
+func (s *AuthService) CreateAPIKey(ctx context.Context, name string) (*APIKey, error) {
+	var key APIKey
+	err := s.c.do(ctx, "POST", "/auth/api-keys", map[string]string{"name": name}, &key)
+	return &key, err
+}
+
+func (s *AuthService) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	var keys []APIKey
+	err := s.c.do(ctx, "GET", "/auth/api-keys", nil, &keys)
+	return keys, err
+}
+
+func (s *AuthService) DeleteAPIKey(ctx context.Context, id string) error {
+	return s.c.do(ctx, "DELETE", "/auth/api-keys/"+id, nil, nil)
 }
 
 // SecretsService handles secret operations.
@@ -95,13 +202,53 @@ func (s *SecretsService) Create(ctx context.Context, name, secretType, value str
 }
 
 func (s *SecretsService) List(ctx context.Context) ([]SecretResponse, error) {
-	var result []SecretResponse
-	err := s.c.do(ctx, "GET", "/secrets", nil, &result)
-	return result, err
+	// The API returns {"secrets": [...]}. Decode once; no second HTTP request.
+	var wrapper struct {
+		Secrets []SecretResponse `json:"secrets"`
+	}
+	err := s.c.do(ctx, "GET", "/secrets", nil, &wrapper)
+	if err != nil {
+		return nil, err
+	}
+	return wrapper.Secrets, nil
+}
+
+func (s *SecretsService) Get(ctx context.Context, id string) (*SecretResponse, error) {
+	var resp SecretResponse
+	err := s.c.do(ctx, "GET", "/secrets/"+id, nil, &resp)
+	return &resp, err
+}
+
+func (s *SecretsService) Update(ctx context.Context, id, value string) error {
+	return s.c.do(ctx, "PUT", "/secrets/"+id, map[string]string{"value": value}, nil)
 }
 
 func (s *SecretsService) Delete(ctx context.Context, id string) error {
 	return s.c.do(ctx, "DELETE", "/secrets/"+id, nil, nil)
+}
+
+func (s *SecretsService) Reveal(ctx context.Context, id, password string) (string, error) {
+	var resp struct {
+		Value string `json:"value"`
+	}
+	err := s.c.do(ctx, "POST", "/secrets/"+id+"/reveal", map[string]string{"password": password}, &resp)
+	return resp.Value, err
+}
+
+func (s *SecretsService) GetAuditLog(ctx context.Context) ([]AuditEntry, error) {
+	var wrapper struct {
+		Entries []AuditEntry `json:"entries"`
+	}
+	err := s.c.do(ctx, "GET", "/secrets/audit", nil, &wrapper)
+	return wrapper.Entries, err
+}
+
+func (s *SecretsService) GetBindingsForSecret(ctx context.Context, id string) ([]string, error) {
+	var wrapper struct {
+		Workspaces []string `json:"workspaces"`
+	}
+	err := s.c.do(ctx, "GET", "/secrets/"+id+"/bindings", nil, &wrapper)
+	return wrapper.Workspaces, err
 }
 
 // TerminalService handles terminal operations.
@@ -130,4 +277,46 @@ func extractText(raw json.RawMessage) string {
 		}
 	}
 	return sb
+}
+
+// UserSettingsService handles user settings.
+type UserSettingsService struct{ c *Client }
+
+func (s *UserSettingsService) Get(ctx context.Context) (*UserSettings, error) {
+	var result UserSettings
+	err := s.c.do(ctx, "GET", "/users/me/settings", nil, &result)
+	return &result, err
+}
+
+func (s *UserSettingsService) GetSchema(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	err := s.c.do(ctx, "GET", "/users/me/settings/schema", nil, &result)
+	return result, err
+}
+
+func (s *UserSettingsService) Set(ctx context.Context, key string, value any) (map[string]any, error) {
+	var result map[string]any
+	err := s.c.do(ctx, "PUT", "/users/me/settings/"+key, map[string]any{"value": value}, &result)
+	return result, err
+}
+
+// AccountService handles account key management.
+type AccountService struct{ c *Client }
+
+func (s *AccountService) RotateKey(ctx context.Context, password string) (map[string]any, error) {
+	var result map[string]any
+	err := s.c.do(ctx, "POST", "/account/rotate-key", map[string]string{"password": password}, &result)
+	return result, err
+}
+
+func (s *AccountService) ChangePassword(ctx context.Context, oldPassword, newPassword string) error {
+	body := map[string]string{"oldPassword": oldPassword, "newPassword": newPassword}
+	return s.c.do(ctx, "POST", "/account/change-password", body, nil)
+}
+
+func (s *AccountService) Recover(ctx context.Context, userID, recoveryKey, newPassword string) (map[string]any, error) {
+	var result map[string]any
+	body := map[string]string{"userId": userID, "recoveryKey": recoveryKey, "newPassword": newPassword}
+	err := s.c.do(ctx, "POST", "/account/recover", body, &result)
+	return result, err
 }

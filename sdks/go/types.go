@@ -74,3 +74,133 @@ type SecretResponse struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// APIKey represents an API key record.
+type APIKey struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Key       string     `json:"key,omitempty"` // only on creation
+	Prefix    string     `json:"prefix"`
+	Active    bool       `json:"active"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// WorkspaceStatus is the rich status response from GET /workspaces/:id/status.
+type WorkspaceStatus struct {
+	Phase            string               `json:"phase"`
+	ActiveSessions   int                  `json:"activeSessions"`
+	LastActivityAt   *time.Time           `json:"lastActivityAt,omitempty"`
+	Message          string               `json:"message,omitempty"`
+	Conditions       []WorkspaceCondition `json:"conditions,omitempty"`
+	CredentialState  CredentialState      `json:"credentialState"`
+	AgentHealth      AgentHealth          `json:"agentHealth"`
+	Sessions         []SessionStatusItem  `json:"sessions,omitempty"`
+	ImageTag         string               `json:"imageTag,omitempty"`
+	DiskUsedBytes    int64                `json:"diskUsedBytes,omitempty"`
+	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
+	MemoryUsedBytes  int64                `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes int64                `json:"memoryTotalBytes,omitempty"`
+	ContextUsed      int64                `json:"contextUsed,omitempty"`
+	ContextTotal     int64                `json:"contextTotal,omitempty"`
+}
+
+type WorkspaceCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type CredentialState struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+type AgentHealth struct {
+	Status              string   `json:"status"`
+	ProvidersConfigured int      `json:"providersConfigured"`
+	AgentVersion        string   `json:"agentVersion,omitempty"`
+	Connected           []string `json:"connected,omitempty"`
+	Message             string   `json:"message,omitempty"`
+	LastCheckedAt       string   `json:"lastCheckedAt,omitempty"`
+}
+
+type SessionStatusItem struct {
+	ID     string `json:"id"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status"`
+}
+
+// ActivateWorkspaceResponse is returned by POST /workspaces/:id/activate.
+type ActivateWorkspaceResponse struct {
+	Resumed   string `json:"resumed"`
+	Suspended string `json:"suspended,omitempty"`
+}
+
+// SessionListItem is sidebar metadata for a session.
+type SessionListItem struct {
+	ID            string     `json:"id"`
+	Title         string     `json:"title,omitempty"`
+	ParentID      string     `json:"parentId,omitempty"`
+	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
+	MessageCount  int        `json:"messageCount"`
+	Status        string     `json:"status"`
+}
+
+// ActiveSessionsResponse is returned by GET /workspaces/:id/sessions/active.
+type ActiveSessionsResponse struct {
+	Active    []string `json:"active"`
+	MaxActive int      `json:"maxActive"`
+}
+
+// BindingsResponse is returned by GET /workspaces/:id/bindings.
+type BindingsResponse struct {
+	Bindings []BindingItem `json:"bindings"`
+}
+
+// BindingItem is a single binding entry.
+type BindingItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// ReloadResult is returned by POST /workspaces/:id/reload-secrets.
+type ReloadResult struct {
+	Reloaded  int  `json:"reloaded"`
+	Restarted bool `json:"restarted"`
+}
+
+// ModelListResponse is returned by GET /workspaces/:id/models.
+type ModelListResponse struct {
+	Models       []ModelItem `json:"models"`
+	CurrentModel string      `json:"currentModel"`
+}
+
+// ModelItem is a single model in the catalog.
+type ModelItem struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerID"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	Tier       string `json:"tier"`
+	FreeTier   bool   `json:"freeTier"`
+	Selected   bool   `json:"selected"`
+}
+
+// AuditEntry is a single secret audit log entry.
+type AuditEntry struct {
+	Action      string    `json:"action"`
+	SecretID    string    `json:"secretId"`
+	UserID      string    `json:"userId"`
+	WorkspaceID string    `json:"workspaceId,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
+// UserSettings is the response from GET /users/me/settings.
+type UserSettings struct {
+	Settings      map[string]any `json:"settings"`
+	SchemaVersion int            `json:"schemaVersion"`
+}

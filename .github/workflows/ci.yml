@@ -341,6 +341,234 @@ jobs:
           npx tsc --noEmit
           npm run build
 
+  # SDK Canary CI — runs the ci:fast (Tier 1 shallow) canary scenarios
+  # against the local API server. These scenarios do not require a live
+  # Kubernetes cluster, LLM credentials, or waiting for pod scheduling.
+  # They verify auth, CRUD, error shapes, and SDK parsing regressions.
+  sdk-canary:
+    name: SDK Canary (ci:fast scenarios)
+    runs-on: ubuntu-latest
+    needs: [sdk-contract]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: llmsafespace
+          POSTGRES_USER: llmsafespace
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      valkey:
+        image: valkey/valkey:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Build the API server binary and run migrations
+      - name: Build API server
+        run: go build -o /tmp/llmsafespace-api ./cmd/api/
+
+      - name: Run DB migrations
+        env:
+          LLMSAFESPACE_DB_URL: postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable
+        run: go run ./cmd/migrate/
+
+      # Start the API server in the background
+      - name: Start API server
+        env:
+          LLMSAFESPACE_DB_URL: postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable
+          LLMSAFESPACE_REDIS_URL: redis://localhost:6379
+          LLMSAFESPACE_JWT_SECRET: canary-ci-jwt-secret-not-for-production
+          LLMSAFESPACE_MASTER_KEY: canary-ci-master-key-32bytes000000000
+          LLMSAFESPACE_PORT: "8080"
+        run: |
+          /tmp/llmsafespace-api &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+          # Wait for readyz
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/readyz >/dev/null 2>&1; then
+              echo "API server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      # Seed test accounts
+      - name: Seed canary test accounts
+        run: |
+          go run ./sdks/canary/go/cmd/seed-accounts/ \
+            --url http://localhost:8080 \
+            --out /tmp/canary-keys.env
+        continue-on-error: true  # seed may fail if accounts exist (idempotent)
+
+      - name: Load canary API keys
+        run: |
+          if [ -f /tmp/canary-keys.env ]; then
+            source /tmp/canary-keys.env
+            echo "LLMSAFESPACE_API_KEY=${CANARY_API_KEY_1}" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACE_API_KEY_USER2=${CANARY_API_KEY_2}" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACE_EMAIL=canary1@llmsafespace.test" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACE_PASSWORD=${CANARY_PASSWORD_1}" >> "$GITHUB_ENV"
+          fi
+
+      # ── Go SDK canaries ────────────────────────────────────────────────────
+      - name: Go canary — S-HEALTH
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-health/
+        continue-on-error: false
+
+      - name: Go canary — S-AUTH
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-auth/
+
+      - name: Go canary — S-AUTH-CONFIG
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-auth-config/
+
+      - name: Go canary — S-LOGOUT
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-logout/
+
+      - name: Go canary — S-APIKEY
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-apikey/
+
+      - name: Go canary — S-WS-CRUD
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-ws-crud/
+
+      - name: Go canary — S-WS-STATUS
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-ws-status/
+
+      - name: Go canary — S-SECRET-CRUD
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-secret-crud/
+
+      - name: Go canary — S-SECRET-REVEAL
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-secret-reveal/
+
+      - name: Go canary — S-SECRET-AUDIT
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-secret-audit/
+
+      - name: Go canary — S-SECRET-BINDINGS
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-secret-bindings/
+
+      - name: Go canary — S-ENV-VARS
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-env-vars/
+
+      - name: Go canary — S-CRED-CRUD
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-cred-crud/
+
+      - name: Go canary — S-OWNERSHIP
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-ownership/
+
+      - name: Go canary — S-USER-SETTINGS
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-user-settings/
+
+      - name: Go canary — S-ERROR-FORMAT
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: go run ./sdks/canary/go/scenarios/s-error-format/
+
+      # ── Python SDK canaries (all ci:fast scenarios) ────────────────────────
+      - name: Python SDK install
+        working-directory: sdks/python
+        run: pip install -e ".[dev]" httpx -q
+
+      - name: Python canaries — all ci:fast scenarios
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: |
+          set -e
+          for scenario in \
+            s_health s_auth s_auth_config s_logout s_apikey s_user_settings \
+            s_ws_crud s_ws_status s_secret_crud s_secret_reveal s_secret_audit \
+            s_secret_bindings s_env_vars s_cred_crud s_error_format s_ownership; do
+            echo "--- Python: $scenario ---"
+            python sdks/canary/python/scenarios/${scenario}.py
+          done
+
+      # ── TypeScript SDK canaries (all ci:fast scenarios) ────────────────────
+      - name: TypeScript SDK install and build
+        working-directory: sdks/typescript
+        run: |
+          npm ci
+          npx tsup src/index.ts --format esm,cjs --dts
+
+      - name: TypeScript canaries — all ci:fast scenarios
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+        run: |
+          set -e
+          for scenario in \
+            s-health s-auth s-auth-config s-logout s-apikey s-user-settings \
+            s-ws-crud s-ws-status s-secret-crud s-secret-reveal s-secret-audit \
+            s-secret-bindings s-env-vars s-cred-crud s-error-format s-ownership; do
+            echo "--- TypeScript: $scenario ---"
+            npx tsx sdks/canary/typescript/scenarios/${scenario}.ts
+          done
+
+      # ── MCP server canaries ────────────────────────────────────────────────
+      - name: Build MCP binary
+        run: go build -o /tmp/mcp-binary ./cmd/mcp/
+
+      - name: MCP canary — S-MCP-TOOLS + S-MCP-AUTH-NEG + S-MCP-CRED + S-MCP-INPUT-NEG
+        env:
+          LLMSAFESPACE_URL: http://localhost:8080
+          MCP_BINARY: /tmp/mcp-binary
+        run: go run ./sdks/canary/mcp/
+
+      - name: Stop API server
+        if: always()
+        run: kill $API_PID 2>/dev/null || true
+
   # Compute a single unix timestamp shared by all image-build jobs in this run
   # so every artifact built from one workflow invocation carries the same
   # `ts-<unix>` tag. Sortable lexicographically as a 10-digit number until

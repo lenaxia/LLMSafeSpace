@@ -169,6 +169,39 @@ class _WorkspacesAPI:
     def get_status(self, workspace_id: str) -> dict[str, Any]:
         return self._c._request("GET", f"/workspaces/{workspace_id}/status")
 
+    def restart(self, workspace_id: str) -> None:
+        self._c._request("POST", f"/workspaces/{workspace_id}/restart")
+
+    def set_bindings(self, workspace_id: str, secret_ids: list[str]) -> None:
+        self._c._request(
+            "PUT",
+            f"/workspaces/{workspace_id}/bindings",
+            json={"secretIds": secret_ids},
+        )
+
+    def get_bindings(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("GET", f"/workspaces/{workspace_id}/bindings")
+
+    def reload_secrets(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("POST", f"/workspaces/{workspace_id}/reload-secrets")
+
+    def set_model(self, workspace_id: str, model: str) -> None:
+        self._c._request(
+            "PUT", f"/workspaces/{workspace_id}/model", json={"model": model}
+        )
+
+    def get_models(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("GET", f"/workspaces/{workspace_id}/models")
+
+    def set_env(self, workspace_id: str, vars: dict[str, str]) -> None:
+        self._c._request("PUT", f"/workspaces/{workspace_id}/env", json={"vars": vars})
+
+    def get_env(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("GET", f"/workspaces/{workspace_id}/env")
+
+    def delete_env(self, workspace_id: str, var_name: str) -> None:
+        self._c._request("DELETE", f"/workspaces/{workspace_id}/env/{var_name}")
+
 
 class _SessionsAPI:
     def __init__(self, client: LLMSafeSpace):
@@ -203,6 +236,30 @@ class _SessionsAPI:
             "POST", f"/workspaces/{workspace_id}/sessions/{session_id}/abort"
         )
 
+    def rename(self, workspace_id: str, session_id: str, title: str) -> None:
+        self._c._request(
+            "PUT",
+            f"/workspaces/{workspace_id}/sessions/{session_id}/title",
+            json={"title": title},
+        )
+
+    def get(self, workspace_id: str, session_id: str) -> dict[str, Any]:
+        return self._c._request(
+            "GET", f"/workspaces/{workspace_id}/sessions/{session_id}"
+        )
+
+    def get_active(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("GET", f"/workspaces/{workspace_id}/sessions/active")
+
+    def send_prompt_async(
+        self, workspace_id: str, session_id: str, message: str
+    ) -> None:
+        self._c._request(
+            "POST",
+            f"/workspaces/{workspace_id}/sessions/{session_id}/prompt",
+            json={"message": message},
+        )
+
 
 class _AuthAPI:
     def __init__(self, client: LLMSafeSpace):
@@ -235,17 +292,40 @@ class _SecretsAPI:
         return SecretResponse(**self._c._request("POST", "/secrets", json=body))
 
     def list(self) -> list[SecretResponse]:
-        return [SecretResponse(**s) for s in self._c._request("GET", "/secrets")]
+        # API returns {"secrets": [...]} wrapper
+        data = self._c._request("GET", "/secrets")
+        if isinstance(data, dict):
+            items = data.get("secrets", [])
+        else:
+            items = data
+        return [SecretResponse(**s) for s in items]
 
     def get(self, secret_id: str) -> SecretResponse:
         return SecretResponse(**self._c._request("GET", f"/secrets/{secret_id}"))
 
+    def update(self, secret_id: str, value: str) -> None:
+        self._c._request("PUT", f"/secrets/{secret_id}", json={"value": value})
+
     def delete(self, secret_id: str) -> None:
         self._c._request("DELETE", f"/secrets/{secret_id}")
 
-    def reveal(self, secret_id: str) -> str:
-        data = self._c._request("POST", f"/secrets/{secret_id}/reveal")
+    def reveal(self, secret_id: str, password: str = "") -> str:
+        data = self._c._request(
+            "POST", f"/secrets/{secret_id}/reveal", json={"password": password}
+        )
         return data["value"]
+
+    def get_audit_log(self) -> list[dict]:
+        data = self._c._request("GET", "/secrets/audit")
+        if isinstance(data, dict):
+            return data.get("entries", [])
+        return data
+
+    def get_bindings_for_secret(self, secret_id: str) -> list[str]:
+        data = self._c._request("GET", f"/secrets/{secret_id}/bindings")
+        if isinstance(data, dict):
+            return data.get("workspaces", [])
+        return data
 
 
 class _TerminalAPI:

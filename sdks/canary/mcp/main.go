@@ -1,0 +1,580 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// MCP Server canary: S-MCP-TOOLS + S-MCP-AUTH-NEG + S-MCP-CRED + S-MCP-INPUT-NEG
+//
+// Communicates with the MCP server via stdio transport (spawning the mcp binary)
+// or SSE transport (connecting to a running SSE endpoint).
+//
+// Run modes:
+//
+//	MCP_TRANSPORT=stdio  (default) — spawn ./cmd/mcp/mcp binary via exec
+//	MCP_TRANSPORT=sse    — connect to MCP_SSE_URL (default http://localhost:3001)
+//
+// Env vars:
+//
+//	LLMSAFESPACE_URL          API base URL (passed to MCP server)
+//	LLMSAFESPACE_API_KEY      valid API key
+//	MCP_TRANSPORT             stdio | sse
+//	MCP_SSE_URL               SSE server URL (sse mode only)
+//	MCP_BINARY                path to mcp binary (stdio mode only)
+//
+// Compile:
+//
+//	cd sdks/canary/mcp && go build -o mcp-canary ./main.go
+//
+// Run:
+//
+//	./mcp-canary
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ── JSON-RPC types ─────────────────────────────────────────────────────────
+
+type rpcRequest struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      int    `json:"id"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+}
+
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int             `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type toolResult struct {
+	IsError bool `json:"isError"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+// ── Result tracking ────────────────────────────────────────────────────────
+
+type Check struct {
+	Name   string `json:"name"`
+	Passed bool   `json:"passed"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type Result struct {
+	Scenario  string  `json:"scenario"`
+	SDK       string  `json:"sdk"`
+	Passed    int     `json:"passed"`
+	Failed    int     `json:"failed"`
+	DurationS float64 `json:"duration_s"`
+	Checks    []Check `json:"checks"`
+}
+
+type Runner struct {
+	scenario string
+	start    time.Time
+	checks   []Check
+	passed   int
+	failed   int
+}
+
+func NewRunner(scenario string) *Runner {
+	return &Runner{scenario: scenario, start: time.Now()}
+}
+
+func (r *Runner) assert(cond bool, name, detail string) {
+	r.checks = append(r.checks, Check{Name: name, Passed: cond, Detail: detail})
+	if cond {
+		r.passed++
+	} else {
+		r.failed++
+	}
+}
+
+func (r *Runner) ok(name string)           { r.assert(true, name, "") }
+func (r *Runner) fail(name, detail string) { r.assert(false, name, detail) }
+
+func (r *Runner) print() Result {
+	res := r.result()
+	fmt.Printf("=== Canary: mcp-server / %s ===\n", res.Scenario)
+	for _, c := range res.Checks {
+		if c.Passed {
+			fmt.Printf("  PASS %s\n", c.Name)
+		} else {
+			fmt.Printf("  FAIL %s: %s\n", c.Name, c.Detail)
+		}
+	}
+	fmt.Printf("--- %d passed, %d failed in %.2fs ---\n\n", res.Passed, res.Failed, res.DurationS)
+	return res
+}
+
+func (r *Runner) result() Result {
+	return Result{
+		Scenario:  r.scenario,
+		SDK:       "mcp-server",
+		Passed:    r.passed,
+		Failed:    r.failed,
+		DurationS: time.Since(r.start).Seconds(),
+		Checks:    r.checks,
+	}
+}
+
+// ── MCP client (stdio) ─────────────────────────────────────────────────────
+
+type stdioClient struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Scanner
+	mu     sync.Mutex
+	nextID int
+}
+
+func newStdioClient(binary, apiURL, apiKey string) (*stdioClient, error) {
+	cmd := exec.Command(binary)
+	cmd.Env = append(os.Environ(),
+		"LLMSAFESPACE_URL="+apiURL,
+		"LLMSAFESPACE_API_KEY="+apiKey,
+	)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start mcp binary: %w", err)
+	}
+
+	c := &stdioClient{
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: bufio.NewScanner(stdout),
+		nextID: 1,
+	}
+
+	// Initialize
+	_, err = c.send("initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"clientInfo":      map[string]string{"name": "canary", "version": "1.0"},
+		"capabilities":    map[string]any{},
+	})
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return nil, fmt.Errorf("initialize: %w", err)
+	}
+
+	return c, nil
+}
+
+func (c *stdioClient) send(method string, params any) (json.RawMessage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	id := c.nextID
+	c.nextID++
+
+	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+
+	if _, err := c.stdin.Write(data); err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+
+	// Read response lines until we find one with matching id
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if !c.stdout.Scan() {
+			return nil, fmt.Errorf("EOF reading response")
+		}
+		line := c.stdout.Text()
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var resp rpcResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			continue
+		}
+		if resp.ID != id {
+			continue
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return resp.Result, nil
+	}
+	return nil, fmt.Errorf("timeout waiting for response to %s", method)
+}
+
+func (c *stdioClient) callTool(name string, args map[string]any) (*toolResult, error) {
+	result, err := c.send("tools/call", map[string]any{
+		"name":      name,
+		"arguments": args,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var tr toolResult
+	if err := json.Unmarshal(result, &tr); err != nil {
+		return nil, fmt.Errorf("decode tool result: %w", err)
+	}
+	return &tr, nil
+}
+
+func (c *stdioClient) listTools() ([]map[string]any, error) {
+	result, err := c.send("tools/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Tools, nil
+}
+
+func (c *stdioClient) close() {
+	_ = c.stdin.Close()
+	_ = c.cmd.Wait()
+}
+
+// ── Scenario runners ───────────────────────────────────────────────────────
+
+func runMCPTools(ctx context.Context, r *Runner, client *stdioClient) {
+	const expectedCount = 11
+	expectedTools := []string{
+		"workspace_create", "workspace_activate", "workspace_stop",
+		"session_create", "session_message", "session_history",
+		"credential_create", "credential_list", "credential_delete",
+		"model_list", "model_set",
+	}
+
+	tools, err := client.listTools()
+	if err != nil {
+		r.fail("tools/list: no error", err.Error())
+		return
+	}
+	r.ok("tools/list: no error")
+
+	// P14: exact count
+	r.assert(len(tools) == expectedCount, "tools: exact count",
+		fmt.Sprintf("expected %d, got %d", expectedCount, len(tools)))
+
+	// P1–P11: each expected tool present
+	toolMap := make(map[string]map[string]any, len(tools))
+	for _, t := range tools {
+		name, _ := t["name"].(string)
+		toolMap[name] = t
+	}
+	for _, name := range expectedTools {
+		_, found := toolMap[name]
+		r.assert(found, "tool-present: "+name, "")
+	}
+
+	// P12: non-empty description
+	for _, t := range tools {
+		name, _ := t["name"].(string)
+		desc, _ := t["description"].(string)
+		r.assert(desc != "", "tool-description: "+name, "empty description")
+	}
+
+	// P13: inputSchema.type=object
+	for _, t := range tools {
+		name, _ := t["name"].(string)
+		schema, _ := t["inputSchema"].(map[string]any)
+		if schema == nil {
+			r.fail("tool-schema: "+name, "no inputSchema")
+			continue
+		}
+		r.assert(schema["type"] == "object", "tool-schema-type: "+name,
+			fmt.Sprintf("got %v", schema["type"]))
+	}
+}
+
+func runMCPAuthNeg(ctx context.Context, r *Runner, apiURL, binary string) {
+	// Create a client with an invalid key
+	badClient, err := newStdioClient(binary, apiURL, "lsp_invalid_canary_key_000000000000")
+	if err != nil {
+		r.fail("mcp-auth-neg: client started", err.Error())
+		return
+	}
+	defer badClient.close()
+
+	// N1: workspace_create with bad key → isError=true
+	tr, err := badClient.callTool("workspace_create", map[string]any{"runtime": "base"})
+	if err != nil {
+		// JSON-RPC level error is a failure
+		r.fail("bad-key: workspace_create not rpc error", "got rpc error: "+err.Error())
+	} else {
+		r.assert(tr.IsError, "bad-key: workspace_create isError=true", "")
+		text := toolResultText(tr)
+		r.assert(strings.Contains(strings.ToLower(text), "401") ||
+			strings.Contains(strings.ToLower(text), "unauthorized") ||
+			strings.Contains(strings.ToLower(text), "auth"),
+			"bad-key: error message contains auth indicator", text[:min(len(text), 100)])
+	}
+
+	// N2: credential_list with bad key
+	tr2, err2 := badClient.callTool("credential_list", map[string]any{})
+	if err2 != nil {
+		r.fail("bad-key: credential_list not rpc error", "got rpc error: "+err2.Error())
+	} else {
+		r.assert(tr2.IsError, "bad-key: credential_list isError=true", "")
+	}
+}
+
+func runMCPInputNeg(ctx context.Context, r *Runner, client *stdioClient) {
+	testCases := []struct {
+		name    string
+		tool    string
+		args    map[string]any
+		missing string
+	}{
+		{"session_create-missing-ws", "session_create", map[string]any{}, "workspace_id"},
+		{"session_message-missing-ws", "session_message", map[string]any{"session_id": "x", "message": "hi"}, "workspace_id"},
+		{"session_message-missing-sess", "session_message", map[string]any{"workspace_id": "x", "message": "hi"}, "session_id"},
+		{"session_message-empty-msg", "session_message", map[string]any{"workspace_id": "x", "session_id": "y", "message": ""}, "message"},
+		{"session_history-missing-ws", "session_history", map[string]any{"session_id": "x"}, "workspace_id"},
+		{"model_list-missing-ws", "model_list", map[string]any{}, "workspace_id"},
+		{"model_set-missing-model", "model_set", map[string]any{"workspace_id": "x"}, "model"},
+	}
+
+	for _, tc := range testCases {
+		tr, err := client.callTool(tc.tool, tc.args)
+		if err != nil {
+			r.fail(tc.name+": not rpc error", "got rpc error: "+err.Error())
+		} else {
+			r.assert(tr.IsError, tc.name+": isError=true", "")
+		}
+	}
+
+	// N5: message > 1MB → isError=true
+	bigMsg := strings.Repeat("x", 1024*1024+1)
+	tr, err := client.callTool("session_message", map[string]any{
+		"workspace_id": "x", "session_id": "y", "message": bigMsg,
+	})
+	if err != nil {
+		r.fail("oversized-message: not rpc error", "got rpc error: "+err.Error())
+	} else {
+		r.assert(tr.IsError, "oversized-message: isError=true", "")
+		text := toolResultText(tr)
+		r.assert(strings.Contains(strings.ToLower(text), "large") ||
+			strings.Contains(strings.ToLower(text), "size") ||
+			strings.Contains(strings.ToLower(text), "too"),
+			"oversized-message: contains size indicator", text[:min(len(text), 100)])
+	}
+}
+
+func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
+	// P1: credential_create
+	tr, err := client.callTool("credential_create", map[string]any{
+		"provider": "anthropic",
+		"api_key":  "sk-canary-placeholder-00000000",
+		"name":     "canary-mcp-cred",
+	})
+	if err != nil {
+		r.fail("credential_create: no rpc error", err.Error())
+		return
+	}
+	r.assert(!tr.IsError, "credential_create: isError=false", toolResultText(tr))
+
+	// Extract credential ID from result
+	text := toolResultText(tr)
+	var credResp map[string]any
+	credID := ""
+	if err := json.Unmarshal([]byte(text), &credResp); err == nil {
+		credID, _ = credResp["id"].(string)
+	}
+	r.assert(credID != "", "credential_create: id in result", text[:min(len(text), 100)])
+
+	// P2: credential_list
+	tr2, err := client.callTool("credential_list", map[string]any{})
+	if err != nil {
+		r.fail("credential_list: no rpc error", err.Error())
+	} else {
+		r.assert(!tr2.IsError, "credential_list: isError=false", toolResultText(tr2))
+		listText := toolResultText(tr2)
+		r.assert(credID == "" || strings.Contains(listText, credID),
+			"credential_list: contains created credential", "")
+	}
+
+	// P3: credential_delete
+	if credID != "" {
+		tr3, err := client.callTool("credential_delete", map[string]any{"credential_id": credID})
+		if err != nil {
+			r.fail("credential_delete: no rpc error", err.Error())
+		} else {
+			r.assert(!tr3.IsError, "credential_delete: isError=false", toolResultText(tr3))
+			r.assert(strings.Contains(strings.ToLower(toolResultText(tr3)), "delet"),
+				"credential_delete: result contains 'deleted'", toolResultText(tr3))
+		}
+	}
+
+	// N1: missing provider
+	trN1, _ := client.callTool("credential_create", map[string]any{"api_key": "sk-x"})
+	if trN1 != nil {
+		r.assert(trN1.IsError, "cred_create-missing-provider: isError=true", "")
+	}
+
+	// N2: missing api_key
+	trN2, _ := client.callTool("credential_create", map[string]any{"provider": "anthropic"})
+	if trN2 != nil {
+		r.assert(trN2.IsError, "cred_create-missing-key: isError=true", "")
+	}
+
+	// N4: delete nonexistent
+	trN4, _ := client.callTool("credential_delete", map[string]any{"credential_id": "00000000-0000-0000-0000-000000000099"})
+	if trN4 != nil {
+		r.assert(trN4.IsError, "cred_delete-nonexistent: isError=true", "")
+	}
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+
+func main() {
+	apiURL := os.Getenv("LLMSAFESPACE_URL")
+	if apiURL == "" {
+		apiURL = "http://localhost:8080"
+	}
+	apiKey := os.Getenv("LLMSAFESPACE_API_KEY")
+	binary := os.Getenv("MCP_BINARY")
+	if binary == "" {
+		// Find the mcp binary relative to repo root
+		binary = "./cmd/mcp/mcp"
+	}
+
+	// Build the binary if it doesn't exist
+	if _, err := os.Stat(binary); os.IsNotExist(err) {
+		fmt.Printf("Building MCP binary at %s...\n", binary)
+		cmd := exec.Command("go", "build", "-o", binary, "./cmd/mcp/")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to build MCP binary: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	totalPassed, totalFailed := 0, 0
+
+	// ── S-MCP-TOOLS ──
+	{
+		r := NewRunner("mcp-tools")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runMCPTools(ctx, r, client)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── S-MCP-AUTH-NEG ──
+	{
+		r := NewRunner("mcp-auth-neg")
+		runMCPAuthNeg(ctx, r, apiURL, binary)
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── S-MCP-CRED + S-MCP-INPUT-NEG ── (share one client)
+	{
+		r := NewRunner("mcp-cred-and-input-neg")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runMCPCredCRUD(ctx, r, client)
+			runMCPInputNeg(ctx, r, client)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	fmt.Printf("=== Total: %d passed, %d failed ===\n", totalPassed, totalFailed)
+	if totalFailed > 0 {
+		os.Exit(1)
+	}
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+func toolResultText(tr *toolResult) string {
+	if tr == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, c := range tr.Content {
+		if c.Type == "text" {
+			sb.WriteString(c.Text)
+		}
+	}
+	return sb.String()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// rawHTTPDo is used by the SSE-based MCP test if needed.
+func rawHTTPDo(ctx context.Context, method, url, apiKey string, body []byte) (int, []byte, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, b, err
+}

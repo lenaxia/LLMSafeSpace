@@ -42,6 +42,8 @@ export class LLMSafeSpace {
   public readonly auth: AuthAPI;
   public readonly secrets: SecretsAPI;
   public readonly terminal: TerminalAPI;
+  public readonly userSettings: UserSettingsAPI;
+  public readonly account: AccountAPI;
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -55,6 +57,8 @@ export class LLMSafeSpace {
     this.auth = new AuthAPI(this);
     this.secrets = new SecretsAPI(this);
     this.terminal = new TerminalAPI(this);
+    this.userSettings = new UserSettingsAPI(this);
+    this.account = new AccountAPI(this);
   }
 
   /** Internal: make an authenticated request. */
@@ -168,14 +172,33 @@ class WorkspacesAPI {
   resume(id: string) {
     return this.client.request<void>("POST", `/workspaces/${id}/resume`);
   }
+  restart(id: string) {
+    return this.client.request<void>("POST", `/workspaces/${id}/restart`);
+  }
   setBindings(id: string, secretIds: string[]) {
     return this.client.request<void>("PUT", `/workspaces/${id}/bindings`, { secretIds });
   }
+  getBindings(id: string) {
+    return this.client.request<{ bindings: Array<{ id: string; name: string; type: string }> }>(
+      "GET", `/workspaces/${id}/bindings`);
+  }
+  reloadSecrets(id: string) {
+    return this.client.request<{ reloaded: number; restarted: boolean }>("POST", `/workspaces/${id}/reload-secrets`);
+  }
+  setModel(id: string, model: string) {
+    return this.client.request<void>("PUT", `/workspaces/${id}/model`, { model });
+  }
+  getModels(id: string) {
+    return this.client.request<{ models: unknown[]; currentModel: string }>("GET", `/workspaces/${id}/models`);
+  }
   setEnv(id: string, env: Record<string, string>) {
-    return this.client.request<void>("PUT", `/workspaces/${id}/env`, env);
+    return this.client.request<void>("PUT", `/workspaces/${id}/env`, { vars: env });
   }
   getEnv(id: string) {
-    return this.client.request<Record<string, string>>("GET", `/workspaces/${id}/env`);
+    return this.client.request<{ vars: string[] }>("GET", `/workspaces/${id}/env`);
+  }
+  deleteEnv(id: string, varName: string) {
+    return this.client.request<void>("DELETE", `/workspaces/${id}/env/${varName}`);
   }
 }
 
@@ -208,6 +231,12 @@ class SessionsAPI {
   abort(workspaceId: string, sessionId: string) {
     return this.client.request<void>("POST", `/workspaces/${workspaceId}/sessions/${sessionId}/abort`);
   }
+  get(workspaceId: string, sessionId: string) {
+    return this.client.request<Record<string, unknown>>("GET", `/workspaces/${workspaceId}/sessions/${sessionId}`);
+  }
+  sendPromptAsync(workspaceId: string, sessionId: string, message: string) {
+    return this.client.request<void>("POST", `/workspaces/${workspaceId}/sessions/${sessionId}/prompt`, { message });
+  }
 }
 
 class AuthAPI {
@@ -234,16 +263,27 @@ class SecretsAPI {
     return this.client.request<SecretResponse>("POST", "/secrets", req);
   }
   list() {
-    return this.client.request<SecretResponse[]>("GET", "/secrets");
+    // API wraps in {"secrets": [...]}
+    return this.client.request<{ secrets: SecretResponse[] }>("GET", "/secrets")
+      .then(r => (r as any)?.secrets ?? r as unknown as SecretResponse[]);
   }
   get(id: string) {
     return this.client.request<SecretResponse>("GET", `/secrets/${id}`);
   }
+  update(id: string, value: string) {
+    return this.client.request<void>("PUT", `/secrets/${id}`, { value });
+  }
   delete(id: string) {
     return this.client.request<void>("DELETE", `/secrets/${id}`);
   }
-  reveal(id: string) {
-    return this.client.request<{ value: string }>("POST", `/secrets/${id}/reveal`);
+  reveal(id: string, password: string) {
+    return this.client.request<{ value: string }>("POST", `/secrets/${id}/reveal`, { password });
+  }
+  getAuditLog() {
+    return this.client.request<{ entries: unknown[] }>("GET", "/secrets/audit");
+  }
+  getBindingsForSecret(id: string) {
+    return this.client.request<{ workspaces: string[] }>("GET", `/secrets/${id}/bindings`);
   }
 }
 
@@ -252,6 +292,34 @@ class TerminalAPI {
 
   getTicket(workspaceId: string) {
     return this.client.request<TerminalTicket>("POST", `/workspaces/${workspaceId}/terminal/ticket`);
+  }
+}
+
+class UserSettingsAPI {
+  constructor(private client: LLMSafeSpace) {}
+
+  get() {
+    return this.client.request<{ settings: Record<string, unknown>; schemaVersion: number }>("GET", "/users/me/settings");
+  }
+  getSchema() {
+    return this.client.request<{ settings: unknown[]; schemaVersion: number }>("GET", "/users/me/settings/schema");
+  }
+  set(key: string, value: unknown) {
+    return this.client.request<{ key: string; value: unknown }>("PUT", `/users/me/settings/${key}`, { value });
+  }
+}
+
+class AccountAPI {
+  constructor(private client: LLMSafeSpace) {}
+
+  rotateKey(password: string) {
+    return this.client.request<{ keyVersion: number; recoveryKey: string }>("POST", "/account/rotate-key", { password });
+  }
+  changePassword(oldPassword: string, newPassword: string) {
+    return this.client.request<void>("POST", "/account/change-password", { oldPassword, newPassword });
+  }
+  recover(userId: string, recoveryKey: string, newPassword: string) {
+    return this.client.request<{ recoveryKey: string }>("POST", "/account/recover", { userId, recoveryKey, newPassword });
   }
 }
 

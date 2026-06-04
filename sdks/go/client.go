@@ -24,11 +24,13 @@ type Client struct {
 	password   string
 	httpClient *http.Client
 
-	Workspaces *WorkspacesService
-	Sessions   *SessionsService
-	Auth       *AuthService
-	Secrets    *SecretsService
-	Terminal   *TerminalService
+	Workspaces   *WorkspacesService
+	Sessions     *SessionsService
+	Auth         *AuthService
+	Secrets      *SecretsService
+	Terminal     *TerminalService
+	UserSettings *UserSettingsService
+	Account      *AccountService
 }
 
 // Option configures the client.
@@ -64,6 +66,8 @@ func New(baseURL string, opts ...Option) *Client {
 	c.Auth = &AuthService{c: c}
 	c.Secrets = &SecretsService{c: c}
 	c.Terminal = &TerminalService{c: c}
+	c.UserSettings = &UserSettingsService{c: c}
+	c.Account = &AccountService{c: c}
 	return c
 }
 
