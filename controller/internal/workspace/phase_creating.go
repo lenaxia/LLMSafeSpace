@@ -102,7 +102,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		return ctrl.Result{RequeueAfter: requeueCreating}, nil
 	}
 
-	if existingPod.Status.Phase == corev1.PodRunning && existingPod.Status.PodIP != "" {
+	if existingPod.Status.Phase == corev1.PodRunning && existingPod.Status.PodIP != "" && allContainersReady(existingPod) {
 		now := metav1.Now()
 
 		// Record startup latency metrics and clear anchors.

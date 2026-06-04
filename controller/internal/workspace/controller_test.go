@@ -80,7 +80,26 @@ func makeBoundPVC(name, namespace string, ownerUID types.UID) *corev1.Persistent
 func makeRunningPod(name, namespace, ip string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Status:     corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: ip,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Ready: true},
+			},
+		},
+	}
+}
+
+func makeRunningPodNotReady(name, namespace, ip string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: ip,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Ready: false},
+			},
+		},
 	}
 }
 
@@ -179,7 +198,27 @@ func TestReconcile_Creating_PodRunning_TransitionsToActive(t *testing.T) {
 	assert.Equal(t, "http://10.0.0.5:4096", updated.Status.Endpoint)
 }
 
-// TestReconcile_Creating_NoPod_NoPwSecret_SelfHealsCreatesSecret pins the
+// TestReconcile_Creating_PodRunningNotReady_StaysInCreating verifies that a
+// pod in PodRunning phase whose readiness probe has not yet passed does NOT
+// cause a transition to Active. The workspace must remain in Creating until
+// all container readiness probes pass (ContainerStatus.Ready == true).
+func TestReconcile_Creating_PodRunningNotReady_StaysInCreating(t *testing.T) {
+	ws := makeWorkspace("ws-not-ready", "default", v1.WorkspacePhaseCreating)
+	ws.Status.PVCName = "workspace-ws-not-ready"
+	expectedPodName := podName("ws-not-ready", string(ws.UID))
+	pod := makeRunningPodNotReady(expectedPodName, "default", "10.0.0.6")
+	r := reconcilerFor(t, ws, pod)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-not-ready", "default"))
+	require.NoError(t, err)
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-not-ready", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "must stay Creating until readiness probe passes")
+	assert.Empty(t, updated.Status.PodIP, "PodIP must not be set while not ready")
+	assert.Empty(t, updated.Status.Endpoint, "Endpoint must not be set while not ready")
+}
+
 // production self-heal observed at safespace.thekao.cloud on 2026-06-01:
 // 6+ workspaces were stuck in Creating phase from a pre-fix controller
 // that did not create per-workspace bcrypt password Secrets. After the
