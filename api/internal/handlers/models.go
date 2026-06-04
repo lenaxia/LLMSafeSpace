@@ -19,31 +19,12 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
-// WorkspaceMetadataUpdater updates non-sensitive workspace fields.
-// Kept for backward compatibility; ModelStore is the superset interface.
-type WorkspaceMetadataUpdater interface {
-	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
-}
-
-// WorkspaceDefaultModelReader reads the workspace's current default model.
-// Optional — if the updater also implements this, ListModels includes the selection.
-type WorkspaceDefaultModelReader interface {
-	GetDefaultModel(ctx context.Context, workspaceID string) (string, error)
-}
-
 // ModelStore provides all database operations needed by model endpoints.
-// Satisfied by *database.Service. Superset of WorkspaceMetadataUpdater.
+// Satisfied by *database.Service.
 type ModelStore interface {
-	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
 	GetDefaultModel(ctx context.Context, workspaceID string) (string, error)
-}
-
-// evictModelCache removes a single workspace's cached model entry.
-func evictModelCache(workspaceID string) {
-	modelCacheMu.Lock()
-	defer modelCacheMu.Unlock()
-	delete(modelCacheMap, workspaceID)
+	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
 }
 
 // ModelSelectionRequest is the request body for PUT /workspaces/:id/model.
@@ -51,9 +32,7 @@ type ModelSelectionRequest struct {
 	Model string `json:"model" binding:"required"`
 }
 
-// SetWorkspaceMetadataUpdater installs the updater for workspace metadata.
-// Accepts ModelStore (the superset interface used by eb1a7c4+) but falls back
-// gracefully when passed a plain WorkspaceMetadataUpdater for compatibility.
+// SetWorkspaceMetadataUpdater installs the model store for workspace metadata operations.
 func (h *SecretsHandler) SetWorkspaceMetadataUpdater(u ModelStore) {
 	h.wsUpdater = u
 }
@@ -98,6 +77,13 @@ func clearModelCache() {
 	modelCacheMap = make(map[string]*modelCacheEntry)
 }
 
+// evictModelCache removes a single workspace's cached entry.
+func evictModelCache(workspaceID string) {
+	modelCacheMu.Lock()
+	defer modelCacheMu.Unlock()
+	delete(modelCacheMap, workspaceID)
+}
+
 // ListModels handles GET /api/v1/workspaces/:id/models.
 // Proxies to the running opencode instance's model catalog.
 func (h *SecretsHandler) ListModels(c *gin.Context) {
@@ -113,6 +99,19 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
+	// Explicit ownership check before any pod communication.
+	if h.wsUpdater != nil {
+		meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
+		if err != nil || meta == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+			return
+		}
+		if meta.UserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			return
+		}
+	}
+
 	podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
 	if err != nil || podIP == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workspace pod not running"})
@@ -122,12 +121,24 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	// Check cache first (5s TTL, avoids repeated catalog fetches on page loads).
 	body := getCachedModels(workspaceID)
 	if body == nil {
+		// Retrieve workspace password for opencode Basic auth.
+		if h.passwordGetter == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model discovery unavailable (no password getter)"})
+			return
+		}
+		password, err := h.passwordGetter(c.Request.Context(), workspaceID)
+		if err != nil || password == "" {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to retrieve workspace credentials"})
+			return
+		}
+
 		url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
 		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil) //nolint:gosec // G107: URL constructed from trusted podIP (internal cluster network)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
 			return
 		}
+		req.SetBasicAuth(agentd.AuthUsername, password)
 
 		resp, err := modelHTTPClient.Do(req)
 		if err != nil {
@@ -161,10 +172,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	// Include current workspace model selection for convenience.
 	var currentModel string
 	if h.wsUpdater != nil {
-		// wsUpdater also implements a reader if available — check via type assertion.
-		if reader, ok := h.wsUpdater.(WorkspaceDefaultModelReader); ok {
-			currentModel, _ = reader.GetDefaultModel(c.Request.Context(), workspaceID)
-		}
+		currentModel, _ = h.wsUpdater.GetDefaultModel(c.Request.Context(), workspaceID)
 	}
 
 	// Mark the selected model in the array.
@@ -270,8 +278,9 @@ func classifyTier(providerID string, cost []opencodeCost) string {
 }
 
 // SetModel handles PUT /api/v1/workspaces/:id/model.
-// Stores the selected model as workspace metadata (no encryption needed)
-// and pushes the model selection directly to the running agent via PATCH /global/config.
+// Stores the selected model as workspace metadata. The model takes effect
+// on next agent reload or pod restart (not pushed live to avoid stream
+// disruption — see Epic 27a principles). Returns applied:false always.
 func (h *SecretsHandler) SetModel(c *gin.Context) {
 	workspaceID := c.Param("id")
 	userID, _ := extractAuth(c)
@@ -291,11 +300,22 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		return
 	}
 
+	// Ownership check: verify the user owns this workspace before mutating.
+	meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
+	if err != nil || meta == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	if meta.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
 	// Validate model exists in the live catalog (if pod is running).
 	if h.podIPResolver != nil {
 		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
 		if err == nil && podIP != "" {
-			if !h.modelExistsInCatalog(c.Request.Context(), podIP, req.Model) {
+			if !h.modelExistsInCatalog(c.Request.Context(), podIP, workspaceID, req.Model) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found in workspace catalog"})
 				return
 			}
@@ -311,6 +331,9 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		return
 	}
 
+	// Clear this workspace's model cache so next ListModels reflects the new selection.
+	evictModelCache(workspaceID)
+
 	// Also persist to K8s Secret so the next pod boot picks it up.
 	if h.manifestWriter != nil {
 		_ = h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
@@ -318,8 +341,7 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		})
 	}
 
-	// Push model selection to running agent via PATCH /global/config.
-	// This merges {"model": "..."} into opencode's config without touching providers.
+	// Push model selection to running agent (if pod available).
 	applied := false
 	if h.podIPResolver != nil {
 		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
@@ -332,7 +354,6 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 
 			// Epic 26: If the selected model is free-tier, configure the
 			// opencode provider's baseURL to route through the relay proxy.
-			// This enables client-proxied inference for free models.
 			// If switching to a paid model, reset to direct (no relay).
 			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
 				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
@@ -340,7 +361,6 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 					h.warn("push relay baseURL failed", "error", pushErr.Error())
 				}
 			} else {
-				// Reset to direct — clear relay override by pushing empty baseURL
 				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP); pushErr != nil {
 					h.warn("clear relay baseURL failed", "error", pushErr.Error())
 				}
@@ -348,40 +368,24 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		}
 	}
 
-	// Evict model cache so the next GET /models reflects the new selection.
-	evictModelCache(workspaceID)
-
 	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
 
-// patchAgentModel sends {"model": "<id>"} to opencode's PATCH /global/config.
-func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model string) error {
-	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
-	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: URL to internal pod
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
-	}
-	return nil
-}
-
 // modelExistsInCatalog checks if a model ID exists in the running agent's catalog.
-func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model string) bool {
+func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, workspaceID, model string) bool {
+	if h.passwordGetter == nil {
+		return true // fail open — don't block on missing password getter
+	}
+	password, err := h.passwordGetter(ctx, workspaceID)
+	if err != nil || password == "" {
+		return true // fail open — don't block on password retrieval failure
+	}
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: URL to internal pod
 	if err != nil {
 		return true // fail open — don't block on validation infrastructure failure
 	}
+	req.SetBasicAuth(agentd.AuthUsername, password)
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return true // fail open
@@ -406,6 +410,27 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model 
 	return false
 }
 
+// patchAgentModel sends the model selection to the running opencode agent.
+func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model string) error {
+	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
+	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.
 func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID string) bool {
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
@@ -426,7 +451,6 @@ func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID str
 	if err != nil {
 		return false
 	}
-
 	var models []opencodeModel
 	if json.Unmarshal(body, &models) != nil {
 		return false
@@ -440,31 +464,23 @@ func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID str
 }
 
 // pushRelayBaseURL configures the opencode provider's baseURL to route
-// through the in-pod relay proxy (Epic 26). This makes free-tier LLM
-// requests go to localhost:4097/relay/inference instead of opencode.ai.
+// through the in-pod relay proxy (Epic 26).
 func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
-	type relayAuthPayload struct {
+	type payload struct {
 		Type     string            `json:"type"`
 		Key      string            `json:"key"`
 		Metadata map[string]string `json:"metadata"`
 	}
-	payload := relayAuthPayload{
-		Type:     "api",
-		Key:      "public",
-		Metadata: map[string]string{"baseURL": relayBaseURL},
-	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(payload{Type: "api", Key: "public", Metadata: map[string]string{"baseURL": relayBaseURL}})
 	if err != nil {
 		return err
 	}
-
 	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -476,38 +492,7 @@ func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseU
 	return nil
 }
 
-// clearRelayBaseURL resets the opencode provider to use its default base URL
-// (removes the relay redirect). Called when switching from free to paid model.
+// clearRelayBaseURL resets the opencode provider to its default base URL.
 func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP string) error {
-	type relayAuthPayload struct {
-		Type     string            `json:"type"`
-		Key      string            `json:"key"`
-		Metadata map[string]string `json:"metadata"`
-	}
-	payload := relayAuthPayload{
-		Type:     "api",
-		Key:      "public",
-		Metadata: map[string]string{"baseURL": ""},
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("PUT /auth/opencode (clear) returned %d", resp.StatusCode)
-	}
-	return nil
+	return h.pushRelayBaseURL(ctx, podIP, "")
 }
