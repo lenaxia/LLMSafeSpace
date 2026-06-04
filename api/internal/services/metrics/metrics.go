@@ -138,3 +138,60 @@ func (s *Service) IncrementActiveConnections(connType, userID string) {
 func (s *Service) DecrementActiveConnections(connType, userID string) {
 	s.activeConnections.WithLabelValues(connType, userID).Dec()
 }
+
+// --- Epic 27b: Agent reload metrics ---
+
+var (
+	agentReloadTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_agent_reload_total",
+			Help: "Total agent reload operations",
+		},
+		[]string{"result", "drained"},
+	)
+	agentReloadDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_agent_reload_duration_ms",
+			Help:    "Agent reload duration in milliseconds",
+			Buckets: prometheus.ExponentialBuckets(100, 2, 12),
+		},
+		[]string{"drained"},
+	)
+	agentReloadDrainTimeouts = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "llmsafespace_agent_reload_drain_timeouts_total",
+		Help: "Total drain timeout occurrences",
+	})
+	agentReloadBulkTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_agent_reload_bulk_total",
+			Help: "Total bulk reload operations",
+		},
+		[]string{"outcome"},
+	)
+)
+
+// RecordAgentReload records a reload operation result.
+func (s *Service) RecordAgentReload(result string, durationMs int64, drained bool) {
+	drainedStr := "false"
+	if drained {
+		drainedStr = "true"
+	}
+	agentReloadTotal.WithLabelValues(result, drainedStr).Inc()
+	agentReloadDuration.WithLabelValues(drainedStr).Observe(float64(durationMs))
+}
+
+// RecordAgentReloadDrainTimeout records a drain timeout.
+func (s *Service) RecordAgentReloadDrainTimeout(elapsedMs int64) {
+	agentReloadDrainTimeouts.Inc()
+}
+
+// RecordAgentReloadBulk records a bulk reload operation.
+func (s *Service) RecordAgentReloadBulk(total, succeeded, failed int) {
+	outcome := "all_success"
+	if failed > 0 && succeeded > 0 {
+		outcome = "partial"
+	} else if failed > 0 {
+		outcome = "all_failed"
+	}
+	agentReloadBulkTotal.WithLabelValues(outcome).Inc()
+}

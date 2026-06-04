@@ -63,6 +63,9 @@ type RouterConfig struct {
 
 	// AgentReloadHandler handles POST /api/v1/workspaces/:id/agent/reload (optional)
 	AgentReloadHandler *handlers.AgentReloadHandler
+
+	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
+	BulkReloadHandler *handlers.BulkReloadHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -128,6 +131,13 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
 	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler, cfg)
+
+	// Epic 27b: Bulk agent reload across all pending workspaces.
+	if cfg.BulkReloadHandler != nil {
+		userGroup := router.Group("/api/v1/users/me")
+		userGroup.Use(services.GetAuth().AuthMiddleware())
+		userGroup.POST("/agents/reload", cfg.BulkReloadHandler.BulkReload)
+	}
 
 	// Sessions/active endpoint — needs proxyHandler for active session data
 	if proxyHandler != nil {

@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -222,4 +223,174 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		"disposed":       true,
 		"lastDisposedAt": disposedAt.Format(time.RFC3339),
 	})
+}
+
+// PendingReloadLister lists workspaces with pending credential reload.
+type PendingReloadLister interface {
+	ListPendingReloadWorkspaces(ctx context.Context, userID string) ([]*types.WorkspaceMetadata, error)
+}
+
+// BulkReloadHandler handles POST /api/v1/users/me/agents/reload.
+type BulkReloadHandler struct {
+	pendingLister PendingReloadLister
+	workspaceSvc  WorkspaceServicer
+	db            AgentStateStore
+	podResolver   PodIPResolver
+	httpClient    *http.Client
+	logger        pkginterfaces.LoggerInterface
+	sseTracker    *SSETracker
+	getPassword   func(ctx context.Context, workspaceID string) (string, error)
+}
+
+// NewBulkReloadHandler constructs the bulk reload handler.
+func NewBulkReloadHandler(
+	pendingLister PendingReloadLister,
+	wsSvc WorkspaceServicer,
+	db AgentStateStore,
+	podResolver PodIPResolver,
+	httpClient *http.Client,
+	logger pkginterfaces.LoggerInterface,
+) *BulkReloadHandler {
+	return &BulkReloadHandler{
+		pendingLister: pendingLister,
+		workspaceSvc:  wsSvc,
+		db:            db,
+		podResolver:   podResolver,
+		httpClient:    httpClient,
+		logger:        logger,
+	}
+}
+
+// SetSSETracker injects the SSE tracker for drain mode.
+func (h *BulkReloadHandler) SetSSETracker(t *SSETracker) { h.sseTracker = t }
+
+// SetPasswordGetter injects the password getter for drain mode.
+func (h *BulkReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
+	h.getPassword = getter
+}
+
+// BulkReload streams per-workspace reload results as NDJSON.
+func (h *BulkReloadHandler) BulkReload(c *gin.Context) {
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	drain := c.Query("drain") == "true"
+	drainTimeout := 5 * time.Minute
+	if v := c.Query("drainTimeoutSeconds"); v != "" {
+		var secs int
+		if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 && secs <= 600 {
+			drainTimeout = time.Duration(secs) * time.Second
+		}
+	}
+
+	pending, err := h.pendingLister.ListPendingReloadWorkspaces(c.Request.Context(), userID)
+	if err != nil {
+		respondWithAPIError(c, apierrors.NewInternalError("list_pending_failed", err))
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+
+	start := time.Now()
+	succeeded, failed := 0, 0
+
+	for _, ws := range pending {
+		result := h.reloadOne(c.Request.Context(), userID, ws.ID, drain, drainTimeout)
+		_ = json.NewEncoder(c.Writer).Encode(result)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if _, ok := result["error"]; ok {
+			failed++
+		} else {
+			succeeded++
+		}
+	}
+
+	// Summary line (always last)
+	_ = json.NewEncoder(c.Writer).Encode(map[string]any{
+		"summary": map[string]any{
+			"total":      len(pending),
+			"succeeded":  succeeded,
+			"failed":     failed,
+			"durationMs": time.Since(start).Milliseconds(),
+		},
+	})
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID string, drain bool, drainTimeout time.Duration) map[string]any {
+	ws, err := h.workspaceSvc.GetWorkspace(ctx, userID, workspaceID)
+	if err != nil {
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "workspace_error", "message": err.Error()}}
+	}
+	if ws.Phase != "Active" {
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "phase_not_active", "message": fmt.Sprintf("workspace is in phase %q", ws.Phase)}}
+	}
+
+	podIP, err := h.podResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
+	if err != nil || podIP == "" {
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "pod_not_reachable", "message": "workspace pod is not reachable"}}
+	}
+
+	if drain && h.sseTracker != nil && h.getPassword != nil {
+		pw, err := h.getPassword(ctx, workspaceID)
+		if err != nil {
+			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "get_password_failed", "message": err.Error()}}
+		}
+		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw)
+		if err := WaitUntilIdle(ctx, workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
+			var drainErr *ErrDrainTimeout
+			if errors.As(err, &drainErr) {
+				return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "drain_timeout", "busySessionIDs": drainErr.BusySessions}}
+			}
+			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "drain_failed", "message": err.Error()}}
+		}
+	}
+
+	priorChangedAt, err := h.db.GetLastCredentialChangedAt(ctx, workspaceID)
+	if err != nil {
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "state_read_failed", "message": err.Error()}}
+	}
+
+	agentdURL := fmt.Sprintf("http://%s:%d/v1/agent/reload", podIP, agentd.AgentdPort)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, agentdURL, nil)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "agent_unreachable", "message": err.Error()}}
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
+		return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "dispose_failed", "message": fmt.Sprintf("agentd returned %d: %s", resp.StatusCode, string(body))}}
+	}
+
+	// Dispose succeeded — update state.
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return map[string]any{"workspaceId": workspaceID, "disposed": true, "warning": "state could not be updated"}
+	}
+	defer func() {
+		if tx != nil {
+			tx.Rollback() //nolint:errcheck
+		}
+	}()
+
+	disposedAt, err := h.db.MarkAgentReloaded(ctx, tx, workspaceID, priorChangedAt)
+	if err != nil {
+		return map[string]any{"workspaceId": workspaceID, "disposed": true, "warning": "state could not be updated"}
+	}
+	if err := tx.Commit(); err != nil {
+		return map[string]any{"workspaceId": workspaceID, "disposed": true, "warning": "state could not be updated"}
+	}
+
+	return map[string]any{"workspaceId": workspaceID, "disposed": true, "drained": drain, "lastDisposedAt": disposedAt.Format(time.RFC3339)}
 }

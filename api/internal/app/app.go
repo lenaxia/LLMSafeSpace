@@ -246,8 +246,21 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// Epic 27a: Agent reload handler.
 	var agentReloadHandler *handlers.AgentReloadHandler
+	var bulkReloadHandler *handlers.BulkReloadHandler
 	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 		agentReloadHandler = handlers.NewAgentReloadHandler(
+			wsSvc,
+			dbSvc,
+			newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc,
+				log,
+			),
+			&http.Client{Timeout: 15 * time.Second},
+			log,
+		)
+		bulkReloadHandler = handlers.NewBulkReloadHandler(
+			dbSvc,
 			wsSvc,
 			dbSvc,
 			newSecretsPodIPResolver(
@@ -274,6 +287,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		RotateKeyHandler:        rotateKeyHandler,
 		TerminalHandler:         terminalHandler,
 		AgentReloadHandler:      agentReloadHandler,
+		BulkReloadHandler:       bulkReloadHandler,
 	})
 
 	httpServer := &http.Server{

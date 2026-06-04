@@ -819,3 +819,40 @@ func (s *Service) MarkAgentReloaded(ctx context.Context, tx *sql.Tx, workspaceID
 	}
 	return disposedAt, nil
 }
+
+// ListPendingReloadWorkspaces returns workspaces with pending_refresh=TRUE for the given user.
+func (s *Service) ListPendingReloadWorkspaces(ctx context.Context, userID string) ([]*types.WorkspaceMetadata, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version,
+		       w.created_at, w.updated_at,
+		       TRUE AS agent_needs_refresh,
+		       s.last_credential_changed_at AS credentials_pending_since
+		FROM workspaces w
+		JOIN workspace_agent_state s ON s.workspace_id = w.id
+		WHERE w.user_id = $1
+		  AND w.deleted_at IS NULL
+		  AND s.pending_refresh = TRUE
+		ORDER BY w.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending reload workspaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var items []*types.WorkspaceMetadata
+	for rows.Next() {
+		var ws types.WorkspaceMetadata
+		if err := rows.Scan(
+			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
+			&ws.StorageSize, &ws.ImageTag, &ws.AgentVersion,
+			&ws.CreatedAt, &ws.UpdatedAt,
+			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
+		); err != nil {
+			return nil, fmt.Errorf("scan pending reload workspace: %w", err)
+		}
+		items = append(items, &ws)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending reload workspaces: %w", err)
+	}
+	return items, nil
+}
