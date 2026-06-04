@@ -162,12 +162,12 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 		return
 	}
 	mat, skip, fail := r.Counts()
-	_, _ = fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failedn", mat, skip, fail)
+	_, _ = fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failed\n", mat, skip, fail)
 	for _, sr := range r.Results {
 		if sr.Outcome == secrets.OutcomeMaterialized {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %sn", sr.Type, sr.Name, sr.Outcome, sr.Reason)
+		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %s\n", sr.Type, sr.Name, sr.Outcome, sr.Reason)
 	}
 }
 
