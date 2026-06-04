@@ -23,7 +23,7 @@ func (e *ErrDrainTimeout) Error() string {
 }
 
 // WaitUntilIdle blocks until all sessions in the workspace are idle,
-// the context is cancelled, or the deadline fires.
+// the context is canceled, or the deadline fires.
 func WaitUntilIdle(
 	ctx context.Context,
 	workspaceID string,

@@ -780,7 +780,7 @@ func (s *Service) GetLastCredentialChangedAt(ctx context.Context, workspaceID st
 }
 
 // MarkAgentReloaded clears pending_refresh after a successful dispose.
-// Uses SELECT FOR UPDATE to serialise against concurrent MarkCredentialChanged.
+// Uses SELECT FOR UPDATE to serialize against concurrent MarkCredentialChanged.
 // priorChangedAt is captured BEFORE dispose; if a new credential was staged
 // during the dispose window, pending_refresh stays true.
 // Returns the DB-clock timestamp written to last_agent_disposed_at.

@@ -56,7 +56,7 @@ func EnrichChatErrorBody(
 	return result
 }
 
-// GetAgentNeedsRefresh is a helper interface for checking workspace state.
+// AgentStateChecker is the interface for checking workspace agent state.
 type AgentStateChecker interface {
 	GetLastCredentialChangedAt(ctx context.Context, workspaceID string) (time.Time, error)
 }
