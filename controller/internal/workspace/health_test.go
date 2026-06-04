@@ -548,6 +548,20 @@ func TestInitContainerScript_NoElseBranch(t *testing.T) {
 	assert.NotContains(t, script, "echo '{}'", "init script should NOT write empty JSON when no creds exist")
 	assert.Contains(t, script, "cp /mnt/secrets/password/password /sandbox-cfg/password", "password should always be copied")
 	assert.NotContains(t, script, "workspace-creds-", "legacy credential secret should not be referenced")
+
+	// Verify the credential-setup init container mounts user-secrets.
+	// This ensures credentials are available to the init script once kubelet
+	// syncs the optional secret into the pod.
+	var userSecretsMount *corev1.VolumeMount
+	for i := range credInit.VolumeMounts {
+		if credInit.VolumeMounts[i].Name == "user-secrets" {
+			userSecretsMount = &credInit.VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, userSecretsMount, "credential-setup init container must mount user-secrets")
+	assert.Equal(t, "/mnt/secrets/user-secrets", userSecretsMount.MountPath, "user-secrets must be mounted at /mnt/secrets/user-secrets")
+	assert.True(t, userSecretsMount.ReadOnly, "user-secrets mount must be read-only")
 }
 
 func makeRuntimeEnv(name string) *v1.RuntimeEnvironment {
