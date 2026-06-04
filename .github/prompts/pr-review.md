@@ -13,6 +13,19 @@ TESTS
 - Are both happy-path and unhappy-path cases covered?
 - Do the tests actually exercise the changed code (not just pass trivially)?
 - If tests are missing or thin, flag it — TDD is required per README-LLM.md.
+- Identify missing test cases: read the changed code carefully and enumerate concrete scenarios
+  that are not covered by the existing tests. For each candidate missing test, ask yourself:
+  "Would this test catch a real bug or regression that the current tests would miss?" Only
+  include it if the answer is yes. Discard trivial, redundant, or low-value cases.
+
+ROBUSTNESS
+- Identify specific points in the design or implementation that are weak, fragile, or prone
+  to failure — e.g. missing bounds checks, unhandled edge cases, race conditions, incorrect
+  assumptions about external state, or brittle dependencies.
+- For each candidate weakness, verify it is real: trace the code path, check whether existing
+  safeguards already cover it, and confirm it could actually occur in practice. Only include
+  weaknesses that survive this validation. Do not include speculative or theoretical issues
+  that are already handled or that cannot realistically occur.
 
 SECURITY
 - Does any change touch pkg/redact/? If so, verify redaction wrappers are not weakened.
@@ -47,6 +60,12 @@ Output format — post a PR review with this structure:
 
 ### Tests
 [findings or ✓ Adequate coverage]
+
+#### Missing test cases
+[List only meaningful, impactful missing tests that would catch real bugs — or "None identified"]
+
+### Robustness
+[List only validated weaknesses confirmed to be real and reachable — or ✓ No concerns]
 
 ### Security
 [findings or ✓ No concerns]
