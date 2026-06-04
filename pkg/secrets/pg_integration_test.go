@@ -53,6 +53,13 @@ func ensureTestUser(t *testing.T, pool *pgxpool.Pool, userID string) {
 		userID, "testuser-"+userID, userID+"@test.com")
 }
 
+func ensureTestWorkspace(t *testing.T, pool *pgxpool.Pool, wsID, userID string) {
+	t.Helper()
+	pool.Exec(context.Background(),
+		`INSERT INTO workspaces (id, name, user_id, runtime, storage_size, created_at, updated_at) VALUES ($1, $2, $3, 'base', '5Gi', NOW(), NOW()) ON CONFLICT DO NOTHING`,
+		wsID, "test-ws-"+wsID[:8], userID)
+}
+
 // --- PgKeyStore Tests ---
 
 func TestPgKeyStore_CreateAndGet(t *testing.T) {
@@ -282,7 +289,8 @@ func TestPgSecretStore_Bindings(t *testing.T) {
 	store.CreateSecret(ctx, s1)
 	store.CreateSecret(ctx, s2)
 
-	wsID := fmt.Sprintf("ws-pg-test-%d", time.Now().UnixNano())
+	wsID := fmt.Sprintf("00000000-0000-4000-8000-%012d", time.Now().UnixNano() % 1000000000000)
+	ensureTestWorkspace(t, pool, wsID, userID)
 
 	// Set bindings
 	err := store.SetBindings(ctx, wsID, []string{s1.ID, s2.ID})
@@ -395,7 +403,8 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// Bind
-	wsID := fmt.Sprintf("ws-e2e-%d", time.Now().UnixNano())
+	wsID := fmt.Sprintf("00000000-0000-4000-8001-%012d", time.Now().UnixNano() % 1000000000000)
+	ensureTestWorkspace(t, pool, wsID, userID)
 	_, err = svc.SetBindings(ctx, userID, wsID, []string{created.ID})
 	if err != nil {
 		t.Fatalf("SetBindings: %v", err)
@@ -594,7 +603,8 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 		ids = append(ids, s.ID)
 	}
 
-	wsID := fmt.Sprintf("ws-addb-%d", time.Now().UnixNano())
+	wsID := fmt.Sprintf("00000000-0000-4000-8002-%012d", time.Now().UnixNano() % 1000000000000)
+	ensureTestWorkspace(t, pool, wsID, userID)
 
 	// Idempotent: calling AddBindings 5 times with the same set
 	// must end with one binding per secret, not 15.
@@ -615,7 +625,8 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 	// AddBindings is "merge". The advisory lock serializes them so
 	// the final state is well-defined: whichever ran last wins
 	// the union.
-	wsID2 := fmt.Sprintf("ws-addb2-%d", time.Now().UnixNano())
+	wsID2 := fmt.Sprintf("00000000-0000-4000-8003-%012d", time.Now().UnixNano() % 1000000000000)
+	ensureTestWorkspace(t, pool, wsID2, userID)
 	if err := secretStore.SetBindings(ctx, wsID2, []string{ids[0], ids[1]}); err != nil {
 		t.Fatalf("SetBindings: %v", err)
 	}
