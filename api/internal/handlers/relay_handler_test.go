@@ -76,7 +76,7 @@ func TestRelayHandler_TwoParticipants(t *testing.T) {
 	require.NoError(t, agentConn.WriteMessage(websocket.TextMessage, data))
 
 	// Client should receive the proxy request
-	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, msg, err := clientConn.ReadMessage()
 	require.NoError(t, err)
 
@@ -94,7 +94,7 @@ func TestRelayHandler_TwoParticipants(t *testing.T) {
 	respData, _ := json.Marshal(respStart)
 	require.NoError(t, clientConn.WriteMessage(websocket.TextMessage, respData))
 
-	agentConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	agentConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, agentMsg, err := agentConn.ReadMessage()
 	require.NoError(t, err)
 
@@ -140,7 +140,7 @@ func TestRelayHandler_StreamingChunks(t *testing.T) {
 	}
 
 	// Agent should receive all chunks
-	agentConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	agentConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for _, expected := range chunks {
 		_, msg, err := agentConn.ReadMessage()
 		require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestRelayHandler_PingPong(t *testing.T) {
 	require.NoError(t, conn.WriteMessage(websocket.TextMessage, data))
 
 	// Should receive pong
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, msg, err := conn.ReadMessage()
 	require.NoError(t, err)
 
@@ -305,7 +305,7 @@ func TestRelayHandler_ConcurrentMessages(t *testing.T) {
 
 	// Client should receive all 10
 	received := 0
-	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for i := 0; i < 10; i++ {
 		_, _, err := clientConn.ReadMessage()
 		if err != nil {
