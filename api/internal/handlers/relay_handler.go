@@ -11,14 +11,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/relay"
 )
 
 const (
 	relayWriteWait  = 10 * time.Second
 	relayPongWait   = 60 * time.Second
-	relayPingPeriod = 30 * time.Second
 	relayMaxMsgSize = 10 << 20 // 10MB
 )
 
@@ -28,53 +26,74 @@ var relayUpgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-// relayRoom is a per-workspace relay channel with exactly two participants:
-// one agentd connection and one client connection.
+// relayConn wraps a websocket.Conn with a write mutex to prevent concurrent writes.
+type relayConn struct {
+	conn *websocket.Conn
+	wmu  sync.Mutex
+}
+
+func (rc *relayConn) writeMessage(msgType int, data []byte) error {
+	rc.wmu.Lock()
+	defer rc.wmu.Unlock()
+	_ = rc.conn.SetWriteDeadline(time.Now().Add(relayWriteWait))
+	return rc.conn.WriteMessage(msgType, data)
+}
+
+func (rc *relayConn) close() error {
+	return rc.conn.Close()
+}
+
+// relayRoom is a per-workspace relay channel with exactly two participants.
 type relayRoom struct {
 	mu     sync.RWMutex
-	agentd *websocket.Conn
-	client *websocket.Conn
+	agentd *relayConn
+	client *relayConn
 }
 
 // RelayHandler manages the WebSocket relay endpoint for client-proxied inference.
 type RelayHandler struct {
-	logger pkginterfaces.LoggerInterface
-	mu     sync.RWMutex
-	rooms  map[string]*relayRoom // keyed by workspace ID
+	wsGetter WorkspaceGetter // validates workspace ownership
+	mu       sync.RWMutex
+	rooms    map[string]*relayRoom
 }
 
-// NewRelayHandler creates a new relay handler.
-func NewRelayHandler(logger pkginterfaces.LoggerInterface) *RelayHandler {
+// NewRelayHandler creates a new relay handler. wsGetter may be nil (ownership
+// check is skipped — only acceptable in tests).
+func NewRelayHandler(wsGetter WorkspaceGetter) *RelayHandler {
 	return &RelayHandler{
-		logger: logger,
-		rooms:  make(map[string]*relayRoom),
+		wsGetter: wsGetter,
+		rooms:    make(map[string]*relayRoom),
 	}
 }
 
 // HandleRelay is the Gin handler for GET /api/v1/workspaces/:id/relay.
 func (h *RelayHandler) HandleRelay(c *gin.Context) {
 	workspaceID := c.Param("id")
-	role := c.Query("role") // "agentd" or "client"
+	role := c.Query("role")
 	if role != "agentd" && role != "client" {
-		role = "client" // default
+		role = "client"
 	}
 
-	// Verify workspace ownership — only the owner can connect to the relay.
-	// The agentd role connects from within the pod (no user context check needed
-	// for agentd since it's authenticated via pod-internal token). Client role
-	// must be the workspace owner.
+	// Ownership enforcement for client role. Agentd connects from within
+	// the pod using a service token, not a user token.
 	if role == "client" {
-		userID, exists := c.Get("userID")
-		if !exists || userID == "" {
+		userID, _ := c.Get("userID")
+		uid, _ := userID.(string)
+		if uid == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		// Workspace ownership is enforced by the workspace auth group middleware
-		// which sets userID. The workspace service validates ownership on all
-		// workspace-scoped operations. Since this endpoint is in the authenticated
-		// workspace group, the auth middleware has already validated the user.
-		// Additional ownership check would require a K8s/DB lookup which we skip
-		// here to match the pattern of other workspace endpoints (e.g., session-events).
+		if h.wsGetter != nil {
+			ws, err := h.wsGetter.GetWorkspace(workspaceID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+				return
+			}
+			if ws.Labels["user-id"] != uid {
+				c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+				return
+			}
+		}
 	}
 
 	conn, err := relayUpgrader.Upgrade(c.Writer, c.Request, nil)
@@ -83,25 +102,24 @@ func (h *RelayHandler) HandleRelay(c *gin.Context) {
 		return
 	}
 
+	rc := &relayConn{conn: conn}
 	room := h.getOrCreateRoom(workspaceID)
 
 	room.mu.Lock()
 	if role == "agentd" {
-		// Close existing agentd connection if any (replaced)
 		if room.agentd != nil {
-			_ = room.agentd.Close()
+			_ = room.agentd.close()
 		}
-		room.agentd = conn
+		room.agentd = rc
 	} else {
 		if room.client != nil {
-			_ = room.client.Close()
+			_ = room.client.close()
 		}
-		room.client = conn
+		room.client = rc
 	}
 	room.mu.Unlock()
 
-	// Start read loop — messages from this participant are forwarded to the other.
-	h.readLoop(conn, room, role, workspaceID)
+	h.readLoop(rc, room, role, workspaceID)
 }
 
 func (h *RelayHandler) getOrCreateRoom(workspaceID string) *relayRoom {
@@ -115,19 +133,19 @@ func (h *RelayHandler) getOrCreateRoom(workspaceID string) *relayRoom {
 	return room
 }
 
-// readLoop reads messages from one participant and forwards to the other.
-func (h *RelayHandler) readLoop(conn *websocket.Conn, room *relayRoom, role, workspaceID string) {
+// readLoop reads from one participant and forwards to the other.
+// All writes go through relayConn.writeMessage which serializes with a mutex.
+func (h *RelayHandler) readLoop(rc *relayConn, room *relayRoom, role, workspaceID string) {
 	defer func() {
 		room.mu.Lock()
-		if role == "agentd" && room.agentd == conn {
+		if role == "agentd" && room.agentd == rc {
 			room.agentd = nil
-		} else if role == "client" && room.client == conn {
+		} else if role == "client" && room.client == rc {
 			room.client = nil
 		}
 		room.mu.Unlock()
-		_ = conn.Close()
+		_ = rc.close()
 
-		// Clean up empty rooms
 		h.mu.Lock()
 		room.mu.RLock()
 		if room.agentd == nil && room.client == nil {
@@ -137,34 +155,31 @@ func (h *RelayHandler) readLoop(conn *websocket.Conn, room *relayRoom, role, wor
 		h.mu.Unlock()
 	}()
 
-	conn.SetReadLimit(relayMaxMsgSize)
-	_ = conn.SetReadDeadline(time.Now().Add(relayPongWait))
-	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(relayPongWait))
+	rc.conn.SetReadLimit(relayMaxMsgSize)
+	_ = rc.conn.SetReadDeadline(time.Now().Add(relayPongWait))
+	rc.conn.SetPongHandler(func(string) error {
+		_ = rc.conn.SetReadDeadline(time.Now().Add(relayPongWait))
 		return nil
 	})
 
 	for {
-		_, msg, err := conn.ReadMessage()
+		_, msg, err := rc.conn.ReadMessage()
 		if err != nil {
 			return
 		}
+		_ = rc.conn.SetReadDeadline(time.Now().Add(relayPongWait))
 
-		// Reset read deadline on any message
-		_ = conn.SetReadDeadline(time.Now().Add(relayPongWait))
-
-		// Check for ping messages (application-level)
+		// Application-level ping → respond with pong (via write mutex)
 		var env relay.Envelope
 		if json.Unmarshal(msg, &env) == nil && env.Type == relay.TypePing {
 			pong, _ := json.Marshal(relay.Envelope{Type: relay.TypePong})
-			_ = conn.SetWriteDeadline(time.Now().Add(relayWriteWait))
-			_ = conn.WriteMessage(websocket.TextMessage, pong)
+			_ = rc.writeMessage(websocket.TextMessage, pong)
 			continue
 		}
 
 		// Forward to the other participant
 		room.mu.RLock()
-		var target *websocket.Conn
+		var target *relayConn
 		if role == "agentd" {
 			target = room.client
 		} else {
@@ -173,16 +188,12 @@ func (h *RelayHandler) readLoop(conn *websocket.Conn, room *relayRoom, role, wor
 		room.mu.RUnlock()
 
 		if target != nil {
-			_ = target.SetWriteDeadline(time.Now().Add(relayWriteWait))
-			if err := target.WriteMessage(websocket.TextMessage, msg); err != nil {
-				// Target disconnected; continue reading from source
-				continue
-			}
+			_ = target.writeMessage(websocket.TextMessage, msg)
 		}
 	}
 }
 
-// IsClientConnected returns whether a client relay is connected for the given workspace.
+// IsClientConnected returns whether a client relay is connected for the workspace.
 func (h *RelayHandler) IsClientConnected(workspaceID string) bool {
 	h.mu.RLock()
 	room, ok := h.rooms[workspaceID]

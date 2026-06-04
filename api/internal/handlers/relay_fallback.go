@@ -108,9 +108,18 @@ func (h *RelayFallbackHandler) allowRequest(userID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	counter, ok := h.userCounts[userID]
 	now := time.Now()
 
+	// Periodic cleanup: remove expired entries (bounded memory)
+	if len(h.userCounts) > 100 {
+		for k, v := range h.userCounts {
+			if now.After(v.windowEnd) {
+				delete(h.userCounts, k)
+			}
+		}
+	}
+
+	counter, ok := h.userCounts[userID]
 	if !ok || now.After(counter.windowEnd) {
 		h.userCounts[userID] = &fallbackCounter{
 			count:     1,

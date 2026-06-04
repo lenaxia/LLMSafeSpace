@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,9 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/relay"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestRelayHandler_NoUpgrade(t *testing.T) {
@@ -311,4 +314,79 @@ func TestRelayHandler_ConcurrentMessages(t *testing.T) {
 		received++
 	}
 	assert.Equal(t, 10, received)
+}
+
+func TestRelayHandler_IsClientConnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRelayHandler(nil)
+
+	// No room exists
+	assert.False(t, h.IsClientConnected("ws-nonexistent"))
+
+	router := gin.New()
+	router.GET("/api/v1/workspaces/:id/relay", func(c *gin.Context) {
+		c.Set("userID", "user1")
+		h.HandleRelay(c)
+	})
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/workspaces/ws1/relay"
+
+	// Connect client
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL+"?role=client", nil)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+	assert.True(t, h.IsClientConnected("ws1"))
+
+	// Disconnect
+	clientConn.Close()
+	time.Sleep(100 * time.Millisecond)
+	assert.False(t, h.IsClientConnected("ws1"))
+}
+
+func TestRelayHandler_OwnershipEnforced(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Mock workspace getter that returns a workspace owned by "owner1"
+	mockGetter := &mockRelayWSGetter{
+		workspaces: map[string]string{
+			"ws1": "owner1",
+		},
+	}
+	h := NewRelayHandler(mockGetter)
+
+	router := gin.New()
+	router.GET("/api/v1/workspaces/:id/relay", func(c *gin.Context) {
+		c.Set("userID", "attacker") // not the owner
+		h.HandleRelay(c)
+	})
+
+	// Regular request (not WebSocket) — should get 404 because ownership check fails
+	// before the upgrade attempt
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws1/relay?role=client", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// mockRelayWSGetter implements WorkspaceGetter for testing.
+type mockRelayWSGetter struct {
+	workspaces map[string]string // id → owner user-id
+}
+
+func (m *mockRelayWSGetter) GetWorkspace(id string) (*v1.Workspace, error) {
+	owner, ok := m.workspaces[id]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+	return &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   id,
+			Labels: map[string]string{"user-id": owner},
+		},
+	}, nil
 }

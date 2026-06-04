@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,10 +18,13 @@ import (
 	"go.uber.org/zap"
 )
 
+var reqCounter uint64
+
 // relayProxyConfig configures the relay proxy.
 type relayProxyConfig struct {
 	relayURL       string // WebSocket URL to the API server relay endpoint
 	authToken      string // Bearer token for authenticating to the relay endpoint
+	targetBaseURL  string // Provider base URL (default: https://opencode.ai)
 	requestTimeout time.Duration
 	maxPending     int
 }
@@ -31,32 +35,38 @@ type pendingRequest struct {
 	chunkCh chan relay.ProxyResponseChunk
 	endCh   chan struct{}
 	errorCh chan relay.ProxyError
-	doneCh  chan struct{} // closed when handler finishes (for cleanup)
+	doneCh  chan struct{} // closed when handler finishes
 }
 
 // relayProxy is the in-pod relay that receives HTTP requests from opencode
 // (via baseURL redirect) and forwards them to the client via the API server's
 // relay WebSocket.
 type relayProxy struct {
-	mu             sync.Mutex
-	conn           *websocket.Conn
-	pending        map[string]*pendingRequest
+	mu      sync.Mutex
+	conn    *websocket.Conn
+	connWmu sync.Mutex // serializes WebSocket writes
+	pending map[string]*pendingRequest
+
 	requestTimeout time.Duration
 	maxPending     int
+	targetBaseURL  string
 	closed         bool
 	closeCh        chan struct{}
 
-	// sendFn is the function used to send proxy requests to the client.
-	// In production, this writes to the WebSocket conn.
-	// In tests, this can be overridden for injection.
+	// sendFn overrides the WebSocket send path (for testing).
 	sendFn func(relay.ProxyRequest) error
+	cfg    *relayProxyConfig
 
-	cfg *relayProxyConfig
+	// Metrics
+	requestsTotal   uint64
+	requestsErrored uint64
+	requestsTimeout uint64
 }
 
 func newRelayProxy(cfg *relayProxyConfig) *relayProxy {
 	timeout := relay.RequestTimeout
 	maxPending := relay.MaxPendingRequests
+	target := "https://opencode.ai"
 	if cfg != nil {
 		if cfg.requestTimeout > 0 {
 			timeout = cfg.requestTimeout
@@ -64,33 +74,43 @@ func newRelayProxy(cfg *relayProxyConfig) *relayProxy {
 		if cfg.maxPending > 0 {
 			maxPending = cfg.maxPending
 		}
+		if cfg.targetBaseURL != "" {
+			target = cfg.targetBaseURL
+		}
 	}
 	return &relayProxy{
 		pending:        make(map[string]*pendingRequest),
 		requestTimeout: timeout,
 		maxPending:     maxPending,
+		targetBaseURL:  target,
 		closeCh:        make(chan struct{}),
 		cfg:            cfg,
 	}
 }
 
-// setRequestSender sets a custom send function (used for testing).
+// setRequestSender sets a custom send function (testing only).
 func (rp *relayProxy) setRequestSender(fn func(relay.ProxyRequest) error) {
 	rp.mu.Lock()
 	rp.sendFn = fn
 	rp.mu.Unlock()
 }
 
+// isConnected reports whether the relay WebSocket is connected.
+func (rp *relayProxy) isConnected() bool {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	return rp.conn != nil || rp.sendFn != nil
+}
+
 // handler returns the HTTP handler for the relay inference endpoint.
-// opencode sends requests here (via baseURL override).
 func (rp *relayProxy) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rp.mu.Lock()
-		if rp.sendFn == nil && rp.conn == nil {
-			rp.mu.Unlock()
+		if !rp.isConnected() {
 			http.Error(w, `{"error":"relay not connected"}`, http.StatusServiceUnavailable)
 			return
 		}
+
+		rp.mu.Lock()
 		if len(rp.pending) >= rp.maxPending {
 			rp.mu.Unlock()
 			http.Error(w, `{"error":"too many pending requests"}`, http.StatusTooManyRequests)
@@ -98,23 +118,14 @@ func (rp *relayProxy) handler() http.Handler {
 		}
 		rp.mu.Unlock()
 
-		// Read the request body
-		body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB max
+		body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
 		if err != nil {
 			http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
 			return
 		}
 
-		// Build proxy request
-		reqID := fmt.Sprintf("req_%d", time.Now().UnixNano())
-		headers := make(map[string]string)
-		for k := range r.Header {
-			headers[normalizeHeaderKey(k)] = r.Header.Get(k)
-		}
-
-		// Reconstruct the target URL. opencode sends to our local endpoint
-		// but the actual target is the opencode.ai provider gateway.
-		// The path from the request tells us what path opencode wanted.
+		reqID := fmt.Sprintf("req_%d", atomic.AddUint64(&reqCounter, 1))
+		headers := buildProxyHeaders(r.Header)
 		targetURL := rp.buildTargetURL(r.URL.Path, r.URL.RawQuery)
 
 		pr := relay.ProxyRequest{
@@ -126,10 +137,9 @@ func (rp *relayProxy) handler() http.Handler {
 			Body:    string(body),
 		}
 
-		// Register pending request
 		pending := &pendingRequest{
 			startCh: make(chan relay.ProxyResponseStart, 1),
-			chunkCh: make(chan relay.ProxyResponseChunk, 64),
+			chunkCh: make(chan relay.ProxyResponseChunk, 128),
 			endCh:   make(chan struct{}, 1),
 			errorCh: make(chan relay.ProxyError, 1),
 			doneCh:  make(chan struct{}),
@@ -145,76 +155,74 @@ func (rp *relayProxy) handler() http.Handler {
 			rp.mu.Unlock()
 		}()
 
-		// Send proxy request
+		atomic.AddUint64(&rp.requestsTotal, 1)
+
 		if err := rp.send(pr); err != nil {
+			atomic.AddUint64(&rp.requestsErrored, 1)
 			http.Error(w, `{"error":"failed to send relay request"}`, http.StatusBadGateway)
 			return
 		}
 
-		// Wait for response start or timeout
 		timer := time.NewTimer(rp.requestTimeout)
 		defer timer.Stop()
 
 		select {
 		case start := <-pending.startCh:
-			// Write response headers
-			for k, v := range start.Headers {
-				w.Header().Set(k, v)
-			}
-			if start.Status == 0 {
-				start.Status = http.StatusOK
-			}
-			w.WriteHeader(start.Status)
-
-			// Stream chunks until end or error
-			flusher, _ := w.(http.Flusher)
-			for {
-				select {
-				case chunk := <-pending.chunkCh:
-					_, _ = w.Write([]byte(chunk.Data))
-					if flusher != nil {
-						flusher.Flush()
-					}
-				case <-pending.endCh:
-					// Drain any remaining chunks before returning
-					for {
-						select {
-						case chunk := <-pending.chunkCh:
-							_, _ = w.Write([]byte(chunk.Data))
-							if flusher != nil {
-								flusher.Flush()
-							}
-						default:
-							return
-						}
-					}
-				case pe := <-pending.errorCh:
-					// Error after response start — can't change status code
-					if log != nil {
-						log.Warn("relay error after response started", zap.String("error", pe.Error))
-					}
-					return
-				case <-r.Context().Done():
-					return
-				}
-			}
-
+			rp.writeStreamingResponse(w, r, pending, start)
 		case pe := <-pending.errorCh:
+			atomic.AddUint64(&rp.requestsErrored, 1)
 			errJSON, _ := json.Marshal(map[string]string{"error": pe.Error})
 			http.Error(w, string(errJSON), http.StatusBadGateway)
-			return
-
 		case <-timer.C:
+			atomic.AddUint64(&rp.requestsTimeout, 1)
 			http.Error(w, `{"error":"relay timeout"}`, http.StatusGatewayTimeout)
-			return
-
 		case <-r.Context().Done():
-			return
+			// Client disconnected from opencode
 		}
 	})
 }
 
-// send dispatches a proxy request via the configured send function or WebSocket.
+// writeStreamingResponse writes the response headers and streams chunks.
+func (rp *relayProxy) writeStreamingResponse(w http.ResponseWriter, r *http.Request, pending *pendingRequest, start relay.ProxyResponseStart) {
+	for k, v := range start.Headers {
+		w.Header().Set(k, v)
+	}
+	status := start.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+
+	flusher, _ := w.(http.Flusher)
+	for {
+		select {
+		case chunk := <-pending.chunkCh:
+			_, _ = w.Write([]byte(chunk.Data))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-pending.endCh:
+			// Drain remaining buffered chunks
+			for {
+				select {
+				case chunk := <-pending.chunkCh:
+					_, _ = w.Write([]byte(chunk.Data))
+				default:
+					return
+				}
+			}
+		case <-pending.errorCh:
+			if log != nil {
+				log.Warn("relay error after response started")
+			}
+			return
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+// send dispatches a proxy request via sendFn or WebSocket.
 func (rp *relayProxy) send(pr relay.ProxyRequest) error {
 	rp.mu.Lock()
 	fn := rp.sendFn
@@ -231,10 +239,11 @@ func (rp *relayProxy) send(pr relay.ProxyRequest) error {
 	if err != nil {
 		return err
 	}
+	rp.connWmu.Lock()
+	defer rp.connWmu.Unlock()
 	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
-// deliverResponse delivers a response start to the pending request.
 func (rp *relayProxy) deliverResponse(msg relay.ProxyResponseStart) {
 	rp.mu.Lock()
 	p := rp.pending[msg.ID]
@@ -247,7 +256,7 @@ func (rp *relayProxy) deliverResponse(msg relay.ProxyResponseStart) {
 	}
 }
 
-// deliverChunk delivers a response chunk to the pending request.
+// deliverChunk blocks until accepted or handler exits (backpressure, not drop).
 func (rp *relayProxy) deliverChunk(msg relay.ProxyResponseChunk) {
 	rp.mu.Lock()
 	p := rp.pending[msg.ID]
@@ -255,12 +264,11 @@ func (rp *relayProxy) deliverChunk(msg relay.ProxyResponseChunk) {
 	if p != nil {
 		select {
 		case p.chunkCh <- msg:
-		default:
+		case <-p.doneCh:
 		}
 	}
 }
 
-// deliverEnd signals the end of a response.
 func (rp *relayProxy) deliverEnd(msg relay.ProxyResponseEnd) {
 	rp.mu.Lock()
 	p := rp.pending[msg.ID]
@@ -273,7 +281,6 @@ func (rp *relayProxy) deliverEnd(msg relay.ProxyResponseEnd) {
 	}
 }
 
-// deliverError delivers an error to the pending request.
 func (rp *relayProxy) deliverError(msg relay.ProxyError) {
 	rp.mu.Lock()
 	p := rp.pending[msg.ID]
@@ -286,8 +293,28 @@ func (rp *relayProxy) deliverError(msg relay.ProxyError) {
 	}
 }
 
-// connect establishes the WebSocket connection to the API server relay endpoint.
-// Blocks until the connection is closed or lost.
+// failAllPending fails all in-flight requests (called on disconnect).
+func (rp *relayProxy) failAllPending(reason string) {
+	rp.mu.Lock()
+	pending := make(map[string]*pendingRequest, len(rp.pending))
+	for k, v := range rp.pending {
+		pending[k] = v
+	}
+	rp.mu.Unlock()
+
+	for id, p := range pending {
+		select {
+		case p.errorCh <- relay.ProxyError{
+			Type:  relay.TypeProxyError,
+			ID:    id,
+			Error: reason,
+		}:
+		default:
+		}
+	}
+}
+
+// connect establishes the WebSocket connection. Blocks until disconnected.
 func (rp *relayProxy) connect() error {
 	if rp.cfg == nil || rp.cfg.relayURL == "" {
 		return fmt.Errorf("no relay URL configured")
@@ -310,12 +337,22 @@ func (rp *relayProxy) connect() error {
 	rp.conn = conn
 	rp.mu.Unlock()
 
-	// readLoop blocks until the connection is closed.
+	if log != nil {
+		log.Info("relay WebSocket connected", zap.String("url", rp.cfg.relayURL))
+	}
+
 	rp.readLoop(conn)
+
+	// Connection lost — fail all pending requests immediately
+	rp.failAllPending("relay disconnected")
+
+	if log != nil {
+		log.Warn("relay WebSocket disconnected")
+	}
 	return nil
 }
 
-// readLoop reads messages from the WebSocket and dispatches to pending requests.
+// readLoop reads messages and dispatches. Single JSON unmarshal via RawMessage.
 func (rp *relayProxy) readLoop(conn *websocket.Conn) {
 	defer func() {
 		rp.mu.Lock()
@@ -330,11 +367,17 @@ func (rp *relayProxy) readLoop(conn *websocket.Conn) {
 		if err != nil {
 			return
 		}
-		var env relay.Envelope
-		if json.Unmarshal(msg, &env) != nil {
+
+		// Single unmarshal: extract type field with RawMessage for the rest
+		var raw struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(msg, &raw) != nil {
 			continue
 		}
-		switch env.Type {
+
+		switch raw.Type {
 		case relay.TypeProxyResponseStart:
 			var start relay.ProxyResponseStart
 			if json.Unmarshal(msg, &start) == nil {
@@ -346,24 +389,21 @@ func (rp *relayProxy) readLoop(conn *websocket.Conn) {
 				rp.deliverChunk(chunk)
 			}
 		case relay.TypeProxyResponseEnd:
-			var end relay.ProxyResponseEnd
-			if json.Unmarshal(msg, &end) == nil {
-				rp.deliverEnd(end)
-			}
+			rp.deliverEnd(relay.ProxyResponseEnd{Type: raw.Type, ID: raw.ID})
 		case relay.TypeProxyError:
 			var pe relay.ProxyError
 			if json.Unmarshal(msg, &pe) == nil {
 				rp.deliverError(pe)
 			}
 		case relay.TypePing:
-			// Respond with pong
 			pong, _ := json.Marshal(relay.Envelope{Type: relay.TypePong})
+			rp.connWmu.Lock()
 			_ = conn.WriteMessage(websocket.TextMessage, pong)
+			rp.connWmu.Unlock()
 		}
 	}
 }
 
-// close shuts down the relay proxy.
 func (rp *relayProxy) close() {
 	rp.mu.Lock()
 	if rp.closed {
@@ -379,24 +419,32 @@ func (rp *relayProxy) close() {
 	}
 }
 
-// buildTargetURL reconstructs the target provider URL from the request path.
-// opencode sends requests to our local relay with the provider API path appended.
-// The request arrives with path like /relay/inference/v1/chat/completions.
-// We strip the relay prefix and prepend the provider base URL.
+// buildTargetURL strips the relay prefix and prepends the configured provider base URL.
 func (rp *relayProxy) buildTargetURL(path, query string) string {
-	base := "https://opencode.ai"
 	apiPath := strings.TrimPrefix(path, "/relay/inference")
 	if apiPath == "" {
 		apiPath = "/"
 	}
-	url := base + apiPath
+	url := rp.targetBaseURL + apiPath
 	if query != "" {
 		url += "?" + query
 	}
 	return url
 }
 
-// normalizeHeaderKey converts header keys to lowercase for transport.
-func normalizeHeaderKey(k string) string {
-	return strings.ToLower(k)
+// buildProxyHeaders extracts headers for the proxy request.
+// Strips hop-by-hop headers. Keeps authorization (needed by the provider).
+func buildProxyHeaders(h http.Header) map[string]string {
+	out := make(map[string]string, len(h))
+	for k := range h {
+		lk := strings.ToLower(k)
+		// Skip hop-by-hop headers that shouldn't be forwarded
+		switch lk {
+		case "connection", "keep-alive", "transfer-encoding",
+			"te", "trailer", "upgrade", "host":
+			continue
+		}
+		out[lk] = h.Get(k)
+	}
+	return out
 }

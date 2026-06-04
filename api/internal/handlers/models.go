@@ -311,6 +311,16 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 			} else {
 				applied = true
 			}
+
+			// Epic 26: If the selected model is free-tier, configure the
+			// opencode provider's baseURL to route through the relay proxy.
+			// This enables client-proxied inference for free models.
+			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
+				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
+				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, relayBaseURL); pushErr != nil {
+					h.warn("push relay baseURL failed", "error", pushErr.Error())
+				}
+			}
 		}
 	}
 
@@ -367,4 +377,71 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model 
 		}
 	}
 	return false
+}
+
+// isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.
+func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID string) bool {
+	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return false
+	}
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false
+	}
+
+	var models []opencodeModel
+	if json.Unmarshal(body, &models) != nil {
+		return false
+	}
+	for _, m := range models {
+		if m.ID == modelID {
+			return classifyTier(m.ProviderID, m.Cost) == "free"
+		}
+	}
+	return false
+}
+
+// pushRelayBaseURL configures the opencode provider's baseURL to route
+// through the in-pod relay proxy (Epic 26). This makes free-tier LLM
+// requests go to localhost:4097/relay/inference instead of opencode.ai.
+func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
+	payload := map[string]interface{}{
+		"type": "api",
+		"key":  "public",
+		"metadata": map[string]string{
+			"baseURL": relayBaseURL,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PUT /auth/opencode returned %d", resp.StatusCode)
+	}
+	return nil
 }

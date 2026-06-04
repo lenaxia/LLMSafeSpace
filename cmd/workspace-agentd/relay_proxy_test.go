@@ -375,3 +375,65 @@ func TestBuildTargetURL(t *testing.T) {
 		})
 	}
 }
+
+func TestRelayProxy_FailAllPendingOnDisconnect(t *testing.T) {
+	// Simulate a relay that disconnects while a request is in flight.
+	// The handler should receive an error rather than hanging.
+	rp := newRelayProxy(nil)
+	rp.requestTimeout = 5 * time.Second
+
+	reqCh := make(chan relay.ProxyRequest, 1)
+	rp.setRequestSender(func(pr relay.ProxyRequest) error {
+		reqCh <- pr
+		return nil
+	})
+
+	doneCh := make(chan int, 1) // receives HTTP status code
+
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+			strings.NewReader(`{"model":"test"}`))
+		w := httptest.NewRecorder()
+		rp.handler().ServeHTTP(w, req)
+		doneCh <- w.Code
+	}()
+
+	// Wait for request to be sent
+	<-reqCh
+
+	// Simulate disconnect — fail all pending
+	rp.failAllPending("connection lost")
+
+	// Handler should complete with 502
+	select {
+	case code := <-doneCh:
+		assert.Equal(t, http.StatusBadGateway, code)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not complete after failAllPending")
+	}
+}
+
+func TestRelayProxy_IsConnected(t *testing.T) {
+	rp := newRelayProxy(nil)
+	assert.False(t, rp.isConnected())
+
+	rp.setRequestSender(func(pr relay.ProxyRequest) error { return nil })
+	assert.True(t, rp.isConnected())
+}
+
+func TestBuildProxyHeaders_StripsHopByHop(t *testing.T) {
+	h := http.Header{}
+	h.Set("Content-Type", "application/json")
+	h.Set("Authorization", "Bearer public")
+	h.Set("Connection", "keep-alive")
+	h.Set("Transfer-Encoding", "chunked")
+	h.Set("Host", "localhost:4097")
+
+	result := buildProxyHeaders(h)
+
+	assert.Equal(t, "application/json", result["content-type"])
+	assert.Equal(t, "Bearer public", result["authorization"])
+	assert.Empty(t, result["connection"])
+	assert.Empty(t, result["transfer-encoding"])
+	assert.Empty(t, result["host"])
+}
