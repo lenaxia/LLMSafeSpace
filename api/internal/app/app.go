@@ -22,6 +22,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -283,6 +284,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
 		}
+	}
+	// Wire metrics into reload handlers.
+	if metricsSvc, ok := svc.Metrics.(*metrics.Service); ok {
+		agentReloadHandler.SetMetrics(metricsSvc)
+		bulkReloadHandler.SetMetrics(metricsSvc)
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{

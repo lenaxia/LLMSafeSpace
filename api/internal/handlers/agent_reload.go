@@ -50,13 +50,21 @@ type WorkspaceServicer interface {
 
 // AgentReloadHandler handles POST /api/v1/workspaces/:id/agent/reload.
 type AgentReloadHandler struct {
-	workspaceSvc WorkspaceServicer
-	db           AgentStateStore
-	podResolver  PodIPResolver
-	httpClient   *http.Client
-	logger       pkginterfaces.LoggerInterface
-	sseTracker   *SSETracker
-	getPassword  func(ctx context.Context, workspaceID string) (string, error)
+	workspaceSvc   WorkspaceServicer
+	db             AgentStateStore
+	podResolver    PodIPResolver
+	httpClient     *http.Client
+	logger         pkginterfaces.LoggerInterface
+	sseTracker     *SSETracker
+	getPassword    func(ctx context.Context, workspaceID string) (string, error)
+	metricsService MetricsRecorder
+}
+
+// MetricsRecorder is the minimal metrics interface for reload handlers.
+type MetricsRecorder interface {
+	RecordAgentReload(result string, durationMs int64, drained bool)
+	RecordAgentReloadDrainTimeout(elapsedMs int64)
+	RecordAgentReloadBulk(total, succeeded, failed int)
 }
 
 // NewAgentReloadHandler constructs the handler with all dependencies.
@@ -84,8 +92,12 @@ func (h *AgentReloadHandler) SetPasswordGetter(getter func(ctx context.Context, 
 	h.getPassword = getter
 }
 
+// SetMetrics injects the metrics recorder.
+func (h *AgentReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m }
+
 // Reload handles POST /api/v1/workspaces/:id/agent/reload.
 func (h *AgentReloadHandler) Reload(c *gin.Context) {
+	start := time.Now()
 	workspaceID := c.Param("id")
 	userID, _ := extractAuth(c)
 	if userID == "" {
@@ -140,6 +152,9 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		if err := WaitUntilIdle(c.Request.Context(), workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
 			if errors.As(err, &drainErr) {
+				if h.metricsService != nil {
+					h.metricsService.RecordAgentReloadDrainTimeout(time.Since(start).Milliseconds())
+				}
 				c.JSON(http.StatusRequestTimeout, gin.H{
 					"error": gin.H{
 						"code":           "drain_timeout",
@@ -227,6 +242,10 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		return
 	}
 
+	if h.metricsService != nil {
+		h.metricsService.RecordAgentReload("success", time.Since(start).Milliseconds(), drain)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"disposed":       true,
 		"lastDisposedAt": disposedAt.Format(time.RFC3339),
@@ -240,14 +259,15 @@ type PendingReloadLister interface {
 
 // BulkReloadHandler handles POST /api/v1/users/me/agents/reload.
 type BulkReloadHandler struct {
-	pendingLister PendingReloadLister
-	workspaceSvc  WorkspaceServicer
-	db            AgentStateStore
-	podResolver   PodIPResolver
-	httpClient    *http.Client
-	logger        pkginterfaces.LoggerInterface
-	sseTracker    *SSETracker
-	getPassword   func(ctx context.Context, workspaceID string) (string, error)
+	pendingLister  PendingReloadLister
+	workspaceSvc   WorkspaceServicer
+	db             AgentStateStore
+	podResolver    PodIPResolver
+	httpClient     *http.Client
+	logger         pkginterfaces.LoggerInterface
+	sseTracker     *SSETracker
+	getPassword    func(ctx context.Context, workspaceID string) (string, error)
+	metricsService MetricsRecorder
 }
 
 // NewBulkReloadHandler constructs the bulk reload handler.
@@ -271,6 +291,9 @@ func NewBulkReloadHandler(
 
 // SetSSETracker injects the SSE tracker for drain mode.
 func (h *BulkReloadHandler) SetSSETracker(t *SSETracker) { h.sseTracker = t }
+
+// SetMetrics injects the metrics recorder.
+func (h *BulkReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m }
 
 // SetPasswordGetter injects the password getter for drain mode.
 func (h *BulkReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
@@ -332,6 +355,9 @@ func (h *BulkReloadHandler) BulkReload(c *gin.Context) {
 	})
 	if flusher != nil {
 		flusher.Flush()
+	}
+	if h.metricsService != nil {
+		h.metricsService.RecordAgentReloadBulk(len(pending), succeeded, failed)
 	}
 }
 
