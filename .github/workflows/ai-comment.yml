@@ -74,7 +74,13 @@ jobs:
 
       - name: Install opencode
         shell: bash
-        run: curl -fsSL https://opencode.ai/install | bash
+        run: |
+          for i in 1 2 3 4 5; do
+            curl -fsSL https://opencode.ai/install | bash && break
+            wait=$((2 ** i * 5 + RANDOM % 10))
+            echo "Install attempt $i failed. Retrying in ${wait}s..."
+            sleep $wait
+          done
 
       - name: Run OpenCode
         shell: bash
