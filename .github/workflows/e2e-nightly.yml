@@ -5,8 +5,6 @@ on:
     # Run at 06:00 UTC daily (10pm PST)
     - cron: "0 6 * * *"
   workflow_dispatch: # Allow manual trigger
-  push:
-    branches: [main] # declared so GitHub doesn't create a phantom failure run on push
 
 env:
   CLUSTER_NAME: llmsafespace-ci
@@ -18,7 +16,6 @@ jobs:
     name: Full system E2E (kind cluster)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name != 'push'
     steps:
       - uses: actions/checkout@v6
 
@@ -104,7 +101,7 @@ jobs:
         # Conservative CI thresholds catch gross regressions (e.g. re-adding
         # the provider-connectivity readyz gate) without being sensitive to
         # kind cluster resource noise. Tighten after S18.11 baseline is set.
-        if: ${{ secrets.LLM_API_KEY != '' }}
+        if: ${{ env.LLM_API_KEY != '' }}
         env:
           NS: ${{ env.NS }}
           API_URL: http://localhost:30080
