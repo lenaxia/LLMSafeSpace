@@ -636,3 +636,66 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 	require.Len(t, resp.Models, 1)
 	require.Equal(t, "paid", resp.Models[0].Tier)
 }
+
+func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "filter-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Mix of models: free opencode, paid opencode, non-opencode enabled
+	models := `[
+		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]},
+		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid","enabled":true,"cost":[{"input":3,"output":15}]},
+		{"id":"anthropic/claude","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15}]},
+		{"id":"openai/disabled","providerID":"openai","name":"Disabled","enabled":false,"cost":[{"input":1,"output":2}]}
+	]`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Models []struct {
+			ID       string `json:"id"`
+			FreeTier bool   `json:"freeTier"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Should contain: free opencode + anthropic (enabled, non-opencode)
+	// Should NOT contain: paid opencode + disabled openai
+	ids := make([]string, len(resp.Models))
+	for i, m := range resp.Models {
+		ids[i] = m.ID
+	}
+	require.Contains(t, ids, "opencode/free-model")
+	require.Contains(t, ids, "anthropic/claude")
+	require.NotContains(t, ids, "opencode/paid-model")
+	require.NotContains(t, ids, "openai/disabled")
+	require.Len(t, resp.Models, 2)
+}
