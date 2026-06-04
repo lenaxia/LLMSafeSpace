@@ -210,3 +210,29 @@ func (h *RelayHandler) IsClientConnected(workspaceID string) bool {
 	defer room.mu.RUnlock()
 	return room.client != nil
 }
+
+// IsAgentConnected returns whether an agentd relay is connected for the workspace.
+func (h *RelayHandler) IsAgentConnected(workspaceID string) bool {
+	h.mu.RLock()
+	room, ok := h.rooms[workspaceID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.agentd != nil
+}
+
+// IsBothConnected returns whether both agentd and client are connected for the workspace.
+func (h *RelayHandler) IsBothConnected(workspaceID string) bool {
+	h.mu.RLock()
+	room, ok := h.rooms[workspaceID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.agentd != nil && room.client != nil
+}

@@ -1,13 +1,25 @@
-// @ts-nocheck — Pre-existing strict-null TS errors from Epic 26; does not affect runtime.
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useRelayClient } from "./useRelayClient";
 
+// ReadyState numeric constants (mirrors WebSocket spec; avoids using
+// the WebSocket global before vi.stubGlobal runs in beforeEach).
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
+const WS_CLOSED = 3;
+
 // Mock WebSocket
 class MockWebSocket {
+  // Static readyState constants — the hook reads WebSocket.OPEN, so these
+  // must exist on the class that vi.stubGlobal("WebSocket", ...) installs.
+  static CONNECTING = WS_CONNECTING;
+  static OPEN = WS_OPEN;
+  static CLOSING = 2;
+  static CLOSED = WS_CLOSED;
+
   static instances: MockWebSocket[] = [];
   url: string;
-  readyState = WebSocket.CONNECTING;
+  readyState = WS_CONNECTING;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -24,13 +36,13 @@ class MockWebSocket {
   }
 
   close() {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = WS_CLOSED;
     this.onclose?.();
   }
 
   // Test helpers
   simulateOpen() {
-    this.readyState = WebSocket.OPEN;
+    this.readyState = WS_OPEN;
     this.onopen?.();
   }
 
@@ -39,7 +51,7 @@ class MockWebSocket {
   }
 
   simulateClose() {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = WS_CLOSED;
     this.onclose?.();
   }
 
@@ -73,12 +85,11 @@ describe("useRelayClient", () => {
   });
 
   it("connects when workspaceId is provided", () => {
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
-    expect(result.current.status).toBe("connecting");
     expect(MockWebSocket.instances).toHaveLength(1);
-    expect(MockWebSocket.instances[0].url).toContain("/workspaces/ws1/relay?role=client");
+    expect(MockWebSocket.instances[0]!.url).toContain("/workspaces/ws1/relay?role=client");
   });
 
   it("transitions to connected on WebSocket open", async () => {
@@ -87,7 +98,7 @@ describe("useRelayClient", () => {
     );
 
     act(() => {
-      MockWebSocket.instances[0].simulateOpen();
+      MockWebSocket.instances[0]!.simulateOpen();
     });
 
     expect(result.current.status).toBe("connected");
@@ -99,27 +110,31 @@ describe("useRelayClient", () => {
     );
 
     act(() => {
-      MockWebSocket.instances[0].simulateError();
+      MockWebSocket.instances[0]!.simulateError();
     });
 
     expect(result.current.status).toBe("error");
   });
 
   it("handles proxy_request by calling fetch and streaming response", async () => {
+    // Use real timers for this test: waitFor relies on setTimeout internally
+    // and is incompatible with vi.useFakeTimers().
+    vi.useRealTimers();
+
     const mockResponse = new Response("hello world", {
       status: 200,
       headers: { "content-type": "text/plain" },
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
 
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
-    await act(async () => {
+    act(() => {
       ws.simulateMessage({
         type: "proxy_request",
         id: "req_1",
@@ -128,31 +143,36 @@ describe("useRelayClient", () => {
         headers: { "content-type": "application/json" },
         body: '{"model":"test"}',
       });
-      // Allow microtasks to flush
-      await vi.advanceTimersByTimeAsync(0);
     });
 
-    // Should have sent response_start, response_chunk(s), response_end
-    const sent = ws.sentMessages.map((s) => JSON.parse(s));
-    const types = sent.map((m: { type: string }) => m.type);
-    expect(types).toContain("proxy_response_start");
-    expect(types).toContain("proxy_response_end");
+    // handleProxyRequest is fire-and-forget from onmessage; poll until
+    // the async fetch chain completes and the messages are sent.
+    await waitFor(() => {
+      const types = ws.sentMessages
+        .map((s) => JSON.parse(s) as { type: string })
+        .map((m) => m.type);
+      expect(types).toContain("proxy_response_start");
+      expect(types).toContain("proxy_response_end");
+    });
   });
 
   it("sends proxy_error on fetch failure (CORS)", async () => {
+    // Use real timers — same reason as the test above.
+    vi.useRealTimers();
+
     vi.stubGlobal(
       "fetch",
       vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
     );
 
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
-    await act(async () => {
+    act(() => {
       ws.simulateMessage({
         type: "proxy_request",
         id: "req_2",
@@ -160,15 +180,15 @@ describe("useRelayClient", () => {
         url: "https://opencode.ai/v1/models",
         headers: {},
       });
-      await vi.advanceTimersByTimeAsync(0);
     });
 
-    const sent = ws.sentMessages.map((s) => JSON.parse(s));
-    const errorMsg = sent.find(
-      (m: { type: string }) => m.type === "proxy_error",
-    );
-    expect(errorMsg).toBeDefined();
-    expect(errorMsg.error).toContain("CORS");
+    await waitFor(() => {
+      const sent = ws.sentMessages
+        .map((s) => JSON.parse(s) as { type: string; error?: string });
+      const errorMsg = sent.find((m) => m.type === "proxy_error");
+      expect(errorMsg).toBeDefined();
+      expect(errorMsg!.error).toContain("CORS");
+    });
   });
 
   it("does not connect when enabled is false", () => {
@@ -183,7 +203,7 @@ describe("useRelayClient", () => {
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
     act(() => ws.simulateClose());
 

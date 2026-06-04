@@ -57,6 +57,11 @@ type relayProxy struct {
 	sendFn func(relay.ProxyRequest) error
 	cfg    *relayProxyConfig
 
+	// log is captured at construction time so relay goroutines never read
+	// the mutable package-level `log` variable (which tests swap under the
+	// race detector without a lock).
+	log *zap.Logger
+
 	// Metrics
 	requestsTotal   uint64
 	requestsErrored uint64
@@ -85,6 +90,7 @@ func newRelayProxy(cfg *relayProxyConfig) *relayProxy {
 		targetBaseURL:  target,
 		closeCh:        make(chan struct{}),
 		cfg:            cfg,
+		log:            log, // snapshot package-level logger at construction time
 	}
 }
 
@@ -212,8 +218,8 @@ func (rp *relayProxy) writeStreamingResponse(w http.ResponseWriter, r *http.Requ
 				}
 			}
 		case <-pending.errorCh:
-			if log != nil {
-				log.Warn("relay error after response started")
+			if rp.log != nil {
+				rp.log.Warn("relay error after response started")
 			}
 			return
 		case <-r.Context().Done():
@@ -337,8 +343,8 @@ func (rp *relayProxy) connect() error {
 	rp.conn = conn
 	rp.mu.Unlock()
 
-	if log != nil {
-		log.Info("relay WebSocket connected", zap.String("url", rp.cfg.relayURL))
+	if rp.log != nil {
+		rp.log.Info("relay WebSocket connected", zap.String("url", rp.cfg.relayURL))
 	}
 
 	rp.readLoop(conn)
@@ -346,8 +352,8 @@ func (rp *relayProxy) connect() error {
 	// Connection lost — fail all pending requests immediately
 	rp.failAllPending("relay disconnected")
 
-	if log != nil {
-		log.Warn("relay WebSocket disconnected")
+	if rp.log != nil {
+		rp.log.Warn("relay WebSocket disconnected")
 	}
 	return nil
 }

@@ -207,7 +207,7 @@ check: fmt-check imports-check vet lint helm-render repolint
 #
 # Does NOT auto-fix:
 #   - errcheck / bodyclose / sqlclosecheck (semantic; need code changes)
-#   - duplicate worklog / migration numbers (need rename decision)
+#   - duplicate migration numbers (load-bearing; need human rename decision)
 #   - CRD drift (need Go ↔ chart schema reconciliation)
 #   - gitleaks findings (rotate the secret + remove from diff)
 #
@@ -217,7 +217,7 @@ pre-commit-fix:
 	@echo "== pre-commit-fix: snapshot staged files =="
 	@staged=$$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(go|sql)$$' || true); \
 	if [ -z "$$staged" ]; then \
-		echo "No Go/SQL files staged; only chart-drift will run."; \
+		echo "No Go/SQL files staged; only chart-drift and worklog-fix will run."; \
 	fi; \
 	echo "== gofmt =="; \
 	$(GOCMD) fmt ./... >/dev/null; \
@@ -228,11 +228,15 @@ pre-commit-fix:
 	misspell -w -locale US $$(find . -name '*.go' -not -path './frontend/node_modules/*' -not -path './sdks/*/node_modules/*') >/dev/null 2>&1 || true; \
 	echo "== chart-sync-migrations =="; \
 	$(MAKE) -s chart-sync-migrations >/dev/null; \
+	echo "== fix-worklogs =="; \
+	$(GOBUILD) -o bin/repolint ./cmd/repolint >/dev/null 2>&1; \
+	./bin/repolint -fix-worklogs; \
 	echo "== restage modified files =="; \
 	if [ -n "$$staged" ]; then \
 		echo "$$staged" | xargs -r git add; \
 	fi; \
 	git add charts/llmsafespace/migrations/ 2>/dev/null || true; \
+	git add worklogs/ 2>/dev/null || true; \
 	echo ""; \
 	echo "Auto-fixes applied and re-staged. Re-run 'git commit' to retry."
 

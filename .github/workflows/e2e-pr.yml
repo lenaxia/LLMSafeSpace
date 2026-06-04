@@ -46,9 +46,27 @@ jobs:
           retention-days: 7
 
   e2e-fullstack:
+    # DISABLED: The API requires a Kubernetes client at startup
+    # (pkg/kubernetes/client.go) and there is no no-k8s / stub mode.
+    # ci-compose.yaml provides Postgres + Valkey but no kubeconfig,
+    # so the API container crashes immediately with:
+    #   "failed to create in-cluster config: unable to load in-cluster
+    #    configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT
+    #    must be defined"
+    #
+    # Fix options (tracked in issue #24):
+    #   A) Add LLMSAFESPACE_KUBERNETES_INCLUSTER=false + a minimal
+    #      kubeconfig (pointing at a kind/k3s cluster or a fake API
+    #      server) to ci-compose.yaml so the client can initialise.
+    #   B) Add a LLMSAFESPACE_KUBERNETES_DISABLED env var that makes
+    #      app.New() skip k8s client creation entirely and return stub
+    #      implementations — safe for auth/session/credential flows
+    #      that don't touch workspaces.
+    # Option B is cleaner for CI but requires touching app.go and all
+    # handlers that accept a KubernetesClient. Tracked as future work.
     name: Full-stack E2E (docker-compose)
-    if: false # Disabled: requires KUBERNETES_SERVICE_HOST (in-cluster config) not available in docker-compose
     runs-on: ubuntu-latest
+    if: false   # disabled — see comment above
     steps:
       - uses: actions/checkout@v6
 

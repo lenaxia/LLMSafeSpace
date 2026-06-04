@@ -113,9 +113,16 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Set up environment variable overrides
+	// Set up environment variable overrides.
+	// Replace underscores with dots so LLMSAFESPACE_KUBERNETES_INCLUSTER maps
+	// to the nested viper key kubernetes.incluster (matches struct tag inCluster).
 	v.SetEnvPrefix("LLMSAFESPACE")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	// Explicit bindings for nested keys that AutomaticEnv misses because
+	// viper only replaces dots→underscores in env names, not the reverse.
+	_ = v.BindEnv("kubernetes.inCluster", "LLMSAFESPACE_KUBERNETES_INCLUSTER")
+	_ = v.BindEnv("kubernetes.configPath", "LLMSAFESPACE_KUBERNETES_CONFIGPATH")
 
 	// Unmarshal config
 	if err := v.Unmarshal(&config); err != nil {

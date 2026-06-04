@@ -21,6 +21,20 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// waitBothConnected polls until both agentd and client are registered in the
+// relay handler for the given workspaceID. This is necessary because
+// websocket.Dial returns as soon as the HTTP upgrade succeeds, but the
+// server-side HandleRelay goroutine may not have stored the connection in
+// room.agentd / room.client yet. Without this barrier, the first WriteMessage
+// can fire before the target slot is set, and the relay handler silently
+// drops messages (target==nil → no-op).
+func waitBothConnected(t *testing.T, h *RelayHandler, workspaceID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return h.IsBothConnected(workspaceID)
+	}, 2*time.Second, 5*time.Millisecond, "both participants did not connect within 2s")
+}
+
 func TestRelayHandler_NoUpgrade(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewRelayHandler(nil)
@@ -63,6 +77,11 @@ func TestRelayHandler_TwoParticipants(t *testing.T) {
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL+"?role=client", nil)
 	require.NoError(t, err)
 	defer clientConn.Close()
+
+	// Wait for both connections to be registered server-side before sending.
+	// Without this the agent may write before room.client is set, silently
+	// dropping messages (the handler drops if target==nil).
+	waitBothConnected(t, h, "ws1")
 
 	// Agent sends a proxy request → should be delivered to client
 	proxyReq := relay.ProxyRequest{
@@ -126,6 +145,8 @@ func TestRelayHandler_StreamingChunks(t *testing.T) {
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL+"?role=client", nil)
 	require.NoError(t, err)
 	defer clientConn.Close()
+
+	waitBothConnected(t, h, "ws1")
 
 	// Client sends multiple chunks → all should reach agent
 	chunks := []string{"chunk1", "chunk2", "chunk3"}
@@ -251,6 +272,10 @@ func TestRelayHandler_MultipleWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	defer ws2Client.Close()
 
+	// Wait for all four connections to register before sending.
+	waitBothConnected(t, h, "ws1")
+	waitBothConnected(t, h, "ws2")
+
 	// Message on ws1 should NOT go to ws2
 	req := relay.ProxyRequest{Type: relay.TypeProxyRequest, ID: "ws1_req", Method: "POST", URL: "https://opencode.ai/test"}
 	data, _ := json.Marshal(req)
@@ -292,6 +317,9 @@ func TestRelayHandler_ConcurrentMessages(t *testing.T) {
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL+"?role=client", nil)
 	require.NoError(t, err)
 	defer clientConn.Close()
+
+	// Wait for client to be registered before agent starts sending.
+	waitBothConnected(t, h, "ws1")
 
 	// Send 10 requests from agent sequentially (gorilla/websocket doesn't support concurrent writes)
 	for i := 0; i < 10; i++ {
