@@ -19,6 +19,10 @@ const (
 	heartbeatInterval   = 25 * time.Second
 	writeDeadlineWindow = 30 * time.Second
 	snapshotTimeout     = 5 * time.Second
+
+	// labelUserID is the label key used on Workspace CRDs to identify the owner.
+	// Set by workspace_service.go:636; read here and in terminal.go.
+	labelUserID = "user-id"
 )
 
 // StreamUserEvents is the user-scoped SSE endpoint (GET /api/v1/events).
@@ -151,7 +155,7 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 	resultCh := make(chan listResult, 1)
 	go func() {
 		list, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).List(metav1.ListOptions{
-			LabelSelector: "user-id=" + userID,
+			LabelSelector: labelUserID + "=" + userID,
 		})
 		if err != nil {
 			resultCh <- listResult{err: err}

@@ -307,7 +307,7 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 	k8sMock.On("LlmsafespaceV1").Return(llmMock)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	wsMock.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
-		return opts.LabelSelector == "user-id=user-snap"
+		return opts.LabelSelector == labelUserID+"=user-snap"
 	})).Return(&v1.WorkspaceList{
 		Items: []v1.Workspace{
 			{ObjectMeta: metav1.ObjectMeta{Name: "ws-a"}},
