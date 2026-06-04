@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.9
-**Last Updated:** 2026-05-27
+**Version:** 1.10
+**Last Updated:** 2026-06-04
 **Project Status:** Active Development
 
 ---
@@ -18,9 +18,10 @@
 6. [Worklog Requirements](#worklog-requirements)
 7. [Development Workflow](#development-workflow)
 8. [Multi-Agent Workflow](#multi-agent-workflow)
-9. [Common Commands](#common-commands)
-10. [Branch Management](#branch-management)
-11. [Testing Requirements](#testing-requirements)
+9. [PR Review Guide](#pr-review-guide)
+10. [Common Commands](#common-commands)
+11. [Branch Management](#branch-management)
+12. [Testing Requirements](#testing-requirements)
 
 ---
 
@@ -207,22 +208,40 @@ Force pushing rewrites shared history and can destroy a collaborator's work. The
 
 ### 11. Adversarial Self-Review
 
-After implementing any non-trivial change, **before marking it complete**, explicitly ask:
+After implementing any non-trivial change, **before marking it complete**, conduct a structured adversarial review in three phases.
 
-1. **Where are the gaps?** What did the design not cover? What edge cases are unhandled?
+#### Phase 1: Identify Weaknesses, Gaps, and Failure Modes
+
+Explicitly ask:
+
+1. **Where are the gaps?** What did the design not cover? What edge cases are unhandled? What requirements were omitted?
 2. **Where is it weak?** Which parts are fragile, tightly coupled, or depend on implicit ordering?
-3. **Where will it fail?** Under what conditions (concurrency, partial failure, invalid state, resource exhaustion) will the implementation behave unexpectedly?
+3. **Where will it fail?** Under what conditions (concurrency, partial failure, invalid state, resource exhaustion, adversarial input) will the implementation behave unexpectedly?
 4. **What did I assume without verifying?** Re-read the assumptions list. For each one, ask: "Did I actually validate this, or did I just believe it?"
 5. **What would a skeptical reviewer reject?** If someone with no context read this diff, what would they flag?
+6. **Why might this code be wrong?** Take the adversarial view — assume the implementation is incorrect or misses the mark, and prove otherwise.
 
-After generating these criticisms, **assess each one for validity**:
+#### Phase 2: Validate Each Finding
 
-- Is it a real bug, a design flaw, or a false alarm?
-- If real: fix it before proceeding.
-- If a false alarm: document why it is not a real issue (one sentence is enough).
-- If uncertain: escalate to the user rather than dismissing it.
+For every criticism generated in Phase 1:
+
+1. **Is the finding real?** Re-read the code, re-run the test, reproduce the scenario. Do not take findings at face value.
+2. **Is it a bug, a design flaw, or a false alarm?**
+   - **Real bug:** Fix it before proceeding. Do not defer.
+   - **Design flaw:** Surface with proposed remediation. Do not proceed without addressing.
+   - **False alarm:** Document why it is not a real issue (one sentence with evidence). Do not silently dismiss.
+3. **If uncertain:** Escalate to the user rather than dismissing or guessing.
+4. **Only validated findings make it into the record.** Unvalidated claims, guesses, and assumed-but-unverified assertions are discarded. They have no place in a worklog, PR description, or review report.
+
+#### Phase 3: Remediate or Document
+
+- Real findings must be fixed with regression tests before the change is complete.
+- False alarms must be documented with rationale (one sentence is sufficient).
+- The change is not ready until Phase 2 returns zero real findings.
 
 This is not optional introspection — it is a mandatory validation gate. Code that has not survived its own adversarial review is not ready for commit.
+
+See also the [Adversarial Assessment](#adversarial-assessment) section in the PR Review Guide for expanded criteria used during pull request review.
 
 ---
 
@@ -1261,6 +1280,270 @@ SUCCESS CRITERIA:
 
 ---
 
+## PR Review Guide
+
+Every PR must be reviewed against the rubric below before merging. Score each dimension 1–10; a score of **9 or higher** is required on every dimension. For each dimension, list specific remediation items needed to reach ≥9.
+
+### Quality Rubric & Scoring
+
+#### Robustness
+
+**Definition:** Handles failures, partial states, and adversarial inputs without corruption or data loss.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | No error handling; panics on unexpected input; no recovery from partial failure |
+| 4–6 | Basic error returns but some paths silently ignored; no retry/backoff; crashes on dependency failure |
+| 7–8 | All errors handled explicitly; retry with backoff on transient failures; graceful degradation |
+| 9–10 | Every failure mode enumerated and tested; circuit breakers; defensive coding against all inputs; provably correct under partial failure |
+
+**To reach ≥9:**
+- Verify every function handles its documented error returns
+- Add integration tests for each dependency failure (DB down, Redis down, K8s API unreachable)
+- Eliminate all silent error swallowing (`_ = fn()` without comment)
+- Validate all external inputs at the boundary
+- Confirm recovery from partial state (e.g., half-written CRD status → rollback or retry)
+
+#### Scalability
+
+**Definition:** Performance characteristics hold as load, data volume, and concurrency increase.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | O(n²) or worse on hot paths; no pagination; global locks on every request |
+| 4–6 | Linear scans where indexed lookups exist; per-request expensive allocations; no connection pooling |
+| 7–8 | Bounded loops; pagination on list endpoints; connection pooling; no per-request resource exhaustion |
+| 9–10 | Verified O(1) or O(log n) on all hot paths; horizontal scalability demonstrated; no hidden N+1 queries; resource limits enforced |
+
+**To reach ≥9:**
+- Profile for N+1 query patterns (database and K8s API)
+- Verify all list endpoints use pagination with configurable limits
+- Check for unbounded goroutine creation or slice growth
+- Confirm connection pools are sized and reused
+- Ensure no per-request lock acquisition on shared resources
+
+#### Maintainability
+
+**Definition:** Code is readable, well-structured, and follows established patterns; a new contributor can modify it confidently.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | No tests; no doc comments; monolithic functions; inconsistent naming |
+| 4–6 | Some tests but low coverage; mixed patterns; unclear data flow; magic numbers |
+| 7–8 | Good test coverage; clear naming; small focused functions; follows project conventions |
+| 9–10 | Self-documenting code; no unnecessary comments; consistent patterns throughout; a junior engineer can read and modify safely |
+
+**To reach ≥9:**
+- Verify all functions are reasonably small (≤50 lines or justified exceptions)
+- Confirm naming follows Go conventions and project style
+- Ensure no duplicate or near-duplicate code
+- Check that every struct has a clear single responsibility
+- Remove any TODOs, FIXMEs, or commented-out code
+
+#### Reliability
+
+**Definition:** Deterministic, repeatable behaviour; no flaky tests; consistent results across environments.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | Non-deterministic behaviour; race conditions; flaky tests ignored |
+| 4–6 | Some races handled; tests occasionally flaky; no timeout on external calls |
+| 7–8 | Race-free in normal operation; stable tests; timeouts on all external calls |
+| 9–10 | Race-free at high concurrency; all tests pass consistently with `-race`; timeout and deadline propagation everywhere |
+
+**To reach ≥9:**
+- Run tests with `-race` and verify zero races
+- Ensure all external calls have timeouts (`context.WithTimeout`)
+- Fix any flaky tests; document if genuinely non-deterministic
+- Verify no shared mutable state across goroutines without synchronisation
+- Confirm idempotency of all mutation endpoints
+
+#### Performance
+
+**Definition:** Efficient use of CPU, memory, and I/O; no unnecessary pessimisation.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | Unbounded memory allocations; synchronous I/O on hot paths; no caching |
+| 4–6 | Some caching but misses common patterns; unnecessary copies of large objects |
+| 7–8 | Proper use of pointers, reuse, and pooling; async I/O where beneficial; cache headers |
+| 9–10 | Benchmark-driven optimisation; zero-copy paths where possible; measured and documented trade-offs |
+
+**To reach ≥9:**
+- Check for unnecessary heap allocations in hot loops
+- Verify JSON marshal/unmarshal is not on every response (cache when possible)
+- Ensure no synchronous I/O inside a hot handler without justification
+- Profile with realistic load before claiming performance is adequate
+
+#### Security
+
+**Definition:** Input validated, outputs sanitised, secrets never logged, least-privilege by default.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | No input validation; secrets logged; no auth on endpoints |
+| 4–6 | Basic validation but bypassable; secrets may leak in error messages; broad permissions |
+| 7–8 | All inputs validated at boundary; secrets filtered from logs; least-privilege RBAC |
+| 9–10 | Defence in depth; no user data in error messages; injection-proof by construction; security tests for every control |
+
+**To reach ≥9:**
+- Verify no secrets appear in logs, error messages, or responses
+- Check all user input is validated (length, type, range, allowed characters)
+- Confirm permission checks happen in the service layer, not just the handler
+- Ensure SQL injection is impossible (parameterised queries only)
+- Add security-specific tests for every control (see Auth section)
+- Verify rate limiting and body size limits are applied
+
+#### Test Coverage & Quality
+
+**Definition:** Tests exist at the right levels, cover happy+unhappy paths, and are reliable.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | No tests, or tests don't actually assert anything |
+| 4–6 | Some unit tests but no unhappy paths; no integration tests |
+| 7–8 | Good unit coverage + unhappy paths + integration/e2e tests; table-driven |
+| 9–10 | Comprehensive coverage at all levels; TDD followed; tests run with `-race`; no flaky tests |
+
+**To reach ≥9:**
+- Verify table-driven tests cover both happy and unhappy paths
+- Confirm e2e/integration tests exercise the real wiring (router → service → store)
+- Ensure tests run cleanly with `-race` and `-count=1`
+- Check for test utility functions that reduce boilerplate
+- Verify no tests depend on external services without a mock/fake
+
+#### SOLID Compliance
+
+**Definition:** Follows Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, and Dependency Inversion principles. Every type has one clear reason to change; abstractions are stable; dependencies flow inward.
+
+| Score | Criteria |
+|-------|----------|
+| 1–3 | Violates multiple SOLID principles; god objects; concrete coupling everywhere; impossible to test in isolation |
+| 4–6 | Some SRP violations; mixed abstraction levels; some coupling to concrete types; partial testability |
+| 7–8 | Mostly SOLID; clear interfaces; dependency injection; small focused types; testable in isolation |
+| 9–10 | Fully SOLID by construction; every type has one reason to change; abstractions are caller-shaped not implementation-shaped; high-level modules never import low-level details |
+
+**To reach ≥9:**
+- Verify every type has a single, clear responsibility (ask "what is the one thing this does?")
+- Confirm interfaces are small (1–3 methods) and designed for the caller's need, not the implementation's
+- Ensure no concrete type is depended on where an interface would serve
+- Validate that adding a new variant (runtime environment, sandbox profile, auth provider) does not require modifying existing types (open/closed)
+- Check that high-level policy modules (services, controllers) do not import low-level detail modules (database drivers, K8s client internals)
+
+#### Right-Sized Complexity
+
+**Definition:** The code is exactly as complex as it needs to be — no more (over-engineered), no less (under-engineered). Abstractions earn their keep. 10 is perfect; scores decrease in either direction.
+
+| Score | Criteria |
+|-------|----------|
+| 10 | Perfectly sized — abstraction level matches the problem; every interface has ≥2 implementations or a clear imminent need; no speculative generality; a junior engineer can follow the flow |
+| 7–9 | Slightly off — one unnecessary abstraction layer OR one missing abstraction that would simplify callers. Functions and type boundaries are mostly right |
+| 4–6 | Noticeably off — speculative abstractions with no current consumer, or monoliths that should be split. Multiple indirection layers without value |
+| 1–3 | Severely wrong — framework-in-disguise (unnecessary factories/visitors/strategies for a simple CRUD path), or giant monolithic functions with no decomposition. Actively reduces productivity |
+
+**To reach ≥9:**
+- For every interface, ask: "Does this have (or will it imminently have) ≥2 implementations, or is it speculative generality?"
+- For every function >30 lines, ask: "Can this be decomposed without forcing the reader to hold more state in their head?"
+- Remove any abstraction that has exactly one concrete implementation and no second implementation planned
+- Verify that adding a new feature requires adding code (new types, new files), not modifying the abstraction layer
+- Confirm the simplest correct solution was chosen — not the most general, not the most clever
+
+### E2E Wiring Verification
+
+Beyond scoring individual dimensions, every PR must verify that all expected user workflows and system pathways are fully wired end-to-end. "Wired" means the code is connected through the full request path — entry point, middleware, service/controller logic, data store interaction, response propagation, and error handling at every step.
+
+#### Process
+
+1. **List every expected workflow** affected by this PR:
+   - User-facing operations (create sandbox, send message, suspend workspace, etc.)
+   - System operations (reconciliation loop, webhook validation, credential injection, etc.)
+   - Background operations (cache eviction, metrics collection, health checks)
+   - Error/recovery paths (dependency failure, invalid state, timeout)
+
+2. **For each workflow, trace the full path:**
+   - Entry point (REST endpoint, CRD event, CLI command, timer)
+   - Middleware/authorisation layer
+   - Service/controller logic
+   - Data store interaction (DB, Redis, K8s API)
+   - Response or propagation back to caller
+   - Error handling and rollback at every step
+
+3. **Confirm wiring with evidence:**
+   - Integration test that exercises the real path (router → service → store)
+   - Or, for paths that cannot be integration-tested, a documented manual verification with output
+   - **"It compiles" or "unit tests pass" is NOT sufficient** — the actual wiring must be demonstrated
+
+4. **Identify and flag unwired code:**
+   - Any handler, service, or function that was built but never called from a live request path
+   - Any code path guarded by a dead conditional (env var never set, feature flag never enabled)
+   - These are not acceptable — either wire them or remove them
+
+5. **Common wiring failures to check:**
+   - New handler not registered in the router
+   - New service not initialised in the service bootstrap (`services.go`)
+   - New CRD type not registered in the scheme
+   - New reconciler not added to the controller setup
+   - New migration not included in the startup sequence
+   - New middleware not added to the chain
+   - New error type not handled in the error handler middleware
+   - New permission not checked in the authorisation layer
+   - New mock missing a method (silent no-op in tests)
+
+This verification must be documented in the final PR review report. Unwired code is dead code and is not acceptable.
+
+### Adversarial Assessment
+
+In addition to the rubric scoring, every PR must undergo a structured adversarial review (see also [Rule 11 — Adversarial Self-Review](#11-adversarial-self-review)). This is a mandatory validation gate.
+
+#### Phase 1: Identify Weaknesses, Gaps, and Failure Modes
+
+Assume the code is wrong until proven otherwise. Proactively search for:
+
+1. **Architectural gaps:** What scenarios did the design not cover? What happens when system state doesn't match the designer's expectations?
+2. **Failure modes:** Under what conditions will this code fail? Consider:
+   - Concurrency (two requests at once, race conditions, stale reads)
+   - Partial failure (DB write succeeds but K8s write fails, or vice versa)
+   - Resource exhaustion (OOM, disk full, too many open files, connection pool exhausted)
+   - Invalid state (CRD in unexpected phase, orphaned resources, missing labels)
+   - Timing dependencies (operation A must complete before B, but nothing enforces ordering)
+   - Adversarial input (malformed JSON, very long strings, unexpected types, injection attempts)
+3. **Wrong assumptions:** Every assumption the code relies on — list each one and ask "what if this is false?" (see [Rule 7 — Assumptions: State, Then Validate](#7-assumptions-state-then-validate))
+4. **Incorrectness:** Places where the code does the wrong thing even when inputs are valid:
+   - Wrong status code returned
+   - Data mutated without authorisation
+   - Rollback not performed when a multi-step operation fails mid-way
+   - Resource leak (goroutine, file handle, DB connection, K8s watch)
+5. **Omitted requirements:** Features the PR should have but doesn't:
+   - Missing input validation
+   - Missing authentication/authorisation checks
+   - Missing logging for debugging
+   - Missing metrics for monitoring
+   - Missing timeout/deadline propagation
+
+#### Phase 2: Validate Each Finding
+
+After generating the adversarial findings list, validate every single one:
+
+1. **Is the finding real?** Re-read the code, re-run the test, reproduce the scenario. Do not take any finding at face value.
+2. **Is it a bug, a design flaw, or a false alarm?**
+   - **Real bug:** Fix it before proceeding. Do not defer.
+   - **Design flaw:** Surface with proposed remediation. Do not merge without addressing.
+   - **False alarm:** Document why it is not a real issue (one sentence with evidence). Do not silently dismiss.
+3. **If uncertain:** Escalate to the user/stakeholder rather than dismissing or guessing.
+4. **Only validated findings go into the final report.** Unvalidated claims are discarded — they have no place in a review.
+
+#### Phase 3: Final Report
+
+The final PR review report must contain:
+
+- Scores for each quality dimension (1–10) with specific remediation items
+- E2E wiring verification results — which workflows were traced, evidence for each, and any unwired code identified
+- List of validated adversarial findings (real bugs and design flaws)
+- List of false alarms with rationale for each
+- A pass/fail recommendation — fail unless all real findings are fixed, no unwired code exists, and all dimensions score ≥9
+
+---
+
 ## Common Commands
 
 ```bash
@@ -1624,6 +1907,8 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.10 | 2026-06-04 | Added PR Review Guide with 1–10 rubric scoring for robustness, scalability, maintainability, reliability, performance, security, test coverage, SOLID compliance, and right-sized complexity — each with remediation steps to reach ≥9; added E2E wiring verification section (workflow tracing, evidence requirements, common wiring failures); added adversarial assessment section with Phase 1 (identify weaknesses/gaps/failure modes), Phase 2 (validate each finding), Phase 3 (final report); expanded Rule 11 with three-phase structure and "only validated findings" rule; cross-referenced Rule 7 (Assumptions) and Rule 11 throughout |
+| 1.9 | 2026-05-27 | Frontend streaming UX fixes (user echo, thinking blocks, bubble overflow); SSE format unwrapping; tested against real cluster; 369 frontend tests passing |
 | 1.8 | 2026-05-23 | Engineering principles (SOLID/robust/secure/idiomatic/not over-engineered) added to Rule 4; new Rule 7 mandates stating and validating assumptions; TDD now requires happy + unhappy + e2e integration tests with explicit definition of done; orchestrator workflow restructured around a mandatory skeptical-validator → fix → re-validate loop with false-alarm triage |
 | 1.5 | 2026-05-23 | Sandbox CRUD via API (`/api/v1/sandboxes`), `?verbose=true` flag (strips opencode `patch` parts by default), README.md rewritten for V2 |
 | 1.4 | 2026-05-23 | Rate limiting wired, CORS hardened (no wildcard+credentials), account lockout, all configurable via env vars |
