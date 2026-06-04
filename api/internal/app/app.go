@@ -245,6 +245,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create terminal handler (Epic 14 — WebSocket terminal proxy).
 	terminalHandler := handlers.NewTerminalHandler(svc.Cache, &k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace}, cfg.Kubernetes.Namespace, log)
 
+	// Epic 26: Relay handler for client-proxied inference.
+	relayHandler := handlers.NewRelayHandler(&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace})
+	relayFallbackHandler := handlers.NewRelayFallbackHandler()
+
 	// Epic 27a: Agent reload handler.
 	var agentReloadHandler *handlers.AgentReloadHandler
 	var bulkReloadHandler *handlers.BulkReloadHandler
@@ -306,6 +310,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TerminalHandler:         terminalHandler,
 		AgentReloadHandler:      agentReloadHandler,
 		BulkReloadHandler:       bulkReloadHandler,
+		RelayHandler:            relayHandler,
+		RelayFallbackHandler:    relayFallbackHandler,
 	})
 
 	httpServer := &http.Server{

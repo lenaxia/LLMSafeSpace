@@ -315,10 +315,16 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 			// Epic 26: If the selected model is free-tier, configure the
 			// opencode provider's baseURL to route through the relay proxy.
 			// This enables client-proxied inference for free models.
+			// If switching to a paid model, reset to direct (no relay).
 			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
 				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
 				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, relayBaseURL); pushErr != nil {
 					h.warn("push relay baseURL failed", "error", pushErr.Error())
+				}
+			} else {
+				// Reset to direct — clear relay override by pushing empty baseURL
+				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP); pushErr != nil {
+					h.warn("clear relay baseURL failed", "error", pushErr.Error())
 				}
 			}
 		}
@@ -416,12 +422,15 @@ func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID str
 // through the in-pod relay proxy (Epic 26). This makes free-tier LLM
 // requests go to localhost:4097/relay/inference instead of opencode.ai.
 func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
-	payload := map[string]interface{}{
-		"type": "api",
-		"key":  "public",
-		"metadata": map[string]string{
-			"baseURL": relayBaseURL,
-		},
+	type relayAuthPayload struct {
+		Type     string            `json:"type"`
+		Key      string            `json:"key"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	payload := relayAuthPayload{
+		Type:     "api",
+		Key:      "public",
+		Metadata: map[string]string{"baseURL": relayBaseURL},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -442,6 +451,42 @@ func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseU
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("PUT /auth/opencode returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// clearRelayBaseURL resets the opencode provider to use its default base URL
+// (removes the relay redirect). Called when switching from free to paid model.
+func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP string) error {
+	type relayAuthPayload struct {
+		Type     string            `json:"type"`
+		Key      string            `json:"key"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	payload := relayAuthPayload{
+		Type:     "api",
+		Key:      "public",
+		Metadata: map[string]string{"baseURL": ""},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PUT /auth/opencode (clear) returned %d", resp.StatusCode)
 	}
 	return nil
 }
