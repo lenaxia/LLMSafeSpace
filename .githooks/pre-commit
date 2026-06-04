@@ -154,8 +154,9 @@ EOF
         exit 1
         fi
     fi
-    show_skip "gofmt"        "no .go files staged"
-    show_skip "goimports"    "no .go files staged"
+else
+    show_skip "gofmt"         "no .go files staged"
+    show_skip "goimports"     "no .go files staged"
     show_skip "golangci-lint" "no .go files staged"
 fi
 

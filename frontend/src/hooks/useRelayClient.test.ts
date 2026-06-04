@@ -1,4 +1,4 @@
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useRelayClient } from "./useRelayClient";
 
@@ -10,6 +10,13 @@ const WS_CLOSED = 3;
 
 // Mock WebSocket
 class MockWebSocket {
+  // Static readyState constants — the hook reads WebSocket.OPEN, so these
+  // must exist on the class that vi.stubGlobal("WebSocket", ...) installs.
+  static CONNECTING = WS_CONNECTING;
+  static OPEN = WS_OPEN;
+  static CLOSING = 2;
+  static CLOSED = WS_CLOSED;
+
   static instances: MockWebSocket[] = [];
   url: string;
   readyState = WS_CONNECTING;
@@ -110,6 +117,10 @@ describe("useRelayClient", () => {
   });
 
   it("handles proxy_request by calling fetch and streaming response", async () => {
+    // Use real timers for this test: waitFor relies on setTimeout internally
+    // and is incompatible with vi.useFakeTimers().
+    vi.useRealTimers();
+
     const mockResponse = new Response("hello world", {
       status: 200,
       headers: { "content-type": "text/plain" },
@@ -123,7 +134,7 @@ describe("useRelayClient", () => {
     const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
-    await act(async () => {
+    act(() => {
       ws.simulateMessage({
         type: "proxy_request",
         id: "req_1",
@@ -132,18 +143,23 @@ describe("useRelayClient", () => {
         headers: { "content-type": "application/json" },
         body: '{"model":"test"}',
       });
-      // Allow microtasks to flush
-      await vi.advanceTimersByTimeAsync(0);
     });
 
-    // Should have sent response_start, response_chunk(s), response_end
-    const sent = ws.sentMessages.map((s) => JSON.parse(s));
-    const types = sent.map((m: { type: string }) => m.type);
-    expect(types).toContain("proxy_response_start");
-    expect(types).toContain("proxy_response_end");
+    // handleProxyRequest is fire-and-forget from onmessage; poll until
+    // the async fetch chain completes and the messages are sent.
+    await waitFor(() => {
+      const types = ws.sentMessages
+        .map((s) => JSON.parse(s) as { type: string })
+        .map((m) => m.type);
+      expect(types).toContain("proxy_response_start");
+      expect(types).toContain("proxy_response_end");
+    });
   });
 
   it("sends proxy_error on fetch failure (CORS)", async () => {
+    // Use real timers — same reason as the test above.
+    vi.useRealTimers();
+
     vi.stubGlobal(
       "fetch",
       vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
@@ -156,7 +172,7 @@ describe("useRelayClient", () => {
     const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
-    await act(async () => {
+    act(() => {
       ws.simulateMessage({
         type: "proxy_request",
         id: "req_2",
@@ -164,15 +180,15 @@ describe("useRelayClient", () => {
         url: "https://opencode.ai/v1/models",
         headers: {},
       });
-      await vi.advanceTimersByTimeAsync(0);
     });
 
-    const sent = ws.sentMessages.map((s) => JSON.parse(s));
-    const errorMsg = sent.find(
-      (m: { type: string }) => m.type === "proxy_error",
-    );
-    expect(errorMsg).toBeDefined();
-    expect(errorMsg.error).toContain("CORS");
+    await waitFor(() => {
+      const sent = ws.sentMessages
+        .map((s) => JSON.parse(s) as { type: string; error?: string });
+      const errorMsg = sent.find((m) => m.type === "proxy_error");
+      expect(errorMsg).toBeDefined();
+      expect(errorMsg!.error).toContain("CORS");
+    });
   });
 
   it("does not connect when enabled is false", () => {

@@ -390,14 +390,19 @@ jobs:
 
       # Build the API server binary and run migrations
       - name: Build API server
-        run: go build -o /tmp/llmsafespace-api ./cmd/api/
+        run: go build -o /tmp/llmsafespace-api ./api/cmd/api/
 
       - name: Run DB migrations
-        env:
-          LLMSAFESPACE_DB_URL: postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable
-        run: go run ./cmd/migrate/
+        run: |
+          # Install golang-migrate CLI and run migrations
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+          migrate -path api/migrations -database "postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable" up
 
-      # Start the API server in the background
+      # Start the API server in the background.
+      # We write a stub kubeconfig pointing at a non-existent server so the
+      # kubernetes client initialises without in-cluster creds. The canary
+      # ci:fast scenarios only exercise auth, CRUD, secrets, and session
+      # endpoints — none of which schedule real workspace pods.
       - name: Start API server
         env:
           LLMSAFESPACE_DB_URL: postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable
@@ -405,7 +410,27 @@ jobs:
           LLMSAFESPACE_JWT_SECRET: canary-ci-jwt-secret-not-for-production
           LLMSAFESPACE_MASTER_KEY: canary-ci-master-key-32bytes000000000
           LLMSAFESPACE_PORT: "8080"
+          LLMSAFESPACE_KUBERNETES_INCLUSTER: "false"
+          LLMSAFESPACE_KUBERNETES_CONFIGPATH: "/tmp/ci-kubeconfig.yaml"
         run: |
+          # Stub kubeconfig — API client initialises but no real cluster exists.
+          cat > /tmp/ci-kubeconfig.yaml << 'KUBEEOF'
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              server: http://127.0.0.1:19999
+            name: ci-stub
+          contexts:
+          - context:
+              cluster: ci-stub
+              user: ci-user
+            name: ci-context
+          current-context: ci-context
+          users:
+          - name: ci-user
+            user: {}
+          KUBEEOF
           /tmp/llmsafespace-api &
           echo "API_PID=$!" >> "$GITHUB_ENV"
           # Wait for readyz

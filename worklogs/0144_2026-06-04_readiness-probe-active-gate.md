@@ -86,4 +86,4 @@ Deploy and confirm no more 500s on `POST /sessions/new` immediately after worksp
 - `controller/internal/workspace/phase_creating.go` — added `allContainersReady` guard to Active transition
 - `controller/internal/workspace/container_ready_test.go` — new file, 6 unit tests
 - `controller/internal/workspace/controller_test.go` — updated `makeRunningPod`, added `makeRunningPodNotReady`, added `TestReconcile_Creating_PodRunningNotReady_StaysInCreating`
-- `worklogs/0143_2026-06-04_readiness-probe-active-gate.md` — this file
+- `worklogs/0144_2026-06-04_readiness-probe-active-gate.md` — this file
