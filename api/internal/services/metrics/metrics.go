@@ -181,7 +181,7 @@ func (s *Service) RecordAgentReload(result string, durationMs int64, drained boo
 }
 
 // RecordAgentReloadDrainTimeout records a drain timeout.
-func (s *Service) RecordAgentReloadDrainTimeout(elapsedMs int64) {
+func (s *Service) RecordAgentReloadDrainTimeout(_ int64) {
 	agentReloadDrainTimeouts.Inc()
 }
 

@@ -1392,3 +1392,14 @@ func validateSessionID(s string) error {
 	}
 	return nil
 }
+
+// GetSSETracker returns the proxy's SSE tracker (for drain mode wiring).
+// Returns nil if the tracker hasn't been initialized yet.
+func (h *ProxyHandler) GetSSETracker() *SSETracker {
+	return h.sseTracker
+}
+
+// GetPasswordGetter returns the proxy's password getter function (for drain mode).
+func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID string) (string, error) {
+	return h.getPassword
+}

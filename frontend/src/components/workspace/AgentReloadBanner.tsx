@@ -35,9 +35,11 @@ export function AgentReloadBanner({
       const resp = await workspacesApi.reloadAgent(workspaceId);
       if (resp.warning) {
         setError(resp.warning);
+        // Keep modal open so user sees the warning
+      } else {
+        setShowModal(false);
+        onReloaded?.();
       }
-      setShowModal(false);
-      onReloaded?.();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Reload failed");
     } finally {

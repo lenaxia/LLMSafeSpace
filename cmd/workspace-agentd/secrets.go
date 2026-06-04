@@ -120,7 +120,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 			// Missing file is a no-op, not a failure.
 			return 0
 		}
-		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 		return 2
 	}
 
@@ -129,7 +129,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	reportResult(stderr, result)
 
 	if err != nil && !errors.Is(err, secrets.ErrPartialFailure) {
-		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 		return 3
 	}
 
@@ -137,7 +137,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	// reads them at startup. Without this, the config file is empty and
 	// opencode boots with no provider credentials.
 	if flushErr := m.FlushProviders(opencode.FormatOpenCodeConfig); flushErr != nil {
-		_, _ = fmt.Fprintf(stderr, "materialize: flush providers: %vn", flushErr)
+		_, _ = fmt.Fprintf(stderr, "materialize: flush providers: %v\n", flushErr)
 		return 3
 	}
 

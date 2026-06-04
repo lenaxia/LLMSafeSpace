@@ -273,6 +273,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		)
 	}
 
+	// Epic 27b: Wire drain mode dependencies from proxyHandler into reload handlers.
+	if proxyHandler != nil && agentReloadHandler != nil {
+		if tracker := proxyHandler.GetSSETracker(); tracker != nil {
+			agentReloadHandler.SetSSETracker(tracker)
+			bulkReloadHandler.SetSSETracker(tracker)
+		}
+		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
+			agentReloadHandler.SetPasswordGetter(pwGetter)
+			bulkReloadHandler.SetPasswordGetter(pwGetter)
+		}
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
