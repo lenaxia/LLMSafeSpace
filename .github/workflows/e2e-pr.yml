@@ -47,6 +47,7 @@ jobs:
 
   e2e-fullstack:
     name: Full-stack E2E (docker-compose)
+    if: false # Disabled: requires KUBERNETES_SERVICE_HOST (in-cluster config) not available in docker-compose
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
