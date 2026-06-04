@@ -69,6 +69,9 @@ spec:
             {{- if hasKey .Values.webhooks "maxWorkspaceEphemeralStorageGi" }}
             - --max-workspace-ephemeral-storage-gi={{ .Values.webhooks.maxWorkspaceEphemeralStorageGi }}
             {{- end }}
+            {{- /* Epic 26: API service URL for relay WebSocket construction.
+                   Defaults to the in-cluster service name derived from the release. */ -}}
+            - --api-service-url=http://{{ include "llmsafespace.fullname" . }}-api.{{ .Release.Namespace }}.svc:{{ .Values.api.service.port }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}

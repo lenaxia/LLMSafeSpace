@@ -25,6 +25,12 @@ type WorkspaceReconciler struct {
 	// defaultHostResolver (net.DefaultResolver) when nil.
 	HostResolver HostResolver
 
+	// APIServiceURL is the cluster-internal URL to the API service's HTTP
+	// endpoint (e.g. "http://llmsafespace-api.llmsafespace.svc:8080").
+	// Used to construct LLMSAFESPACE_RELAY_URL for workspace pods (Epic 26).
+	// When empty, relay env vars are not injected.
+	APIServiceURL string
+
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
 	// the next reconcile will just call it immediately).
