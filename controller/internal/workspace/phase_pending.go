@@ -46,8 +46,21 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, err
 		}
 		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPendingTimeout, "workspace timed out in Pending phase")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			// PVC doesn't exist yet — retry PVC creation with backoff.
+			// Don't call enterRecovery (which sets phase=Creating) because
+			// handleCreating would attempt buildPod without a PVC.
+			workspace.Status.ConsecutiveFailures++
+			workspace.Status.LastFailureClass = string(FailureClassInfrastructure)
+			now := metav1.Now()
+			workspace.Status.LastFailureAt = &now
+			policy := recoveryPolicies[FailureClassInfrastructure]
+			backoff := calculateBackoff(workspace.Status.ConsecutiveFailures, policy)
+			if backoff > 0 {
+				nextRetry := metav1.NewTime(now.Add(backoff))
+				workspace.Status.NextRetryAt = &nextRetry
+			}
+			workspace.CreationTimestamp = now // reset timeout clock
+			return ctrl.Result{RequeueAfter: backoff}, r.Status().Update(ctx, workspace)
 		}
 		newPVC := r.buildPVC(workspace, pvcName)
 		if err := controllerutil.SetControllerReference(workspace, newPVC, r.Scheme); err != nil {
@@ -76,8 +89,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPVCBindTimeout, "PVC not bound after timeout")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
 		}
 		return ctrl.Result{RequeueAfter: requeueActive}, nil
 	}

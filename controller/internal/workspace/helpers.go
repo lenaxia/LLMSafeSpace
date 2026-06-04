@@ -4,11 +4,7 @@
 package workspace
 
 import (
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
-
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // isPodTerminating reports whether the K8s pod is in the process of being
@@ -39,13 +35,4 @@ func allContainersReady(pod *corev1.Pod) bool {
 		}
 	}
 	return true
-}
-
-// markFailed transitions a workspace to Failed with a typed FailureReason
-// and a human-readable message. All Failed-write sites must use this helper
-// to ensure FailureReason is always populated.
-func markFailed(ws *v1.Workspace, reason v1.FailureReason, format string, args ...any) {
-	ws.Status.Phase = v1.WorkspacePhaseFailed
-	ws.Status.FailureReason = reason
-	ws.Status.Message = fmt.Sprintf(format, args...)
 }

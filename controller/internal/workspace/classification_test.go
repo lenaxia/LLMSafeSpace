@@ -28,6 +28,11 @@ func TestClassifyFailure_Evicted(t *testing.T) {
 	assert.Equal(t, FailureClassInfrastructure, classifyFailure(obs))
 }
 
+func TestClassifyFailure_Evicted_EphemeralStorage(t *testing.T) {
+	obs := PodObservation{Exists: true, Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: ephemeral-storage."}
+	assert.Equal(t, FailureClassResource, classifyFailure(obs))
+}
+
 func TestClassifyFailure_Preempting(t *testing.T) {
 	obs := PodObservation{Exists: true, Phase: corev1.PodFailed, Reason: "Preempting"}
 	assert.Equal(t, FailureClassInfrastructure, classifyFailure(obs))

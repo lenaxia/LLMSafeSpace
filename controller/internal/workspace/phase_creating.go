@@ -53,6 +53,14 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 			logger.Error(err, "Failed to ensure password secret in Creating phase")
 			return ctrl.Result{}, err
 		}
+
+		// F1/F16: enforce backoff — if NextRetryAt is set and not yet
+		// elapsed, requeue without creating a pod.
+		if wait := timeUntilNextRetry(workspace); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+		// Clear NextRetryAt once elapsed (avoid stale value on next cycle).
+		workspace.Status.NextRetryAt = nil
 		// Ensure per-workspace egress NetworkPolicy BEFORE pod creation
 		// (F1.2.4 / G4 part 2). Built from spec.networkAccess.egress;
 		// no-op when the field is nil/empty (chart-wide policy applies).
@@ -65,8 +73,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		pod, buildErr := r.buildPod(ctx, workspace)
 		if buildErr != nil {
 			logger.Error(buildErr, "Failed to build pod")
-			markFailed(workspace, v1.FailureReasonPodBuildFailed, "pod build failed: %v", buildErr)
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassConfiguration)
 		}
 		if err := controllerutil.SetControllerReference(workspace, pod, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -120,8 +127,12 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	}
 
 	if existingPod.Status.Phase == corev1.PodFailed {
-		markFailed(workspace, v1.FailureReasonPodFailedDuringCreation, "pod entered Failed phase during creation")
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		// F49: delete the failed pod BEFORE setting recovery state
+		// to prevent re-observing the same Failed pod on next reconcile.
+		obs := observePod(existingPod)
+		class := classifyFailure(obs)
+		r.deletePodByName(ctx, existingPod.Name, existingPod.Namespace)
+		return r.enterRecovery(ctx, workspace, class)
 	}
 
 	return ctrl.Result{RequeueAfter: requeueCreating}, nil

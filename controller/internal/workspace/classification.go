@@ -36,6 +36,10 @@ func classifyFailure(obs PodObservation) FailureClass {
 	if obs.ContainerOOMKilled {
 		return FailureClassResource
 	}
+	// Ephemeral-storage eviction → Resource (must check before general Evicted)
+	if obs.Reason == "Evicted" && strings.Contains(obs.Message, "ephemeral") {
+		return FailureClassResource
+	}
 	switch obs.Reason {
 	case "Evicted", "Preempting", "NodeShutdown", "NodeAffinity",
 		"Terminated", "DeadlineExceeded", "GracefulNodeShutdown",
@@ -44,9 +48,6 @@ func classifyFailure(obs PodObservation) FailureClass {
 	}
 	if obs.Unschedulable {
 		return FailureClassInfrastructure
-	}
-	if obs.Reason == "Evicted" && strings.Contains(obs.Message, "ephemeral") {
-		return FailureClassResource
 	}
 	switch obs.ContainerReason {
 	case "ImagePullBackOff", "ErrImagePull", "InvalidImageName",

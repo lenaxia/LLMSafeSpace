@@ -115,9 +115,9 @@ func TestHandleCreating_TerminatingPod_RunningPhase_StillWaits(t *testing.T) {
 	assert.Equal(t, requeueCreating, result.RequeueAfter)
 }
 
-func TestHandleCreating_GenuineFailedPod_StillTransitionsToFailed(t *testing.T) {
-	// Regression: a genuinely failed pod (no DeletionTimestamp) must still
-	// trigger terminal Failed.
+func TestHandleCreating_GenuineFailedPod_EntersRecovery(t *testing.T) {
+	// Epic 24: a genuinely failed pod (no DeletionTimestamp) enters
+	// recovery with classification instead of terminal Failed.
 	scheme := testScheme(t)
 	ws := makeWorkspace("ws-genuine", "default", v1.WorkspacePhaseCreating)
 	ws.UID = "ws-genuine-uid"
@@ -142,9 +142,10 @@ func TestHandleCreating_GenuineFailedPod_StillTransitionsToFailed(t *testing.T) 
 	_, err := r.handleCreating(context.Background(), ws)
 	require.NoError(t, err)
 
-	assert.Equal(t, v1.WorkspacePhaseFailed, ws.Status.Phase,
-		"genuine failed pod must still trigger terminal Failed")
-	assert.Equal(t, "pod entered Failed phase during creation", ws.Status.Message)
+	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase,
+		"failed pod enters recovery (stays in Creating with backoff), not terminal Failed")
+	assert.Equal(t, int32(1), ws.Status.ConsecutiveFailures)
+	assert.NotNil(t, ws.Status.NextRetryAt, "backoff must be set")
 }
 
 // --- handleActive DeletionTimestamp guard tests ---
@@ -229,6 +230,8 @@ func TestHandleActive_NonRunningPod_NoDeletionTimestamp_RecoverTransient(t *test
 	var updated v1.Workspace
 	require.NoError(t, fc.Get(context.Background(), types.NamespacedName{Name: "ws-active-lost", Namespace: "default"}, &updated))
 
-	assert.Equal(t, int32(1), updated.Status.TransientFailureCount,
-		"non-terminating failed pod must increment transient failure count")
+	assert.Equal(t, int32(1), updated.Status.ConsecutiveFailures,
+		"non-terminating failed pod must trigger recovery with failure classification")
+	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase,
+		"workspace must remain in Creating phase (not terminal Failed)")
 }
