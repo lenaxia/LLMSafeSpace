@@ -98,7 +98,7 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 			return
 		case evt, open := <-s.ch:
 			if !open {
-				return
+				return // defensive: ch is never closed (markClosed+context cancellation used instead)
 			}
 			if evt.Type == heartbeatSentinelType {
 				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {

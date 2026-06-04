@@ -15,7 +15,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func init() {
@@ -312,4 +317,176 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 	}
 done:
 	assert.GreaterOrEqual(t, heartbeats, 2)
+}
+
+func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
+	broker := NewUserEventBroker()
+
+	// Set up a mock k8s client that returns workspaces for the user
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	wsMock.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		return opts.LabelSelector == "user-id=user-snap"
+	})).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-a"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-b"}},
+		},
+	}, nil)
+
+	// Set up watcher with known phases
+	watcher, _ := NewWorkspaceWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
+	watcher.knownPhasesMu.Lock()
+	watcher.knownPhases["ws-a"] = "Active"
+	watcher.knownPhases["ws-b"] = "Suspended"
+	watcher.knownPhasesMu.Unlock()
+
+	h := &ProxyHandler{
+		k8sClient:  k8sMock,
+		logger:     &testLogger{},
+		namespace:  "default",
+		userBroker: broker,
+		watcher:    watcher,
+	}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-snap")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Collect events — expect snapshot events for ws-a and ws-b
+	scanner := bufio.NewScanner(resp.Body)
+	var snapshotEvents []WorkspaceSSEEvent
+	deadline := time.After(2 * time.Second)
+
+	for {
+		select {
+		case <-deadline:
+			goto done
+		default:
+		}
+		if !scanner.Scan() {
+			break
+		}
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var evt WorkspaceSSEEvent
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
+				if evt.Type == "workspace.phase" {
+					snapshotEvents = append(snapshotEvents, evt)
+					if len(snapshotEvents) >= 2 {
+						goto done
+					}
+				}
+			}
+		}
+	}
+done:
+	cancel()
+
+	assert.Len(t, snapshotEvents, 2)
+	// Snapshot events should have EventID=0 (no id: line in SSE)
+	for _, evt := range snapshotEvents {
+		assert.Zero(t, evt.EventID, "snapshot events should have EventID=0")
+	}
+	// Verify both workspaces present
+	phases := map[string]string{}
+	for _, evt := range snapshotEvents {
+		phases[evt.WorkspaceID] = evt.Phase
+	}
+	assert.Equal(t, "Active", phases["ws-a"])
+	assert.Equal(t, "Suspended", phases["ws-b"])
+}
+
+func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
+	broker := NewUserEventBroker()
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	wsMock.On("List", mock.Anything).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-known"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-deleted"}}, // not in knownPhases
+		},
+	}, nil)
+
+	watcher, _ := NewWorkspaceWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
+	watcher.knownPhasesMu.Lock()
+	watcher.knownPhases["ws-known"] = "Active"
+	// ws-deleted intentionally NOT in knownPhases (F4: deleted between list and map read)
+	watcher.knownPhasesMu.Unlock()
+
+	h := &ProxyHandler{
+		k8sClient:  k8sMock,
+		logger:     &testLogger{},
+		namespace:  "default",
+		userBroker: broker,
+		watcher:    watcher,
+	}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-f4")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	var events []WorkspaceSSEEvent
+	deadline := time.After(1 * time.Second)
+
+	for {
+		select {
+		case <-deadline:
+			goto done2
+		default:
+		}
+		if !scanner.Scan() {
+			break
+		}
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var evt WorkspaceSSEEvent
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
+				if evt.Type == "workspace.phase" {
+					events = append(events, evt)
+				}
+			}
+		}
+	}
+done2:
+	cancel()
+
+	// Only ws-known should appear (ws-deleted has empty phase, skipped per F4)
+	assert.Len(t, events, 1)
+	assert.Equal(t, "ws-known", events[0].WorkspaceID)
+	assert.Equal(t, "Active", events[0].Phase)
 }

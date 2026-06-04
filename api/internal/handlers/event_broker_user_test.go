@@ -297,7 +297,8 @@ func TestUserBroker_ConcurrentPublishMonotonicOrder(t *testing.T) {
 func TestUserBroker_WorkspaceSubscribeAndPublish(t *testing.T) {
 	b := NewUserEventBroker()
 
-	s := b.SubscribeWorkspace("ws-1")
+	s, err := b.SubscribeWorkspace("ws-1")
+	require.NoError(t, err)
 	defer b.UnsubscribeWorkspace("ws-1", s)
 
 	evt := WorkspaceSSEEvent{Type: "session.status", SessionID: "s1", Status: "busy", WorkspaceID: "ws-1"}
@@ -315,10 +316,12 @@ func TestUserBroker_WorkspaceSubscribeAndPublish(t *testing.T) {
 func TestUserBroker_WorkspaceIsolation(t *testing.T) {
 	b := NewUserEventBroker()
 
-	s1 := b.SubscribeWorkspace("ws-1")
+	s1, err := b.SubscribeWorkspace("ws-1")
+	require.NoError(t, err)
 	defer b.UnsubscribeWorkspace("ws-1", s1)
 
-	s2 := b.SubscribeWorkspace("ws-2")
+	s2, err := b.SubscribeWorkspace("ws-2")
+	require.NoError(t, err)
 	defer b.UnsubscribeWorkspace("ws-2", s2)
 
 	b.PublishToWorkspace("ws-1", WorkspaceSSEEvent{Type: "session.status"})

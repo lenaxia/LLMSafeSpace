@@ -189,14 +189,19 @@ func (b *UserEventBroker) UnsubscribeUser(userID string, s *subscriber) {
 }
 
 // SubscribeWorkspace registers a workspace-scoped subscriber.
-func (b *UserEventBroker) SubscribeWorkspace(workspaceID string) *subscriber {
+// Returns ErrTooManySubscribers if the workspace exceeds the connection limit.
+func (b *UserEventBroker) SubscribeWorkspace(workspaceID string) (*subscriber, error) {
 	sh := b.wsShard(workspaceID)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
+	if len(sh.wsSubs[workspaceID]) >= maxSubscribersPerUser {
+		return nil, ErrTooManySubscribers
+	}
+
 	s := &subscriber{ch: make(chan WorkspaceSSEEvent, userChannelBuffer)}
 	sh.wsSubs[workspaceID] = append(sh.wsSubs[workspaceID], s)
-	return s
+	return s, nil
 }
 
 // UnsubscribeWorkspace removes a workspace subscriber and marks it closed.
