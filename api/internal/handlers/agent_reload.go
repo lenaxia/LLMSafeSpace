@@ -130,12 +130,9 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	drain := c.Query("drain") == "true"
 	drainTimeout := 5 * time.Minute
 	if v := c.Query("drainTimeoutSeconds"); v != "" {
-		if t, _ := fmt.Sscanf(v, "%d", new(int)); t == 1 {
-			var secs int
-			fmt.Sscanf(v, "%d", &secs)
-			if secs > 0 && secs <= 600 {
-				drainTimeout = time.Duration(secs) * time.Second
-			}
+		var secs int
+		if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 && secs <= 600 {
+			drainTimeout = time.Duration(secs) * time.Second
 		}
 	}
 
