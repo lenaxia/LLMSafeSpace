@@ -404,6 +404,7 @@ func TestRelayHandler_OwnershipEnforced(t *testing.T) {
 // mockRelayWSGetter implements WorkspaceGetter for testing.
 type mockRelayWSGetter struct {
 	workspaces map[string]string // id → owner user-id
+	passwords  map[string]string // id → workspace password
 }
 
 func (m *mockRelayWSGetter) GetWorkspace(id string) (*v1.Workspace, error) {
@@ -417,4 +418,119 @@ func (m *mockRelayWSGetter) GetWorkspace(id string) (*v1.Workspace, error) {
 			Labels: map[string]string{"user-id": owner},
 		},
 	}, nil
+}
+
+func (m *mockRelayWSGetter) GetWorkspacePassword(id string) (string, error) {
+	pw, ok := m.passwords[id]
+	if !ok {
+		return "", fmt.Errorf("secret not found")
+	}
+	return pw, nil
+}
+
+// TestRelayHandler_AgentdPasswordAuth_Success verifies that an agentd connecting
+// with the workspace password as a Bearer token is authenticated and connected.
+func TestRelayHandler_AgentdPasswordAuth_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	getter := &mockRelayWSGetter{
+		workspaces: map[string]string{"ws1": "user1"},
+		passwords:  map[string]string{"ws1": "correct-password"},
+	}
+	h := NewRelayHandler(getter)
+
+	router := gin.New()
+	// No userID set — simulates auth middleware finding no valid JWT/API key.
+	// The relay handler should fall back to workspace-password auth for agentd.
+	router.GET("/api/v1/workspaces/:id/relay", h.HandleRelay)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/workspaces/ws1/relay"
+
+	// agentd connects with the workspace password as Bearer token
+	header := http.Header{}
+	header.Set("Authorization", "Bearer correct-password")
+	agentConn, resp, err := websocket.DefaultDialer.Dial(wsURL+"?role=agentd", header)
+	require.NoError(t, err, "agentd with correct password should connect; got HTTP %v", resp)
+	defer agentConn.Close()
+
+	assert.True(t, h.IsAgentConnected("ws1"))
+}
+
+// TestRelayHandler_AgentdPasswordAuth_WrongPassword verifies that agentd with a
+// wrong password is rejected with 401.
+func TestRelayHandler_AgentdPasswordAuth_WrongPassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	getter := &mockRelayWSGetter{
+		workspaces: map[string]string{"ws1": "user1"},
+		passwords:  map[string]string{"ws1": "correct-password"},
+	}
+	h := NewRelayHandler(getter)
+
+	router := gin.New()
+	router.GET("/api/v1/workspaces/:id/relay", h.HandleRelay)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/workspaces/ws1/relay"
+
+	header := http.Header{}
+	header.Set("Authorization", "Bearer wrong-password")
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL+"?role=agentd", header)
+	require.Error(t, err, "wrong password should be rejected")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestRelayHandler_AgentdPasswordAuth_NoToken verifies that agentd with no
+// Authorization header is rejected with 401.
+func TestRelayHandler_AgentdPasswordAuth_NoToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	getter := &mockRelayWSGetter{
+		workspaces: map[string]string{"ws1": "user1"},
+		passwords:  map[string]string{"ws1": "correct-password"},
+	}
+	h := NewRelayHandler(getter)
+
+	router := gin.New()
+	router.GET("/api/v1/workspaces/:id/relay", h.HandleRelay)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/workspaces/ws1/relay"
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL+"?role=agentd", nil)
+	require.Error(t, err, "no token should be rejected")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestRelayHandler_ClientRole_PasswordAuthNotAllowed verifies that a client
+// cannot authenticate using the workspace password (only JWT/API key allowed).
+func TestRelayHandler_ClientRole_PasswordAuthNotAllowed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	getter := &mockRelayWSGetter{
+		workspaces: map[string]string{"ws1": "user1"},
+		passwords:  map[string]string{"ws1": "correct-password"},
+	}
+	h := NewRelayHandler(getter)
+
+	router := gin.New()
+	// No userID set in context — client must use JWT/API key through auth middleware.
+	router.GET("/api/v1/workspaces/:id/relay", h.HandleRelay)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/workspaces/ws1/relay"
+
+	header := http.Header{}
+	header.Set("Authorization", "Bearer correct-password")
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL+"?role=client", header)
+	require.Error(t, err, "client with workspace password should be rejected")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }

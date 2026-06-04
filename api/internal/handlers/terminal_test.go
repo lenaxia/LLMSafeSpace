@@ -71,6 +71,10 @@ func (m *mockWorkspaceGetter) GetWorkspace(id string) (*v1.Workspace, error) {
 	return ws, nil
 }
 
+func (m *mockWorkspaceGetter) GetWorkspacePassword(_ string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
 // --- Tests ---
 
 func setupTerminalRouter(h *TerminalHandler) *gin.Engine {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -449,6 +450,26 @@ type k8sWorkspaceGetterAdapter struct {
 
 func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
 	return a.client.LlmsafespaceV1().Workspaces(a.namespace).Get(id, metav1.GetOptions{})
+}
+
+// GetWorkspacePassword reads the workspace password from its K8s Secret.
+// The secret name follows the controller's passwordSecretName convention:
+// "workspace-pw-<workspaceID>". Used by the relay handler to authenticate
+// agentd connections (agentd is injected LLMSAFESPACE_RELAY_TOKEN from this
+// same secret by the controller).
+func (a *k8sWorkspaceGetterAdapter) GetWorkspacePassword(id string) (string, error) {
+	secretName := fmt.Sprintf("workspace-pw-%s", id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	secret, err := a.client.Clientset().CoreV1().Secrets(a.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("workspace password secret not found: %w", err)
+	}
+	pw := string(secret.Data["password"])
+	if pw == "" {
+		return "", fmt.Errorf("workspace password secret has no password key")
+	}
+	return pw, nil
 }
 
 // workspaceCRDGetter is the minimal interface needed by secretsPodIPResolver.

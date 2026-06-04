@@ -4,8 +4,10 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,10 +76,23 @@ func (h *RelayHandler) HandleRelay(c *gin.Context) {
 		role = "client"
 	}
 
-	// Both roles require authentication. The auth middleware has already
-	// validated the JWT/API key and set userID in the context.
+	// Both roles require authentication. The auth middleware (JWT/API key) has
+	// already run and may have set userID in the context. For the agentd role,
+	// we additionally accept the workspace password as a Bearer token — the
+	// controller injects LLMSAFESPACE_RELAY_TOKEN from the same Secret. This
+	// lets agentd connect without requiring a full user API key.
 	userID, _ := c.Get("userID")
 	uid, _ := userID.(string)
+
+	if uid == "" && role == "agentd" && h.wsGetter != nil {
+		// Attempt workspace-password auth for the agentd role.
+		uid = h.authenticateAgentd(c, workspaceID)
+		if uid == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+	}
+
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -235,4 +250,32 @@ func (h *RelayHandler) IsBothConnected(workspaceID string) bool {
 	room.mu.RLock()
 	defer room.mu.RUnlock()
 	return room.agentd != nil && room.client != nil
+}
+
+// authenticateAgentd validates a workspace-password Bearer token for the agentd
+// role. Returns the workspace owner's userID on success, or "" on failure.
+// Only called when the standard JWT/API key middleware did not authenticate the
+// request (uid == ""). The comparison is constant-time to prevent timing attacks.
+func (h *RelayHandler) authenticateAgentd(c *gin.Context, workspaceID string) string {
+	authHeader := c.GetHeader("Authorization")
+	token, ok := strings.CutPrefix(authHeader, "Bearer ")
+	if !ok || token == "" {
+		return ""
+	}
+
+	expected, err := h.wsGetter.GetWorkspacePassword(workspaceID)
+	if err != nil || expected == "" {
+		return ""
+	}
+
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		return ""
+	}
+
+	// Token is valid — resolve the workspace owner's userID from the CRD label.
+	ws, err := h.wsGetter.GetWorkspace(workspaceID)
+	if err != nil {
+		return ""
+	}
+	return ws.Labels["user-id"]
 }
