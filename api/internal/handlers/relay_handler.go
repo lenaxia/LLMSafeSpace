@@ -74,25 +74,30 @@ func (h *RelayHandler) HandleRelay(c *gin.Context) {
 		role = "client"
 	}
 
-	// Ownership enforcement for client role. Agentd connects from within
-	// the pod using a service token, not a user token.
-	if role == "client" {
-		userID, _ := c.Get("userID")
-		uid, _ := userID.(string)
-		if uid == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+	// Both roles require authentication. The auth middleware has already
+	// validated the JWT/API key and set userID in the context.
+	userID, _ := c.Get("userID")
+	uid, _ := userID.(string)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	// Ownership enforcement: verify the authenticated user owns this workspace.
+	// This applies to BOTH roles — the agentd uses the workspace's API key
+	// (which resolves to the workspace owner's userID), so the ownership check
+	// passes naturally. A malicious user cannot impersonate the agentd role
+	// for a workspace they don't own because their token resolves to a
+	// different userID.
+	if h.wsGetter != nil {
+		ws, err := h.wsGetter.GetWorkspace(workspaceID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
 			return
 		}
-		if h.wsGetter != nil {
-			ws, err := h.wsGetter.GetWorkspace(workspaceID)
-			if err != nil {
-				c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-				return
-			}
-			if ws.Labels["user-id"] != uid {
-				c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-				return
-			}
+		if ws.Labels["user-id"] != uid {
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+			return
 		}
 	}
 
