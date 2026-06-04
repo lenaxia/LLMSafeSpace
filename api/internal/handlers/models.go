@@ -166,16 +166,17 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 
 // annotatedModel is the enriched model response returned to callers.
 type annotatedModel struct {
-	ID         string          `json:"id"`
-	ProviderID string          `json:"providerID"`
-	Name       string          `json:"name"`
-	Family     string          `json:"family,omitempty"`
-	Enabled    bool            `json:"enabled"`
-	Status     string          `json:"status,omitempty"`
-	Tier       string          `json:"tier"`     // "free" or "paid"
-	FreeTier   bool            `json:"freeTier"` // convenience boolean
-	Selected   bool            `json:"selected"` // true if this is the workspace's current default
-	Details    json.RawMessage `json:"details"`  // full opencode model object (unstable schema)
+	ID            string          `json:"id"`
+	ProviderID    string          `json:"providerID"`
+	Name          string          `json:"name"`
+	Family        string          `json:"family,omitempty"`
+	Enabled       bool            `json:"enabled"`
+	Status        string          `json:"status,omitempty"`
+	Tier          string          `json:"tier"`          // "free" or "paid"
+	FreeTier      bool            `json:"freeTier"`      // convenience boolean
+	ProxyRequired bool            `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
+	Selected      bool            `json:"selected"`      // true if this is the workspace's current default
+	Details       json.RawMessage `json:"details"`       // full opencode model object (unstable schema)
 }
 
 // opencodeModel is the minimal subset of opencode's ModelV2.Info we parse for classification.
@@ -215,15 +216,16 @@ func annotateModels(raw []byte) ([]annotatedModel, error) {
 			details = rawModels[i]
 		}
 		result[i] = annotatedModel{
-			ID:         m.ID,
-			ProviderID: m.ProviderID,
-			Name:       m.Name,
-			Family:     m.Family,
-			Enabled:    m.Enabled,
-			Status:     m.Status,
-			Tier:       tier,
-			FreeTier:   tier == "free",
-			Details:    details,
+			ID:            m.ID,
+			ProviderID:    m.ProviderID,
+			Name:          m.Name,
+			Family:        m.Family,
+			Enabled:       m.Enabled,
+			Status:        m.Status,
+			Tier:          tier,
+			FreeTier:      tier == "free",
+			ProxyRequired: tier == "free",
+			Details:       details,
 		}
 	}
 	return result, nil
@@ -309,6 +311,22 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 			} else {
 				applied = true
 			}
+
+			// Epic 26: If the selected model is free-tier, configure the
+			// opencode provider's baseURL to route through the relay proxy.
+			// This enables client-proxied inference for free models.
+			// If switching to a paid model, reset to direct (no relay).
+			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
+				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
+				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, relayBaseURL); pushErr != nil {
+					h.warn("push relay baseURL failed", "error", pushErr.Error())
+				}
+			} else {
+				// Reset to direct — clear relay override by pushing empty baseURL
+				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP); pushErr != nil {
+					h.warn("clear relay baseURL failed", "error", pushErr.Error())
+				}
+			}
 		}
 	}
 
@@ -365,4 +383,110 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, model 
 		}
 	}
 	return false
+}
+
+// isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.
+func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID string) bool {
+	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return false
+	}
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false
+	}
+
+	var models []opencodeModel
+	if json.Unmarshal(body, &models) != nil {
+		return false
+	}
+	for _, m := range models {
+		if m.ID == modelID {
+			return classifyTier(m.ProviderID, m.Cost) == "free"
+		}
+	}
+	return false
+}
+
+// pushRelayBaseURL configures the opencode provider's baseURL to route
+// through the in-pod relay proxy (Epic 26). This makes free-tier LLM
+// requests go to localhost:4097/relay/inference instead of opencode.ai.
+func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
+	type relayAuthPayload struct {
+		Type     string            `json:"type"`
+		Key      string            `json:"key"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	payload := relayAuthPayload{
+		Type:     "api",
+		Key:      "public",
+		Metadata: map[string]string{"baseURL": relayBaseURL},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PUT /auth/opencode returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// clearRelayBaseURL resets the opencode provider to use its default base URL
+// (removes the relay redirect). Called when switching from free to paid model.
+func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP string) error {
+	type relayAuthPayload struct {
+		Type     string            `json:"type"`
+		Key      string            `json:"key"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	payload := relayAuthPayload{
+		Type:     "api",
+		Key:      "public",
+		Metadata: map[string]string{"baseURL": ""},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PUT /auth/opencode (clear) returned %d", resp.StatusCode)
+	}
+	return nil
 }

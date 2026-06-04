@@ -66,6 +66,12 @@ type RouterConfig struct {
 
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
+
+	// RelayHandler handles GET /api/v1/workspaces/:id/relay WebSocket (optional, Epic 26)
+	RelayHandler *handlers.RelayHandler
+
+	// RelayFallbackHandler handles POST /api/v1/workspaces/:id/relay/fallback (optional, Epic 26 US-26.6)
+	RelayFallbackHandler *handlers.RelayFallbackHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -652,6 +658,16 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 	// Epic 27a: explicit agent reload (disposes opencode without pod restart).
 	if cfg.AgentReloadHandler != nil {
 		rg.POST("/:id/agent/reload", cfg.AgentReloadHandler.Reload)
+	}
+
+	// Epic 26: WebSocket relay for client-proxied inference (free-tier models).
+	if cfg.RelayHandler != nil {
+		rg.GET("/:id/relay", cfg.RelayHandler.HandleRelay)
+	}
+
+	// Epic 26 US-26.6: CORS fallback — server-side proxy for free-tier when client can't CORS.
+	if cfg.RelayFallbackHandler != nil {
+		rg.POST("/:id/relay/fallback", cfg.RelayFallbackHandler.HandleFallback)
 	}
 
 	rg.GET("/:id/status", func(c *gin.Context) {
