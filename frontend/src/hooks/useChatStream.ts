@@ -32,7 +32,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   }, []);
 
   const send = useCallback(
-    async (text: string, onComplete: (msg: Message) => void) => {
+    async (text: string, onComplete: (msg: Message) => void, model?: { providerID: string; modelID: string }) => {
       if (!workspaceId || !sessionId) return;
       setLocalStreaming(true);
       setError(null);
@@ -55,6 +55,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
 
         await messagesApi.sendAsync(workspaceId, sessionId, {
           parts: [{ type: "text", text }],
+          ...(model && { model }),
         });
 
         // Wait for session.status=idle SSE OR a timeout fallback.

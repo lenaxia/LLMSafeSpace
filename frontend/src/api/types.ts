@@ -153,6 +153,7 @@ export interface Message {
 
 export interface SendMessageRequest {
   parts: MessagePart[];
+  model?: { providerID: string; modelID: string };
 }
 
 export interface ApiKey {
