@@ -166,16 +166,17 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 
 // annotatedModel is the enriched model response returned to callers.
 type annotatedModel struct {
-	ID         string          `json:"id"`
-	ProviderID string          `json:"providerID"`
-	Name       string          `json:"name"`
-	Family     string          `json:"family,omitempty"`
-	Enabled    bool            `json:"enabled"`
-	Status     string          `json:"status,omitempty"`
-	Tier       string          `json:"tier"`     // "free" or "paid"
-	FreeTier   bool            `json:"freeTier"` // convenience boolean
-	Selected   bool            `json:"selected"` // true if this is the workspace's current default
-	Details    json.RawMessage `json:"details"`  // full opencode model object (unstable schema)
+	ID            string          `json:"id"`
+	ProviderID    string          `json:"providerID"`
+	Name          string          `json:"name"`
+	Family        string          `json:"family,omitempty"`
+	Enabled       bool            `json:"enabled"`
+	Status        string          `json:"status,omitempty"`
+	Tier          string          `json:"tier"`          // "free" or "paid"
+	FreeTier      bool            `json:"freeTier"`      // convenience boolean
+	ProxyRequired bool            `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
+	Selected      bool            `json:"selected"`      // true if this is the workspace's current default
+	Details       json.RawMessage `json:"details"`       // full opencode model object (unstable schema)
 }
 
 // opencodeModel is the minimal subset of opencode's ModelV2.Info we parse for classification.
@@ -215,15 +216,16 @@ func annotateModels(raw []byte) ([]annotatedModel, error) {
 			details = rawModels[i]
 		}
 		result[i] = annotatedModel{
-			ID:         m.ID,
-			ProviderID: m.ProviderID,
-			Name:       m.Name,
-			Family:     m.Family,
-			Enabled:    m.Enabled,
-			Status:     m.Status,
-			Tier:       tier,
-			FreeTier:   tier == "free",
-			Details:    details,
+			ID:            m.ID,
+			ProviderID:    m.ProviderID,
+			Name:          m.Name,
+			Family:        m.Family,
+			Enabled:       m.Enabled,
+			Status:        m.Status,
+			Tier:          tier,
+			FreeTier:      tier == "free",
+			ProxyRequired: tier == "free",
+			Details:       details,
 		}
 	}
 	return result, nil

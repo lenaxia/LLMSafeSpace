@@ -680,6 +680,35 @@ func main() {
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
 
+	// Epic 26: Relay inference endpoint. opencode sends LLM requests here
+	// when the provider baseURL is redirected to localhost:4097/relay/inference.
+	relayURL := os.Getenv("LLMSAFESPACE_RELAY_URL")
+	var relayProxyInstance *relayProxy
+	if relayURL != "" {
+		relayProxyInstance = newRelayProxy(&relayProxyConfig{relayURL: relayURL})
+		go func() {
+			backoff := time.Second
+			for {
+				select {
+				case <-relayProxyInstance.closeCh:
+					return
+				default:
+				}
+				if err := relayProxyInstance.connect(); err != nil {
+					log.Warn("relay proxy connect failed", zap.Error(err), zap.Duration("backoff", backoff))
+					time.Sleep(backoff)
+					if backoff < 30*time.Second {
+						backoff *= 2
+					}
+					continue
+				}
+				backoff = time.Second // reset on successful connect
+			}
+		}()
+		userMux.Handle("/relay/inference/", relayProxyInstance.handler())
+		log.Info("relay proxy enabled", zap.String("relay_url", relayURL))
+	}
+
 	// Start admin server (health probes) on dedicated port.
 	adminSrv := &http.Server{
 		Addr:              agentd.AgentdAdminAddr,
