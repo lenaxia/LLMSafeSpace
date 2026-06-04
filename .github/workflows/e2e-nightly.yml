@@ -5,6 +5,8 @@ on:
     # Run at 06:00 UTC daily (10pm PST)
     - cron: "0 6 * * *"
   workflow_dispatch: # Allow manual trigger
+  push:
+    branches: [main] # declared so GitHub doesn't create a phantom failure run on push
 
 env:
   CLUSTER_NAME: llmsafespace-ci
@@ -16,6 +18,7 @@ jobs:
     name: Full system E2E (kind cluster)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: github.event_name != 'push'
     steps:
       - uses: actions/checkout@v6
 
