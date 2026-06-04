@@ -31,15 +31,19 @@ jobs:
             echo "__PROMPT_EOF__"
           } >> "$GITHUB_ENV"
 
+      - name: Install opencode
+        shell: bash
+        run: curl -fsSL https://opencode.ai/install | bash
+
       - name: Run OpenCode
-        uses: anomalyco/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # github-v1.2.9
+        shell: bash
+        run: opencode github run
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODEL: openai-compatible/default
           PROMPT: ${{ env.OPENCODE_PROMPT }}
-        with:
-          model: openai-compatible/default
-          use_github_token: "true"
-          share: "false"
+          SHARE: "false"
+          USE_GITHUB_TOKEN: "true"
