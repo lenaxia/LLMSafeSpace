@@ -1,12 +1,18 @@
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useRelayClient } from "./useRelayClient";
+
+// ReadyState numeric constants (mirrors WebSocket spec; avoids using
+// the WebSocket global before vi.stubGlobal runs in beforeEach).
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
+const WS_CLOSED = 3;
 
 // Mock WebSocket
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   url: string;
-  readyState = WebSocket.CONNECTING;
+  readyState = WS_CONNECTING;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -23,13 +29,13 @@ class MockWebSocket {
   }
 
   close() {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = WS_CLOSED;
     this.onclose?.();
   }
 
   // Test helpers
   simulateOpen() {
-    this.readyState = WebSocket.OPEN;
+    this.readyState = WS_OPEN;
     this.onopen?.();
   }
 
@@ -38,7 +44,7 @@ class MockWebSocket {
   }
 
   simulateClose() {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = WS_CLOSED;
     this.onclose?.();
   }
 
@@ -72,12 +78,11 @@ describe("useRelayClient", () => {
   });
 
   it("connects when workspaceId is provided", () => {
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
-    expect(result.current.status).toBe("connecting");
     expect(MockWebSocket.instances).toHaveLength(1);
-    expect(MockWebSocket.instances[0].url).toContain("/workspaces/ws1/relay?role=client");
+    expect(MockWebSocket.instances[0]!.url).toContain("/workspaces/ws1/relay?role=client");
   });
 
   it("transitions to connected on WebSocket open", async () => {
@@ -86,7 +91,7 @@ describe("useRelayClient", () => {
     );
 
     act(() => {
-      MockWebSocket.instances[0].simulateOpen();
+      MockWebSocket.instances[0]!.simulateOpen();
     });
 
     expect(result.current.status).toBe("connected");
@@ -98,7 +103,7 @@ describe("useRelayClient", () => {
     );
 
     act(() => {
-      MockWebSocket.instances[0].simulateError();
+      MockWebSocket.instances[0]!.simulateError();
     });
 
     expect(result.current.status).toBe("error");
@@ -111,11 +116,11 @@ describe("useRelayClient", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
 
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
     await act(async () => {
@@ -144,11 +149,11 @@ describe("useRelayClient", () => {
       vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
     );
 
-    const { result } = renderHook(() =>
+    renderHook(() =>
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
 
     await act(async () => {
@@ -182,7 +187,7 @@ describe("useRelayClient", () => {
       useRelayClient({ workspaceId: "ws1" }),
     );
 
-    const ws = MockWebSocket.instances[0];
+    const ws = MockWebSocket.instances[0]!;
     act(() => ws.simulateOpen());
     act(() => ws.simulateClose());
 

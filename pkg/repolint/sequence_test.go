@@ -415,6 +415,183 @@ func TestLive_ChartMigrations_NoDriftFromCanonical(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// FixWorklogs
+// ---------------------------------------------------------------------------
+
+func TestFixWorklogs_NoDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_beta.md"), "")
+	mustWrite(t, filepath.Join(dir, "0099_2026-01-01_gamma.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 0 {
+		t.Fatalf("expected 0 renames, got %d: %v", len(renames), renames)
+	}
+}
+
+func TestFixWorklogs_SingleDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_aaa-first.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_zzz-second.md"), "") // duplicate
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	// The lexically-later file (zzz-second) should be bumped to 0099.
+	if renames[0].From != "0098_2026-01-01_zzz-second.md" {
+		t.Errorf("expected From=0098_2026-01-01_zzz-second.md, got %s", renames[0].From)
+	}
+	if renames[0].To != "0099_2026-01-01_zzz-second.md" {
+		t.Errorf("expected To=0099_2026-01-01_zzz-second.md, got %s", renames[0].To)
+	}
+	// Verify the file actually moved.
+	if _, err := os.Stat(filepath.Join(dir, renames[0].From)); err == nil {
+		t.Error("old file still exists after rename")
+	}
+	if _, err := os.Stat(filepath.Join(dir, renames[0].To)); err != nil {
+		t.Errorf("new file not found: %v", err)
+	}
+	// After fix, SequenceCheck should pass.
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:              dir,
+		Pattern:          WorklogPattern,
+		GrandfatherBelow: 97,
+	})
+	if err != nil {
+		t.Fatalf("SequenceCheck: %v", err)
+	}
+	if !rep.OK() {
+		t.Errorf("sequence still not OK after fix: %s", rep.String())
+	}
+}
+
+func TestFixWorklogs_MultipleDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_b1.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_b2.md"), "") // dup of 0098
+	mustWrite(t, filepath.Join(dir, "0099_2026-01-01_c1.md"), "")
+	mustWrite(t, filepath.Join(dir, "0099_2026-01-01_c2.md"), "") // dup of 0099
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 2 {
+		t.Fatalf("expected 2 renames, got %d: %v", len(renames), renames)
+	}
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:              dir,
+		Pattern:          WorklogPattern,
+		GrandfatherBelow: 97,
+	})
+	if err != nil {
+		t.Fatalf("SequenceCheck: %v", err)
+	}
+	if !rep.OK() {
+		t.Errorf("sequence still not OK after fix: %s", rep.String())
+	}
+}
+
+func TestFixWorklogs_ThreeWayDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_bbb.md"), "")
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_ccc.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 2 {
+		t.Fatalf("expected 2 renames, got %d: %v", len(renames), renames)
+	}
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:              dir,
+		Pattern:          WorklogPattern,
+		GrandfatherBelow: 97,
+	})
+	if err != nil {
+		t.Fatalf("SequenceCheck: %v", err)
+	}
+	if !rep.OK() {
+		t.Errorf("sequence still not OK after fix: %s", rep.String())
+	}
+}
+
+func TestFixWorklogs_GrandfatheredVersionsUntouched(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0050_2026-01-01_old-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0050_2026-01-01_old-b.md"), "") // grandfathered dup
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_new.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 0 {
+		t.Fatalf("expected 0 renames (all dups grandfathered), got %d: %v", len(renames), renames)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "0050_2026-01-01_old-a.md")); err != nil {
+		t.Error("old-a.md removed unexpectedly")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "0050_2026-01-01_old-b.md")); err != nil {
+		t.Error("old-b.md removed unexpectedly")
+	}
+}
+
+func TestFixWorklogs_NonMatchingFilesIgnored(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "README.md"), "")
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_b.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 0 {
+		t.Fatalf("expected 0 renames, got %d", len(renames))
+	}
+}
+
+func TestFixWorklogs_RenamedFileSelfReferenceUpdated(t *testing.T) {
+	dir := t.TempDir()
+	content := "See worklogs/0098_2026-01-01_zzz.md for context."
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_zzz.md"), content)
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	newPath := filepath.Join(dir, renames[0].To)
+	data, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("read renamed file: %v", err)
+	}
+	if strings.Contains(string(data), renames[0].From) {
+		t.Errorf("renamed file still contains old filename %q", renames[0].From)
+	}
+	if !strings.Contains(string(data), renames[0].To) {
+		t.Errorf("renamed file does not contain new filename %q; content: %s", renames[0].To, data)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

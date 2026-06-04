@@ -12,7 +12,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
 .PHONY: all build clean test cover lint fmt fmt-check imports imports-check vet generate deepcopy \
         helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
         openapi-validate \
-        repolint chart-sync-migrations install-hooks \
+        repolint chart-sync-migrations fix-worklogs install-hooks \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
         migration-roundtrip migration-fk-cascade migration-idempotent migration-safety \
@@ -160,6 +160,17 @@ chart-sync-migrations:
 	$(GOBUILD) -o bin/repolint ./cmd/repolint
 	./bin/repolint -fix-drift
 
+# fix-worklogs: auto-renumber any duplicate worklog files. When two agents
+# independently pick the same worklog number (common in parallel sprints),
+# this renames the lexically-later duplicate to max+1, iterating until all
+# conflicts are resolved. Runs git-add on worklogs/ so the next commit picks
+# up the renames. Safe to run multiple times (idempotent if no duplicates).
+fix-worklogs:
+	$(GOBUILD) -o bin/repolint ./cmd/repolint
+	./bin/repolint -fix-worklogs
+	git add worklogs/
+	@echo "Worklogs renumbered and staged. Re-run 'git commit' to continue."
+
 # install-hooks: wire .githooks/ into git's hook path. Run once per fresh
 # clone. After this, every `git commit` runs `make repolint` and rejects the
 # commit on failure.
@@ -203,11 +214,12 @@ check: fmt-check imports-check vet lint helm-render repolint
 #   - goimports       (import grouping / unused imports)
 #   - misspell        (US-locale spelling: "behaviour" → "behavior", etc)
 #   - chart drift     (api/migrations/ ↔ charts/llmsafespace/migrations/)
+#   - duplicate worklog numbers (auto-renumbered to max+1)
 #   - staticcheck S1016 (struct → struct conversion idiom)
 #
 # Does NOT auto-fix:
 #   - errcheck / bodyclose / sqlclosecheck (semantic; need code changes)
-#   - duplicate worklog / migration numbers (need rename decision)
+#   - duplicate migration numbers (load-bearing; need human rename decision)
 #   - CRD drift (need Go ↔ chart schema reconciliation)
 #   - gitleaks findings (rotate the secret + remove from diff)
 #
@@ -217,7 +229,7 @@ pre-commit-fix:
 	@echo "== pre-commit-fix: snapshot staged files =="
 	@staged=$$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(go|sql)$$' || true); \
 	if [ -z "$$staged" ]; then \
-		echo "No Go/SQL files staged; only chart-drift will run."; \
+		echo "No Go/SQL files staged; only chart-drift and worklog-fix will run."; \
 	fi; \
 	echo "== gofmt =="; \
 	$(GOCMD) fmt ./... >/dev/null; \
@@ -228,11 +240,17 @@ pre-commit-fix:
 	misspell -w -locale US $$(find . -name '*.go' -not -path './frontend/node_modules/*' -not -path './sdks/*/node_modules/*') >/dev/null 2>&1 || true; \
 	echo "== chart-sync-migrations =="; \
 	$(MAKE) -s chart-sync-migrations >/dev/null; \
+	echo "== fix-worklogs =="; \
+	$(GOBUILD) -o bin/repolint ./cmd/repolint; \
+	./bin/repolint -fix-worklogs; \
 	echo "== restage modified files =="; \
 	if [ -n "$$staged" ]; then \
 		echo "$$staged" | xargs -r git add; \
 	fi; \
 	git add charts/llmsafespace/migrations/ 2>/dev/null || true; \
+	git add worklogs/ 2>/dev/null || true; \
+	echo ""; \
+	echo "Auto-fixes applied and re-staged. Re-run 'git commit' to retry." \
 	echo ""; \
 	echo "Auto-fixes applied and re-staged. Re-run 'git commit' to retry."
 

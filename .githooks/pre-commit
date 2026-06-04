@@ -122,8 +122,15 @@ if [ "$GO_STAGED" -eq 1 ]; then
     if [ -z "$packages" ]; then
         packages="./..."
     fi
-    echo "== pre-commit: golangci-lint (new-only, scoped to changed packages) =="
-    if ! golangci-lint run --new-from-merge-base=origin/main $packages 2>&1; then
+    # Filter out sub-module paths that golangci-lint cannot typecheck from the
+    # repo root. These are linted independently by `go build` + `go vet` in CI.
+    # sdks/go, sdks/canary/go, sdks/canary/mcp are all separate Go modules.
+    packages=$(echo "$packages" | grep -v '^./sdks/' || true)
+    if [ -z "$packages" ]; then
+        show_skip "golangci-lint" "no lintable packages after filtering sub-modules"
+    else
+        echo "== pre-commit: golangci-lint (new-only, scoped to changed packages) =="
+        if ! golangci-lint run --new-from-merge-base=origin/main $packages 2>&1; then
         cat >&2 <<EOF
 
 Pre-commit blocked: golangci-lint failed on NEW findings (see above).
@@ -145,8 +152,8 @@ issues you'll need to fix in a follow-up.
 To bypass in an emergency: git commit --no-verify
 EOF
         exit 1
+        fi
     fi
-else
     show_skip "gofmt"        "no .go files staged"
     show_skip "goimports"    "no .go files staged"
     show_skip "golangci-lint" "no .go files staged"
