@@ -155,13 +155,13 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, userSecretsVol, err := r.buildCredentialSetupInit(ctx, workspace, runtimeImage)
+	credInit, pwVolume, userSecretsVol, err := r.buildCredentialSetupInit(workspace, runtimeImage)
 	if err != nil {
 		return nil, err
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
-	volumes = append(volumes, *userSecretsVol)
+	volumes = append(volumes, userSecretsVol)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -332,7 +332,7 @@ func buildNodeSelector(workspace *v1.Workspace) map[string]string {
 	}
 }
 
-func (r *WorkspaceReconciler) buildCredentialSetupInit(ctx context.Context, workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, *corev1.Volume, error) {
+func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
 	credScript := `
 if [ -f /mnt/secrets/user-secrets/secrets.json ]; then
   cp /mnt/secrets/user-secrets/secrets.json /sandbox-cfg/secrets.json
@@ -359,7 +359,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	// mount is safe.
 	userSecretsName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
 	optionalTrue := true
-	userSecretsVolume := &corev1.Volume{
+	userSecretsVolume := corev1.Volume{
 		Name: "user-secrets",
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
