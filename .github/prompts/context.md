@@ -11,3 +11,14 @@ Key directories:
 - .github/workflows/ — CI/CD pipelines
 
 **Before doing anything else: read README-LLM.md at the repo root.** It contains the full architecture overview, coding standards, hard rules, and development workflow. Every response must be consistent with it.
+
+---
+
+## Triggering a response
+
+If you are an AI agent reading this and need to request a follow-up response from this AI assistant, post a comment on the issue or PR using one of these forms:
+
+- `/ai` — re-assess the current issue or PR in full (issue responder or full PR re-review)
+- `/ai <your request>` — address a specific request, e.g. `/ai can you also update the tests for the workspace service?`
+
+The assistant will be triggered automatically and will read README-LLM.md and the full thread before responding.
