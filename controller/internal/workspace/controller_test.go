@@ -153,9 +153,10 @@ func TestReconcile_Pending_Timeout_EntersRecovery(t *testing.T) {
 
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase,
-		"pending timeout enters recovery (Creating with backoff), not terminal Failed")
+	assert.Equal(t, v1.WorkspacePhasePending, updated.Status.Phase,
+		"pending timeout stays in Pending with backoff (PVC not yet created)")
 	assert.Equal(t, int32(1), updated.Status.ConsecutiveFailures)
+	assert.NotNil(t, updated.Status.NextRetryAt)
 }
 
 // --- Creating Phase Tests ---

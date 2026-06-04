@@ -35,6 +35,8 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
 		workspace.Status.TransientFailureCount = 0
+		workspace.Status.ConsecutiveFailures = 0
+		workspace.Status.NextRetryAt = nil
 		workspace.Status.LastTransientFailureAt = nil
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
@@ -56,6 +58,8 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
 		workspace.Status.TransientFailureCount = 0
+		workspace.Status.ConsecutiveFailures = 0
+		workspace.Status.NextRetryAt = nil
 		workspace.Status.Message = ""
 		workspace.Status.FailureReason = v1.FailureReasonNone
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
@@ -80,6 +84,8 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 			workspace.Status.ImageTag = imageTagFromPod(pod)
 			workspace.Status.StartTime = &now
 			workspace.Status.TransientFailureCount = 0
+			workspace.Status.ConsecutiveFailures = 0
+			workspace.Status.NextRetryAt = nil
 			workspace.Status.ConsecutiveHealthFailures = 0
 			workspace.Status.LastTransientFailureAt = nil
 			workspace.Status.Message = ""
@@ -95,6 +101,8 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 	workspace.Status.PodIP = ""
 	workspace.Status.Endpoint = ""
 	workspace.Status.TransientFailureCount = 0
+	workspace.Status.ConsecutiveFailures = 0
+	workspace.Status.NextRetryAt = nil
 	workspace.Status.Message = ""
 	workspace.Status.FailureReason = v1.FailureReasonNone
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)
