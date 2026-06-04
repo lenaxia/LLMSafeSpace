@@ -66,44 +66,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			{ContainerPort: agentd.AgentdPort, Name: "agentd", Protocol: corev1.ProtocolTCP},
 			{ContainerPort: agentd.AgentdAdminPort, Name: "agentd-admin", Protocol: corev1.ProtocolTCP},
 		},
-		Env: []corev1.EnvVar{
-			{Name: "WORKSPACE_ID", Value: workspace.Name},
-			{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
-			// Enable opencode's free-tier models by default. AccountPlugin
-			// reads this env var and enables the "opencode" provider with
-			// apiKey="public". Without this, the provider stays disabled
-			// and catalog.model.available() returns [] even though
-			// OpencodePlugin injects the public key into options.
-			{Name: "OPENCODE_AUTH_CONTENT", Value: `{"opencode":{"type":"api","key":"public"}}`},
-			// F1.4.2 (Epic 17): Bearer token for agentd's /v1/readyz
-			// and /v1/statusz endpoints. Sourced from the same per-
-			// workspace password Secret the controller already
-			// generates. The controller sends this token when polling
-			// /v1/statusz; the kubelet's readiness probe must also
-			// carry it via httpHeaders (set on the probe spec below).
-			{Name: "AGENTD_ADMIN_TOKEN", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: passwordSecretName(workspace.Name),
-					},
-					Key: "password",
-				},
-			}},
-			// Epic 26: Relay URL for client-proxied inference. When set,
-			// agentd starts the relay proxy that intercepts free-tier LLM
-			// requests and forwards them to the client via the API server's
-			// relay WebSocket. Constructed from the API service URL + workspace ID.
-			{Name: "LLMSAFESPACE_RELAY_URL", Value: r.buildRelayURL(workspace)},
-			// Relay auth token — same as workspace password (resolves to owner's userID).
-			{Name: "LLMSAFESPACE_RELAY_TOKEN", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: passwordSecretName(workspace.Name),
-					},
-					Key: "password",
-				},
-			}},
-		},
+		Env: r.buildAgentdEnv(workspace),
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -514,4 +477,38 @@ func (r *WorkspaceReconciler) buildRelayURL(workspace *v1.Workspace) string {
 		wsURL = "ws://" + strings.TrimPrefix(wsURL, "http://")
 	}
 	return wsURL + "/api/v1/workspaces/" + workspace.Name + "/relay?role=agentd"
+}
+
+// buildAgentdEnv constructs the environment variables for the agentd container.
+func (r *WorkspaceReconciler) buildAgentdEnv(workspace *v1.Workspace) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "WORKSPACE_ID", Value: workspace.Name},
+		{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
+		{Name: "OPENCODE_AUTH_CONTENT", Value: `{"opencode":{"type":"api","key":"public"}}`},
+		{Name: "AGENTD_ADMIN_TOKEN", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: passwordSecretName(workspace.Name),
+				},
+				Key: "password",
+			},
+		}},
+	}
+
+	// Epic 26: Only inject relay env vars when APIServiceURL is configured.
+	if relayURL := r.buildRelayURL(workspace); relayURL != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "LLMSAFESPACE_RELAY_URL", Value: relayURL},
+			corev1.EnvVar{Name: "LLMSAFESPACE_RELAY_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: passwordSecretName(workspace.Name),
+					},
+					Key: "password",
+				},
+			}},
+		)
+	}
+
+	return env
 }
