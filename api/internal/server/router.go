@@ -138,6 +138,21 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
 	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler, cfg)
 
+	// Epic 26: Relay routes use OptionalAuthMiddleware — agentd authenticates
+	// with a workspace password Bearer token (not a user JWT/API key), so the
+	// standard AuthMiddleware would abort those requests. The relay handler
+	// performs its own full auth check after this middleware.
+	if cfg.RelayHandler != nil || cfg.RelayFallbackHandler != nil {
+		relayGroup := router.Group("/api/v1/workspaces")
+		relayGroup.Use(services.GetAuth().OptionalAuthMiddleware())
+		if cfg.RelayHandler != nil {
+			relayGroup.GET("/:id/relay", cfg.RelayHandler.HandleRelay)
+		}
+		if cfg.RelayFallbackHandler != nil {
+			relayGroup.POST("/:id/relay/fallback", cfg.RelayFallbackHandler.HandleFallback)
+		}
+	}
+
 	// Epic 27b: Bulk agent reload across all pending workspaces.
 	if cfg.BulkReloadHandler != nil {
 		userGroup := router.Group("/api/v1/users/me")
@@ -658,16 +673,6 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 	// Epic 27a: explicit agent reload (disposes opencode without pod restart).
 	if cfg.AgentReloadHandler != nil {
 		rg.POST("/:id/agent/reload", cfg.AgentReloadHandler.Reload)
-	}
-
-	// Epic 26: WebSocket relay for client-proxied inference (free-tier models).
-	if cfg.RelayHandler != nil {
-		rg.GET("/:id/relay", cfg.RelayHandler.HandleRelay)
-	}
-
-	// Epic 26 US-26.6: CORS fallback — server-side proxy for free-tier when client can't CORS.
-	if cfg.RelayFallbackHandler != nil {
-		rg.POST("/:id/relay/fallback", cfg.RelayFallbackHandler.HandleFallback)
 	}
 
 	rg.GET("/:id/status", func(c *gin.Context) {

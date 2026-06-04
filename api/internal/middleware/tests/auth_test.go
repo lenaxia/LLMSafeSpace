@@ -109,6 +109,11 @@ func (m *MockAuthService) AuthMiddleware() gin.HandlerFunc {
 	return args.Get(0).(gin.HandlerFunc)
 }
 
+func (m *MockAuthService) OptionalAuthMiddleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	mockAuthService := new(MockAuthService)
 	mockLogger := pkginterfaces.LoggerInterface(nil) // Use a no-op logger

@@ -731,6 +731,35 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // previous key to JWTPreviousSecrets, setting a new JWTSecret, and
 // restarting. Existing sessions stay valid until they expire.
 //
+// OptionalAuthMiddleware is like AuthMiddleware but never aborts. It sets
+// "userID" in the context when a valid JWT/API key is present, and calls
+// c.Next() unconditionally. Handlers that use this middleware must check
+// the userID themselves and handle the unauthenticated case.
+//
+// Used by the relay endpoint which accepts workspace-password Bearer tokens
+// for the agentd role — a token type the standard AuthMiddleware does not
+// know about. The relay handler performs its own auth after this middleware.
+func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := extractToken(c)
+		if tokenString != "" {
+			userID, err := s.ValidateToken(tokenString)
+			if err == nil && userID != "" {
+				c.Set("userID", userID)
+				if jti := utilities.ExtractJTI(tokenString); jti != "" {
+					c.Set("sessionID", jti)
+				}
+				if s.dbService != nil {
+					if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
+						c.Set("userRole", user.Role)
+					}
+				}
+			}
+		}
+		c.Next()
+	}
+}
+
 // The keyFunc closure is shared between ValidateToken and
 // RevokeToken so both surfaces honor the rotated-key list.
 func (s *Service) parseTokenAcceptingRotatedKeys(token string) (*jwt.Token, error) {

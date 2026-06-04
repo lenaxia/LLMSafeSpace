@@ -215,3 +215,122 @@ func (t *trackingKeyService) HasKeys(_ context.Context, userID string) (bool, er
 	}
 	return t.initialized[userID], nil
 }
+
+// TestOptionalAuthMiddleware_ValidToken verifies that a valid JWT sets userID
+// in context and calls the next handler (does not abort).
+func TestOptionalAuthMiddleware_ValidToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	token, err := svc.GenerateToken("user-opt")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	db.users = map[string]*mockUser{
+		"user-opt": {ID: "user-opt", Role: "user", Active: true},
+	}
+
+	router := gin.New()
+	router.Use(svc.OptionalAuthMiddleware())
+	var gotUID string
+	router.GET("/test", func(c *gin.Context) {
+		uid, _ := c.Get("userID")
+		gotUID, _ = uid.(string)
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if gotUID != "user-opt" {
+		t.Errorf("expected userID=user-opt, got %q", gotUID)
+	}
+}
+
+// TestOptionalAuthMiddleware_InvalidToken verifies that an invalid token does
+// NOT abort — handler still runs with empty userID.
+func TestOptionalAuthMiddleware_InvalidToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(svc.OptionalAuthMiddleware())
+	var gotUID string
+	var handlerRan bool
+	router.GET("/test", func(c *gin.Context) {
+		handlerRan = true
+		uid, _ := c.Get("userID")
+		gotUID, _ = uid.(string)
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer not-a-valid-token")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if !handlerRan {
+		t.Error("handler should run even with invalid token")
+	}
+	if w.Code != 200 {
+		t.Errorf("expected 200 (not aborted), got %d", w.Code)
+	}
+	if gotUID != "" {
+		t.Errorf("expected empty userID, got %q", gotUID)
+	}
+}
+
+// TestOptionalAuthMiddleware_NoToken verifies that absent Authorization header
+// does NOT abort — handler still runs with empty userID.
+func TestOptionalAuthMiddleware_NoToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(svc.OptionalAuthMiddleware())
+	var handlerRan bool
+	router.GET("/test", func(c *gin.Context) {
+		handlerRan = true
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if !handlerRan {
+		t.Error("handler should run with no token")
+	}
+	if w.Code != 200 {
+		t.Errorf("expected 200 (not aborted), got %d", w.Code)
+	}
+}

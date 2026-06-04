@@ -40,6 +40,9 @@ type AuthService interface {
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
 	DeleteAPIKey(ctx context.Context, userID, keyID string) error
 	AuthMiddleware() gin.HandlerFunc
+	// OptionalAuthMiddleware sets userID in context when a valid token is
+	// present but never aborts — handlers must check userID themselves.
+	OptionalAuthMiddleware() gin.HandlerFunc
 	Start() error
 	Stop() error
 }
