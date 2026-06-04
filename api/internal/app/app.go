@@ -163,6 +163,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		))
 		secretsHandler.SetLogger(log)
 		secretsHandler.SetCredentialStateWriter(dbSvc)
+		secretsHandler.SetWorkspaceMetadataUpdater(dbSvc)
+		// Wire password getter so ListModels/SetModel can authenticate
+		// to opencode. Uses the same K8s-secret-backed getter as ProxyHandler.
+		// Wired after proxyHandler construction (see below).
 		// Wire the manifest writer so SetBindings persists a K8s Secret
 		// (`workspace-secrets-<id>`) read by the pod init container on
 		// every start. The live HTTP push alone is not durable; see
@@ -245,10 +249,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create terminal handler (Epic 14 — WebSocket terminal proxy).
 	terminalHandler := handlers.NewTerminalHandler(svc.Cache, &k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace}, cfg.Kubernetes.Namespace, log)
 
-	// Epic 26: Relay handler for client-proxied inference.
-	relayHandler := handlers.NewRelayHandler(&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace})
-	relayFallbackHandler := handlers.NewRelayFallbackHandler()
-
 	// Epic 27a: Agent reload handler.
 	var agentReloadHandler *handlers.AgentReloadHandler
 	var bulkReloadHandler *handlers.BulkReloadHandler
@@ -287,6 +287,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
+			if secretsHandler != nil {
+				secretsHandler.SetPasswordGetter(pwGetter)
+			}
 		}
 	}
 	// Wire metrics into reload handlers.
@@ -310,8 +313,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TerminalHandler:         terminalHandler,
 		AgentReloadHandler:      agentReloadHandler,
 		BulkReloadHandler:       bulkReloadHandler,
-		RelayHandler:            relayHandler,
-		RelayFallbackHandler:    relayFallbackHandler,
 	})
 
 	httpServer := &http.Server{

@@ -15,6 +15,7 @@ import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
 import { AgentReloadBanner } from "../components/workspace/AgentReloadBanner";
 import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
+import { ModelSelector } from "../components/chat/ModelSelector";
 import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
@@ -548,10 +549,15 @@ export function ChatPage() {
           <span className="text-muted-foreground/50 mx-1">/</span>
           <span>{sessionDisplayName}</span>
         </h2>
-        <KebabMenu items={kebabItems} footer={[
-          ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
-          ...(status?.imageTag ? [`image: ${status.imageTag}`] : []),
-        ]} />
+        <div className="flex items-center gap-2">
+          {isReady && workspaceId && (
+            <ModelSelector workspaceId={workspaceId} disabled={!isReady} />
+          )}
+          <KebabMenu items={kebabItems} footer={[
+            ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
+            ...(status?.imageTag ? [`image: ${status.imageTag}`] : []),
+          ]} />
+        </div>
       </div>
 
       {isSuspended && (

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +25,8 @@ type mockWSUpdater struct {
 	mu      sync.Mutex
 	calls   []types.WorkspaceUpdates
 	failErr error
+	// WorkspaceOwnerChecker support
+	ownerUserID string // if set, GetWorkspace returns a workspace owned by this user
 }
 
 func (m *mockWSUpdater) UpdateWorkspace(_ context.Context, _ string, updates types.WorkspaceUpdates) error {
@@ -35,19 +36,52 @@ func (m *mockWSUpdater) UpdateWorkspace(_ context.Context, _ string, updates typ
 	return m.failErr
 }
 
+func (m *mockWSUpdater) GetWorkspace(_ context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	if m.ownerUserID == "" {
+		// Default: workspace owned by "user-1" (matches test auth middleware)
+		return &types.WorkspaceMetadata{ID: workspaceID, UserID: "user-1"}, nil
+	}
+	return &types.WorkspaceMetadata{ID: workspaceID, UserID: m.ownerUserID}, nil
+}
+
+func (m *mockWSUpdater) GetDefaultModel(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+// mockPasswordGetter returns a fixed password for any workspace.
+func mockPasswordGetter(password string) func(context.Context, string) (string, error) {
+	return func(_ context.Context, _ string) (string, error) {
+		return password, nil
+	}
+}
+
+// authEnforcingHandler returns an HTTP handler that rejects requests without valid Basic auth.
+// This simulates real opencode behavior (Epic 27a A6).
+func authEnforcingHandler(expectedPassword string, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "opencode" || pass != expectedPassword {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler(w, r)
+	}
+}
+
 // --- ListModels Tests ---
 
 func TestListModels_HappyPath(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
-	// Mock opencode model endpoint on port 4096.
+	// Mock opencode model endpoint on port 4096 — enforces Basic auth.
+	const testPassword = "test-pw-456"
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
 	models := `[{"id":"anthropic/claude-sonnet-4-5","providerID":"anthropic","name":"Claude Sonnet 4.5","enabled":true}]`
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/model", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
@@ -58,6 +92,7 @@ func TestListModels_HappyPath(t *testing.T) {
 
 	handler := NewSecretsHandler(nil)
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -124,6 +159,7 @@ func TestListModels_AgentUnreachable(t *testing.T) {
 	handler := NewSecretsHandler(nil)
 	// Resolver returns IP but nothing is listening on 4096
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.99"})
+	handler.SetPasswordGetter(mockPasswordGetter("some-pw"))
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -154,39 +190,40 @@ func TestListModels_Unauthenticated(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+func TestListModels_OwnershipDenied(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	// wsUpdater returns workspace owned by "other-user"
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{ownerUserID: "other-user"})
+	handler.SetPasswordGetter(mockPasswordGetter("pw"))
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "access denied")
+}
+
 // --- SetModel Tests ---
 
 func TestSetModel_HappyPath(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
-
-	// Mock opencode PATCH /global/config on port 4096.
-	var (
-		mu        sync.Mutex
-		patchBody []byte
-	)
-	listener, err := net.Listen("tcp", "127.0.0.1:4096")
-	if err != nil {
-		t.Skip("port 4096 not available")
-	}
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/global/config" && r.Method == http.MethodPatch {
-			body, _ := io.ReadAll(r.Body)
-			mu.Lock()
-			patchBody = body
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"model":"anthropic/claude-sonnet-4-5"}`))
-			return
-		}
-		http.Error(w, "not found", 404)
-	}))
-	srv.Listener = listener
-	srv.Start()
-	defer srv.Close()
 
 	updater := &mockWSUpdater{}
 	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""}) // no pod needed — SetModel persists only
 	handler.SetWorkspaceMetadataUpdater(updater)
 
 	router := gin.New()
@@ -207,18 +244,15 @@ func TestSetModel_HappyPath(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	require.Equal(t, "anthropic/claude-sonnet-4-5", resp["model"])
-	require.Equal(t, true, resp["applied"])
+	// applied is always false — no live push (PATCH /global/config disposed all
+	// instances, which aborts streams; removed per Epic 27a principles)
+	require.Equal(t, false, resp["applied"])
 
 	// Verify workspace metadata was updated.
 	updater.mu.Lock()
 	require.Len(t, updater.calls, 1)
 	require.Equal(t, "anthropic/claude-sonnet-4-5", *updater.calls[0].DefaultModel)
 	updater.mu.Unlock()
-
-	// Verify PATCH was sent to opencode.
-	mu.Lock()
-	require.Contains(t, string(patchBody), "anthropic/claude-sonnet-4-5")
-	mu.Unlock()
 }
 
 func TestSetModel_MissingModelField(t *testing.T) {
@@ -316,6 +350,92 @@ func TestSetModel_Unauthenticated(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+func TestSetModel_OwnershipDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// wsUpdater returns a workspace owned by "other-user" — not "user-1"
+	updater := &mockWSUpdater{ownerUserID: "other-user"}
+	handler := NewSecretsHandler(nil)
+	handler.SetWorkspaceMetadataUpdater(updater)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter("pw"))
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "test/model"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "access denied")
+}
+
+func TestListModels_NoPasswordGetter_Returns503(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	// No SetPasswordGetter — should fail gracefully
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "password getter")
+}
+
+func TestListModels_WrongPassword_Returns502(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const correctPassword = "real-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Mock opencode that enforces auth
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(correctPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[]`))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter("wrong-pw")) // wrong password
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// opencode returns 401 → handler passes through as error
+	require.NotEqual(t, http.StatusOK, w.Code)
+}
+
 // Ensure unused import doesn't break compilation.
 
 // --- Tier Annotation Tests ---
@@ -410,12 +530,13 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
+	const testPassword = "annotated-pw"
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
 	models := `[{"id":"opencode/test","providerID":"opencode","name":"Test","enabled":true,"cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}],"status":"active"}]`
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
 	}))
@@ -425,6 +546,7 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 
 	handler := NewSecretsHandler(nil)
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -464,16 +586,21 @@ func (m *mockModelReader) GetDefaultModel(_ context.Context, _ string) (string, 
 	return m.model, nil
 }
 
+func (m *mockModelReader) GetWorkspace(_ context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	return &types.WorkspaceMetadata{ID: workspaceID, UserID: "user-1"}, nil
+}
+
 func TestListModels_IncludesCurrentModel(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
+	const testPassword = "currentmodel-pw"
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
 	models := `[{"id":"anthropic/claude-sonnet-4-5","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15,"cache":{"read":0,"write":0}}]}]`
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
 	}))
@@ -483,6 +610,7 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 
 	handler := NewSecretsHandler(nil)
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
 	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "anthropic/claude-sonnet-4-5"})
 
 	router := gin.New()

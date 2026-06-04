@@ -16,6 +16,22 @@ export interface EnsureSessionResponse {
   resumed: boolean;
 }
 
+export interface ModelInfo {
+  id: string;
+  providerID: string;
+  name: string;
+  tier: string;
+  freeTier: boolean;
+  selected: boolean;
+  enabled: boolean;
+  details?: unknown;
+}
+
+export interface ListModelsResponse {
+  models: ModelInfo[];
+  currentModel: string;
+}
+
 export const workspacesApi = {
   list: () => api.get<WorkspaceListResponse>("/workspaces"),
   create: (params: { name: string; runtime?: string }) =>
@@ -48,4 +64,8 @@ export const workspacesApi = {
     api.post<{ disposed: boolean; lastDisposedAt?: string; warning?: string }>(
       `/workspaces/${workspaceId}/agent/reload`
     ),
+  listModels: (workspaceId: string) =>
+    api.get<ListModelsResponse>(`/workspaces/${workspaceId}/models`),
+  setModel: (workspaceId: string, model: string) =>
+    api.put<{ model: string; applied: boolean }>(`/workspaces/${workspaceId}/model`, { model }),
 };

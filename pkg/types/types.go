@@ -395,6 +395,7 @@ type Workspace struct {
 	Phase                   string            `json:"phase"`
 	PVCName                 string            `json:"pvcName,omitempty"`
 	Labels                  map[string]string `json:"labels,omitempty"`
+	DefaultModel            string            `json:"defaultModel,omitempty"`
 	CreatedAt               time.Time         `json:"createdAt"`
 	UpdatedAt               time.Time         `json:"updatedAt"`
 	AgentNeedsRefresh       bool              `json:"agentNeedsRefresh"`
@@ -432,6 +433,7 @@ type WorkspaceListItem struct {
 	Phase                   string     `json:"phase,omitempty"`
 	ImageTag                string     `json:"imageTag,omitempty"`
 	AgentVersion            string     `json:"agentVersion,omitempty"`
+	DefaultModel            string     `json:"defaultModel,omitempty"`
 	MaxActiveSessions       int        `json:"maxActiveSessions,omitempty"`
 	CreatedAt               time.Time  `json:"createdAt"`
 	UpdatedAt               time.Time  `json:"updatedAt"`
@@ -508,6 +510,8 @@ type WorkspaceMetadata struct {
 	AgentVersion string    `json:"agentVersion" db:"agent_version"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
+	// Model selection (migration 000013)
+	DefaultModel string `json:"defaultModel,omitempty" db:"default_model"`
 	// Epic 27a: agent credential state (LEFT JOIN workspace_agent_state)
 	AgentNeedsRefresh       bool       `json:"agentNeedsRefresh" db:"agent_needs_refresh"`
 	CredentialsPendingSince *time.Time `json:"credentialsPendingSince,omitempty" db:"credentials_pending_since"`

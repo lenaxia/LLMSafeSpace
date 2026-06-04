@@ -1,0 +1,116 @@
+import { useEffect, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { workspacesApi } from "../../api/workspaces";
+import type { ModelInfo } from "../../api/workspaces";
+import { ChevronDown } from "lucide-react";
+
+interface Props {
+  workspaceId: string;
+  disabled?: boolean;
+}
+
+export function ModelSelector({ workspaceId, disabled }: Props) {
+  const [open, setOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["models", workspaceId],
+    queryFn: () => workspacesApi.listModels(workspaceId),
+    enabled: !!workspaceId,
+    staleTime: 10_000,
+    retry: 1,
+  });
+
+  const setModelMutation = useMutation({
+    mutationFn: (model: string) => workspacesApi.setModel(workspaceId, model),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["models", workspaceId] });
+      setOpen(false);
+      if (data && !data.applied) {
+        setToast("Model saved — takes effect on next session or agent reload.");
+      }
+    },
+    onError: () => {
+      setToast("Failed to set model. Please try again.");
+    },
+  });
+
+  const models = data?.models ?? [];
+  const currentModel = data?.currentModel || "";
+  const currentDisplay = currentModel
+    ? models.find((m) => m.id === currentModel)?.name || currentModel.split("/").pop()
+    : "Select model";
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  if (isLoading) {
+    return (
+      <span className="text-xs text-muted-foreground px-2 py-1">
+        Loading models...
+      </span>
+    );
+  }
+
+  if (isError) {
+    return (
+      <span className="text-xs text-destructive px-2 py-1" title="Could not load models">
+        ⚠ Models
+      </span>
+    );
+  }
+
+  if (models.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        disabled={disabled || setModelMutation.isPending}
+        className="flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+      >
+        <span className="max-w-[160px] truncate">{currentDisplay}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      </button>
+
+      {open && (
+        <>
+          {/* Backdrop to close on click outside */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+            {models.filter((m: ModelInfo) => m.enabled).map((m: ModelInfo) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setModelMutation.mutate(m.id)}
+                className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-accent ${
+                  m.id === currentModel ? "bg-accent/50 font-medium" : ""
+                }`}
+              >
+                <span className="truncate">{m.name || m.id}</span>
+                <span className={`ml-2 shrink-0 rounded px-1 py-0.5 text-[10px] ${
+                  m.freeTier ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                }`}>
+                  {m.tier}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {toast && (
+        <div className="absolute right-0 top-full z-50 mt-1 rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}

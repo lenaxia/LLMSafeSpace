@@ -45,6 +45,7 @@ export interface WorkspaceListItem {
   phase?: string;
   imageTag?: string;
   agentVersion?: string;
+  defaultModel?: string;
   maxActiveSessions?: number;
   agentNeedsRefresh?: boolean;
   credentialsPendingSince?: string;
