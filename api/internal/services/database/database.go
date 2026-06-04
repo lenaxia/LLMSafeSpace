@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/lenaxia/llmsafespace/api/internal/config"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -341,9 +342,12 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		return nil, nil
 	}
 	query := `
-        SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at
-        FROM workspaces
-        WHERE id = $1
+        SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
+               COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
+               s.last_credential_changed_at AS credentials_pending_since
+        FROM workspaces w
+        LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
+        WHERE w.id = $1
     `
 	var ws types.WorkspaceMetadata
 	err := s.DB.QueryRowContext(ctx, query, workspaceID).Scan(
@@ -356,6 +360,8 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.AgentVersion,
 		&ws.CreatedAt,
 		&ws.UpdatedAt,
+		&ws.AgentNeedsRefresh,
+		&ws.CredentialsPendingSince,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -525,10 +531,13 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 		return []*types.WorkspaceMetadata{}, pagination, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `
-        SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at
-        FROM workspaces
-        WHERE user_id = $1 AND deleted_at IS NULL
-        ORDER BY created_at DESC
+        SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
+               COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
+               s.last_credential_changed_at AS credentials_pending_since
+        FROM workspaces w
+        LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
+        WHERE w.user_id = $1 AND w.deleted_at IS NULL
+        ORDER BY w.created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)
 	if err != nil {
@@ -543,6 +552,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 			&ws.StorageSize,
 			&ws.ImageTag, &ws.AgentVersion,
 			&ws.CreatedAt, &ws.UpdatedAt,
+			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
 		}
@@ -724,4 +734,125 @@ func (s *Service) UpsertSessionParent(ctx context.Context, workspaceID, sessionI
 		   parent_session_id = EXCLUDED.parent_session_id,
 		   updated_at = NOW()`, workspaceID, sessionID, parentID)
 	return err
+}
+
+// BeginTx starts a new database transaction. Used by handlers that need
+// multi-statement atomicity (e.g., AgentReloadHandler's SELECT FOR UPDATE + UPSERT).
+func (s *Service) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return s.DB.BeginTx(ctx, opts)
+}
+
+// MarkCredentialChanged flips a workspace into "credentials staged, reload needed" state.
+// Uses a single auto-commit UPSERT (no external transaction parameter) because
+// the binding write (PgSecretStore, pgxpool) and this write (*sql.DB) use
+// incompatible connection pools — cross-pool transactions are impossible.
+func (s *Service) MarkCredentialChanged(ctx context.Context, workspaceID string) error {
+	_, err := s.DB.ExecContext(ctx, `
+		INSERT INTO workspace_agent_state
+			(workspace_id, last_credential_changed_at, pending_refresh, updated_at)
+		VALUES ($1, NOW(), TRUE, NOW())
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			last_credential_changed_at = NOW(),
+			pending_refresh = TRUE,
+			updated_at = NOW()
+	`, workspaceID)
+	if err != nil {
+		return fmt.Errorf("mark credential changed: %w", err)
+	}
+	return nil
+}
+
+// GetLastCredentialChangedAt returns the most recent credential-changed
+// timestamp for the workspace, or the zero time if no row exists.
+func (s *Service) GetLastCredentialChangedAt(ctx context.Context, workspaceID string) (time.Time, error) {
+	var t time.Time
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT COALESCE(last_credential_changed_at, '1970-01-01') FROM workspace_agent_state WHERE workspace_id = $1`,
+		workspaceID,
+	).Scan(&t)
+	if err == sql.ErrNoRows {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get last credential changed at: %w", err)
+	}
+	return t, nil
+}
+
+// MarkAgentReloaded clears pending_refresh after a successful dispose.
+// Uses SELECT FOR UPDATE to serialize against concurrent MarkCredentialChanged.
+// priorChangedAt is captured BEFORE dispose; if a new credential was staged
+// during the dispose window, pending_refresh stays true.
+// Returns the DB-clock timestamp written to last_agent_disposed_at.
+func (s *Service) MarkAgentReloaded(ctx context.Context, tx *sql.Tx, workspaceID string, priorChangedAt time.Time) (time.Time, error) {
+	var currentChangedAt time.Time
+	err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(last_credential_changed_at, '1970-01-01')
+		 FROM workspace_agent_state
+		 WHERE workspace_id = $1
+		 FOR UPDATE`,
+		workspaceID,
+	).Scan(&currentChangedAt)
+	if err == sql.ErrNoRows {
+		return time.Time{}, apierrors.ErrNoAgentStateRow
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("lock workspace_agent_state: %w", err)
+	}
+
+	// pending_refresh stays true if a credential was staged during dispose window.
+	newPendingRefresh := currentChangedAt.After(priorChangedAt)
+
+	var disposedAt time.Time
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO workspace_agent_state
+			(workspace_id, last_agent_disposed_at, pending_refresh, updated_at)
+		VALUES ($1, NOW(), $2, NOW())
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			last_agent_disposed_at = NOW(),
+			pending_refresh = $2,
+			updated_at = NOW()
+		RETURNING last_agent_disposed_at
+	`, workspaceID, newPendingRefresh).Scan(&disposedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("mark agent reloaded: %w", err)
+	}
+	return disposedAt, nil
+}
+
+// ListPendingReloadWorkspaces returns workspaces with pending_refresh=TRUE for the given user.
+func (s *Service) ListPendingReloadWorkspaces(ctx context.Context, userID string) ([]*types.WorkspaceMetadata, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version,
+		       w.created_at, w.updated_at,
+		       TRUE AS agent_needs_refresh,
+		       s.last_credential_changed_at AS credentials_pending_since
+		FROM workspaces w
+		JOIN workspace_agent_state s ON s.workspace_id = w.id
+		WHERE w.user_id = $1
+		  AND w.deleted_at IS NULL
+		  AND s.pending_refresh = TRUE
+		ORDER BY w.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending reload workspaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var items []*types.WorkspaceMetadata
+	for rows.Next() {
+		var ws types.WorkspaceMetadata
+		if err := rows.Scan(
+			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
+			&ws.StorageSize, &ws.ImageTag, &ws.AgentVersion,
+			&ws.CreatedAt, &ws.UpdatedAt,
+			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
+		); err != nil {
+			return nil, fmt.Errorf("scan pending reload workspace: %w", err)
+		}
+		items = append(items, &ws)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending reload workspaces: %w", err)
+	}
+	return items, nil
 }

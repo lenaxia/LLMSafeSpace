@@ -97,27 +97,49 @@ func (c *Client) DisposeInstance(ctx context.Context) error {
 	return nil
 }
 
-// RefreshCredentials is the combined operation for Step 2:
-// 1. Push all provider credentials to auth.json (PUT /auth/:providerID)
-// 2. Dispose the instance so it picks up the new keys on next access
+// StageCredentials writes provider credentials to opencode's auth.json
+// (via PUT /auth/:providerID) but does NOT trigger provider-state refresh.
+// The credentials are "staged" — they exist on disk but opencode's
+// in-memory provider state is unchanged until DisposeInstance is called
+// separately by the caller (typically via POST /api/v1/workspaces/:id/agent/reload).
 //
-// If push fails, dispose is NOT called (credentials unchanged, no reason to
-// disrupt the running instance).
-//
-// Returns nil if providers is empty (no-op, no dispose).
-func (c *Client) RefreshCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
-	if len(providers) == 0 {
-		return nil
+// Returns nil if providers is empty (no-op).
+func (c *Client) StageCredentials(ctx context.Context, providers []secrets.LLMProviderData) error {
+	return c.PushCredentials(ctx, providers)
+}
+
+// GetSessionStatuses calls GET /session/status on opencode and returns
+// the current status of all known sessions. The map key is the session ID;
+// the value is the status type string: "idle", "busy", or "retry".
+func (c *Client) GetSessionStatuses(ctx context.Context) (map[string]string, error) {
+	url := c.baseURL + "/session/status"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build session/status request: %w", err)
+	}
+	req.SetBasicAuth(agentd.AuthUsername, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET /session/status: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GET /session/status returned %d: %s", resp.StatusCode, string(errBody))
 	}
 
-	if err := c.PushCredentials(ctx, providers); err != nil {
-		return fmt.Errorf("push credentials: %w", err)
+	var raw map[string]struct {
+		Type string `json:"type"`
 	}
-
-	if err := c.DisposeInstance(ctx); err != nil {
-		return fmt.Errorf("dispose instance: %w", err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode session/status: %w", err)
 	}
-	return nil
+	result := make(map[string]string, len(raw))
+	for id, info := range raw {
+		result[id] = info.Type
+	}
+	return result, nil
 }
 
 // setAuth sends PUT /auth/:providerID with the credential payload.

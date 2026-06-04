@@ -380,10 +380,10 @@ func TestGetWorkspace(t *testing.T) {
 		now := time.Now()
 		wsID := "ws-uuid-found"
 
-		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at"}).
-			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "agent_needs_refresh", "credentials_pending_since"}).
+			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now, false, nil)
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(wsID).
 			WillReturnRows(rows)
 
@@ -404,7 +404,7 @@ func TestGetWorkspace(t *testing.T) {
 
 		ctx := context.Background()
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs("nonexistent").
 			WillReturnError(sql.ErrNoRows)
 
@@ -420,7 +420,7 @@ func TestGetWorkspace(t *testing.T) {
 
 		ctx := context.Background()
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at FROM workspaces WHERE id = \\$1").
+		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs("ws-err").
 			WillReturnError(sql.ErrConnDone)
 
@@ -447,11 +447,11 @@ func TestListWorkspaces(t *testing.T) {
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at"}).
-			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now).
-			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now)
+		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "agent_needs_refresh", "credentials_pending_since"}).
+			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now, false, nil).
+			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now, true, &now)
 
-		mock.ExpectQuery("SELECT id, user_id, name, runtime, storage_size, image_tag, agent_version, created_at, updated_at FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
+		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(userID, limit, offset).
 			WillReturnRows(wsRows)
 

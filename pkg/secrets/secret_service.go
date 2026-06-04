@@ -281,50 +281,59 @@ func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionI
 // the handler so the response shape does not differentiate between
 // "doesn't exist" and "not yours" — preventing cross-user existence
 // enumeration (validator pass-3 finding SO-1).
-func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) error {
+func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) (BindingsMutationResult, error) {
 	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
-		return err
+		return BindingsMutationResult{}, err
 	}
-	// Verify all secrets belong to the user
+	// Verify all secrets belong to the user and accumulate for diff.
+	var newSecrets []*UserSecret
 	for _, sid := range secretIDs {
 		secret, err := s.store.GetSecret(ctx, userID, sid)
 		if err != nil {
-			return err
+			return BindingsMutationResult{}, err
 		}
 		if secret == nil {
-			return fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
+			return BindingsMutationResult{}, fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
 		}
+		newSecrets = append(newSecrets, secret)
 	}
 
-	// Get existing bindings to detect removals
-	existing, _ := s.store.GetBindings(ctx, workspaceID)
-	existingIDs := make(map[string]bool)
-	for _, sec := range existing {
-		existingIDs[sec.ID] = true
+	// Get existing bindings for diff and audit.
+	existing, getErr := s.store.GetBindings(ctx, workspaceID)
+	if getErr != nil {
+		existing = nil
 	}
 
 	if err := s.store.SetBindings(ctx, workspaceID, secretIDs); err != nil {
-		return fmt.Errorf("set bindings: %w", err)
+		return BindingsMutationResult{}, fmt.Errorf("set bindings: %w", err)
 	}
 
-	// Log unbinds (IDs that were bound but are no longer)
-	newIDs := make(map[string]bool)
-	for _, sid := range secretIDs {
-		newIDs[sid] = true
+	// Audit removed and added bindings.
+	existingIDs := make(map[string]bool, len(existing))
+	for _, sec := range existing {
+		existingIDs[sec.ID] = true
 	}
-	for id := range existingIDs {
-		if !newIDs[id] {
-			sid := id
+	newIDs := make(map[string]bool, len(newSecrets))
+	for _, sec := range newSecrets {
+		newIDs[sec.ID] = true
+	}
+	for _, sec := range existing {
+		if !newIDs[sec.ID] {
+			sid := sec.ID
 			s.audit(ctx, userID, "unbind", &sid, &workspaceID, nil)
 		}
 	}
-
-	for _, sid := range secretIDs {
-		if !existingIDs[sid] {
+	for _, sec := range newSecrets {
+		if !existingIDs[sec.ID] {
+			sid := sec.ID
 			s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
 		}
 	}
-	return nil
+
+	if getErr != nil {
+		return BindingsMutationResult{LLMProviderAffected: true}, nil
+	}
+	return computeBindingsDiff(existing, newSecrets), nil
 }
 
 // AddBindings adds secretIDs to a workspace's binding set without
@@ -337,30 +346,32 @@ func (s *SecretService) SetBindings(ctx context.Context, userID, workspaceID str
 // Used by SetWorkspaceEnv to merge newly-created env-secrets into
 // the workspace bindings without the Get-then-Set window the previous
 // implementation suffered from.
-func (s *SecretService) AddBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) error {
+func (s *SecretService) AddBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) (BindingsMutationResult, error) {
 	if len(secretIDs) == 0 {
-		return nil
+		return BindingsMutationResult{}, nil
 	}
 	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
-		return err
+		return BindingsMutationResult{}, err
 	}
+	var newSecrets []*UserSecret
 	for _, sid := range secretIDs {
 		secret, err := s.store.GetSecret(ctx, userID, sid)
 		if err != nil {
-			return err
+			return BindingsMutationResult{}, err
 		}
 		if secret == nil {
-			return fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
+			return BindingsMutationResult{}, fmt.Errorf("%w: %s", ErrSecretNotFound, sid)
 		}
+		newSecrets = append(newSecrets, secret)
 	}
 	if err := s.store.AddBindings(ctx, workspaceID, secretIDs); err != nil {
-		return fmt.Errorf("add bindings: %w", err)
+		return BindingsMutationResult{}, fmt.Errorf("add bindings: %w", err)
 	}
-	for _, sid := range secretIDs {
-		sid := sid
+	for _, sec := range newSecrets {
+		sid := sec.ID
 		s.audit(ctx, userID, "bind", &sid, &workspaceID, nil)
 	}
-	return nil
+	return computeBindingsDiff(nil, newSecrets), nil
 }
 
 // GetBindings returns secrets bound to a workspace. Verifies the

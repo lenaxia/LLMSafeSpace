@@ -676,8 +676,9 @@ func main() {
 	// Prometheus scraper can collect per-pod agentd gate timings.
 	adminMux.Handle("/metrics", promhttp.Handler())
 
-	// User endpoints (reload-secrets) — user port.
+	// User endpoints — user port.
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password))
+	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
 
 	// Start admin server (health probes) on dedicated port.
 	adminSrv := &http.Server{

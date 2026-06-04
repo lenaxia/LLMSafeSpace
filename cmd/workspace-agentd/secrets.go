@@ -120,7 +120,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 			// Missing file is a no-op, not a failure.
 			return 0
 		}
-		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 		return 2
 	}
 
@@ -129,7 +129,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	reportResult(stderr, result)
 
 	if err != nil && !errors.Is(err, secrets.ErrPartialFailure) {
-		_, _ = fmt.Fprintf(stderr, "materialize: %vn", err)
+		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 		return 3
 	}
 
@@ -137,7 +137,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	// reads them at startup. Without this, the config file is empty and
 	// opencode boots with no provider credentials.
 	if flushErr := m.FlushProviders(opencode.FormatOpenCodeConfig); flushErr != nil {
-		_, _ = fmt.Fprintf(stderr, "materialize: flush providers: %vn", flushErr)
+		_, _ = fmt.Fprintf(stderr, "materialize: flush providers: %v\n", flushErr)
 		return 3
 	}
 
@@ -162,12 +162,12 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 		return
 	}
 	mat, skip, fail := r.Counts()
-	_, _ = fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failedn", mat, skip, fail)
+	_, _ = fmt.Fprintf(w, "materialize: %d materialized, %d skipped, %d failed\n", mat, skip, fail)
 	for _, sr := range r.Results {
 		if sr.Outcome == secrets.OutcomeMaterialized {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %sn", sr.Type, sr.Name, sr.Outcome, sr.Reason)
+		_, _ = fmt.Fprintf(w, "  - %s/%s: %s — %s\n", sr.Type, sr.Name, sr.Outcome, sr.Reason)
 	}
 }
 
@@ -265,33 +265,25 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 			zap.Int("failed", fail),
 		)
 
-		// Notify opencode of credential changes via the Control API.
-		// PUT /auth/:providerID writes each key to auth.json, then
-		// POST /instance/dispose invalidates the instance state so the
-		// next request picks up the new credentials.
-		// In-flight LLM calls are aborted by disposal; session history
-		// persists in SQLite. This is acceptable for MVP — credential
-		// rotation does not happen mid-conversation in practice.
-		configReloaded := false
+		// Stage llm-provider credentials. StageCredentials writes to opencode's
+		// auth.json but does NOT dispose the instance. The user triggers reload
+		// explicitly via POST /api/v1/workspaces/:id/agent/reload (Epic 27a).
 		if hasLLMProviders(batch) {
 			staged := m.StagedProviders()
 			if len(staged) > 0 {
 				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort), opencodePassword)
-				if err := oc.RefreshCredentials(r.Context(), staged); err != nil {
-					log.Warn("reload-secrets: opencode credential refresh failed, falling back to restart",
+				if err := oc.StageCredentials(r.Context(), staged); err != nil {
+					log.Warn("reload-secrets: opencode stage failed; credentials remain in "+
+						"auth.json on disk but in-memory provider state will not pick them up "+
+						"until the next explicit reload or pod restart",
 						zap.Error(err))
-					if proc != nil {
-						proc.restart() //nolint:contextcheck // restart() manages its own context
-					}
-				} else {
-					configReloaded = true
 				}
 			}
 		}
 
 		// Restart for env-secret changes (agent reads env at boot only).
 		restarted := false
-		if !configReloaded && proc != nil && shouldRestart(batch) {
+		if proc != nil && shouldRestart(batch) {
 			log.Info("env secrets changed, restarting opencode")
 			//nolint:contextcheck // restart() spawns its own health-check goroutine with a fresh context
 			proc.restart()
@@ -304,12 +296,11 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"reloaded":       mat,
-			"skipped":        skip,
-			"failed":         fail,
-			"results":        result.Results,
-			"restarted":      restarted,
-			"configReloaded": configReloaded,
+			"reloaded":  mat,
+			"skipped":   skip,
+			"failed":    fail,
+			"results":   result.Results,
+			"restarted": restarted,
 		})
 	}
 }

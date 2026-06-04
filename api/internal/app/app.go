@@ -22,6 +22,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -161,6 +162,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			log,
 		))
 		secretsHandler.SetLogger(log)
+		secretsHandler.SetCredentialStateWriter(dbSvc)
 		// Wire the manifest writer so SetBindings persists a K8s Secret
 		// (`workspace-secrets-<id>`) read by the pod init container on
 		// every start. The live HTTP push alone is not durable; see
@@ -243,6 +245,52 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create terminal handler (Epic 14 — WebSocket terminal proxy).
 	terminalHandler := handlers.NewTerminalHandler(svc.Cache, &k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace}, cfg.Kubernetes.Namespace, log)
 
+	// Epic 27a: Agent reload handler.
+	var agentReloadHandler *handlers.AgentReloadHandler
+	var bulkReloadHandler *handlers.BulkReloadHandler
+	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		agentReloadHandler = handlers.NewAgentReloadHandler(
+			wsSvc,
+			dbSvc,
+			newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc,
+				log,
+			),
+			&http.Client{Timeout: 15 * time.Second},
+			log,
+		)
+		bulkReloadHandler = handlers.NewBulkReloadHandler(
+			dbSvc,
+			wsSvc,
+			dbSvc,
+			newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc,
+				log,
+			),
+			&http.Client{Timeout: 15 * time.Second},
+			log,
+		)
+	}
+
+	// Epic 27b: Wire drain mode dependencies from proxyHandler into reload handlers.
+	if proxyHandler != nil && agentReloadHandler != nil {
+		if tracker := proxyHandler.GetSSETracker(); tracker != nil {
+			agentReloadHandler.SetSSETracker(tracker)
+			bulkReloadHandler.SetSSETracker(tracker)
+		}
+		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
+			agentReloadHandler.SetPasswordGetter(pwGetter)
+			bulkReloadHandler.SetPasswordGetter(pwGetter)
+		}
+	}
+	// Wire metrics into reload handlers.
+	if metricsSvc, ok := svc.Metrics.(*metrics.Service); ok {
+		agentReloadHandler.SetMetrics(metricsSvc)
+		bulkReloadHandler.SetMetrics(metricsSvc)
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                   cfg.Logging.Development,
 		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
@@ -256,6 +304,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecretsHandler:          secretsHandler,
 		RotateKeyHandler:        rotateKeyHandler,
 		TerminalHandler:         terminalHandler,
+		AgentReloadHandler:      agentReloadHandler,
+		BulkReloadHandler:       bulkReloadHandler,
 	})
 
 	httpServer := &http.Server{

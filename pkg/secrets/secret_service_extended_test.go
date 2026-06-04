@@ -239,9 +239,9 @@ func TestSecretService_BindingMultipleWorkspaces(t *testing.T) {
 	})
 
 	// Bind to multiple workspaces
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
-	svc.SetBindings(ctx, "user-1", "ws-2", []string{created.ID})
-	svc.SetBindings(ctx, "user-1", "ws-3", []string{created.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-2", []string{created.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-3", []string{created.ID})
 
 	// Each workspace should see the binding
 	for _, wsID := range []string{"ws-1", "ws-2", "ws-3"} {
@@ -269,10 +269,10 @@ func TestSecretService_RebindReplacesExisting(t *testing.T) {
 	})
 
 	// Bind both
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID})
 
 	// Rebind with only s2
-	svc.SetBindings(ctx, "user-1", "ws-1", []string{s2.ID})
+	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s2.ID})
 
 	resp, _ := svc.GetBindings(ctx, "user-1", "ws-1")
 	if len(resp.Bindings) != 1 {

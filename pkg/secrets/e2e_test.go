@@ -102,7 +102,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 5: Bind secrets to workspace ===
-	err = svc.SetBindings(ctx, userID, workspaceID, []string{
+	_, err = svc.SetBindings(ctx, userID, workspaceID, []string{
 		llmSecret.ID, sshSecret.ID, gitSecret.ID, envSecret.ID, fileSecret.ID,
 	})
 	if err != nil {

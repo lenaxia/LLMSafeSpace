@@ -93,6 +93,7 @@
     "phase": "Active",
     "maxActiveSessions": 5,
     "createdAt": "2026-05-24T12:00:00Z",
-    "updatedAt": "2026-05-24T12:00:00Z"
+    "updatedAt": "2026-05-24T12:00:00Z",
+    "agentNeedsRefresh": false
   }
 }

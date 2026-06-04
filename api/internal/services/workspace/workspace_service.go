@@ -263,13 +263,15 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 	}
 
 	ws := &types.Workspace{
-		ID:          meta.ID,
-		Name:        meta.Name,
-		UserID:      meta.UserID,
-		Runtime:     meta.Runtime,
-		StorageSize: meta.StorageSize,
-		CreatedAt:   meta.CreatedAt,
-		UpdatedAt:   meta.UpdatedAt,
+		ID:                      meta.ID,
+		Name:                    meta.Name,
+		UserID:                  meta.UserID,
+		Runtime:                 meta.Runtime,
+		StorageSize:             meta.StorageSize,
+		CreatedAt:               meta.CreatedAt,
+		UpdatedAt:               meta.UpdatedAt,
+		AgentNeedsRefresh:       meta.AgentNeedsRefresh,
+		CredentialsPendingSince: meta.CredentialsPendingSince,
 	}
 	if crd != nil {
 		ws.Phase = string(crd.Status.Phase)
@@ -309,16 +311,18 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 	phases := s.fetchUserWorkspacePhases(ctx, userID)
 	for _, m := range metas {
 		items = append(items, types.WorkspaceListItem{
-			ID:           m.ID,
-			Name:         m.Name,
-			UserID:       m.UserID,
-			Runtime:      m.Runtime,
-			StorageSize:  m.StorageSize,
-			Phase:        phases[m.ID],
-			ImageTag:     m.ImageTag,
-			AgentVersion: m.AgentVersion,
-			CreatedAt:    m.CreatedAt,
-			UpdatedAt:    m.UpdatedAt,
+			ID:                      m.ID,
+			Name:                    m.Name,
+			UserID:                  m.UserID,
+			Runtime:                 m.Runtime,
+			StorageSize:             m.StorageSize,
+			Phase:                   phases[m.ID],
+			ImageTag:                m.ImageTag,
+			AgentVersion:            m.AgentVersion,
+			CreatedAt:               m.CreatedAt,
+			UpdatedAt:               m.UpdatedAt,
+			AgentNeedsRefresh:       m.AgentNeedsRefresh,
+			CredentialsPendingSince: m.CredentialsPendingSince,
 		})
 	}
 
