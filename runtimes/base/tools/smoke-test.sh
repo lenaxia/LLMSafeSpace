@@ -34,6 +34,9 @@ which aws
 which opencode
 which mise
 
+# GitHub CLI
+which gh
+
 # Language runtimes (mise-managed, baked into image layer)
 mise which python
 mise which pip

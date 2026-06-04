@@ -46,6 +46,11 @@ ARG OPENCODE_VERSION=1.15.12
 
 ARG MISE_VERSION=2026.5.15
 
+# GitHub CLI (gh) — pinned to a specific release.
+# Source: https://github.com/cli/cli/releases
+# Asset naming: gh_{version}_linux_{arch}.tar.gz
+ARG GH_VERSION=2.74.1
+
 # AWS CLI v2 — pinned to a specific patch release.
 # Source: https://awscli.amazonaws.com/awscli-exe-linux-{x86_64,aarch64}-${VERSION}.zip
 # Verification: the corresponding .sig file is PGP-signed with the AWS CLI
@@ -143,7 +148,25 @@ RUN set -eux; \
         -o /tmp/opencode.tar.gz; \
     tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin/ opencode; \
     chmod +x /usr/local/bin/opencode; \
-    rm /tmp/opencode.tar.gz
+    rm /tmp/opencode.tar.gz; \
+    \
+# Install GitHub CLI (gh) from upstream releases.
+# Source: https://github.com/cli/cli/releases
+# Asset naming: gh_{version}_linux_{arch}.tar.gz  (amd64/arm64 — matches Docker TARGETARCH).
+# Pinned to 2.74.1 (June 2026) — validated against API surface used by sandbox agents.
+    GH_VERSION="${GH_VERSION:-2.74.1}"; \
+    case "${TARGETARCH}" in \
+        amd64) GH_ARCH=amd64 ;; \
+        arm64) GH_ARCH=arm64 ;; \
+        *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl --fail --show-error --location \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" \
+        -o /tmp/gh.tar.gz; \
+    tar -xzf /tmp/gh.tar.gz -C /tmp/; \
+    cp "/tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" /usr/local/bin/gh; \
+    chmod +x /usr/local/bin/gh; \
+    rm -rf "/tmp/gh_${GH_VERSION}_linux_${GH_ARCH}" /tmp/gh.tar.gz
 
 # Install mise (polyglot runtime manager) so sandbox users can install
 # language runtimes (Python, Node.js, Go, etc.) without root access.
