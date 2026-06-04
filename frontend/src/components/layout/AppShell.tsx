@@ -3,6 +3,7 @@ import { Outlet, useLocation, useMatches } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
+import { useUserEventStream } from "../../hooks/useUserEventStream";
 
 const EDGE_ZONE = 30;
 const SWIPE_THRESHOLD = 60;
@@ -17,6 +18,9 @@ export function AppShell() {
   const isEdgeSwipe = useRef(false);
   const matches = useMatches();
   const isInitialMount = useRef(true);
+
+  // Epic 28: user-scoped SSE for cross-workspace phase visibility
+  useUserEventStream();
 
   useEffect(() => {
     if (isInitialMount.current) {

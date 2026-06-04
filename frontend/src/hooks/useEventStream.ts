@@ -27,7 +27,7 @@ export function useEventStream(
     async function connect() {
       if (cancelled) return;
       const { apiBaseUrl } = getEnv();
-      const url = `${apiBaseUrl}/workspaces/${workspaceId}/events`;
+      const url = `${apiBaseUrl}/workspaces/${workspaceId}/session-events`;
 
       wsLog("sse.connecting", workspaceId, `url=${url}`);
 

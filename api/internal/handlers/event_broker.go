@@ -21,12 +21,14 @@ const brokerChannelBuffer = 16
 //   - "agent.permission":          agent needs permission approval; Data is *agent.PermissionRequest.
 //   - "agent.permission.resolved": permission was approved or denied; Data is map[string]string{request_id, session_id, reply}.
 type WorkspaceSSEEvent struct {
-	Type      string      `json:"type"`
-	Phase     string      `json:"phase,omitempty"`
-	SessionID string      `json:"session_id,omitempty"`
-	Status    string      `json:"status,omitempty"`
-	EventType string      `json:"event_type,omitempty"` // opencode event type (e.g. "session.diff", "message.updated")
-	Data      interface{} `json:"data,omitempty"`       // raw opencode event payload for "opencode.event"
+	EventID     uint64      `json:"event_id,omitempty"`
+	WorkspaceID string      `json:"workspace_id,omitempty"`
+	Type        string      `json:"type"`
+	Phase       string      `json:"phase,omitempty"`
+	SessionID   string      `json:"session_id,omitempty"`
+	Status      string      `json:"status,omitempty"`
+	EventType   string      `json:"event_type,omitempty"` // opencode event type (e.g. "session.diff", "message.updated")
+	Data        interface{} `json:"data,omitempty"`       // raw opencode event payload for "opencode.event"
 }
 
 // WorkspaceEventBroker is a fan-out pub/sub for per-workspace SSE events.

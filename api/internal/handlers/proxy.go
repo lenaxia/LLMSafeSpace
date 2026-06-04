@@ -76,6 +76,7 @@ type ProxyHandler struct {
 	sseTracker      *SSETracker
 	sessionIndex    interfaces.SessionIndexService
 	broker          *WorkspaceEventBroker
+	userBroker      *UserEventBroker
 	sessionParents  *sessionParentCache
 
 	// parentBackfilled tracks workspaces whose session_index has been
@@ -157,6 +158,7 @@ func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
 		h.broker = NewWorkspaceEventBroker()
+		h.userBroker = NewUserEventBroker()
 
 		h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
 		if err := h.activityTracker.Start(); err != nil {
@@ -176,6 +178,7 @@ func (h *ProxyHandler) Start() error {
 			startErr = fmt.Errorf("creating CRD watcher: %w", err)
 			return
 		}
+		watcher.SetUserBroker(h.userBroker)
 		if err := watcher.Start(); err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
@@ -297,7 +300,7 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no") // disable nginx buffering when behind a proxy
+	c.Header("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -311,26 +314,64 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		h.sseTracker.EnsureWatching(workspaceID)
 	}
 
+	streamCtx, streamCancel := context.WithCancel(c.Request.Context())
+	defer streamCancel()
+
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
+
 	// Emit any pending input requests so reconnecting browsers see them immediately.
 	if h.dialect != nil {
 		go h.emitPendingInputRequests(workspaceID)
 	}
 
-	ctx := c.Request.Context()
+	// Heartbeat goroutine — sends comment lines to keep connection alive (FM1)
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-ticker.C:
+				// Send heartbeat directly — legacy broker doesn't use subscriber struct.
+				// The live loop below handles the actual write.
+				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: heartbeatSentinelType})
+			}
+		}
+	}()
+
 	for {
 		select {
-		case <-ctx.Done():
+		case <-streamCtx.Done():
 			return
 		case evt, open := <-ch:
 			if !open {
 				return
 			}
-			data, err := json.Marshal(evt)
-			if err != nil {
+			if evt.Type == heartbeatSentinelType {
+				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {
+					streamCancel()
+					return
+				}
+				flusher.Flush()
+				_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 				continue
 			}
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			// Ensure workspace_id is set on all events
+			if evt.WorkspaceID == "" {
+				evt.WorkspaceID = workspaceID
+			}
+			data, marshalErr := json.Marshal(evt)
+			if marshalErr != nil {
+				continue
+			}
+			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", data); writeErr != nil {
+				streamCancel()
+				return
+			}
 			flusher.Flush()
+			_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 		}
 	}
 }
@@ -803,11 +844,14 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	h.priorPhase[workspace.Name] = string(phase)
 	h.priorPhaseMu.Unlock()
 
-	// Publish the phase change to all browser SSE subscribers.
-	if h.broker != nil {
-		h.broker.Publish(workspace.Name, WorkspaceSSEEvent{
-			Type:  "workspace.phase",
-			Phase: string(phase),
+	// S28.4: Publish workspace.phase to user-scoped stream only (hard cutover).
+	// The workspace session stream no longer carries phase events.
+	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
+		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
+		h.userBroker.PublishToUser(workspace.Spec.Owner.UserID, WorkspaceSSEEvent{
+			Type:        "workspace.phase",
+			WorkspaceID: workspace.Name,
+			Phase:       string(phase),
 		})
 	}
 

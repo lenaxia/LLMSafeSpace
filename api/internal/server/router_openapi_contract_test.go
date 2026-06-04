@@ -291,6 +291,10 @@ var implOnlyAllowlist = map[route]bool{
 	// sdks/openapi.yaml. TODO: document in follow-up SDK pass.
 	{method: "PUT", path: "/api/v1/workspaces/:id/model"}:  true,
 	{method: "GET", path: "/api/v1/workspaces/:id/models"}: true,
+
+	// Epic 28: User-scoped SSE event stream. Long-lived connection,
+	// not a typical REST endpoint. Not documented in OpenAPI.
+	{method: "GET", path: "/api/v1/events"}: true,
 }
 
 // -----------------------------------------------------------------------------

@@ -542,7 +542,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /workspaces/{id}/events:
+  /workspaces/{id}/session-events:
     get:
       tags: [sessions]
       summary: SSE event stream from the workspace agent

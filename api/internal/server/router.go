@@ -68,7 +68,7 @@ func DefaultRouterConfig() RouterConfig {
 	// The /events SSE endpoint is a long-lived connection, not a per-request
 	// API call. Exempt it from the token-bucket rate limiter so reconnects
 	// after network drops don't trigger 429s.
-	rlCfg.ExemptPaths = []string{"/events"}
+	rlCfg.ExemptPaths = []string{"/events", "/session-events"}
 	return RouterConfig{
 		Debug:                   false,
 		LoggingConfig:           middleware.DefaultLoggingConfig(),
@@ -110,8 +110,9 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// F1.1.4 (Epic 17): the previous `/api/v1/workspaces/:id/stream`
 	// group had middleware attached but no handlers — dead code that
 	// existed only because an earlier API design wired SSE here. The
-	// current SSE endpoint is `/api/v1/workspaces/:id/events`
-	// registered below; the actual WebSocket terminal endpoint is
+	// current session SSE endpoint is `/api/v1/workspaces/:id/session-events`
+	// registered below; the user-scoped event stream is at `/api/v1/events`.
+	// The actual WebSocket terminal endpoint is
 	// `/api/v1/workspaces/:id/terminal/...` which gets the WebSocket
 	// security middleware via its own router group.
 	_ = router // wsGroup removal — kept the var to avoid unused-import warnings if a future commit re-adds /stream.
@@ -154,6 +155,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// Proxy routes — registered within workspace group when a ProxyHandler is provided
 	if proxyHandler != nil {
 		registerProxyRoutes(workspaceGroup, proxyHandler)
+
+		// S28.3: User-scoped SSE stream (authenticated, rate-limit exempt)
+		eventsGroup := router.Group("/api/v1")
+		eventsGroup.Use(services.GetAuth().AuthMiddleware())
+		eventsGroup.GET("/events", proxyHandler.StreamUserEvents)
 	}
 
 	// Terminal proxy routes (WebSocket terminal to sandbox pod)
@@ -729,7 +735,7 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
 	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
-	rg.GET("/:id/events", proxyHandler.StreamEvents)
+	rg.GET("/:id/session-events", proxyHandler.StreamEvents)
 
 	// Question/Permission input request routes (Epic 16)
 	rg.GET("/:id/question", proxyHandler.ListQuestions)

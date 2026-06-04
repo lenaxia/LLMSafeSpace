@@ -85,7 +85,7 @@ describe("useEventStream", () => {
 
     await waitFor(() => expect(mock).toHaveBeenCalled());
     const [url, opts] = mock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/workspaces/sb-123/events");
+    expect(url).toContain("/workspaces/sb-123/session-events");
     expect((opts.headers as Record<string, string>)?.Accept).toBe("text/event-stream");
     expect(opts.credentials).toBe("include");
 

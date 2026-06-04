@@ -368,10 +368,7 @@ export function ChatPage() {
     const event = data as WorkspaceStreamEvent;
     if (!event?.type) return;
 
-    if (event.type === "workspace.phase" && workspaceId) {
-      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
-      queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
-    } else if (event.type === "session.status" && workspaceId) {
+    if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
       if (event.session_id === sessionId) {
         if (event.status === "idle") {

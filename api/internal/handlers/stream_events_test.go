@@ -316,8 +316,13 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	// S28.4: workspace.phase now published to userBroker, not legacy broker
+	userBroker := NewUserEventBroker()
+	handler.userBroker = userBroker
+
+	s, subErr := userBroker.SubscribeUser("user-1")
+	require.NoError(t, subErr)
+	defer userBroker.UnsubscribeUser("user-1", s)
 
 	phases := []string{
 		string(v1.WorkspacePhaseActive),
@@ -329,12 +334,14 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 
 	for _, phase := range phases {
 		ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", phase, "ws-1")
+		ws.Spec.Owner.UserID = "user-1"
 		handler.onPhaseChange(ws)
 
 		select {
-		case evt := <-ch:
+		case evt := <-s.ch:
 			assert.Equal(t, "workspace.phase", evt.Type, "phase=%s", phase)
 			assert.Equal(t, phase, evt.Phase, "phase=%s", phase)
+			assert.Equal(t, "ws-1", evt.WorkspaceID, "phase=%s", phase)
 		case <-time.After(time.Second):
 			t.Fatalf("expected phase event for phase %s", phase)
 		}
