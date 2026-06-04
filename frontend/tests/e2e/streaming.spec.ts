@@ -60,7 +60,7 @@ async function setupAPIMocks(page: Page) {
 
   // SSE events endpoint — return prefilled events in the flat format the backend
   // produces (the proxy re-parses raw opencode JSON and sets it as evt.Data).
-  await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+  await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
     const events = [
       {
         type: "opencode.event",
@@ -94,7 +94,7 @@ test.describe("SSE streaming pipeline (mock backend)", () => {
   test("SSE endpoint is intercepted and returns event-stream content type", async ({ page }) => {
     // Verify the route mock is set up by navigating and checking the page received SSE data
     let sseRouteHit = false;
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       sseRouteHit = true;
       const events = [{ type: "session.status", session_id: SESSION_ID, status: "idle" }];
       const sseBody = events.map((e) => `data: ${JSON.stringify(e)}\n`).join("\n");

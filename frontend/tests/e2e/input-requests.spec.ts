@@ -55,7 +55,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
 
   test("question prompt renders when agent.question SSE event arrives", async ({ page }) => {
     // Pre-load the SSE with a question event
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = { type: "agent.question", data: { id: "que_e2e1", session_id: SESSION_ID, questions: [{ header: "Choose DB", question: "Which database?", options: [{ label: "PostgreSQL", description: "Relational" }, { label: "MongoDB", description: "Document" }] }] } };
       const body = `data: ${JSON.stringify(event)}\n\n`;
       await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body });
@@ -68,7 +68,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   });
 
   test("user can select option and submit question answer", async ({ page }) => {
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = { type: "agent.question", data: { id: "que_e2e2", session_id: SESSION_ID, questions: [{ header: "Language", question: "Pick one", options: [{ label: "Go", description: "Fast" }, { label: "Rust", description: "Safe" }] }] } };
       await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
     });
@@ -93,7 +93,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   });
 
   test("permission prompt renders and user can approve", async ({ page }) => {
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = { type: "agent.permission", data: { id: "per_e2e1", session_id: SESSION_ID, permission: "shell", patterns: ["rm -rf /tmp/cache"] } };
       await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
     });
@@ -116,7 +116,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   });
 
   test("permission deny shows feedback input", async ({ page }) => {
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = { type: "agent.permission", data: { id: "per_e2e2", session_id: SESSION_ID, permission: "write", patterns: ["/etc/passwd"] } };
       await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
     });
@@ -135,7 +135,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   });
 
   test("question dismiss calls reject API", async ({ page }) => {
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = { type: "agent.question", data: { id: "que_e2e3", session_id: SESSION_ID, questions: [{ header: "Test", question: "Dismiss me", options: [{ label: "A", description: "" }] }] } };
       await route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: `data: ${JSON.stringify(event)}\n\n` });
     });
@@ -160,7 +160,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   // Without this fix the prompt was silently dropped — see worklog 0121.
   test("subtask permission bubbles to parent session via root_session_id", async ({ page }) => {
     const SUBTASK_ID = "ses_subtask_xyz";
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = {
         type: "agent.permission",
         data: {
@@ -193,7 +193,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
 
   test("subtask question bubbles to parent session via root_session_id", async ({ page }) => {
     const SUBTASK_ID = "ses_subtask_q";
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = {
         type: "agent.question",
         data: {
@@ -213,7 +213,7 @@ test.describe("Epic 16: Agent input requests (mocked backend)", () => {
   test("subtask permission for a different parent tree is NOT shown", async ({ page }) => {
     // Two subtask trees coexist in the same workspace. The user is viewing
     // tree A (SESSION_ID); the event is for tree B. Must NOT render.
-    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/events`, async (route: Route) => {
+    await page.route(`${API_PREFIX}/workspaces/${WORKSPACE_ID}/session-events`, async (route: Route) => {
       const event = {
         type: "agent.permission",
         data: {

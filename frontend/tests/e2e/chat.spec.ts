@@ -37,7 +37,7 @@ async function setupMockWorkspace(page: Page, workspaceId: string) {
     }
   });
   // Intercept SSE events — immediately send workspace.phase=Active
-  await page.route(`**/api/v1/workspaces/${workspaceId}/events`, async (route) => {
+  await page.route(`**/api/v1/workspaces/${workspaceId}/session-events`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "text/event-stream",
