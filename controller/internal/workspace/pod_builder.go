@@ -69,6 +69,12 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
 			{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
+			// Enable opencode's free-tier models by default. AccountPlugin
+			// reads this env var and enables the "opencode" provider with
+			// apiKey="public". Without this, the provider stays disabled
+			// and catalog.model.available() returns [] even though
+			// OpencodePlugin injects the public key into options.
+			{Name: "OPENCODE_AUTH_CONTENT", Value: `{"opencode":{"type":"api","key":"public"}}`},
 			// F1.4.2 (Epic 17): Bearer token for agentd's /v1/readyz
 			// and /v1/statusz endpoints. Sourced from the same per-
 			// workspace password Secret the controller already
