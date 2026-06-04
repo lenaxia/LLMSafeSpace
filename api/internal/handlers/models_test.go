@@ -489,12 +489,15 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 
 	require.Equal(t, "free", result[0].Tier)
 	require.True(t, result[0].FreeTier)
+	require.True(t, result[0].ProxyRequired, "free-tier model must have proxyRequired=true")
 	require.Equal(t, "opencode/free-model", result[0].ID)
 
 	require.Equal(t, "paid", result[1].Tier)
 	require.False(t, result[1].FreeTier)
+	require.False(t, result[1].ProxyRequired, "paid model must have proxyRequired=false")
 
 	require.Equal(t, "paid", result[2].Tier) // opencode provider but has cost > 0
+	require.False(t, result[2].ProxyRequired, "paid model must have proxyRequired=false")
 }
 
 func TestAnnotateModels_InvalidJSON(t *testing.T) {
