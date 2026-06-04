@@ -1,0 +1,39 @@
+name: Test Multiline Pass-Through
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate multiline via GITHUB_ENV
+        run: |
+          echo "TEST_PROMPT<<__EOF__" >> "$GITHUB_ENV"
+          echo "line 1: Hello World" >> "$GITHUB_ENV"
+          echo "line 2: This is a test" >> "$GITHUB_ENV"
+          echo "line 3: Multiline works" >> "$GITHUB_ENV"
+          echo "__EOF__" >> "$GITHUB_ENV"
+
+      - name: Generate multiline via GITHUB_OUTPUT
+        id: gen
+        run: |
+          echo "prompt<<__EOF__" >> "$GITHUB_OUTPUT"
+          echo "output line 1" >> "$GITHUB_OUTPUT"
+          echo "output line 2" >> "$GITHUB_OUTPUT"
+          echo "__EOF__" >> "$GITHUB_OUTPUT"
+
+      # Test 1: ${{ env.VAR }} via with:
+      - uses: actions/github-script@v7
+        id: test_env
+        with:
+          script: |
+            const prompt = `${{ env.TEST_PROMPT }}`;
+            core.notice('env.VAR in with: length=' + prompt.length);
+            core.notice('env.VAR in with: lines=' + prompt.split('\\n').length);
+
+      # Test 2: ${{ steps.X.outputs.Y }} via with:
+      - uses: actions/github-script@v7
+        id: test_outputs
+        with:
+          script: |
+            const prompt = `${{ steps.gen.outputs.prompt }}`;
+            core.notice('outputs in with: length=' + prompt.length);
+            core.notice('outputs in with: lines=' + prompt.split('\\n').length);
