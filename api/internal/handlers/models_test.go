@@ -569,6 +569,7 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	require.Len(t, resp.Models, 1)
 	require.Equal(t, "free", resp.Models[0].Tier)
 	require.True(t, resp.Models[0].FreeTier)
+	require.True(t, resp.Models[0].ProxyRequired, "free-tier models must have proxyRequired=true (Epic 26)")
 	require.Equal(t, "opencode/test", resp.Models[0].ID)
 	require.Equal(t, "", resp.CurrentModel) // no updater set = empty
 }
