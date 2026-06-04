@@ -63,6 +63,14 @@ export function ChatPage() {
 
   const isReady = status?.phase === "Active";
 
+  // Current model for prompt injection — reads from same cache as ModelSelector
+  const { data: modelsData } = useQuery({
+    queryKey: ["models", workspaceId],
+    queryFn: () => workspacesApi.listModels(workspaceId!),
+    enabled: isReady && !!workspaceId,
+    staleTime: 30_000,
+  });
+
   // [ws-timing] Log every phase change and the moment isReady flips true.
   // prevPhaseRef tracks the last seen phase so we only log on actual changes.
   const prevPhaseRef = useRef<string | undefined>(undefined);
@@ -482,6 +490,15 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
+    // Parse current model selection into opencode's PromptInput.model format
+    const currentModelRef = (() => {
+      const id = modelsData?.currentModel;
+      if (!id) return undefined;
+      const slash = id.indexOf("/");
+      if (slash < 0) return undefined;
+      return { providerID: id.slice(0, slash), modelID: id.slice(slash + 1) };
+    })();
+
     setSseStreamParts([]);
     sentTextRef.current = text;
     activePartTypeRef.current = null;
@@ -508,7 +525,7 @@ export function ChatPage() {
       // No-op: the assistant message is delivered via the streaming bubble
       // (live) and via history (after reconcile). We don't need to manage
       // it in localMessages.
-    });
+    }, currentModelRef);
   };
 
   const sessionDisplayName = sessionTitle || "New chat";

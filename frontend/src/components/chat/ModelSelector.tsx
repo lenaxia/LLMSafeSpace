@@ -28,7 +28,7 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
       queryClient.invalidateQueries({ queryKey: ["models", workspaceId] });
       setOpen(false);
       if (data && !data.applied) {
-        setToast("Model saved — takes effect on next session or agent reload.");
+        setToast("Model saved — takes effect on your next message.");
       }
     },
     onError: () => {
