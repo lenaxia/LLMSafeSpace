@@ -42,8 +42,18 @@ func WaitUntilIdle(
 
 	// Subscribe BEFORE snapshot to avoid missing transitions.
 	unsub := tracker.SubscribeDrain(workspaceID,
-		func(_, sid string) { select { case events <- event{sid, true}: default: } },
-		func(_, sid string) { select { case events <- event{sid, false}: default: } },
+		func(_, sid string) {
+			select {
+			case events <- event{sid, true}:
+			default:
+			}
+		},
+		func(_, sid string) {
+			select {
+			case events <- event{sid, false}:
+			default:
+			}
+		},
 	)
 	defer unsub()
 

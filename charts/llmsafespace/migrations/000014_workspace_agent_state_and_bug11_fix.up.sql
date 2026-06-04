@@ -4,12 +4,18 @@
 -- Bug 11 fix: align user_secret_bindings.workspace_id with workspaces.id type
 -- and add the FK that should have existed from the start.
 -- Existing rows already contain valid 36-char UUID strings; the cast is a no-op.
-ALTER TABLE user_secret_bindings
-    ALTER COLUMN workspace_id TYPE UUID USING workspace_id::uuid;
+DO $$ BEGIN
+  ALTER TABLE user_secret_bindings
+      ALTER COLUMN workspace_id TYPE UUID USING workspace_id::uuid;
+EXCEPTION WHEN others THEN NULL;
+END $$;
 
-ALTER TABLE user_secret_bindings
-    ADD CONSTRAINT user_secret_bindings_workspace_id_fkey
-        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE user_secret_bindings
+      ADD CONSTRAINT user_secret_bindings_workspace_id_fkey
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Bug 12 fix: align workspaces.user_id with users.id type (VARCHAR(36))
 -- and add the missing FK. ON DELETE RESTRICT (not CASCADE) is intentional:
@@ -17,12 +23,18 @@ ALTER TABLE user_secret_bindings
 -- CASCADE would hard-delete workspace rows, bypassing soft-delete, losing audit
 -- records, and orphaning live Kubernetes CRD objects.
 -- RESTRICT means DeleteUser() fails if workspace rows still reference the user.
-ALTER TABLE workspaces
-    ALTER COLUMN user_id TYPE VARCHAR(36) USING user_id::varchar(36);
+DO $$ BEGIN
+  ALTER TABLE workspaces
+      ALTER COLUMN user_id TYPE VARCHAR(36) USING user_id::varchar(36);
+EXCEPTION WHEN others THEN NULL;
+END $$;
 
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_user_id_fkey
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT;
+DO $$ BEGIN
+  ALTER TABLE workspaces
+      ADD CONSTRAINT workspaces_user_id_fkey
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- New per-workspace agent state, separate from workspace identity.
 -- One row per workspace, created lazily on first credential mutation.
