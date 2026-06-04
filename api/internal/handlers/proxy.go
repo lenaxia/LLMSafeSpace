@@ -300,7 +300,7 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no") // disable nginx buffering when behind a proxy
+	c.Header("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -314,26 +314,64 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		h.sseTracker.EnsureWatching(workspaceID)
 	}
 
+	streamCtx, streamCancel := context.WithCancel(c.Request.Context())
+	defer streamCancel()
+
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
+
 	// Emit any pending input requests so reconnecting browsers see them immediately.
 	if h.dialect != nil {
 		go h.emitPendingInputRequests(workspaceID)
 	}
 
-	ctx := c.Request.Context()
+	// Heartbeat goroutine — sends comment lines to keep connection alive (FM1)
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-ticker.C:
+				// Send heartbeat directly — legacy broker doesn't use subscriber struct.
+				// The live loop below handles the actual write.
+				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: heartbeatSentinelType})
+			}
+		}
+	}()
+
 	for {
 		select {
-		case <-ctx.Done():
+		case <-streamCtx.Done():
 			return
 		case evt, open := <-ch:
 			if !open {
 				return
 			}
-			data, err := json.Marshal(evt)
-			if err != nil {
+			if evt.Type == heartbeatSentinelType {
+				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {
+					streamCancel()
+					return
+				}
+				flusher.Flush()
+				_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 				continue
 			}
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			// Ensure workspace_id is set on all events
+			if evt.WorkspaceID == "" {
+				evt.WorkspaceID = workspaceID
+			}
+			data, marshalErr := json.Marshal(evt)
+			if marshalErr != nil {
+				continue
+			}
+			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", data); writeErr != nil {
+				streamCancel()
+				return
+			}
 			flusher.Flush()
+			_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 		}
 	}
 }
