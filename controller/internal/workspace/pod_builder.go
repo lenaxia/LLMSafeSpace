@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -162,9 +161,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
-	if userSecretsVol != nil {
-		volumes = append(volumes, *userSecretsVol)
-	}
+	volumes = append(volumes, *userSecretsVol)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -354,24 +351,26 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
 	}
 
-	// Epic 10: mount user-secrets if the ephemeral Secret exists.
+	// Always mount user-secrets with optional: true so the pod starts
+	// cleanly even when no credentials have been configured yet. kubelet
+	// will automatically sync the secret into the running pod within
+	// ~60-90s once it is created, without requiring a pod restart.
+	// The init script already guards with `if [ -f ... ]` so an empty
+	// mount is safe.
 	userSecretsName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
-	userSecretsSecret := &corev1.Secret{}
-	var userSecretsVolume *corev1.Volume
-	if err := r.Get(ctx, types.NamespacedName{Name: userSecretsName, Namespace: workspace.Namespace}, userSecretsSecret); err == nil {
-		v := corev1.Volume{
-			Name: "user-secrets",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{SecretName: userSecretsName},
+	optionalTrue := true
+	userSecretsVolume := &corev1.Volume{
+		Name: "user-secrets",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: userSecretsName,
+				Optional:   &optionalTrue,
 			},
-		}
-		userSecretsVolume = &v
-		credMounts = append(credMounts, corev1.VolumeMount{
-			Name: "user-secrets", MountPath: "/mnt/secrets/user-secrets", ReadOnly: true,
-		})
-	} else if !errors.IsNotFound(err) {
-		return corev1.Container{}, corev1.Volume{}, nil, fmt.Errorf("checking user-secrets secret: %w", err)
+		},
 	}
+	credMounts = append(credMounts, corev1.VolumeMount{
+		Name: "user-secrets", MountPath: "/mnt/secrets/user-secrets", ReadOnly: true,
+	})
 
 	trueVal := true
 	falseVal := false
