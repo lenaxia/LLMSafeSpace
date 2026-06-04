@@ -19,6 +19,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Build prompt
+        run: |
+          set -euo pipefail
+          {
+            echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
+            cat .github/prompts/context.md
+            printf '\n\n'
+            cat .github/prompts/issue-responder.md
+            printf '\n\nA new GitHub issue has been opened. Analyze it and take the appropriate action.\n'
+            echo "__PROMPT_EOF__"
+          } >> "$GITHUB_ENV"
+
       - name: Run OpenCode
         uses: anomalyco/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # github-v1.2.9
         env:
@@ -26,31 +38,8 @@ jobs:
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMPT: ${{ env.OPENCODE_PROMPT }}
         with:
           model: openai-compatible/default
           use_github_token: "true"
           share: "false"
-          prompt: |
-            You are an AI assistant for the LLMSafeSpace repository. A new GitHub issue has been opened. Analyze it and take the appropriate action.
-
-            Repository: LLMSafeSpace — a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
-
-            Key directories:
-            - api/               — Go API service (Gin) + MCP server; reverse proxy to sandbox agents, workspace/credential management
-            - controller/        — Kubernetes operator (controller-runtime); manages Sandbox, Workspace, SandboxProfile, RuntimeEnvironment CRDs
-            - runtimes/          — Container images (Python, Node.js, Go); hardened environments with opencode serve and credential injection
-            - pkg/               — Shared packages (types, kubernetes client, redact, logger, utilities)
-            - cmd/               — Top-level binaries (redact, mcp)
-            - design/            — Architecture and design documents (EVOLUTION-V2.md is authoritative)
-            - .github/workflows/ — CI/CD pipelines
-
-            Rules:
-            1. Always post a comment on the issue with your response before finishing.
-            2. For any code or file changes: create a feature branch and open a PR — never commit directly to main. Branch naming: feat/issue-{number}-<short-description>. PR body must include "Closes #{number}".
-            3. Never handle or create secrets.
-            4. Flag any change touching pkg/redact/, RBAC, CRD schema, or secrets handling as security-sensitive.
-            5. If the request is ambiguous, ask for clarification in a comment rather than guessing.
-            6. Use the checked-out repository to read source files and understand current implementation before answering questions or proposing changes.
-            7. Read README-LLM.md at repo root for full project context, coding standards, and architecture before making any changes.
-
-            Analyze this issue, determine what action to take (answer a question, implement a change, ask for clarification), and execute it.

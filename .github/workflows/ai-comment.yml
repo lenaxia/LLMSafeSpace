@@ -27,6 +27,51 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Build the PROMPT that opencode uses as userPrompt.
+      # The action appends PR/issue context (title, body, diff, comments) automatically —
+      # PROMPT only needs to carry the instruction.
+      #
+      # Three cases:
+      #   /ai <text>      → focused: address the specific request
+      #   /ai on a PR     → full re-review (pr-review.md)
+      #   /ai on an issue → issue responder (issue-responder.md)
+      - name: Build prompt
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_URL: ${{ github.event.issue.pull_request.url }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          CONTEXT_FILE=".github/prompts/context.md"
+          PR_REVIEW_FILE=".github/prompts/pr-review.md"
+          ISSUE_RSP_FILE=".github/prompts/issue-responder.md"
+          OUT="/tmp/opencode_prompt.txt"
+
+          # Extract text after /ai (strip keyword, trim)
+          NOTE="$(printf '%s' "$COMMENT_BODY" | sed 's|.*/ai||' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+
+          # Write the context header
+          cat "$CONTEXT_FILE" > "$OUT"
+          printf '\n\n' >> "$OUT"
+
+          if [ -n "$NOTE" ]; then
+            printf 'A collaborator has asked:\n\n> %s\n\nAddress this request. For any code changes: create a feature branch, open a PR, never commit to main directly.\n' "$NOTE" >> "$OUT"
+          elif [ -n "$PR_URL" ] || [ "$EVENT_NAME" = "pull_request_review_comment" ]; then
+            cat "$PR_REVIEW_FILE" >> "$OUT"
+            printf '\n\nA collaborator triggered a re-review by posting `/ai`. Re-assess the PR in full, taking into account all commits pushed since the last review. Note what changed since the previous review if one exists.\n' >> "$OUT"
+          else
+            cat "$ISSUE_RSP_FILE" >> "$OUT"
+            printf '\n\nA collaborator triggered you by posting `/ai`. Analyze the full issue thread and take the appropriate action.\n' >> "$OUT"
+          fi
+
+          # Export as multiline GITHUB_ENV entry
+          {
+            echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
+            cat "$OUT"
+            echo "__PROMPT_EOF__"
+          } >> "$GITHUB_ENV"
+
       - name: Run OpenCode
         uses: anomalyco/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # github-v1.2.9
         env:
@@ -34,6 +79,7 @@ jobs:
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMPT: ${{ env.OPENCODE_PROMPT }}
         with:
           model: openai-compatible/default
           use_github_token: "true"
