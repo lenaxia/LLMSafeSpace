@@ -4,6 +4,7 @@ import { wsLog } from "../lib/wsLog";
 
 const MIN_RECONNECT_MS = 2_000;
 const MAX_RECONNECT_MS = 30_000;
+const READ_TIMEOUT_MS = 35_000;
 
 export function useEventStream(
   workspaceId: string | undefined,
@@ -62,7 +63,20 @@ export function useEventStream(
         let buf = "";
 
         while (true) {
-          const { done, value } = await reader.read();
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          const timeoutPromise = new Promise<'timeout'>(resolve => {
+            timeoutId = setTimeout(() => resolve('timeout'), READ_TIMEOUT_MS);
+          });
+          const result = await Promise.race([reader.read(), timeoutPromise]);
+          clearTimeout(timeoutId);
+
+          if (result === 'timeout') {
+            wsLog("sse.read_timeout", workspaceId,
+              `no data for ${READ_TIMEOUT_MS}ms — forcing reconnect`);
+            break;
+          }
+
+          const { done, value } = result;
           if (done || cancelled) break;
           buf += decoder.decode(value, { stream: true });
 
@@ -104,6 +118,8 @@ export function useEventStream(
       if (cancelled) return;
       retryTimer = setTimeout(() => {
         if (cancelled) return;
+        // Abort the old controller so any hanging reader.read() is released
+        abortCtrl.abort();
         abortCtrl = new AbortController();
         connect();
         retryDelay = Math.min(retryDelay * 2, MAX_RECONNECT_MS);

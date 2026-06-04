@@ -5,6 +5,7 @@ import { wsLog } from "../lib/wsLog";
 
 const MIN_RECONNECT_MS = 1000;
 const MAX_RECONNECT_MS = 30_000;
+const READ_TIMEOUT_MS = 35_000;
 
 /**
  * useUserEventStream connects to the user-scoped SSE endpoint (GET /api/v1/events)
@@ -78,7 +79,19 @@ export function useUserEventStream() {
         let buf = "";
 
         while (true) {
-          const { done, value } = await reader.read();
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          const timeoutPromise = new Promise<'timeout'>(resolve => {
+            timeoutId = setTimeout(() => resolve('timeout'), READ_TIMEOUT_MS);
+          });
+          const result = await Promise.race([reader.read(), timeoutPromise]);
+          clearTimeout(timeoutId);
+
+          if (result === 'timeout') {
+            wsLog("user_stream.read_timeout", "", `no data for ${READ_TIMEOUT_MS}ms — forcing reconnect`);
+            break;
+          }
+
+          const { done, value } = result;
           if (done) break;
 
           buf += decoder.decode(value, { stream: true });

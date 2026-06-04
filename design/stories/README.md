@@ -38,6 +38,13 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 27a | **Credential Reload Foundation** — explicit user-driven `agent/reload` endpoint replaces auto-dispose; `workspace_agent_state` schema with `pending_refresh` flag; banner UI; Bug 11 type-mismatch fix | Epic 10 |
 | 27b | **Credential Reload Polish** — drain mode (event-driven via existing SSETracker), bulk reload (streaming NDJSON), chat-proxy error enrichment with refresh hints, SDK ergonomics, Prometheus metrics | Epic 27a |
 
+## V2.2 (In Planning)
+
+| Epic | Goal | Depends On |
+|------|------|------------|
+| 30 | VPN Sidecars (WireGuard, Tailscale, ZeroTier), VPC Connectivity, & AWS IAM (IRSA + Pod Identity) — admin-gated per-workspace network attachment | Epics 6, 9, 24 |
+| 31 | **Shared Workspace Per User (User Drive)** — per-user PVC/S3 drive mounted at `/shared` in every workspace, 5 GB default quota, resize for billing upgrades, frontend capacity bar in status area | Epics 6, 9, 24 |
+
 ## V2.1 (Deferred)
 
 | Story | Reason |

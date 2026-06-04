@@ -1,4 +1,5 @@
 import { getEnv } from "../env";
+import { wsLog } from "../lib/wsLog";
 
 export interface SSEEvent {
   type: string;
@@ -8,6 +9,7 @@ export interface SSEEvent {
 const CHANNEL_PREFIX = "lsp-sse-";
 const HEARTBEAT_MS = 2000;
 const LEADER_TIMEOUT_MS = 5000;
+const EVENT_SOURCE_ERROR_TIMEOUT_MS = 15_000;
 
 /**
  * BroadcastChannel-multiplexed SSE client with leader election.
@@ -29,10 +31,12 @@ export function createEventStream(
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   let lastLeaderHeartbeat = 0;
   let electionTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastEventSourceError: number | null = null;
 
   function becomeLeader() {
     if (isLeader) return;
     isLeader = true;
+    lastEventSourceError = null;
 
     const { apiBaseUrl } = getEnv();
     eventSource = new EventSource(`${apiBaseUrl}/workspaces/${workspaceId}/events`, {
@@ -40,6 +44,8 @@ export function createEventStream(
     });
 
     eventSource.onmessage = (e) => {
+      // Clear error state — successfully received data
+      lastEventSourceError = null;
       try {
         const parsed: SSEEvent = { type: e.type, data: JSON.parse(e.data) };
         onEvent(parsed);
@@ -48,7 +54,17 @@ export function createEventStream(
     };
 
     eventSource.onerror = () => {
-      // EventSource auto-reconnects; no action needed
+      // EventSource auto-reconnects, but track failures so leader resigns
+      // if the connection cannot recover (e.g. browser gives up on mobile).
+      if (lastEventSourceError === null) {
+        lastEventSourceError = Date.now();
+        wsLog("sse.leader_event_source_error", workspaceId, "tracking for possible resignation");
+      }
+    };
+
+    eventSource.onopen = () => {
+      // Successfully (re)connected — clear error state
+      lastEventSourceError = null;
     };
 
     // Broadcast heartbeat so followers know leader is alive
@@ -86,7 +102,25 @@ export function createEventStream(
   }
 
   function checkLeaderAlive() {
-    if (isLeader) return;
+    if (isLeader) {
+      // If leader's EventSource has been errored too long, resign so another
+      // tab can take over (the browser may have given up reconnecting).
+      if (lastEventSourceError !== null &&
+          Date.now() - lastEventSourceError > EVENT_SOURCE_ERROR_TIMEOUT_MS) {
+        wsLog("sse.leader_resigning", workspaceId,
+          `EventSource errored for ${EVENT_SOURCE_ERROR_TIMEOUT_MS}ms`);
+        channel.postMessage({ type: "leader-resign" });
+        eventSource?.close();
+        eventSource = null;
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+        isLeader = false;
+        lastEventSourceError = null;
+        // This tab may become leader again if no other tab takes over
+        startElection();
+      }
+      return;
+    }
     if (Date.now() - lastLeaderHeartbeat > LEADER_TIMEOUT_MS) {
       startElection();
     }
