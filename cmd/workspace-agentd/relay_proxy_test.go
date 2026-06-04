@@ -354,3 +354,24 @@ func TestRelayProxy_BodyForwarded(t *testing.T) {
 	assert.Equal(t, "application/json", capturedReq.Headers["content-type"])
 	assert.Equal(t, "Bearer public", capturedReq.Headers["authorization"])
 }
+
+func TestBuildTargetURL(t *testing.T) {
+	rp := newRelayProxy(nil)
+	tests := []struct {
+		name  string
+		path  string
+		query string
+		want  string
+	}{
+		{"strips relay prefix", "/relay/inference/v1/chat/completions", "", "https://opencode.ai/v1/chat/completions"},
+		{"strips prefix with query", "/relay/inference/v1/models", "limit=10", "https://opencode.ai/v1/models?limit=10"},
+		{"handles root path", "/relay/inference", "", "https://opencode.ai/"},
+		{"handles path without prefix", "/v1/chat/completions", "", "https://opencode.ai/v1/chat/completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rp.buildTargetURL(tt.path, tt.query)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

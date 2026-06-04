@@ -160,7 +160,6 @@ export function useRelayClient({
         if (msg.type === "proxy_request") {
           handleProxyRequest(msg as ProxyRequest);
         } else if (msg.type === "ping") {
-          send({ type: "proxy_response_end", id: "" }); // pong via protocol
           ws.send(JSON.stringify({ type: "pong" }));
         }
       } catch {

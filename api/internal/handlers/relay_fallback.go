@@ -6,6 +6,7 @@ package handlers
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -127,21 +128,10 @@ func (h *RelayFallbackHandler) allowRequest(userID string) bool {
 
 // isAllowedFallbackURL validates the target URL is in the allowed host list.
 func isAllowedFallbackURL(rawURL string) bool {
-	// Extract host from URL
-	// Simple parsing: find the host between "://" and the next "/" or end
-	idx := strings.Index(rawURL, "://")
-	if idx < 0 {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return false
 	}
-	rest := rawURL[idx+3:]
-	slashIdx := strings.IndexByte(rest, '/')
-	host := rest
-	if slashIdx >= 0 {
-		host = rest[:slashIdx]
-	}
-	// Strip port if present
-	if colonIdx := strings.LastIndexByte(host, ':'); colonIdx >= 0 {
-		host = host[:colonIdx]
-	}
+	host := parsed.Hostname() // strips port
 	return relay.IsAllowedHost(host)
 }

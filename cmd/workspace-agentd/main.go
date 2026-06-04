@@ -685,7 +685,11 @@ func main() {
 	relayURL := os.Getenv("LLMSAFESPACE_RELAY_URL")
 	var relayProxyInstance *relayProxy
 	if relayURL != "" {
-		relayProxyInstance = newRelayProxy(&relayProxyConfig{relayURL: relayURL})
+		relayToken := os.Getenv("LLMSAFESPACE_RELAY_TOKEN")
+		relayProxyInstance = newRelayProxy(&relayProxyConfig{
+			relayURL:  relayURL,
+			authToken: relayToken,
+		})
 		go func() {
 			backoff := time.Second
 			for {

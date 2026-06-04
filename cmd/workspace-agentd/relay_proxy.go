@@ -20,6 +20,7 @@ import (
 // relayProxyConfig configures the relay proxy.
 type relayProxyConfig struct {
 	relayURL       string // WebSocket URL to the API server relay endpoint
+	authToken      string // Bearer token for authenticating to the relay endpoint
 	requestTimeout time.Duration
 	maxPending     int
 }
@@ -199,7 +200,8 @@ func (rp *relayProxy) handler() http.Handler {
 			}
 
 		case pe := <-pending.errorCh:
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, pe.Error), http.StatusBadGateway)
+			errJSON, _ := json.Marshal(map[string]string{"error": pe.Error})
+			http.Error(w, string(errJSON), http.StatusBadGateway)
 			return
 
 		case <-timer.C:
@@ -291,7 +293,12 @@ func (rp *relayProxy) connect() error {
 		return fmt.Errorf("no relay URL configured")
 	}
 
-	conn, resp, err := websocket.DefaultDialer.Dial(rp.cfg.relayURL, nil)
+	header := http.Header{}
+	if rp.cfg.authToken != "" {
+		header.Set("Authorization", "Bearer "+rp.cfg.authToken)
+	}
+
+	conn, resp, err := websocket.DefaultDialer.Dial(rp.cfg.relayURL, header)
 	if err != nil {
 		return fmt.Errorf("relay WebSocket dial: %w", err)
 	}
@@ -374,11 +381,15 @@ func (rp *relayProxy) close() {
 
 // buildTargetURL reconstructs the target provider URL from the request path.
 // opencode sends requests to our local relay with the provider API path appended.
-// We need to reconstruct the full target URL for the client to make the actual call.
+// The request arrives with path like /relay/inference/v1/chat/completions.
+// We strip the relay prefix and prepend the provider base URL.
 func (rp *relayProxy) buildTargetURL(path, query string) string {
-	// Default target: opencode.ai (the free-tier gateway)
 	base := "https://opencode.ai"
-	url := base + path
+	apiPath := strings.TrimPrefix(path, "/relay/inference")
+	if apiPath == "" {
+		apiPath = "/"
+	}
+	url := base + apiPath
 	if query != "" {
 		url += "?" + query
 	}
