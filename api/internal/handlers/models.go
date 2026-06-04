@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -191,16 +192,17 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 
 // annotatedModel is the enriched model response returned to callers.
 type annotatedModel struct {
-	ID         string          `json:"id"`
-	ProviderID string          `json:"providerID"`
-	Name       string          `json:"name"`
-	Family     string          `json:"family,omitempty"`
-	Enabled    bool            `json:"enabled"`
-	Status     string          `json:"status,omitempty"`
-	Tier       string          `json:"tier"`     // "free" or "paid"
-	FreeTier   bool            `json:"freeTier"` // convenience boolean
-	Selected   bool            `json:"selected"` // true if this is the workspace's current default
-	Details    json.RawMessage `json:"details"`  // full opencode model object (unstable schema)
+	ID            string          `json:"id"`
+	ProviderID    string          `json:"providerID"`
+	Name          string          `json:"name"`
+	Family        string          `json:"family,omitempty"`
+	Enabled       bool            `json:"enabled"`
+	Status        string          `json:"status,omitempty"`
+	Tier          string          `json:"tier"`          // "free" or "paid"
+	FreeTier      bool            `json:"freeTier"`      // convenience boolean
+	ProxyRequired bool            `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
+	Selected      bool            `json:"selected"`      // true if this is the workspace's current default
+	Details       json.RawMessage `json:"details"`       // full opencode model object (unstable schema)
 }
 
 // opencodeModel is the minimal subset of opencode's ModelV2.Info we parse for classification.
@@ -240,15 +242,16 @@ func annotateModels(raw []byte) ([]annotatedModel, error) {
 			details = rawModels[i]
 		}
 		result[i] = annotatedModel{
-			ID:         m.ID,
-			ProviderID: m.ProviderID,
-			Name:       m.Name,
-			Family:     m.Family,
-			Enabled:    m.Enabled,
-			Status:     m.Status,
-			Tier:       tier,
-			FreeTier:   tier == "free",
-			Details:    details,
+			ID:            m.ID,
+			ProviderID:    m.ProviderID,
+			Name:          m.Name,
+			Family:        m.Family,
+			Enabled:       m.Enabled,
+			Status:        m.Status,
+			Tier:          tier,
+			FreeTier:      tier == "free",
+			ProxyRequired: tier == "free",
+			Details:       details,
 		}
 	}
 	return result, nil
@@ -338,15 +341,32 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		})
 	}
 
-	// Push model selection to running agent.
-	// NOTE: We do NOT use PATCH /global/config because it disposes all instances,
-	// aborting every active LLM stream in the workspace (same problem Epic 27a solved
-	// for credentials). Instead, the model is persisted to DB + K8s Secret and takes
-	// effect on next agent reload or pod restart. The `applied` field communicates this.
-	// Future: validate that opencode's PromptInput.model field works for per-prompt
-	// overrides via the proxy, enabling immediate effect without dispose (tracked in
-	// Epic 29 as a candidate enhancement after upstream validation).
+	// Push model selection to running agent (if pod available).
 	applied := false
+	if h.podIPResolver != nil {
+		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
+		if err == nil && podIP != "" {
+			if patchErr := h.patchAgentModel(c.Request.Context(), podIP, req.Model); patchErr != nil {
+				h.warn("PATCH model to agent failed", "error", patchErr.Error())
+			} else {
+				applied = true
+			}
+
+			// Epic 26: If the selected model is free-tier, configure the
+			// opencode provider's baseURL to route through the relay proxy.
+			// If switching to a paid model, reset to direct (no relay).
+			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
+				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
+				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, relayBaseURL); pushErr != nil {
+					h.warn("push relay baseURL failed", "error", pushErr.Error())
+				}
+			} else {
+				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP); pushErr != nil {
+					h.warn("clear relay baseURL failed", "error", pushErr.Error())
+				}
+			}
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
@@ -388,4 +408,91 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, worksp
 		}
 	}
 	return false
+}
+
+// patchAgentModel sends the model selection to the running opencode agent.
+func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model string) error {
+	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
+	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.
+func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID string) bool {
+	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return false
+	}
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false
+	}
+	var models []opencodeModel
+	if json.Unmarshal(body, &models) != nil {
+		return false
+	}
+	for _, m := range models {
+		if m.ID == modelID {
+			return classifyTier(m.ProviderID, m.Cost) == "free"
+		}
+	}
+	return false
+}
+
+// pushRelayBaseURL configures the opencode provider's baseURL to route
+// through the in-pod relay proxy (Epic 26).
+func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
+	type payload struct {
+		Type     string            `json:"type"`
+		Key      string            `json:"key"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	body, err := json.Marshal(payload{Type: "api", Key: "public", Metadata: map[string]string{"baseURL": relayBaseURL}})
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("http://%s:%d/auth/opencode", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PUT /auth/opencode returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// clearRelayBaseURL resets the opencode provider to its default base URL.
+func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP string) error {
+	return h.pushRelayBaseURL(ctx, podIP, "")
 }

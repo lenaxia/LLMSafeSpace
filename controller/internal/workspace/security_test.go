@@ -109,6 +109,7 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		"tmp":          false,
 		"sandbox-home": false,
 		"pw-secret":    false,
+		"user-secrets": false,
 	}
 	for _, v := range pod.Spec.Volumes {
 		if _, ok := expectedVolumes[v.Name]; ok {
@@ -118,6 +119,20 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	for name, found := range expectedVolumes {
 		require.True(t, found, "expected sandbox volume %q to be present", name)
 	}
+
+	// user-secrets must be optional so pods start cleanly before credentials
+	// are configured and kubelet auto-syncs the secret once it is created.
+	var userSecretsVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "user-secrets" {
+			userSecretsVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, userSecretsVol, "user-secrets volume must exist")
+	require.NotNil(t, userSecretsVol.Secret, "user-secrets volume must be a Secret source")
+	require.NotNil(t, userSecretsVol.Secret.Optional, "user-secrets volume must have Optional set")
+	require.True(t, *userSecretsVol.Secret.Optional, "user-secrets volume must have Optional: true")
 
 	require.NotEmpty(t, pod.Spec.Containers)
 	main := pod.Spec.Containers[0]
