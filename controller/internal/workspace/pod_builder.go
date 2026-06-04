@@ -89,6 +89,20 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 					Key: "password",
 				},
 			}},
+			// Epic 26: Relay URL for client-proxied inference. When set,
+			// agentd starts the relay proxy that intercepts free-tier LLM
+			// requests and forwards them to the client via the API server's
+			// relay WebSocket. Constructed from the API service URL + workspace ID.
+			{Name: "LLMSAFESPACE_RELAY_URL", Value: r.buildRelayURL(workspace)},
+			// Relay auth token — same as workspace password (resolves to owner's userID).
+			{Name: "LLMSAFESPACE_RELAY_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: passwordSecretName(workspace.Name),
+					},
+					Key: "password",
+				},
+			}},
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -485,3 +499,19 @@ func buildWorkspaceSetupScript(ws *v1.Workspace) string {
 }
 
 // --- Setup ---
+
+// buildRelayURL constructs the WebSocket relay URL for the workspace pod.
+// Returns empty string if APIServiceURL is not configured (relay disabled).
+func (r *WorkspaceReconciler) buildRelayURL(workspace *v1.Workspace) string {
+	if r.APIServiceURL == "" {
+		return ""
+	}
+	// Convert http(s):// to ws(s)://
+	wsURL := r.APIServiceURL
+	if strings.HasPrefix(wsURL, "https://") {
+		wsURL = "wss://" + strings.TrimPrefix(wsURL, "https://")
+	} else if strings.HasPrefix(wsURL, "http://") {
+		wsURL = "ws://" + strings.TrimPrefix(wsURL, "http://")
+	}
+	return wsURL + "/api/v1/workspaces/" + workspace.Name + "/relay?role=agentd"
+}

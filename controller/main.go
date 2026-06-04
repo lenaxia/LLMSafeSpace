@@ -69,6 +69,11 @@ func main() {
 		"Maximum spec.resources.memory in MiB (65536 = 64GiB). Set 0 to disable. (G4 / F1.2.3).")
 	flag.Int64Var(&maxEphemeralStorageGi, "max-workspace-ephemeral-storage-gi", 100,
 		"Maximum spec.resources.ephemeralStorage in GiB. Set 0 to disable. (G4 / F1.2.3).")
+	var apiServiceURL string
+	flag.StringVar(&apiServiceURL, "api-service-url", "",
+		"Cluster-internal URL to the API service (e.g. 'http://llmsafespace-api:8080'). "+
+			"Used to construct relay WebSocket URLs for workspace pods (Epic 26). "+
+			"When empty, relay env vars are not injected and client-proxied inference is disabled.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -141,7 +146,7 @@ func main() {
 	})
 
 	// Set up controllers
-	if err := controller.SetupControllers(mgr); err != nil {
+	if err := controller.SetupControllers(mgr, apiServiceURL); err != nil {
 		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}
