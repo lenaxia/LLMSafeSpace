@@ -189,6 +189,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// cross-tenant pollution (NEW-1).
 		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log})
 		secretService.RequireOwnerVerification()
+		secretService.SetAdminKeyDeriver(deriveServerKey)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
