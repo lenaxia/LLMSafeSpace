@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createSSEConnection, type SSEConnectionConfig } from "./sseConnection";
+import { createSSEConnection } from "./sseConnection";
 
 // --- Helpers ---
 
