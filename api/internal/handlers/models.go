@@ -415,48 +415,96 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
 
-// modelExistsInCatalog checks if a model ID exists in the running agent's catalog.
-func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, workspaceID, model string) bool {
+// catalogEntry is the minimal model record returned by the agent catalog.
+type catalogEntry struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerID"`
+}
+
+// fetchCatalog retrieves the model catalog from the running agent. Returns nil on any error
+// (callers should fail open when the catalog is unavailable).
+func (h *SecretsHandler) fetchCatalog(ctx context.Context, podIP, workspaceID string) []catalogEntry {
 	if h.passwordGetter == nil {
-		return true // fail open — don't block on missing password getter
+		return nil
 	}
 	password, err := h.passwordGetter(ctx, workspaceID)
 	if err != nil || password == "" {
-		return true // fail open — don't block on password retrieval failure
+		return nil
 	}
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: URL to internal pod
 	if err != nil {
-		return true // fail open — don't block on validation infrastructure failure
+		return nil
 	}
 	req.SetBasicAuth(agentd.AuthUsername, password)
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
-		return true // fail open
+		return nil
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort drain
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return true // fail open
+		return nil
 	}
+	var entries []catalogEntry
+	if json.Unmarshal(body, &entries) != nil {
+		return nil
+	}
+	return entries
+}
 
-	var models []struct {
-		ID string `json:"id"`
+// modelExistsInCatalog checks if a model ID exists in the running agent's catalog.
+func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, workspaceID, model string) bool {
+	entries := h.fetchCatalog(ctx, podIP, workspaceID)
+	if entries == nil {
+		return true // fail open — don't block on catalog retrieval failure
 	}
-	if json.Unmarshal(body, &models) != nil {
-		return true // fail open
-	}
-	for _, m := range models {
-		if m.ID == model {
+	for _, e := range entries {
+		if e.ID == model {
 			return true
 		}
 	}
 	return false
 }
 
+// resolveModelIDFromCatalog fetches the catalog using the supplied password (already known
+// at the call site) and returns the providerID/modelID form. Falls back to model unchanged.
+func resolveModelIDFromCatalog(ctx context.Context, podIP, password, model string) string {
+	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return model
+	}
+	if password != "" {
+		req.SetBasicAuth(agentd.AuthUsername, password)
+	}
+	resp, err := modelHTTPClient.Do(req)
+	if err != nil {
+		return model
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort drain
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return model
+	}
+	var entries []catalogEntry
+	if json.Unmarshal(body, &entries) != nil {
+		return model
+	}
+	for _, e := range entries {
+		if e.ID == model && e.ProviderID != "" {
+			return e.ProviderID + "/" + e.ID
+		}
+	}
+	return model
+}
+
 // patchAgentModel sends the model selection to the running opencode agent.
+// It resolves the catalog flat model ID to providerID/modelID format before patching.
 func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) error {
-	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
+	// Resolve to opencode's providerID/modelID format (e.g. "openai/gpt-5.5").
+	resolved := resolveModelIDFromCatalog(ctx, podIP, password, model)
+	body := []byte(fmt.Sprintf(`{"model":%q}`, resolved))
 	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
 	if err != nil {

@@ -31,6 +31,9 @@ func NewServer(client APIClient, defaultTimeout time.Duration) *server.MCPServer
 		server.ServerTool{Tool: sessionCreateTool, Handler: h.sessionCreate},
 		server.ServerTool{Tool: sessionMessageTool, Handler: h.sessionMessage},
 		server.ServerTool{Tool: sessionHistoryTool, Handler: h.sessionHistory},
+		server.ServerTool{Tool: sessionQuestionReplyTool, Handler: h.sessionQuestionReply},
+		server.ServerTool{Tool: sessionQuestionRejectTool, Handler: h.sessionQuestionReject},
+		server.ServerTool{Tool: sessionPermissionReplyTool, Handler: h.sessionPermissionReply},
 		server.ServerTool{Tool: credentialCreateTool, Handler: h.credentialCreate},
 		server.ServerTool{Tool: credentialListTool, Handler: h.credentialList},
 		server.ServerTool{Tool: credentialDeleteTool, Handler: h.credentialDelete},
@@ -204,7 +207,86 @@ func strArg(args map[string]any, key string) string {
 	return v
 }
 
-// --- Credential & Model Tool definitions ---
+// --- Question & Permission Tool definitions (Epic 16 US-16.6) ---
+
+var sessionQuestionReplyTool = mcp.NewTool("session_question_reply",
+	mcp.WithDescription("Reply to a question asked by the agent during a session. Call this when session_message returns a response with type='question'."),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+	mcp.WithString("request_id", mcp.Required(), mcp.Description("Question request ID (starts with 'que_')")),
+	mcp.WithString("answers", mcp.Required(), mcp.Description("JSON array of answer arrays, e.g. [[\"answer1\"],[\"answer2\"]]")),
+)
+
+var sessionQuestionRejectTool = mcp.NewTool("session_question_reject",
+	mcp.WithDescription("Reject a question asked by the agent, causing it to abort the current operation."),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+	mcp.WithString("request_id", mcp.Required(), mcp.Description("Question request ID (starts with 'que_')")),
+)
+
+var sessionPermissionReplyTool = mcp.NewTool("session_permission_reply",
+	mcp.WithDescription("Reply to a permission request from the agent (e.g. approve a file write or shell command)."),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+	mcp.WithString("request_id", mcp.Required(), mcp.Description("Permission request ID (starts with 'per_')")),
+	mcp.WithString("reply", mcp.Required(), mcp.Description("One of: 'once' (allow this time), 'always' (allow permanently), 'reject' (deny)")),
+	mcp.WithString("message", mcp.Description("Optional message to send with the reply")),
+)
+
+// --- Question & Permission handlers ---
+
+func (h *handlers) sessionQuestionReply(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID := strArg(args, "workspace_id")
+	requestID := strArg(args, "request_id")
+	answersJSON := strArg(args, "answers")
+
+	if workspaceID == "" || requestID == "" || answersJSON == "" {
+		return mcp.NewToolResultError("workspace_id, request_id, and answers are required"), nil
+	}
+
+	var answers [][]string
+	if err := json.Unmarshal([]byte(answersJSON), &answers); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("answers must be a JSON array of string arrays: %v", err)), nil
+	}
+
+	if err := h.client.QuestionReply(ctx, workspaceID, requestID, answers); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to reply to question: %v", err)), nil
+	}
+	return mcp.NewToolResultText("Question answered"), nil
+}
+
+func (h *handlers) sessionQuestionReject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID := strArg(args, "workspace_id")
+	requestID := strArg(args, "request_id")
+
+	if workspaceID == "" || requestID == "" {
+		return mcp.NewToolResultError("workspace_id and request_id are required"), nil
+	}
+
+	if err := h.client.QuestionReject(ctx, workspaceID, requestID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to reject question: %v", err)), nil
+	}
+	return mcp.NewToolResultText("Question rejected"), nil
+}
+
+func (h *handlers) sessionPermissionReply(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID := strArg(args, "workspace_id")
+	requestID := strArg(args, "request_id")
+	reply := strArg(args, "reply")
+
+	if workspaceID == "" || requestID == "" || reply == "" {
+		return mcp.NewToolResultError("workspace_id, request_id, and reply are required"), nil
+	}
+	validReplies := map[string]bool{"once": true, "always": true, "reject": true}
+	if !validReplies[reply] {
+		return mcp.NewToolResultError("reply must be 'once', 'always', or 'reject'"), nil
+	}
+
+	if err := h.client.PermissionReply(ctx, workspaceID, requestID, reply, strArg(args, "message")); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to reply to permission request: %v", err)), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Permission %s", reply)), nil
+}
 
 var credentialCreateTool = mcp.NewTool("credential_create",
 	mcp.WithDescription("Create an LLM provider credential. Optionally bind to a workspace."),

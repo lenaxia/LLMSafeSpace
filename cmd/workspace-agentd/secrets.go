@@ -172,43 +172,99 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 }
 
 // applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
-// and merges the default model into the agent config file. This ensures the
-// workspace's model selection survives pod restarts.
+// and merges the default model into the agent config file. It also injects
+// the relay baseURL from INFERENCE_RELAY_BASEURL (set by the controller) so
+// opencode routes free-tier inference through the Cloudflare Worker on boot.
 func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
+	relayBaseURL := os.Getenv("INFERENCE_RELAY_BASEURL")
+
 	// workspace-config.json lives alongside secrets.json in /sandbox-cfg/
 	dir := filepath.Dir(secretsPath)
 	configPath := filepath.Join(dir, "workspace-config.json")
 
 	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return // absent = no workspace config to apply
-	}
+	hasWorkspaceConfig := err == nil
 
 	var wsCfg struct {
 		DefaultModel string `json:"defaultModel"`
 	}
-	if json.Unmarshal(data, &wsCfg) != nil || wsCfg.DefaultModel == "" {
+	if hasWorkspaceConfig {
+		if json.Unmarshal(data, &wsCfg) != nil {
+			hasWorkspaceConfig = false
+		}
+	}
+
+	// Nothing to apply — relay not set and no workspace config.
+	if relayBaseURL == "" && (!hasWorkspaceConfig || wsCfg.DefaultModel == "") {
 		return
 	}
 
 	// Read existing agent config (written by FlushProviders above).
+	var cfg map[string]json.RawMessage
 	existing, err := os.ReadFile(agentConfigPath)
-	if err != nil || len(existing) == 0 {
-		// No agent config — write minimal config with just the model.
-		minimal := fmt.Sprintf(`{"$schema":"https://opencode.ai/config.json","model":%q}`, wsCfg.DefaultModel)
-		_ = os.WriteFile(agentConfigPath, []byte(minimal), 0o600)
-		return
+	if err == nil && len(existing) > 0 {
+		_ = json.Unmarshal(existing, &cfg)
+	}
+	if cfg == nil {
+		cfg = map[string]json.RawMessage{}
 	}
 
-	// Merge model into existing config.
-	var cfg map[string]json.RawMessage
-	if json.Unmarshal(existing, &cfg) != nil {
-		return
+	// Apply default model if present.
+	if hasWorkspaceConfig && wsCfg.DefaultModel != "" {
+		modelJSON, _ := json.Marshal(wsCfg.DefaultModel)
+		cfg["model"] = modelJSON
 	}
-	modelJSON, _ := json.Marshal(wsCfg.DefaultModel)
-	cfg["model"] = modelJSON
+
+	// Epic 26: inject relay baseURL into provider.opencode.options.baseURL.
+	// The CF Worker reads this as the first path segment for auth.
+	if relayBaseURL != "" {
+		cfg = injectRelayBaseURL(cfg, relayBaseURL)
+	}
+
+	if _, ok := cfg["$schema"]; !ok {
+		schemaJSON, _ := json.Marshal("https://opencode.ai/config.json")
+		cfg["$schema"] = schemaJSON
+	}
+
 	merged, _ := json.MarshalIndent(cfg, "", "  ")
 	_ = os.WriteFile(agentConfigPath, merged, 0o600)
+}
+
+// injectRelayBaseURL merges provider.opencode.options.baseURL into the
+// opencode agent config map, preserving existing provider/option keys.
+func injectRelayBaseURL(cfg map[string]json.RawMessage, relayBaseURL string) map[string]json.RawMessage {
+	var providers map[string]json.RawMessage
+	if raw, ok := cfg["provider"]; ok {
+		_ = json.Unmarshal(raw, &providers)
+	}
+	if providers == nil {
+		providers = make(map[string]json.RawMessage)
+	}
+
+	var opencodeProvider map[string]json.RawMessage
+	if raw, ok := providers["opencode"]; ok {
+		_ = json.Unmarshal(raw, &opencodeProvider)
+	}
+	if opencodeProvider == nil {
+		opencodeProvider = make(map[string]json.RawMessage)
+	}
+
+	var options map[string]string
+	if raw, ok := opencodeProvider["options"]; ok {
+		_ = json.Unmarshal(raw, &options)
+	}
+	if options == nil {
+		options = make(map[string]string)
+	}
+	options["baseURL"] = relayBaseURL
+
+	optionsJSON, _ := json.Marshal(options)
+	opencodeProvider["options"] = optionsJSON
+	providerJSON, _ := json.Marshal(opencodeProvider)
+	providers["opencode"] = providerJSON
+	providersJSON, _ := json.Marshal(providers)
+	cfg["provider"] = providersJSON
+	return cfg
 }
 
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.

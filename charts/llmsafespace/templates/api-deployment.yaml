@@ -60,6 +60,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "llmsafespace.secretName" . }}
                   key: jwt-secret
+            - name: LLMSAFESPACE_MASTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespace.secretName" . }}
+                  key: master-secret
             - name: LLMSAFESPACE_KUBERNETES_PODNAME
               valueFrom:
                 fieldRef:

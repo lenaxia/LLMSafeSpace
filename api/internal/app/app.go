@@ -29,22 +29,24 @@ import (
 )
 
 type App struct {
-	config           *config.Config
-	logger           *logger.Logger
-	router           *gin.Engine
-	server           *http.Server
-	k8sClient        *kubernetes.Client
-	services         *services.Services
-	proxyHandler     *handlers.ProxyHandler
-	sessionIndexSvc  *sessionindex.Service
-	instanceSettings *settings.InstanceService
-	userSettings     *settings.UserService
-	asyncAudit       *secrets.AsyncAuditLogger // nil if pgxpool path not used
-	secretsPool      *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
-	dekCacheClient   *redis.Client             // redis client for DEK cache; closed on shutdown
-	shutdownCh       chan struct{}
-	ctx              context.Context
-	cancel           context.CancelFunc
+	config             *config.Config
+	logger             *logger.Logger
+	router             *gin.Engine
+	server             *http.Server
+	k8sClient          *kubernetes.Client
+	services           *services.Services
+	proxyHandler       *handlers.ProxyHandler
+	agentReloadHandler *handlers.AgentReloadHandler
+	bulkReloadHandler  *handlers.BulkReloadHandler
+	sessionIndexSvc    *sessionindex.Service
+	instanceSettings   *settings.InstanceService
+	userSettings       *settings.UserService
+	asyncAudit         *secrets.AsyncAuditLogger // nil if pgxpool path not used
+	secretsPool        *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
+	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
+	shutdownCh         chan struct{}
+	ctx                context.Context
+	cancel             context.CancelFunc
 }
 
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
@@ -285,12 +287,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		)
 	}
 
-	// Epic 27b: Wire drain mode dependencies from proxyHandler into reload handlers.
-	if proxyHandler != nil && agentReloadHandler != nil {
-		if tracker := proxyHandler.GetSSETracker(); tracker != nil {
-			agentReloadHandler.SetSSETracker(tracker)
-			bulkReloadHandler.SetSSETracker(tracker)
-		}
+	// Epic 27b: Drain mode SSETracker wiring is deferred to Run() — the tracker
+	// is nil until proxyHandler.Start() runs. Wire password getter + metrics here
+	// (these are available at construction time).
+	if agentReloadHandler != nil {
 		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
@@ -334,22 +334,24 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	return &App{
-		config:           cfg,
-		logger:           log,
-		router:           router,
-		server:           httpServer,
-		k8sClient:        k8sClient,
-		services:         svc,
-		proxyHandler:     proxyHandler,
-		sessionIndexSvc:  sessionIndexSvc,
-		instanceSettings: instanceSettings,
-		userSettings:     userSettings,
-		asyncAudit:       asyncAudit,
-		secretsPool:      secretsPool,
-		dekCacheClient:   dekCacheClient,
-		shutdownCh:       make(chan struct{}),
-		ctx:              ctx,
-		cancel:           cancel,
+		config:             cfg,
+		logger:             log,
+		router:             router,
+		server:             httpServer,
+		k8sClient:          k8sClient,
+		services:           svc,
+		proxyHandler:       proxyHandler,
+		agentReloadHandler: agentReloadHandler,
+		bulkReloadHandler:  bulkReloadHandler,
+		sessionIndexSvc:    sessionIndexSvc,
+		instanceSettings:   instanceSettings,
+		userSettings:       userSettings,
+		asyncAudit:         asyncAudit,
+		secretsPool:        secretsPool,
+		dekCacheClient:     dekCacheClient,
+		shutdownCh:         make(chan struct{}),
+		ctx:                ctx,
+		cancel:             cancel,
 	}, nil
 }
 
@@ -380,6 +382,26 @@ func (a *App) Run() error {
 		a.k8sClient.Stop()
 		_ = a.services.Stop()
 		return fmt.Errorf("failed to start proxy handler: %w", err)
+	}
+
+	// Epic 27a/27b: Wire drain mode dependencies now that proxyHandler.Start()
+	// has initialized the SSETracker. This MUST run after Start() — the tracker
+	// is nil until Start() allocates it, so wiring in New() always produced a
+	// nil tracker and drain mode was a silent no-op in production.
+	if a.agentReloadHandler != nil {
+		if tracker := a.proxyHandler.GetSSETracker(); tracker != nil {
+			a.agentReloadHandler.SetSSETracker(tracker)
+			if a.bulkReloadHandler != nil {
+				a.bulkReloadHandler.SetSSETracker(tracker)
+			}
+		}
+	}
+
+	// Epic 27b US-27b.5: Wire agent state checker into proxy for chat error enrichment.
+	// dbSvc is referenced via services; use a type assertion to get the concrete type
+	// which implements AgentStateChecker (GetLastCredentialChangedAt).
+	if dbSvc, ok := a.services.Database.(*database.Service); ok {
+		a.proxyHandler.SetAgentStateChecker(dbSvc)
 	}
 
 	if err := a.sessionIndexSvc.Start(); err != nil {

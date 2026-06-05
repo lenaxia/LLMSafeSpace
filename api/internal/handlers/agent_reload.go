@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -326,15 +327,42 @@ func (h *BulkReloadHandler) BulkReload(c *gin.Context) {
 	flusher, _ := c.Writer.(http.Flusher)
 
 	start := time.Now()
-	succeeded, failed := 0, 0
 
+	// Epic 27b US-27b.4: Fan-out with a bounded semaphore (max 5 concurrent
+	// reloads). Results are streamed as they complete via a channel so the
+	// client gets partial progress even if some workspaces are slow.
+	const maxParallel = 5
+	type result struct {
+		data map[string]any
+	}
+	resultCh := make(chan result, len(pending))
+	sem := make(chan struct{}, maxParallel)
+
+	var wg sync.WaitGroup
 	for _, ws := range pending {
-		result := h.reloadOne(c.Request.Context(), userID, ws.ID, drain, drainTimeout)
-		_ = json.NewEncoder(c.Writer).Encode(result)
+		wg.Add(1)
+		go func(wsID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r := h.reloadOne(c.Request.Context(), userID, wsID, drain, drainTimeout)
+			resultCh <- result{data: r}
+		}(ws.ID)
+	}
+
+	// Close channel when all goroutines finish.
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	succeeded, failed := 0, 0
+	for r := range resultCh {
+		_ = json.NewEncoder(c.Writer).Encode(r.data)
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if _, ok := result["error"]; ok {
+		if _, ok := r.data["error"]; ok {
 			failed++
 		} else {
 			succeeded++

@@ -276,6 +276,10 @@ externalSecret:
   postgresPassword: ""
   redisPassword: ""
   jwtSecret: ""
+  # Root KEK for admin provider credentials (LLMSAFESPACE_MASTER_SECRET).
+  # Auto-generated as a 64-char random on first install when left empty.
+  # Rotating this value invalidates all admin-encrypted credentials.
+  masterSecret: ""
 
 # ----------------------------------------------------------------------------
 # Datastore NetworkPolicies (G26)
@@ -615,3 +619,11 @@ mcp:
 # from workers/inference-relay/ and set the URL here.
 # Stable CNAME that rotates to fresh Worker deployments.
 inferenceRelayURL: "https://relay.safespaces.dev"
+
+# Epic 26: Relay auth secret. Embedded as the first path segment of
+# inferenceRelayURL so workspace pods send:
+#   https://relay.safespaces.dev/<secret>/responses
+# The CF Worker strips and validates this segment before forwarding upstream.
+# Set via --set inferenceRelaySecret=<value> or in a values override file.
+# Must match the RELAY_SECRET CF Worker secret set via `wrangler secret put`.
+inferenceRelaySecret: ""

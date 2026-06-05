@@ -498,3 +498,44 @@ func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
 }
+
+// ===== MaxActiveSessions (Epic 13 US-13.3) =====
+
+func TestCreateWorkspace_DefaultMaxActiveSessions_Applied(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultStorageSize":       "10Gi",
+		"workspace.defaultMaxActiveSessions": 8,
+	})
+
+	mockCRD := &v1.Workspace{}
+	f.k8s.On("LlmsafespaceV1").Return(f.v1iface)
+	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
+	f.ws.On("Create", mock.Anything).Return(mockCRD, nil)
+	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
+	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
+	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "10Gi", Runtime: "python:3.10"}
+	_, _ = f.svc.CreateWorkspace(context.Background(), "user-1", req)
+
+	// The CRD passed to Create should have MaxActiveSessions = 8
+	f.ws.AssertCalled(t, "Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+		return ws.Spec.MaxActiveSessions == 8
+	}))
+}
+
+func TestApplyWorkspaceDefaults_ExistingMaxActiveSessions_NotOverridden(t *testing.T) {
+	// applyWorkspaceDefaults should not overwrite a non-zero MaxActiveSessions
+	// already set on the CRD (e.g., from a future request field or controller).
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultMaxActiveSessions": 8,
+	})
+
+	crd := &v1.Workspace{}
+	crd.Spec.MaxActiveSessions = 3 // pre-set
+
+	f.svc.applyWorkspaceDefaults(context.Background(), crd)
+
+	// The pre-set value of 3 must NOT be overwritten by the setting of 8.
+	assert.Equal(t, int32(3), crd.Spec.MaxActiveSessions)
+}

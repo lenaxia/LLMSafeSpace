@@ -72,6 +72,9 @@ spec:
             {{- with .Values.inferenceRelayURL }}
             - --inference-relay-url={{ . }}
             {{- end }}
+            {{- with .Values.inferenceRelaySecret }}
+            - --inference-relay-secret={{ . }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}

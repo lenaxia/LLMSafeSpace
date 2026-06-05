@@ -264,7 +264,12 @@ func setupSecretService(t *testing.T) (*SecretService, *mockSecretStore, string)
 
 // --- Tests ---
 
-func TestSecretService_CreateSecret_LLMProvider(t *testing.T) {
+// TestSecretService_CreateSecret_LLMProvider_Legacy documents the OLD (broken)
+// behavior: storing an LLM key as api-key type with provider in metadata.
+// This test exists to prove the old path still works for backward compat with
+// any existing api-key secrets already in the database; new code should use
+// SecretTypeLLMProvider instead (see TestSecretService_CreateSecret_LLMProvider_Correct).
+func TestSecretService_CreateSecret_LLMProvider_Legacy(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
@@ -286,6 +291,93 @@ func TestSecretService_CreateSecret_LLMProvider(t *testing.T) {
 	}
 	if resp.ID == "" {
 		t.Error("Expected non-empty ID")
+	}
+}
+
+// TestSecretService_CreateSecret_LLMProvider_Correct verifies the CORRECT path:
+// type=llm-provider, value=JSON-encoded LLMProviderData.
+// The materializer only processes llm-provider type when building agent-config.json.
+func TestSecretService_CreateSecret_LLMProvider_Correct(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	providerData, _ := json.Marshal(LLMProviderData{
+		Provider: "anthropic",
+		APIKey:   "sk-ant-api03-test-key",
+	})
+
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name:  "anthropic-prod",
+		Type:  SecretTypeLLMProvider,
+		Value: string(providerData),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret(llm-provider) failed: %v", err)
+	}
+	if resp.Type != SecretTypeLLMProvider {
+		t.Errorf("Expected type llm-provider, got %s", resp.Type)
+	}
+	if resp.Name != "anthropic-prod" {
+		t.Errorf("Expected name anthropic-prod, got %s", resp.Name)
+	}
+}
+
+// TestSecretService_CreateSecret_LLMProvider_InvalidJSON verifies that a
+// non-JSON value for llm-provider type is rejected with ErrInvalidMetadata.
+func TestSecretService_CreateSecret_LLMProvider_InvalidJSON(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name:  "bad-cred",
+		Type:  SecretTypeLLMProvider,
+		Value: "not-valid-json",
+	})
+	if err == nil {
+		t.Fatal("Expected error for non-JSON llm-provider value, got nil")
+	}
+	if !errors.Is(err, ErrInvalidMetadata) {
+		t.Errorf("Expected ErrInvalidMetadata, got %v", err)
+	}
+}
+
+// TestSecretService_CreateSecret_LLMProvider_MissingProvider rejects a JSON
+// value that omits the required provider field.
+func TestSecretService_CreateSecret_LLMProvider_MissingProvider(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	val, _ := json.Marshal(map[string]string{"apiKey": "sk-ant-test"})
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name:  "missing-provider",
+		Type:  SecretTypeLLMProvider,
+		Value: string(val),
+	})
+	if err == nil {
+		t.Fatal("Expected error for missing provider field, got nil")
+	}
+	if !errors.Is(err, ErrInvalidMetadata) {
+		t.Errorf("Expected ErrInvalidMetadata, got %v", err)
+	}
+}
+
+// TestSecretService_CreateSecret_LLMProvider_MissingAPIKey rejects a JSON
+// value that omits the required apiKey field.
+func TestSecretService_CreateSecret_LLMProvider_MissingAPIKey(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	val, _ := json.Marshal(map[string]string{"provider": "anthropic"})
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		Name:  "missing-apikey",
+		Type:  SecretTypeLLMProvider,
+		Value: string(val),
+	})
+	if err == nil {
+		t.Fatal("Expected error for missing apiKey field, got nil")
+	}
+	if !errors.Is(err, ErrInvalidMetadata) {
+		t.Errorf("Expected ErrInvalidMetadata, got %v", err)
 	}
 }
 

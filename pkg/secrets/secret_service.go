@@ -90,6 +90,10 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 		return nil, err
 	}
 
+	if err := validateValue(req.Type, req.Value); err != nil {
+		return nil, err
+	}
+
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
@@ -229,6 +233,9 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID, sec
 			return err
 		}
 		secret.Metadata = req.Metadata
+	}
+	if err := validateValue(secret.Type, req.Value); err != nil {
+		return err
 	}
 
 	if err := s.store.UpdateSecret(ctx, secret); err != nil {
@@ -512,6 +519,24 @@ func (s *SecretService) audit(ctx context.Context, userID, action string, secret
 	}
 	// Fire-and-forget audit logging (async in production, sync in tests)
 	_ = s.store.LogAudit(ctx, entry)
+}
+
+// validateValue validates type-specific constraints on the plaintext secret
+// value before encryption. Errors wrap ErrInvalidMetadata so callers map them
+// to 400 responses via handleSecretError.
+func validateValue(secretType SecretType, value string) error {
+	if secretType != SecretTypeLLMProvider {
+		return nil
+	}
+	// llm-provider value must be JSON-encoded LLMProviderData with required fields.
+	var d LLMProviderData
+	if err := json.Unmarshal([]byte(value), &d); err != nil {
+		return fmt.Errorf("%w: llm-provider value must be JSON (got: %v)", ErrInvalidMetadata, err)
+	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidMetadata, err)
+	}
+	return nil
 }
 
 // validateMetadata validates type-specific metadata requirements.

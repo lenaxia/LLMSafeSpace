@@ -143,6 +143,20 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 
 	var initContainers []corev1.Container
 
+	// Epic 26: inject relay baseURL so agentd can configure the opencode provider
+	// to route free-tier inference through the Cloudflare Worker for IP distribution.
+	// When InferenceRelaySecret is set it is embedded as the first path segment;
+	// the Worker strips and validates it before forwarding to upstream.
+	if r.InferenceRelayURL != "" {
+		relayBaseURL := r.InferenceRelayURL
+		if r.InferenceRelaySecret != "" {
+			relayBaseURL = r.InferenceRelayURL + "/" + r.InferenceRelaySecret
+		}
+		mainContainer.Env = append(mainContainer.Env,
+			corev1.EnvVar{Name: "INFERENCE_RELAY_BASEURL", Value: relayBaseURL},
+		)
+	}
+
 	// Workspace setup init (packages + initScript).
 	if len(workspace.Spec.Packages) > 0 || workspace.Spec.InitScript != "" {
 		initContainers = append(initContainers, buildWorkspaceSetupInit(workspace, runtimeImage))

@@ -759,6 +759,15 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 			}
 		}
 	}
+
+	// Max active sessions — enforced by the proxy on every request.
+	// Without this, the proxy falls back to a hardcoded constant of 5
+	// regardless of what the admin configured. (Epic 13 US-13.3)
+	if crd.Spec.MaxActiveSessions == 0 {
+		if v, err := s.instanceSettings.GetInt(ctx, "workspace.defaultMaxActiveSessions"); err == nil && v > 0 {
+			crd.Spec.MaxActiveSessions = int32(v) //nolint:gosec // v is bounded by settings schema (1-100); overflow impossible
+		}
+	}
 }
 
 // --- Frontend methods (Phase A) ---

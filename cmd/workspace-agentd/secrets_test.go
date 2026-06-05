@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -527,4 +528,95 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	require.False(t, resp.ConfigReloaded)
 	// proc is nil so restart didn't fire, but it WOULD have
 	require.False(t, resp.Restarted)
+}
+
+// TestApplyWorkspaceConfig_RelayBaseURL_InjectedOnStartup verifies that
+// applyWorkspaceConfig writes the relay baseURL (from INFERENCE_RELAY_BASEURL)
+// into the agent config file under provider.opencode.options.baseURL.
+// This runs before opencode starts so it reads the relay URL on boot.
+func TestApplyWorkspaceConfig_RelayBaseURL_InjectedOnStartup(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	secretsPath := filepath.Join(dir, "secrets.json")
+
+	t.Setenv("INFERENCE_RELAY_BASEURL", "https://relay.safespaces.dev/supersecret")
+
+	applyWorkspaceConfig(cfgPath, secretsPath)
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err, "agent config must be written when INFERENCE_RELAY_BASEURL is set")
+
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	providerRaw, ok := cfg["provider"]
+	require.True(t, ok, "config must contain 'provider' key")
+
+	var providers map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(providerRaw, &providers))
+
+	opencodeProvider, ok := providers["opencode"]
+	require.True(t, ok, "opencode provider must be present")
+
+	optionsRaw, ok := opencodeProvider["options"]
+	require.True(t, ok, "opencode provider must have options")
+
+	var options map[string]string
+	require.NoError(t, json.Unmarshal(optionsRaw, &options))
+	assert.Equal(t, "https://relay.safespaces.dev/supersecret", options["baseURL"],
+		"baseURL must be the full relay URL including secret segment")
+}
+
+// TestApplyWorkspaceConfig_RelayBaseURL_PreservesModel verifies that when
+// both INFERENCE_RELAY_BASEURL is set and a workspace-config.json with a
+// model is present, the model and relay baseURL are both written.
+func TestApplyWorkspaceConfig_RelayBaseURL_PreservesModel(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	secretsPath := filepath.Join(dir, "secrets.json")
+
+	// Write workspace-config.json with a default model
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "workspace-config.json"),
+		[]byte(`{"defaultModel":"nemotron-3-ultra-free"}`),
+		0o600,
+	))
+
+	t.Setenv("INFERENCE_RELAY_BASEURL", "https://relay.safespaces.dev/abc123")
+
+	applyWorkspaceConfig(cfgPath, secretsPath)
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	// Model must be present
+	var model string
+	require.NoError(t, json.Unmarshal(cfg["model"], &model))
+	assert.Equal(t, "nemotron-3-ultra-free", model, "model must be written")
+
+	// baseURL must be present
+	var providers map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg["provider"], &providers))
+	var options map[string]string
+	require.NoError(t, json.Unmarshal(providers["opencode"]["options"], &options))
+	assert.Equal(t, "https://relay.safespaces.dev/abc123", options["baseURL"])
+}
+
+// TestApplyWorkspaceConfig_NoRelay_NoProviderKey verifies that when
+// INFERENCE_RELAY_BASEURL is not set, no provider key is written.
+func TestApplyWorkspaceConfig_NoRelay_NoProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	secretsPath := filepath.Join(dir, "secrets.json")
+
+	t.Setenv("INFERENCE_RELAY_BASEURL", "")
+
+	applyWorkspaceConfig(cfgPath, secretsPath)
+
+	// No relay, no workspace-config.json → config file should not be created
+	_, err := os.ReadFile(cfgPath)
+	assert.True(t, os.IsNotExist(err), "config file must not be created when no relay and no workspace config")
 }

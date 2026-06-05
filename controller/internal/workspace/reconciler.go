@@ -31,6 +31,13 @@ type WorkspaceReconciler struct {
 	// default gateway (opencode.ai/zen/v1) directly.
 	InferenceRelayURL string
 
+	// InferenceRelaySecret is the path-segment secret that authenticates
+	// requests to the CF Worker. When set, it is appended to InferenceRelayURL
+	// as the first path segment: https://relay.example.com/<secret>.
+	// The Worker strips and validates this segment before forwarding upstream.
+	// Set via --inference-relay-secret controller flag, sourced from a k8s Secret.
+	InferenceRelaySecret string
+
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
 	// the next reconcile will just call it immediately).

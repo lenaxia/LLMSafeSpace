@@ -55,6 +55,11 @@ type APIClient interface {
 	GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error)
 	SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error)
 
+	// Agent input — question & permission replies (Epic 16 US-16.6)
+	QuestionReply(ctx context.Context, workspaceID, requestID string, answers [][]string) error
+	QuestionReject(ctx context.Context, workspaceID, requestID string) error
+	PermissionReply(ctx context.Context, workspaceID, requestID, reply, message string) error
+
 	// Credential management
 	CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error)
 	ListCredentials(ctx context.Context) ([]CredentialResp, error)

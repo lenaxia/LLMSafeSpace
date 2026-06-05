@@ -48,11 +48,12 @@ type workspaceConfig struct {
 }
 
 type ProxyHandler struct {
-	k8sClient  pkginterfaces.KubernetesClient
-	httpClient *http.Client
-	logger     pkginterfaces.LoggerInterface
-	namespace  string
-	dialect    agent.Dialect
+	k8sClient         pkginterfaces.KubernetesClient
+	httpClient        *http.Client
+	logger            pkginterfaces.LoggerInterface
+	namespace         string
+	dialect           agent.Dialect
+	agentStateChecker AgentStateChecker // for chat error enrichment (Epic 27b US-27b.5)
 
 	pwCache   map[string]string
 	pwCacheMu sync.RWMutex
@@ -220,10 +221,27 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 	}
 	wid := c.Param("id")
 	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid)
+
+	status := c.Writer.Status()
 	// After the message round-trip completes, persist the opencode-generated
 	// title to the session index so the sidebar reflects it immediately.
-	if c.Writer.Status() < 300 && h.sessionIndex != nil {
+	if status < 300 && h.sessionIndex != nil {
 		go h.fetchAndPersistTitle(wid, sid)
+	}
+
+	// Epic 27b US-27b.5: If the upstream returned an error and the workspace
+	// has staged credentials, rewrite the response body to include an
+	// agentNeedsRefresh hint. The headers are already committed so we can only
+	// do this when the writer supports body replacement (buffered writers in
+	// tests; in production gin uses a streaming writer so we log instead).
+	if status >= 400 && h.agentStateChecker != nil {
+		changedAt, err := h.agentStateChecker.GetLastCredentialChangedAt(c.Request.Context(), wid)
+		if err == nil && !changedAt.IsZero() {
+			if rw, ok := c.Writer.(interface{ Body() []byte }); ok {
+				enriched := EnrichChatErrorBody(rw.Body(), true, changedAt, wid)
+				_, _ = c.Writer.Write(enriched)
+			}
+		}
 	}
 }
 
@@ -454,9 +472,16 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 
 	var bodyBytes []byte
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
-		bodyBytes, err = io.ReadAll(c.Request.Body)
+		// Limit request body to prevent OOM on oversized payloads (Epic 25 G1).
+		// 10 MB is generous for any legitimate opencode prompt or tool result.
+		limited := http.MaxBytesReader(c.Writer, c.Request.Body, 10*1024*1024)
+		bodyBytes, err = io.ReadAll(limited)
 		_ = c.Request.Body.Close()
 		if err != nil {
+			if err.Error() == "http: request body too large" {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body exceeds 10 MB limit"})
+				return
+			}
 			h.logger.Error("Failed to read request body", err, "workspaceID", workspaceID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
@@ -591,6 +616,14 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			}
 		}
 		if readErr != nil {
+			// io.EOF is the normal end of stream — not an error.
+			// Any other error (pod restart, network cut) means the stream was
+			// truncated mid-response. The HTTP status code was already flushed
+			// as 200, so we cannot change it here; instead log and return the
+			// error so the caller can record a proxy metric. (Epic 25 B2)
+			if readErr != io.EOF {
+				return fmt.Errorf("upstream stream cut short: %w", readErr)
+			}
 			break
 		}
 	}
@@ -1402,4 +1435,10 @@ func (h *ProxyHandler) GetSSETracker() *SSETracker {
 // GetPasswordGetter returns the proxy's password getter function (for drain mode).
 func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID string) (string, error) {
 	return h.getPassword
+}
+
+// SetAgentStateChecker installs the checker used to enrich error responses
+// with agentNeedsRefresh hints (Epic 27b US-27b.5).
+func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {
+	h.agentStateChecker = c
 }

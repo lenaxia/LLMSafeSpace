@@ -5,7 +5,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 
 const SECRET_TYPES = [
-  { value: "api-key", label: "LLM Providers", icon: "🤖", metaFields: ["provider"] },
+  { value: "llm-provider", label: "LLM Providers", icon: "🤖", metaFields: ["provider", "apiKey"] },
   { value: "ssh-key", label: "SSH Keys", icon: "🔑", metaFields: ["key_type", "host"] },
   { value: "git-credential", label: "Git Credentials", icon: "📦", metaFields: ["host"] },
   { value: "secret-file", label: "Secret Files", icon: "📄", metaFields: ["mount_path"] },
@@ -14,6 +14,8 @@ const SECRET_TYPES = [
 
 const FIELD_INFO: Record<string, string> = {
   provider: "LLM provider name (e.g. anthropic, openai, deepseek). Used to configure the agent's API endpoint.",
+  apiKey: "API key for the LLM provider (e.g. sk-ant-... for Anthropic).",
+  baseURL: "Optional: override the provider's default API endpoint (e.g. for Ollama or a proxy).",
   key_type: "SSH key algorithm. Determines the filename (~/.ssh/id_{type}) and ssh-agent configuration.",
   host: "Remote hostname this credential is for (e.g. github.com). Used to configure SSH config entries or git credential helpers.",
   mount_path: "File path inside the workspace where this secret will be written (with 0600 permissions).",
@@ -369,7 +371,7 @@ function padToBlockSize(data: Uint8Array, blockSize: number): Uint8Array {
 function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onError: (e: string) => void }) {
   const { toast } = useToast();
   const [name, setName] = useState("");
-  const [type, setType] = useState<SecretType>("api-key");
+  const [type, setType] = useState<SecretType>("llm-provider");
   const [value, setValue] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);

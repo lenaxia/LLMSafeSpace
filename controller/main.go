@@ -73,6 +73,10 @@ func main() {
 	flag.StringVar(&inferenceRelayURL, "inference-relay-url", "",
 		"Cloudflare Worker URL for free-tier inference relay (Epic 26). "+
 			"When set, workspace pods route opencode requests through this URL for IP distribution.")
+	var inferenceRelaySecret string
+	flag.StringVar(&inferenceRelaySecret, "inference-relay-secret", "",
+		"Path-segment secret for the inference relay Worker (Epic 26). "+
+			"Appended to --inference-relay-url as the first path segment; the Worker validates and strips it.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -145,7 +149,7 @@ func main() {
 	})
 
 	// Set up controllers
-	if err := controller.SetupControllers(mgr, inferenceRelayURL); err != nil {
+	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret); err != nil {
 		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}

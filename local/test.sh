@@ -213,18 +213,18 @@ POD=$(kc -n "${NS}" get workspace "${WORKSPACE_NAME}" -o jsonpath='{.status.podN
 [[ -n "${POD}" ]] || die "Sandbox.status.podName is empty"
 ok "Sandbox pod: ${POD}"
 
-# Hit /global/health on the sandbox pod's opencode server (port 4096) via
+# Hit /global/health on the workspace pod's opencode server (port 4096) via
 # kubectl exec + curl. opencode requires HTTP basic auth — username is
-# always "opencode", password lives in the sandbox-pw-<name> Secret that
+# always "opencode", password lives in the workspace-pw-<name> Secret that
 # the controller's credential-setup init container mounts at
-# /sandbox-cfg/password. We pull it from the K8s API for the test.
-log "  verifying opencode serve responds inside the sandbox pod"
-PW_SECRET="sandbox-pw-${WORKSPACE_NAME}"
+# /workspace-cfg/password. We pull it from the K8s API for the test.
+log "  verifying opencode serve responds inside the workspace pod"
+PW_SECRET="workspace-pw-${WORKSPACE_NAME}"
 OC_PASSWORD=$(kc -n "${NS}" get secret "${PW_SECRET}" -o jsonpath='{.data.password}' 2>/dev/null \
     | base64 -d 2>/dev/null || true)
-[[ -n "${OC_PASSWORD}" ]] || die "secret ${PW_SECRET} missing or empty (controller did not generate sandbox password)"
+[[ -n "${OC_PASSWORD}" ]] || die "secret ${PW_SECRET} missing or empty (controller did not generate workspace password)"
 
-HEALTH=$(kc -n "${NS}" exec "${POD}" -c sandbox -- \
+HEALTH=$(kc -n "${NS}" exec "${POD}" -c workspace -- \
     curl -sfm 5 -u "opencode:${OC_PASSWORD}" \
     http://127.0.0.1:4096/global/health 2>&1 || true)
 case "${HEALTH}" in
@@ -233,7 +233,7 @@ case "${HEALTH}" in
         ;;
     *)
         warn "opencode /global/health unexpected response: ${HEALTH}"
-        kc -n "${NS}" logs "${POD}" -c sandbox --tail=30 || true
+        kc -n "${NS}" logs "${POD}" -c workspace --tail=30 || true
         die "opencode serve did not respond healthy"
         ;;
 esac
