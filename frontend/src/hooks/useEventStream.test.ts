@@ -160,3 +160,82 @@ describe("useEventStream", () => {
     controllers[1]?.close();
   });
 });
+
+describe("useEventStream — read timeout", () => {
+  let fetchRestore: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    fetchRestore = globalThis.fetch;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = fetchRestore;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("reconnects after READ_TIMEOUT_MS of silence", async () => {
+    let connectCount = 0;
+
+    const mock = vi.fn().mockImplementation(() => {
+      connectCount++;
+      return Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise(() => {}), // hangs forever
+          }),
+        },
+        status: 200,
+      });
+    });
+    globalThis.fetch = mock;
+
+    renderHook(() => useEventStream("sb-hang", vi.fn()));
+
+    // Wait for initial connect
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectCount).toBe(1);
+
+    // Advance past READ_TIMEOUT_MS (35s) to trigger timeout
+    await vi.advanceTimersByTimeAsync(35_000);
+
+    // After timeout fires, scheduleReconnect sets a retry timer (MIN_RECONNECT_MS = 2s)
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(connectCount).toBe(2);
+  });
+
+  it("aborts old controller on reconnect so hanging read is released", async () => {
+    const abortCalls: string[] = [];
+    let connectCount = 0;
+
+    const mock = vi.fn().mockImplementation((_url: string, opts: RequestInit) => {
+      connectCount++;
+      const signal = opts.signal as AbortSignal;
+      signal.addEventListener("abort", () => abortCalls.push(`abort-${connectCount}`));
+      return Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise(() => {}),
+          }),
+        },
+        status: 200,
+      });
+    });
+    globalThis.fetch = mock;
+
+    renderHook(() => useEventStream("sb-abort", vi.fn()));
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectCount).toBe(1);
+
+    // Trigger timeout + reconnect
+    await vi.advanceTimersByTimeAsync(35_000 + 2_000);
+
+    expect(abortCalls).toContain("abort-1");
+    expect(connectCount).toBe(2);
+  });
+});

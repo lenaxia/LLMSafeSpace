@@ -23,11 +23,15 @@ export function useUserEventStream() {
     let cancelled = false;
     let retryDelay = MIN_RECONNECT_MS;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    const abortCtrl = new AbortController();
+    let abortCtrl = new AbortController();
 
     function scheduleReconnect() {
       if (cancelled) return;
       retryTimer = setTimeout(() => {
+        if (cancelled) return;
+        // Abort the old controller so any hanging reader.read() is released
+        abortCtrl.abort();
+        abortCtrl = new AbortController();
         retryDelay = Math.min(retryDelay * 2, MAX_RECONNECT_MS);
         connect();
       }, retryDelay);

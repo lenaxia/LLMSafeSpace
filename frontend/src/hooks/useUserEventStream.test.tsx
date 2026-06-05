@@ -140,3 +140,78 @@ describe("useUserEventStream", () => {
     });
   });
 });
+
+describe("useUserEventStream — read timeout & abort", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    global.fetch = fetchMock;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("reconnects after READ_TIMEOUT_MS of silence", async () => {
+    let connectCount = 0;
+    fetchMock.mockImplementation(() => {
+      connectCount++;
+      return Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise(() => {}), // hangs forever
+          }),
+        },
+      });
+    });
+
+    const { wrapper } = createWrapper();
+    renderHook(() => useUserEventStream(), { wrapper });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectCount).toBe(1);
+
+    // Advance past READ_TIMEOUT_MS (35s)
+    await vi.advanceTimersByTimeAsync(35_000);
+
+    // After timeout, scheduleReconnect fires after MIN_RECONNECT_MS (1s)
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(connectCount).toBe(2);
+  });
+
+  it("aborts old controller on reconnect so hanging read is released", async () => {
+    const abortCalls: string[] = [];
+    let connectCount = 0;
+
+    fetchMock.mockImplementation((_url: string, opts: RequestInit) => {
+      connectCount++;
+      const signal = opts.signal as AbortSignal;
+      signal.addEventListener("abort", () => abortCalls.push(`abort-${connectCount}`));
+      return Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise(() => {}),
+          }),
+        },
+      });
+    });
+
+    const { wrapper } = createWrapper();
+    renderHook(() => useUserEventStream(), { wrapper });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectCount).toBe(1);
+
+    // Trigger timeout + reconnect delay
+    await vi.advanceTimersByTimeAsync(35_000 + 1_000);
+
+    expect(abortCalls).toContain("abort-1");
+    expect(connectCount).toBe(2);
+  });
+});
