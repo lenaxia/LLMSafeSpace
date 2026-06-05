@@ -454,9 +454,7 @@ func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, erro
 
 // GetWorkspacePassword reads the workspace password from its K8s Secret.
 // The secret name follows the controller's passwordSecretName convention:
-// "workspace-pw-<workspaceID>". Used by the relay handler to authenticate
-// agentd connections (agentd is injected LLMSAFESPACE_RELAY_TOKEN from this
-// same secret by the controller).
+// "workspace-pw-<workspaceID>".
 func (a *k8sWorkspaceGetterAdapter) GetWorkspacePassword(id string) (string, error) {
 	secretName := fmt.Sprintf("workspace-pw-%s", id)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
