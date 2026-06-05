@@ -45,23 +45,12 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		if r.pendingTimedOut(workspace) {
-			// PVC doesn't exist yet — retry PVC creation with backoff.
-			// Don't call enterRecovery (which sets phase=Creating) because
-			// handleCreating would attempt buildPod without a PVC.
-			workspace.Status.ConsecutiveFailures++
-			workspace.Status.LastFailureClass = string(FailureClassInfrastructure)
-			now := metav1.Now()
-			workspace.Status.LastFailureAt = &now
-			policy := recoveryPolicies[FailureClassInfrastructure]
-			backoff := calculateBackoff(workspace.Status.ConsecutiveFailures, policy)
-			if backoff > 0 {
-				nextRetry := metav1.NewTime(now.Add(backoff))
-				workspace.Status.NextRetryAt = &nextRetry
-			}
-			workspace.CreationTimestamp = now // reset timeout clock
-			return ctrl.Result{RequeueAfter: backoff}, r.Status().Update(ctx, workspace)
+		// If we're in backoff from a prior PVC creation failure, wait.
+		if wait := timeUntilNextRetry(workspace); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
 		}
+		workspace.Status.NextRetryAt = nil
+
 		newPVC := r.buildPVC(workspace, pvcName)
 		if err := controllerutil.SetControllerReference(workspace, newPVC, r.Scheme); err != nil {
 			return ctrl.Result{}, err

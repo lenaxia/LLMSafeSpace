@@ -143,7 +143,7 @@ func TestReconcile_Pending_PVCBound_TransitionsToCreating(t *testing.T) {
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase)
 }
 
-func TestReconcile_Pending_Timeout_EntersRecovery(t *testing.T) {
+func TestReconcile_Pending_NoPVC_CreatesPVC(t *testing.T) {
 	ws := makeWorkspace("ws-timeout", "default", v1.WorkspacePhasePending)
 	ws.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	r := reconcilerFor(t, ws)
@@ -153,10 +153,7 @@ func TestReconcile_Pending_Timeout_EntersRecovery(t *testing.T) {
 
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-timeout", Namespace: "default"}, updated))
-	assert.Equal(t, v1.WorkspacePhasePending, updated.Status.Phase,
-		"pending timeout stays in Pending with backoff (PVC not yet created)")
-	assert.Equal(t, int32(1), updated.Status.ConsecutiveFailures)
-	assert.NotNil(t, updated.Status.NextRetryAt)
+	assert.NotEmpty(t, updated.Status.PVCName, "PVC should be created regardless of age")
 }
 
 // --- Creating Phase Tests ---
