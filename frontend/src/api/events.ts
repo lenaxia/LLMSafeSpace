@@ -32,6 +32,7 @@ export function createEventStream(
   let lastLeaderHeartbeat = 0;
   let electionTimeout: ReturnType<typeof setTimeout> | null = null;
   let lastEventSourceError: number | null = null;
+  let resignationCount = 0;
 
   function becomeLeader() {
     if (isLeader) return;
@@ -46,6 +47,7 @@ export function createEventStream(
     eventSource.onmessage = (e) => {
       // Clear error state — successfully received data
       lastEventSourceError = null;
+      resignationCount = 0;
       try {
         const parsed: SSEEvent = { type: e.type, data: JSON.parse(e.data) };
         onEvent(parsed);
@@ -93,8 +95,10 @@ export function createEventStream(
 
   function startElection() {
     if (isLeader || electionTimeout) return;
-    // Random delay to avoid thundering herd
-    const delay = Math.random() * 500;
+    // Backoff on repeated resignations to prevent tight resign/re-elect loops
+    // on single-tab with persistent network failure
+    const backoff = Math.min(resignationCount * 2_000, 30_000);
+    const delay = backoff + Math.random() * 500;
     electionTimeout = setTimeout(() => {
       electionTimeout = null;
       becomeLeader();
@@ -116,6 +120,7 @@ export function createEventStream(
         heartbeatInterval = null;
         isLeader = false;
         lastEventSourceError = null;
+        resignationCount++;
         // This tab may become leader again if no other tab takes over
         startElection();
       }

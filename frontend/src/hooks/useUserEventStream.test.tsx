@@ -164,6 +164,7 @@ describe("useUserEventStream — read timeout & abort", () => {
         body: {
           getReader: () => ({
             read: () => new Promise(() => {}), // hangs forever
+            cancel: () => Promise.resolve(),
           }),
         },
       });
@@ -178,8 +179,8 @@ describe("useUserEventStream — read timeout & abort", () => {
     // Advance past READ_TIMEOUT_MS (35s)
     await vi.advanceTimersByTimeAsync(35_000);
 
-    // After timeout, scheduleReconnect fires after MIN_RECONNECT_MS (1s)
-    await vi.advanceTimersByTimeAsync(1_000);
+    // After timeout, scheduleReconnect fires after MIN_RECONNECT_MS (1s) * jitter max 1.5
+    await vi.advanceTimersByTimeAsync(1_500);
 
     expect(connectCount).toBe(2);
   });
@@ -197,6 +198,7 @@ describe("useUserEventStream — read timeout & abort", () => {
         body: {
           getReader: () => ({
             read: () => new Promise(() => {}),
+            cancel: () => Promise.resolve(),
           }),
         },
       });
@@ -208,8 +210,8 @@ describe("useUserEventStream — read timeout & abort", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(connectCount).toBe(1);
 
-    // Trigger timeout + reconnect delay
-    await vi.advanceTimersByTimeAsync(35_000 + 1_000);
+    // Trigger timeout + reconnect delay (with jitter)
+    await vi.advanceTimersByTimeAsync(35_000 + 1_500);
 
     expect(abortCalls).toContain("abort-1");
     expect(connectCount).toBe(2);
