@@ -349,6 +349,7 @@ jobs:
     name: SDK Canary (ci:fast scenarios)
     runs-on: ubuntu-latest
     needs: [sdk-contract]
+    if: false # Disabled: requires seeded accounts not yet committed (issue #27)
     # Non-blocking: canary scenarios that require seeded accounts (valid-key,
     # login flows, workspace CRUD) will fail until seed-accounts source is
     # committed to the repo (tracked in issue #27). Health, error-shape, and
