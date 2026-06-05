@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -70,7 +69,6 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		Env: []corev1.EnvVar{
 			{Name: "WORKSPACE_ID", Value: workspace.Name},
 			{Name: "WORKSPACE_DIR", Value: agentd.WorkspacePath},
-			{Name: "OPENCODE_AUTH_CONTENT", Value: r.buildOpenCodeAuthContent()},
 			{Name: "AGENTD_ADMIN_TOKEN", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -475,23 +473,3 @@ func buildWorkspaceSetupScript(ws *v1.Workspace) string {
 }
 
 // --- Setup ---
-
-// buildOpenCodeAuthContent returns the OPENCODE_AUTH_CONTENT JSON.
-// When InferenceRelayURL is configured (Epic 26), it includes metadata.baseURL
-// so opencode routes free-tier requests through the Cloudflare Worker for IP distribution.
-func (r *WorkspaceReconciler) buildOpenCodeAuthContent() string {
-	if r.InferenceRelayURL == "" {
-		return `{"opencode":{"type":"api","key":"public"}}`
-	}
-	type meta struct {
-		BaseURL string `json:"baseURL"`
-	}
-	type entry struct {
-		Type     string `json:"type"`
-		Key      string `json:"key"`
-		Metadata meta   `json:"metadata"`
-	}
-	content := map[string]entry{"opencode": {Type: "api", Key: "public", Metadata: meta{BaseURL: r.InferenceRelayURL}}}
-	out, _ := json.Marshal(content)
-	return string(out)
-}

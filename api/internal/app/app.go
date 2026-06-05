@@ -5,11 +5,8 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +23,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/credentials"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -97,14 +93,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Create settings handler for API routes.
 	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
 
-	// Create credential sets handler (Epic 9 Phase C).
-	credKeySet := loadCredentialKeySet(cfg)
-	credSvc := credentials.NewService(dbSvc, credKeySet, log)
-	credentialsHandler := handlers.NewCredentialsHandler(credSvc)
-
 	// Wire secret management (Epic 10).
 	var secretsHandler *handlers.SecretsHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
+	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
+	var userProvCredHandler *handlers.UserProviderCredentialsHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -152,6 +145,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
+		adminProvCredHandler.SetAutoApplyStore(pgStore)
+		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
+		userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
+			return (&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
+		})
+		userProvCredHandler.SetCredentialStateWriter(dbSvc)
+
+		// Seed the free-tier opencode credential (Epic 30 US-30.4).
+		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {
+			log.Warn("free-tier credential seeding skipped", "error", err.Error())
+		}
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
 		// Without this the SecretsHandler returns 503 for every reload
 		// request and the SetBindings auto-push silently no-ops; see
@@ -190,6 +195,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// cross-tenant pollution (NEW-1).
 		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log})
 		secretService.RequireOwnerVerification()
+		secretService.SetAdminKeyDeriver(deriveServerKey)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
@@ -208,6 +214,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
+			wsSvc.SetCredentialProvisioner(pgStore)
 		}
 	}
 
@@ -299,20 +306,21 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
-		Debug:                   cfg.Logging.Development,
-		LoggingConfig:           server.DefaultRouterConfig().LoggingConfig,
-		RateLimitConfig:         rateLimitCfg,
-		SecurityConfig:          securityCfg,
-		TracingConfig:           server.DefaultRouterConfig().TracingConfig,
-		AllowedWebSocketOrigins: wsOrigins,
-		SettingsHandler:         settingsHandler,
-		InstanceSettings:        instanceSettings,
-		CredentialsHandler:      credentialsHandler,
-		SecretsHandler:          secretsHandler,
-		RotateKeyHandler:        rotateKeyHandler,
-		TerminalHandler:         terminalHandler,
-		AgentReloadHandler:      agentReloadHandler,
-		BulkReloadHandler:       bulkReloadHandler,
+		Debug:                           cfg.Logging.Development,
+		LoggingConfig:                   server.DefaultRouterConfig().LoggingConfig,
+		RateLimitConfig:                 rateLimitCfg,
+		SecurityConfig:                  securityCfg,
+		TracingConfig:                   server.DefaultRouterConfig().TracingConfig,
+		AllowedWebSocketOrigins:         wsOrigins,
+		SettingsHandler:                 settingsHandler,
+		InstanceSettings:                instanceSettings,
+		AdminProviderCredentialsHandler: adminProvCredHandler,
+		UserProviderCredentialsHandler:  userProvCredHandler,
+		SecretsHandler:                  secretsHandler,
+		RotateKeyHandler:                rotateKeyHandler,
+		TerminalHandler:                 terminalHandler,
+		AgentReloadHandler:              agentReloadHandler,
+		BulkReloadHandler:               bulkReloadHandler,
 	})
 
 	httpServer := &http.Server{
@@ -440,30 +448,4 @@ func (a *App) Shutdown() error {
 
 	a.logger.Info("Application shutdown complete")
 	return nil
-}
-
-// loadCredentialKeySet loads the credential encryption key set from the
-// LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY environment variable (hex-encoded 32 bytes).
-// If not set, generates a random key (suitable for development only).
-func loadCredentialKeySet(cfg *config.Config) *credentials.EncryptionKeySet {
-	keyHex := os.Getenv("LLMSAFESPACE_CREDENTIAL_ENCRYPTION_KEY")
-	if keyHex != "" {
-		key, err := hex.DecodeString(keyHex)
-		if err == nil && len(key) == 32 {
-			return &credentials.EncryptionKeySet{
-				Keys: []credentials.EncryptionKey{{Version: 1, Key: key}},
-			}
-		}
-	}
-	// Fallback: generate a random key (development only — not persisted across restarts).
-	// rand.Read failure is fatal: a zero-byte key would leak every
-	// credential it wraps. We panic at startup rather than serve traffic
-	// with broken crypto.
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		panic(fmt.Sprintf("crypto/rand.Read failed during credential key fallback: %v", err))
-	}
-	return &credentials.EncryptionKeySet{
-		Keys: []credentials.EncryptionKey{{Version: 1, Key: key}},
-	}
 }

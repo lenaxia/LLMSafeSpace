@@ -340,12 +340,11 @@ func newContractFixture(t *testing.T) *gin.Engine {
 	// guards in NewRouter wire every route. We never invoke the
 	// handlers; the test asserts route presence only.
 	cfg := RouterConfig{
-		Debug:              false,
-		SettingsHandler:    &handlers.SettingsHandler{},
-		SecretsHandler:     &handlers.SecretsHandler{},
-		CredentialsHandler: &handlers.CredentialsHandler{},
-		RotateKeyHandler:   &handlers.RotateKeyHandler{},
-		TerminalHandler:    &handlers.TerminalHandler{},
+		Debug:            false,
+		SettingsHandler:  &handlers.SettingsHandler{},
+		SecretsHandler:   &handlers.SecretsHandler{},
+		RotateKeyHandler: &handlers.RotateKeyHandler{},
+		TerminalHandler:  &handlers.TerminalHandler{},
 	}
 	// proxyHandler also has a conditional wiring guard (sessions,
 	// events, message, prompt, abort routes). Pass a zero-value stub

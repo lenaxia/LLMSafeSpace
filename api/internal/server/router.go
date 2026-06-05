@@ -52,8 +52,11 @@ type RouterConfig struct {
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
 
-	// CredentialsHandler is the handler for credential set CRUD (optional)
-	CredentialsHandler *handlers.CredentialsHandler
+	// AdminProviderCredentialsHandler handles admin credential CRUD (optional)
+	AdminProviderCredentialsHandler *handlers.AdminProviderCredentialsHandler
+
+	// UserProviderCredentialsHandler handles user credential CRUD (optional)
+	UserProviderCredentialsHandler *handlers.UserProviderCredentialsHandler
 
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
@@ -188,9 +191,31 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		registerSettingsRoutes(router, services, cfg.SettingsHandler)
 	}
 
-	// Credential set CRUD routes (admin only)
-	if cfg.CredentialsHandler != nil {
-		registerCredentialRoutes(router, services, cfg.CredentialsHandler)
+	// Admin provider credentials routes (Epic 30)
+	if cfg.AdminProviderCredentialsHandler != nil {
+		adminCreds := router.Group("/api/v1/admin/provider-credentials")
+		adminCreds.Use(services.GetAuth().AuthMiddleware())
+		adminCreds.Use(middleware.AdminGuard())
+		adminCreds.POST("", cfg.AdminProviderCredentialsHandler.Create)
+		adminCreds.GET("", cfg.AdminProviderCredentialsHandler.List)
+		adminCreds.GET("/:id", cfg.AdminProviderCredentialsHandler.Get)
+		adminCreds.PUT("/:id", cfg.AdminProviderCredentialsHandler.Update)
+		adminCreds.DELETE("/:id", cfg.AdminProviderCredentialsHandler.Delete)
+		adminCreds.POST("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.CreateAutoApply)
+		adminCreds.GET("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.ListAutoApply)
+		adminCreds.DELETE("/:id/auto-apply/:targetType/:targetId", cfg.AdminProviderCredentialsHandler.DeleteAutoApply)
+	}
+
+	// User provider credentials routes (Epic 30)
+	if cfg.UserProviderCredentialsHandler != nil {
+		userCreds := router.Group("/api/v1/provider-credentials")
+		userCreds.Use(services.GetAuth().AuthMiddleware())
+		userCreds.POST("", cfg.UserProviderCredentialsHandler.Create)
+		userCreds.GET("", cfg.UserProviderCredentialsHandler.List)
+		userCreds.GET("/:id", cfg.UserProviderCredentialsHandler.Get)
+		userCreds.DELETE("/:id", cfg.UserProviderCredentialsHandler.Delete)
+		userCreds.POST("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Bind)
+		userCreds.DELETE("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Unbind)
 	}
 
 	// Secret management routes (Epic 10)
@@ -797,21 +822,6 @@ func registerSettingsRoutes(router *gin.Engine, services interfaces.Services, h 
 }
 
 // registerCredentialRoutes adds admin credential set CRUD routes.
-func registerCredentialRoutes(router *gin.Engine, services interfaces.Services, h *handlers.CredentialsHandler) {
-	authMW := services.GetAuth().AuthMiddleware()
-
-	creds := router.Group("/api/v1/admin/credentials")
-	creds.Use(authMW)
-	creds.Use(middleware.AdminGuard())
-	creds.POST("", h.CreateCredentialSet)
-	creds.GET("", h.ListCredentialSets)
-	creds.GET("/:id", h.GetCredentialSet)
-	creds.PUT("/:id", h.UpdateCredentialSet)
-	creds.DELETE("/:id", h.DeleteCredentialSet)
-	creds.PUT("/:id/default", h.SetDefaultCredentialSet)
-	creds.POST("/rotate-key", h.RotateCredentialKey)
-}
-
 // getMaxActiveSessions reads the max active sessions setting, falling back to 5.
 func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.InstanceService) int {
 	if instanceSettings != nil {

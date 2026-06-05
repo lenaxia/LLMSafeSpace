@@ -37,51 +37,61 @@ func (h *SecretsHandler) SetWorkspaceMetadataUpdater(u ModelStore) {
 	h.wsUpdater = u
 }
 
-var modelHTTPClient = &http.Client{Timeout: 5 * time.Second}
+// ModelCache abstracts model catalog caching. Default: in-process map.
+// Future: Redis-backed for multi-replica consistency (US-30.11).
+type ModelCache interface {
+	Get(workspaceID string) []byte
+	Set(workspaceID string, data []byte)
+	Evict(workspaceID string)
+}
 
-// modelCache is a brief per-workspace cache for model catalog responses
-// to avoid re-fetching on rapid page loads.
+// inMemoryModelCache is the default in-process cache (5s TTL).
+type inMemoryModelCache struct {
+	mu    sync.Mutex
+	cache map[string]*modelCacheEntry
+}
+
 type modelCacheEntry struct {
 	data      []byte
 	expiresAt time.Time
 }
 
-var (
-	modelCacheMu  sync.Mutex
-	modelCacheMap = make(map[string]*modelCacheEntry)
-)
+func newInMemoryModelCache() *inMemoryModelCache {
+	return &inMemoryModelCache{cache: make(map[string]*modelCacheEntry)}
+}
 
-func getCachedModels(workspaceID string) []byte {
-	modelCacheMu.Lock()
-	defer modelCacheMu.Unlock()
-	entry := modelCacheMap[workspaceID]
+func (c *inMemoryModelCache) Get(workspaceID string) []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry := c.cache[workspaceID]
 	if entry == nil || time.Now().After(entry.expiresAt) {
 		return nil
 	}
 	return entry.data
 }
 
-func setCachedModels(workspaceID string, data []byte) {
-	modelCacheMu.Lock()
-	defer modelCacheMu.Unlock()
-	modelCacheMap[workspaceID] = &modelCacheEntry{
-		data:      data,
-		expiresAt: time.Now().Add(5 * time.Second),
-	}
+func (c *inMemoryModelCache) Set(workspaceID string, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache[workspaceID] = &modelCacheEntry{data: data, expiresAt: time.Now().Add(5 * time.Second)}
 }
 
-// clearModelCache removes all cached entries. Exported for testing.
+func (c *inMemoryModelCache) Evict(workspaceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.cache, workspaceID)
+}
+
+// defaultModelCache is the singleton used when no Redis is wired.
+var defaultModelCache = newInMemoryModelCache()
+
+var modelHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+// clearModelCache resets the cache. Exported for testing.
 func clearModelCache() {
-	modelCacheMu.Lock()
-	defer modelCacheMu.Unlock()
-	modelCacheMap = make(map[string]*modelCacheEntry)
-}
-
-// evictModelCache removes a single workspace's cached entry.
-func evictModelCache(workspaceID string) {
-	modelCacheMu.Lock()
-	defer modelCacheMu.Unlock()
-	delete(modelCacheMap, workspaceID)
+	defaultModelCache.mu.Lock()
+	defer defaultModelCache.mu.Unlock()
+	defaultModelCache.cache = make(map[string]*modelCacheEntry)
 }
 
 // ListModels handles GET /api/v1/workspaces/:id/models.
@@ -119,7 +129,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	}
 
 	// Check cache first (5s TTL, avoids repeated catalog fetches on page loads).
-	body := getCachedModels(workspaceID)
+	body := defaultModelCache.Get(workspaceID)
 	if body == nil {
 		// Retrieve workspace password for opencode Basic auth.
 		if h.passwordGetter == nil {
@@ -158,7 +168,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 			return
 		}
 
-		setCachedModels(workspaceID, body)
+		defaultModelCache.Set(workspaceID, body)
 	}
 
 	// Annotate models with tier information.
@@ -169,18 +179,14 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// Filter to only usable models:
-	// - Free-tier models always work (public key)
-	// - Models from non-opencode providers work (they only appear if the
-	//   provider was enabled via real credentials injected by AccountPlugin)
-	// - Paid opencode models do NOT work with the public key — exclude them
+	// Filter to only usable models (available or free-tier).
 	usable := make([]annotatedModel, 0, len(annotated))
 	for _, m := range annotated {
 		if !m.Enabled {
 			continue
 		}
-		if m.ProviderID == "opencode" && !m.FreeTier {
-			continue // paid opencode model — won't work with public key
+		if m.Availability == ModelUnavailable {
+			continue
 		}
 		usable = append(usable, m)
 	}
@@ -209,17 +215,18 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 
 // annotatedModel is the enriched model response returned to callers.
 type annotatedModel struct {
-	ID            string          `json:"id"`
-	ProviderID    string          `json:"providerID"`
-	Name          string          `json:"name"`
-	Family        string          `json:"family,omitempty"`
-	Enabled       bool            `json:"enabled"`
-	Status        string          `json:"status,omitempty"`
-	Tier          string          `json:"tier"`          // "free" or "paid"
-	FreeTier      bool            `json:"freeTier"`      // convenience boolean
-	ProxyRequired bool            `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
-	Selected      bool            `json:"selected"`      // true if this is the workspace's current default
-	Details       json.RawMessage `json:"details"`       // full opencode model object (unstable schema)
+	ID            string            `json:"id"`
+	ProviderID    string            `json:"providerID"`
+	Name          string            `json:"name"`
+	Family        string            `json:"family,omitempty"`
+	Enabled       bool              `json:"enabled"`
+	Status        string            `json:"status,omitempty"`
+	Availability  ModelAvailability `json:"availability"`
+	Tier          string            `json:"tier"`          // "free" or "paid" (deprecated, use Availability)
+	FreeTier      bool              `json:"freeTier"`      // convenience boolean (deprecated)
+	ProxyRequired bool              `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
+	Selected      bool              `json:"selected"`      // true if this is the workspace's current default
+	Details       json.RawMessage   `json:"details"`       // full opencode model object (unstable schema)
 }
 
 // opencodeModel is the minimal subset of opencode's ModelV2.Info we parse for classification.
@@ -238,22 +245,37 @@ type opencodeCost struct {
 	Output float64 `json:"output"`
 }
 
+// ModelAvailability classifies model accessibility.
+type ModelAvailability string
+
+const (
+	ModelAvailable   ModelAvailability = "available"
+	ModelUnavailable ModelAvailability = "unavailable"
+	ModelFreeTier    ModelAvailability = "free"
+)
+
 func annotateModels(raw []byte) ([]annotatedModel, error) {
-	// Parse the minimal fields we need for classification.
 	var models []opencodeModel
 	if err := json.Unmarshal(raw, &models); err != nil {
 		return nil, err
 	}
 
-	// Also parse as raw JSON array to preserve full objects.
 	var rawModels []json.RawMessage
 	if err := json.Unmarshal(raw, &rawModels); err != nil {
 		return nil, err
 	}
 
+	// Derive loadedProviders from catalog — which providers have enabled models.
+	loadedProviders := make(map[string]bool)
+	for _, m := range models {
+		if m.Enabled {
+			loadedProviders[m.ProviderID] = true
+		}
+	}
+
 	result := make([]annotatedModel, len(models))
 	for i, m := range models {
-		tier := classifyTier(m.ProviderID, m.Cost)
+		avail := classifyAvailability(m.ProviderID, m.Cost, loadedProviders)
 		var details json.RawMessage
 		if i < len(rawModels) {
 			details = rawModels[i]
@@ -265,33 +287,46 @@ func annotateModels(raw []byte) ([]annotatedModel, error) {
 			Family:        m.Family,
 			Enabled:       m.Enabled,
 			Status:        m.Status,
-			Tier:          tier,
-			FreeTier:      tier == "free",
-			ProxyRequired: tier == "free",
+			Availability:  avail,
+			Tier:          tierFromAvailability(avail),
+			FreeTier:      avail == ModelFreeTier,
+			ProxyRequired: avail == ModelFreeTier,
 			Details:       details,
 		}
 	}
 	return result, nil
 }
 
-// classifyTier determines if a model is free or paid.
-// Free: opencode provider models where all cost entries have input=0 and output=0.
-// Everything else is paid.
-func classifyTier(providerID string, cost []opencodeCost) string {
+func classifyAvailability(providerID string, cost []opencodeCost, loadedProviders map[string]bool) ModelAvailability {
+	if !loadedProviders[providerID] {
+		return ModelUnavailable
+	}
+	if isZeroCostOpencode(providerID, cost) {
+		return ModelFreeTier
+	}
+	return ModelAvailable
+}
+
+func isZeroCostOpencode(providerID string, cost []opencodeCost) bool {
 	if providerID != "opencode" {
-		return "paid"
+		return false
 	}
 	if len(cost) == 0 {
-		// No cost data for an opencode model = assume free (opencode's free tier
-		// models may not have cost entries populated).
-		return "free"
+		return true // no cost data for opencode model = assume free
 	}
 	for _, c := range cost {
 		if c.Input > 0 || c.Output > 0 {
-			return "paid"
+			return false
 		}
 	}
-	return "free"
+	return true
+}
+
+func tierFromAvailability(a ModelAvailability) string {
+	if a == ModelFreeTier {
+		return "free"
+	}
+	return "paid"
 }
 
 // SetModel handles PUT /api/v1/workspaces/:id/model.
@@ -349,7 +384,7 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	}
 
 	// Clear this workspace's model cache so next ListModels reflects the new selection.
-	evictModelCache(workspaceID)
+	defaultModelCache.Evict(workspaceID)
 
 	// Also persist to K8s Secret so the next pod boot picks it up.
 	if h.manifestWriter != nil {
@@ -442,5 +477,3 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, m
 	}
 	return nil
 }
-
-// isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.

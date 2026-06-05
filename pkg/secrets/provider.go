@@ -9,8 +9,9 @@ import "context"
 type OwnerType string
 
 const (
-	OwnerTypeUser OwnerType = "user"
-	OwnerTypeOrg  OwnerType = "org"
+	OwnerTypeUser  OwnerType = "user"
+	OwnerTypeOrg   OwnerType = "org"
+	OwnerTypeAdmin OwnerType = "admin"
 )
 
 // SecretOwner identifies the owner of a secret (user or org).

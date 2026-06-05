@@ -19,6 +19,7 @@ type SecretService struct {
 	keys              *KeyService
 	store             SecretStore
 	wsOwners          WorkspaceOwnerVerifier
+	deriveAdminKey    AdminKeyDeriver
 	requireWsVerifier bool
 }
 
@@ -66,6 +67,12 @@ func (s *SecretService) SetWorkspaceOwnerVerifier(v WorkspaceOwnerVerifier) {
 // silent cross-tenant enumeration.
 func (s *SecretService) RequireOwnerVerification() {
 	s.requireWsVerifier = true
+}
+
+// SetAdminKeyDeriver installs the admin credential decryption key deriver.
+// When non-nil, PrepareSecretsForInjection uses the new multi-source path.
+func (s *SecretService) SetAdminKeyDeriver(d AdminKeyDeriver) {
+	s.deriveAdminKey = d
 }
 
 // CreateSecret encrypts and stores a new secret.
