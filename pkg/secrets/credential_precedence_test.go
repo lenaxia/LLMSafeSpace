@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,3 +178,73 @@ func (c *testDEKCache) GetDEK(_ context.Context, sessionID string) ([]byte, erro
 }
 
 func (c *testDEKCache) EvictDEK(_ context.Context, _ string) error { return nil }
+
+// TestAsyncAuditLogger_ImplementsCredentialStore verifies that the type assertion
+// in PrepareSecretsForInjection succeeds when store is *AsyncAuditLogger.
+func TestAsyncAuditLogger_ImplementsCredentialStore(t *testing.T) {
+	inner := newMockSecretStore()
+	logger := &asyncAuditTestLogger{}
+	audit := NewAsyncAuditLogger(inner, 16, logger)
+	defer audit.Stop()
+
+	// Type assertion must succeed.
+	_, ok := interface{}(audit).(CredentialStore)
+	require.True(t, ok, "AsyncAuditLogger must implement CredentialStore for injection path to activate")
+}
+
+// TestPrepareSecretsForInjection_ViaAsyncAuditLogger ensures the new path
+// activates when store is wrapped in AsyncAuditLogger (production configuration).
+func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
+	// Inner store implements both SecretStore and CredentialStore.
+	innerSecret := newMockSecretStore()
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	plaintext, _ := json.Marshal(LLMProviderData{Provider: "opencode", APIKey: "public"})
+	cipher, err := EncryptSecret(adminKEK, plaintext)
+	require.NoError(t, err)
+
+	// AsyncAuditLogger wraps the inner store (which is both SecretStore and doesn't implement CredentialStore).
+	// We need to use a combined store that implements both.
+	mockCred := &mockCredentialStore{
+		bindings: []CredentialBinding{
+			{ID: "c1", OwnerType: "admin", OwnerID: "_platform", Provider: "opencode", Ciphertext: cipher, SourceType: "auto"},
+		},
+	}
+	combined := &combinedTestStore{SecretStore: innerSecret, CredentialStore: mockCred}
+
+	logger := &asyncAuditTestLogger{}
+	audit := NewAsyncAuditLogger(combined, 16, logger)
+	defer audit.Stop()
+
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(newMockKeyStore(), dekCache)
+
+	svc := NewSecretService(keyService, audit)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	ctx := context.Background()
+	result, err := svc.PrepareSecretsForInjection(ctx, "user-1", "sess-1", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1, "new path must activate through AsyncAuditLogger")
+	assert.Contains(t, llm[0].Plaintext, `"public"`)
+}
+
+type asyncAuditTestLogger struct{}
+
+func (l *asyncAuditTestLogger) Info(_ string, _ ...interface{})           {}
+func (l *asyncAuditTestLogger) Warn(_ string, _ ...interface{})           {}
+func (l *asyncAuditTestLogger) Error(_ string, _ error, _ ...interface{}) {}
+func (l *asyncAuditTestLogger) Debug(_ string, _ ...interface{})          {}
+func (l *asyncAuditTestLogger) Fatal(_ string, _ error, _ ...interface{}) {}
+func (l *asyncAuditTestLogger) Sync() error                               { return nil }
+func (l *asyncAuditTestLogger) With(_ ...interface{}) pkginterfaces.LoggerInterface {
+	return l
+}

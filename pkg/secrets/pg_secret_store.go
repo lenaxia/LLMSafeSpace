@@ -670,3 +670,35 @@ func (l *AsyncAuditLogger) GetBindingsForSecret(ctx context.Context, secretID st
 func (l *AsyncAuditLogger) QueryAudit(ctx context.Context, userID string, query AuditQuery) ([]*AuditEntry, error) {
 	return l.store.QueryAudit(ctx, userID, query)
 }
+
+// --- CredentialStore delegation (Epic 30) ---
+// AsyncAuditLogger must satisfy CredentialStore so the type assertion in
+// PrepareSecretsForInjection succeeds. All methods delegate to the inner store.
+
+func (l *AsyncAuditLogger) GetWorkspaceCredentials(ctx context.Context, workspaceID string) ([]CredentialBinding, error) {
+	if cs, ok := l.store.(CredentialStore); ok {
+		return cs.GetWorkspaceCredentials(ctx, workspaceID)
+	}
+	return nil, nil
+}
+
+func (l *AsyncAuditLogger) UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error {
+	if cs, ok := l.store.(CredentialStore); ok {
+		return cs.UpsertFreeTierCredential(ctx, ciphertext)
+	}
+	return fmt.Errorf("inner store does not implement CredentialStore")
+}
+
+func (l *AsyncAuditLogger) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error {
+	if cs, ok := l.store.(CredentialStore); ok {
+		return cs.SeedWorkspaceCredentials(ctx, workspaceID, userID)
+	}
+	return fmt.Errorf("inner store does not implement CredentialStore")
+}
+
+func (l *AsyncAuditLogger) HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error) {
+	if cs, ok := l.store.(CredentialStore); ok {
+		return cs.HasUserProviderCredential(ctx, userID, provider)
+	}
+	return false, nil
+}

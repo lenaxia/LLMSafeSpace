@@ -555,13 +555,14 @@ func (r *secretsPodIPResolver) GetWorkspacePodIP(ctx context.Context, userID, wo
 	return ws.Status.PodIP, nil
 }
 
-// CredentialSeeder is the narrow interface for free-tier credential seeding.
+// credentialSeeder is the narrow interface for free-tier credential seeding.
 type credentialSeeder interface {
 	UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error
+	BackfillFreeTierBindings(ctx context.Context) (int64, error)
 }
 
-// EnsureFreeTierCredential upserts the platform free-tier opencode credential
-// at API startup. Idempotent — safe on every boot.
+// ensureFreeTierCredential upserts the platform free-tier opencode credential
+// at API startup and backfills bindings for existing workspaces. Idempotent.
 func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, logger pkginterfaces.LoggerInterface) error {
 	kek := deriveServerKey("provider-credentials")
 	if kek == nil {
@@ -572,5 +573,15 @@ func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, logg
 	if err != nil {
 		return fmt.Errorf("encrypt free-tier key: %w", err)
 	}
-	return seeder.UpsertFreeTierCredential(ctx, ciphertext)
+	if err := seeder.UpsertFreeTierCredential(ctx, ciphertext); err != nil {
+		return fmt.Errorf("upsert free-tier credential: %w", err)
+	}
+	// Backfill existing workspaces that lack the free-tier binding.
+	backfilled, err := seeder.BackfillFreeTierBindings(ctx)
+	if err != nil {
+		logger.Warn("free-tier backfill failed (non-fatal)", "error", err.Error())
+	} else if backfilled > 0 {
+		logger.Info("free-tier backfill complete", "workspacesBackfilled", backfilled)
+	}
+	return nil
 }

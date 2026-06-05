@@ -91,6 +91,28 @@ func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceI
 	return nil
 }
 
+// BackfillFreeTierBindings inserts workspace_credential_bindings for all
+// existing workspaces that lack the free-tier opencode credential binding.
+// Idempotent — uses ON CONFLICT DO NOTHING. Returns the number of rows inserted.
+func (s *PgSecretStore) BackfillFreeTierBindings(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT pc.id, w.id, 'auto', 0
+		FROM provider_credentials pc
+		CROSS JOIN workspaces w
+		WHERE pc.owner_type = 'admin' AND pc.owner_id = '_platform' AND pc.provider = 'opencode'
+		  AND NOT EXISTS (
+		    SELECT 1 FROM workspace_credential_bindings wcb
+		    WHERE wcb.credential_id = pc.id AND wcb.workspace_id = w.id
+		  )
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("backfill free-tier bindings: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // HasUserProviderCredential returns true if the user owns a credential for the given provider.
 func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error) {
 	var exists bool

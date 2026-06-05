@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,16 +26,31 @@ type UserCredentialStore interface {
 	UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error
 }
 
+// WorkspaceOwnerChecker verifies workspace ownership for bind operations.
+type WorkspaceOwnerChecker func(ctx context.Context, userID, workspaceID string) error
+
 // UserProviderCredentialsHandler handles user-scoped provider credential CRUD.
 type UserProviderCredentialsHandler struct {
-	store    UserCredentialStore
-	keys     *secrets.KeyService
-	keyStore secrets.KeyStore
+	store           UserCredentialStore
+	keys            *secrets.KeyService
+	keyStore        secrets.KeyStore
+	wsOwnerCheck    WorkspaceOwnerChecker
+	credStateWriter CredentialStateWriter
 }
 
 // NewUserProviderCredentialsHandler creates a new handler.
 func NewUserProviderCredentialsHandler(store UserCredentialStore, keys *secrets.KeyService, keyStore secrets.KeyStore) *UserProviderCredentialsHandler {
 	return &UserProviderCredentialsHandler{store: store, keys: keys, keyStore: keyStore}
+}
+
+// SetWorkspaceOwnerChecker installs the ownership verification function.
+func (h *UserProviderCredentialsHandler) SetWorkspaceOwnerChecker(fn WorkspaceOwnerChecker) {
+	h.wsOwnerCheck = fn
+}
+
+// SetCredentialStateWriter installs the reload banner trigger.
+func (h *UserProviderCredentialsHandler) SetCredentialStateWriter(w CredentialStateWriter) {
+	h.credStateWriter = w
 }
 
 // Create handles POST /api/v1/provider-credentials.
@@ -51,6 +67,13 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+
+	if strings.TrimSpace(req.Provider) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider must not be empty"})
+		return
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Name = strings.TrimSpace(req.Name)
 
 	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID)
 	if err != nil {
@@ -92,6 +115,10 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateUserCredential(c.Request.Context(), row); err != nil {
+		if isDuplicateErr(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
 		return
 	}
@@ -166,22 +193,74 @@ func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
 
 // Bind handles POST /api/v1/provider-credentials/:id/bind/:workspaceId.
 func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
+	userID := c.GetString("userID")
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
+
+	// Verify the user owns the credential.
+	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
+		return
+	}
+	if cred == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
+		return
+	}
+
+	// Verify the user owns the workspace (via the workspace owner verifier on the store).
+	if h.wsOwnerCheck != nil {
+		if err := h.wsOwnerCheck(c.Request.Context(), userID, wsID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+			return
+		}
+	}
+
 	if err := h.store.BindCredentialToWorkspace(c.Request.Context(), credID, wsID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to bind credential"})
 		return
 	}
+
+	// Trigger reload banner (Epic 27a).
+	if h.credStateWriter != nil {
+		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"bound": true})
 }
 
 // Unbind handles DELETE /api/v1/provider-credentials/:id/bind/:workspaceId.
 func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
+	userID := c.GetString("userID")
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
+
+	// Verify the user owns the credential.
+	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
+		return
+	}
+	if cred == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
+		return
+	}
+
+	if h.wsOwnerCheck != nil {
+		if err := h.wsOwnerCheck(c.Request.Context(), userID, wsID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+			return
+		}
+	}
+
 	if err := h.store.UnbindCredentialFromWorkspace(c.Request.Context(), credID, wsID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unbind credential"})
 		return
 	}
+
+	if h.credStateWriter != nil {
+		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+	}
+
 	c.Status(http.StatusNoContent)
 }

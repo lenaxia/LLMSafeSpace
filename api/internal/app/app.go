@@ -148,6 +148,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
+		userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
+			return (&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
+		})
+		userProvCredHandler.SetCredentialStateWriter(dbSvc)
 
 		// Seed the free-tier opencode credential (Epic 30 US-30.4).
 		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {

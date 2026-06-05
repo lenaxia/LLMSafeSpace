@@ -7,12 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
+
+// isDuplicateErr checks for PostgreSQL unique constraint violation (23505).
+func isDuplicateErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "23505")
+}
 
 // AdminCredentialStore abstracts DB operations for admin provider credentials.
 type AdminCredentialStore interface {
@@ -69,6 +75,13 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(req.Provider) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider must not be empty"})
+		return
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Name = strings.TrimSpace(req.Name)
+
 	kek := h.kek()
 	if kek == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
@@ -102,6 +115,10 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateAdminCredential(c.Request.Context(), row); err != nil {
+		if isDuplicateErr(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
 		return
 	}
