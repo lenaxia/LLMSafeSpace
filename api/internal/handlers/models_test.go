@@ -492,42 +492,42 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 
 // Ensure unused import doesn't break compilation.
 
-// --- Tier Annotation Tests ---
+// --- Availability Classification Tests ---
 
-func TestClassifyTier_OpencodeProviderZeroCost(t *testing.T) {
-	tier := classifyTier("opencode", []opencodeCost{{Input: 0, Output: 0}})
-	require.Equal(t, "free", tier)
+func TestClassifyAvailability_OpencodeZeroCost(t *testing.T) {
+	loaded := map[string]bool{"opencode": true}
+	avail := classifyAvailability("opencode", []opencodeCost{{Input: 0, Output: 0}}, loaded)
+	require.Equal(t, ModelFreeTier, avail)
 }
 
-func TestClassifyTier_OpencodeProviderNoCostEntries(t *testing.T) {
-	tier := classifyTier("opencode", []opencodeCost{})
-	require.Equal(t, "free", tier)
+func TestClassifyAvailability_OpencodeNoCostEntries(t *testing.T) {
+	loaded := map[string]bool{"opencode": true}
+	avail := classifyAvailability("opencode", []opencodeCost{}, loaded)
+	require.Equal(t, ModelFreeTier, avail)
 }
 
-func TestClassifyTier_OpencodeProviderNilCost(t *testing.T) {
-	tier := classifyTier("opencode", nil)
-	require.Equal(t, "free", tier)
+func TestClassifyAvailability_OpencodeNilCost(t *testing.T) {
+	loaded := map[string]bool{"opencode": true}
+	avail := classifyAvailability("opencode", nil, loaded)
+	require.Equal(t, ModelFreeTier, avail)
 }
 
-func TestClassifyTier_OpencodeProviderPaidCost(t *testing.T) {
-	tier := classifyTier("opencode", []opencodeCost{{Input: 3.0, Output: 15.0}})
-	require.Equal(t, "paid", tier)
+func TestClassifyAvailability_OpencodePaidCost(t *testing.T) {
+	loaded := map[string]bool{"opencode": true}
+	avail := classifyAvailability("opencode", []opencodeCost{{Input: 3.0, Output: 15.0}}, loaded)
+	require.Equal(t, ModelAvailable, avail)
 }
 
-func TestClassifyTier_OpencodeProviderMixedCost(t *testing.T) {
-	// Multiple cost tiers — one is free, one is paid. Should be paid.
-	tier := classifyTier("opencode", []opencodeCost{{Input: 0, Output: 0}, {Input: 5.0, Output: 10.0}})
-	require.Equal(t, "paid", tier)
+func TestClassifyAvailability_NonOpencodeLoaded(t *testing.T) {
+	loaded := map[string]bool{"anthropic": true}
+	avail := classifyAvailability("anthropic", []opencodeCost{{Input: 0, Output: 0}}, loaded)
+	require.Equal(t, ModelAvailable, avail)
 }
 
-func TestClassifyTier_NonOpencodeProvider(t *testing.T) {
-	tier := classifyTier("anthropic", []opencodeCost{{Input: 0, Output: 0}})
-	require.Equal(t, "paid", tier)
-}
-
-func TestClassifyTier_NonOpencodeProviderNoCost(t *testing.T) {
-	tier := classifyTier("openai", nil)
-	require.Equal(t, "paid", tier)
+func TestClassifyAvailability_ProviderNotLoaded(t *testing.T) {
+	loaded := map[string]bool{"opencode": true}
+	avail := classifyAvailability("anthropic", nil, loaded)
+	require.Equal(t, ModelUnavailable, avail)
 }
 
 func TestAnnotateModels_FullResponse(t *testing.T) {
@@ -744,15 +744,15 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	// Should contain: free opencode + anthropic (enabled, non-opencode)
-	// Should NOT contain: paid opencode + disabled openai
+	// Should contain: free opencode + paid opencode + anthropic (all enabled, all providers loaded)
+	// Should NOT contain: disabled openai
 	ids := make([]string, len(resp.Models))
 	for i, m := range resp.Models {
 		ids[i] = m.ID
 	}
 	require.Contains(t, ids, "opencode/free-model")
+	require.Contains(t, ids, "opencode/paid-model")
 	require.Contains(t, ids, "anthropic/claude")
-	require.NotContains(t, ids, "opencode/paid-model")
 	require.NotContains(t, ids, "openai/disabled")
-	require.Len(t, resp.Models, 2)
+	require.Len(t, resp.Models, 3)
 }
