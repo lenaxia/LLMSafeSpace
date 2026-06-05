@@ -353,3 +353,162 @@ US-26.2 (WebSocket Relay Endpoint) ────┼──→ US-26.3 (Browser Cli
 3. **Alternative: opencode transport plugin.** Instead of an HTTP proxy, could we contribute a custom AI SDK transport to opencode that delegates to a Unix socket? This would be cleaner but requires upstream acceptance.
 
 4. **Rate limit signals.** When the free provider rate-limits the client, how does that signal propagate back to opencode? The proxy response will be a 429 — opencode's retry logic should handle this, but needs testing.
+
+
+---
+
+## US-26.7: Relay Activation — Critical Fixes for Production Functionality
+
+**Status:** Open
+**Priority:** Critical (relay is non-functional without this)
+**Depends On:** US-26.1 through US-26.6 (all merged)
+**Identified:** Worklog 0153 (2026-06-05 audit)
+
+### Problem
+
+The relay system is structurally complete but operationally non-functional in production. Five validated issues prevent it from working:
+
+1. **Basic Auth missing on relay push** — `isFreeTierModel` and `pushRelayBaseURL` call opencode without Basic Auth → 401 → relay never activates via model selection.
+
+2. **No DisposeInstance after baseURL push** — `PUT /auth/opencode` writes to auth.json but opencode's in-memory provider state is NOT refreshed without a subsequent `POST /instance/dispose` (validated: `PushCredentials` docstring in `pkg/agent/opencode/client.go` explicitly states this).
+
+3. **No boot-time activation** — The relay baseURL is only pushed from `SetModel`. Fresh workspaces with free-tier default never push the baseURL → opencode routes directly to opencode.ai.
+
+4. **CORS blocks browser relay** — `api.opencode.ai` does NOT return `Access-Control-Allow-Origin` headers (validated: `curl -sI` returns no CORS headers). Browser `fetch()` will ALWAYS fail with TypeError for opencode.ai requests. The relay's browser execution path is fundamentally broken.
+
+5. **No automatic CORS fallback in agentd** — When the browser reports `proxy_error` (CORS), agentd returns 502 to opencode. There is no automatic fallback to server-side proxying. The existing fallback handler (`POST /relay/fallback`) is a browser-initiated endpoint, not an agentd failover.
+
+### Validated Assumptions
+
+| # | Assumption | Validation Evidence |
+|---|---|---|
+| V1 | opencode requires Basic Auth on ALL endpoints | Worklog 0127: "opencode 1.2.27+ requires Basic auth on all HTTP endpoints" |
+| V2 | `baseURL` in `provider.options.baseURL` works for routing | Worklog 0128: validated live — "request went to `https://ai.thekao.cloud/v1` (NOT api.openai.com)" |
+| V3 | `PUT /auth` writes auth.json but does NOT refresh provider state | `pkg/agent/opencode/client.go:55-57`: "does NOT trigger provider state refresh — call DisposeInstance afterward" |
+| V4 | `DisposeInstance` at boot is safe (no active streams) | Validated: agentd starts, opencode becomes ready, no sessions exist yet |
+| V5 | `api.opencode.ai` does NOT support CORS | `curl -sI https://api.opencode.ai/v1/models` returns no `Access-Control-Allow-Origin` header (tested 2026-06-05) |
+| V6 | `passwordGetter` is already wired on `SecretsHandler` | Worklog 0152: "passwordGetter wired from proxy's K8s-secret-backed getter" |
+| V7 | Existing `OpenCodeClient.PushCredentials` + `DisposeInstance` is the proven pattern | Used successfully for credential injection (Epic 10, worklog 0127/0128) |
+
+### Architecture Decision: Server-Side Fallback in Agentd
+
+Given V5 (CORS always blocked), the original Epic 26 architecture (browser makes HTTP calls to provider) will NEVER work for opencode.ai. The relay still adds value because:
+
+1. **Different providers may support CORS** — not all free-tier models go through opencode.ai
+2. **SDK clients (Go/Python/Node) don't have CORS** — they can make the calls directly
+3. **Future: opencode.ai may add CORS support**
+
+But for the default case (browser + opencode.ai), we need **automatic server-side fallback in agentd**: when the browser reports CORS failure, agentd makes the request directly rather than failing.
+
+This means the relay proxy (`relay_proxy.go`) needs a fallback HTTP client. When `proxy_error` with a CORS-related message arrives, the agentd re-executes the original request directly and streams the response back to opencode.
+
+**Trade-off:** This defeats the purpose of IP-distribution (all requests still come from server IPs). But it's better than non-functional. When SDK clients are used, or when providers support CORS, the browser-side execution path works as designed.
+
+### Scope
+
+#### Task A: Fix Basic Auth on relay push functions (0.5pt)
+
+**Files:** `api/internal/handlers/models.go`
+
+1. `isFreeTierModel(ctx, podIP, modelID)` → add `workspaceID` param, resolve password via `h.passwordGetter`, call `req.SetBasicAuth(agentd.AuthUsername, password)`
+2. `pushRelayBaseURL(ctx, podIP, relayBaseURL)` → same: add workspaceID, add basic auth
+3. `clearRelayBaseURL` inherits (calls pushRelayBaseURL)
+4. Test: httptest server that rejects requests without `Authorization: Basic ...` header
+
+#### Task B: Add DisposeInstance after relay baseURL push (0.5pt)
+
+**Files:** `api/internal/handlers/models.go`, `cmd/workspace-agentd/main.go`
+
+1. After `pushRelayBaseURL` succeeds, call `POST /instance/dispose` on the pod (with basic auth)
+2. Re-use the existing `DisposeInstance` pattern from `pkg/agent/opencode/client.go`
+3. For the agentd boot-time push (Task C), dispose is called after push (safe: no active sessions at boot)
+4. For the `SetModel` API handler: dispose aborts active streams. Per worklog 0152, the project chose per-prompt model injection to avoid this. **Therefore, the API-side `pushRelayBaseURL` should NOT call dispose** — it stages the baseURL for next reload. Only the boot-time path (Task C) calls dispose.
+
+**Revised approach for SetModel:** `pushRelayBaseURL` stages auth.json. The baseURL takes effect on next agent reload (user-initiated via "Reload" button or on pod restart). This matches the Epic 27a principle: credential changes are staged, not force-applied.
+
+#### Task C: Push relay baseURL on workspace boot (1pt)
+
+**Files:** `cmd/workspace-agentd/main.go`
+
+1. After opencode healthz returns healthy (existing `refreshIsHealthyLoop`), if `LLMSAFESPACE_RELAY_URL` is set:
+   - Call `PUT /auth/opencode` with `{type: "api", key: "public", metadata: {baseURL: "http://localhost:4097/relay/inference"}}`
+   - Call `POST /instance/dispose` (safe at boot — no active sessions)
+   - Both with Basic Auth (password from `/sandbox-cfg/password`)
+2. Use existing `pkg/agent/opencode.NewClient(baseURL, password).PushCredentials()` + `.DisposeInstance()`
+3. Only push once per boot (flag guard)
+4. If relay WS is not yet connected at this point, that's OK — the relay proxy returns 503 until connected; opencode will get a failure on the first free-tier request and retry. The WS typically connects within 1-2s.
+5. Test: mock opencode server verifies it received PUT /auth/opencode + POST /instance/dispose with correct payload
+
+#### Task D: CORS fallback in agentd relay proxy (1.5pt)
+
+**Files:** `cmd/workspace-agentd/relay_proxy.go`
+
+When a `proxy_error` arrives with a CORS-related message (contains "CORS" or "TypeError" or status=0), the agentd relay proxy should NOT return 502 to opencode. Instead:
+
+1. Make the original HTTP request directly (agentd → provider) using Go's `net/http`
+2. Stream the response back to the waiting HTTP handler (which is holding the opencode connection)
+3. Log a warning: "relay CORS fallback: making server-side request for <url>"
+4. Rate-limit fallback requests (same 60/min as the relay overall)
+
+Implementation: in the handler's `case pe := <-pending.errorCh:` block, if the error looks like CORS, re-execute the original `ProxyRequest` directly instead of returning 502.
+
+**This makes the relay self-healing:** browser tries → CORS fails → agentd does it directly → opencode gets a successful response. No user awareness needed.
+
+5. Test: send proxy_error with CORS message, verify the handler makes a direct HTTP call and returns the result to the HTTP response writer
+
+#### Task E: Integrate `useRelayClient` into frontend (1pt)
+
+**Files:** `frontend/src/pages/ChatPage.tsx`
+
+1. Import `useRelayClient`
+2. Call with `{ workspaceId: activeWorkspace?.id, enabled: activeModel?.proxyRequired }`
+3. Show status indicator:
+   - `connected` → small green dot + "Relay active" tooltip
+   - `connecting` → yellow dot + "Relay connecting..."
+   - `disconnected`/`error` when `proxyRequired` → orange warning: "Using server fallback for free model"
+4. Do NOT block input or chat — the CORS fallback (Task D) ensures requests always work
+5. When relay status is `connected` and CORS errors occur, the system degrades gracefully (browser tries → fails → agentd fallback → works)
+
+### Failure Modes Addressed
+
+| Failure Mode | Mitigation |
+|---|---|
+| CORS blocks browser fetch (ALWAYS for opencode.ai) | Task D: agentd server-side fallback |
+| First LLM request before relay WS connected | Relay returns 503 → opencode retries after brief delay. Alternatively: Task D's fallback catches the "relay not connected" error too |
+| User never selects a model (free tier is default) | Task C: boot-time push activates relay without user action |
+| `PUT /auth` doesn't refresh provider state | Task B: DisposeInstance after push at boot time; for SetModel, staged until next reload |
+| Multiple browser tabs | Only one relay client per workspace (handler replaces). All tabs benefit from relay because agentd is the consumer, not individual tabs |
+| Network partition (agentd ↔ API server) | `failAllPending("relay disconnected")` fires → opencode gets 502 → retries when relay reconnects. With Task D, CORS fallback catches this too (error contains "relay disconnected" → direct call) |
+
+### Acceptance Criteria
+
+- [ ] `pushRelayBaseURL` succeeds against a real opencode pod (no 401)
+- [ ] Fresh workspace with free-tier default has relay active within 30s of pod readiness
+- [ ] LLM request with free-tier model succeeds end-to-end (browser CORS fails → agentd fallback → response)
+- [ ] Browser relay client connects and shows status indicator
+- [ ] When browser successfully fetches (SDK client or CORS-enabled provider), response flows through relay (not fallback)
+- [ ] All existing relay tests continue to pass
+- [ ] New tests: auth header on push, boot-time push+dispose, CORS fallback in agentd, paid model assertion
+
+### Estimated Effort
+
+- Task A: 0.5pt (add SetBasicAuth + workspace ID param)
+- Task B: 0.5pt (dispose after push; conditional on context)
+- Task C: 1pt (boot-time push with flag guard + test)
+- Task D: 1.5pt (CORS fallback in relay proxy + direct HTTP client + tests)
+- Task E: 1pt (React integration + status indicator)
+- **Total: 4.5pt**
+
+### Quality Targets
+
+| Dimension | Target | How achieved |
+|---|---|---|
+| Robustness | 9/10 | Auto-fallback on CORS; failAllPending on disconnect; boot-time activation |
+| Reliability | 9/10 | All assumptions validated; DisposeInstance ensures state refresh; no silent failures |
+| Security | 9/10 | Basic Auth on all opencode calls; no new attack surface |
+| Performance | 8/10 | Direct fallback adds ~0ms over current behavior; relay overhead only when relay actually works |
+| Maintainability | 9/10 | Follows existing patterns (PushCredentials, DisposeInstance, passwordGetter); single-responsibility tasks |
+| Scalability | 8/10 | Per-workspace relay; fallback doesn't add load (same requests that would go direct anyway) |
+| SOLID | 9/10 | Each task is a single concern; fallback uses same HTTP client pattern |
+| Idiomatic | 9/10 | Uses existing Go patterns, existing React hook conventions |
+| Complexity | 8/10 | Adds fallback complexity but eliminates the "relay never works" failure mode; net simplification of operational concerns |

@@ -102,3 +102,8 @@ func (m *MockAuthMiddlewareService) AuthMiddleware() gin.HandlerFunc {
 	args := m.Called()
 	return args.Get(0).(gin.HandlerFunc)
 }
+
+func (m *MockAuthMiddlewareService) OptionalAuthMiddleware() gin.HandlerFunc {
+	args := m.Called()
+	return args.Get(0).(gin.HandlerFunc)
+}

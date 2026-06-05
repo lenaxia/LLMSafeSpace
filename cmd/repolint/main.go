@@ -42,6 +42,7 @@ const (
 func main() {
 	repoFlag := flag.String("repo", "", "repository root to lint (default: auto-detect from CWD)")
 	fixDrift := flag.Bool("fix-drift", false, "copy api/migrations/*.sql into charts/llmsafespace/migrations/ to resolve drift")
+	fixWorklogs := flag.Bool("fix-worklogs", false, "auto-renumber duplicate worklog files to the next available number")
 	flag.Parse()
 
 	root, err := resolveRoot(*repoFlag)
@@ -56,6 +57,22 @@ func main() {
 			os.Exit(exitInternal)
 		}
 		fmt.Println("ok: synced charts/llmsafespace/migrations/ from api/migrations/")
+	}
+
+	if *fixWorklogs {
+		wlDir := filepath.Join(root, "worklogs")
+		renames, err := repolint.FixWorklogs(wlDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fix-worklogs failed: %v\n", err)
+			os.Exit(exitInternal)
+		}
+		if len(renames) == 0 {
+			fmt.Println("fix-worklogs: no duplicates found, nothing to rename")
+		} else {
+			for _, r := range renames {
+				fmt.Printf("fix-worklogs: renamed %s → %s\n", r.From, r.To)
+			}
+		}
 	}
 
 	failures := 0

@@ -64,6 +64,10 @@ func (m *terminalMockWSGetter) GetWorkspace(id string) (*v1.Workspace, error) {
 	return ws, nil
 }
 
+func (m *terminalMockWSGetter) GetWorkspacePassword(_ string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
 func newTerminalTestRouter(t *testing.T) (*gin.Engine, *terminalMockCache) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

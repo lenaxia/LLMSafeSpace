@@ -31,6 +31,20 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
 
+	// F19: restartGeneration bump bypasses backoff — user wants immediate retry.
+	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
+		logger.Info("RestartGeneration bumped in Creating phase; clearing recovery state",
+			"gen", workspace.Spec.RestartGeneration)
+		workspace.Status.ConsecutiveFailures = 0
+		workspace.Status.NextRetryAt = nil
+		workspace.Status.LastFailureClass = ""
+		workspace.Status.LastFailureAt = nil
+		workspace.Status.SafeMode = false
+		workspace.Status.RestartCount++
+		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
+		// Fall through to pod creation below.
+	}
+
 	// Check if pod already exists.
 	existingPod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, existingPod)
@@ -53,6 +67,14 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 			logger.Error(err, "Failed to ensure password secret in Creating phase")
 			return ctrl.Result{}, err
 		}
+
+		// F1/F16: enforce backoff — if NextRetryAt is set and not yet
+		// elapsed, requeue without creating a pod.
+		if wait := timeUntilNextRetry(workspace); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+		// Clear NextRetryAt once elapsed (avoid stale value on next cycle).
+		workspace.Status.NextRetryAt = nil
 		// Ensure per-workspace egress NetworkPolicy BEFORE pod creation
 		// (F1.2.4 / G4 part 2). Built from spec.networkAccess.egress;
 		// no-op when the field is nil/empty (chart-wide policy applies).
@@ -65,8 +87,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		pod, buildErr := r.buildPod(ctx, workspace)
 		if buildErr != nil {
 			logger.Error(buildErr, "Failed to build pod")
-			markFailed(workspace, v1.FailureReasonPodBuildFailed, "pod build failed: %v", buildErr)
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassConfiguration)
 		}
 		if err := controllerutil.SetControllerReference(workspace, pod, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -120,8 +141,25 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	}
 
 	if existingPod.Status.Phase == corev1.PodFailed {
-		markFailed(workspace, v1.FailureReasonPodFailedDuringCreation, "pod entered Failed phase during creation")
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		// F49: delete the failed pod BEFORE setting recovery state
+		// to prevent re-observing the same Failed pod on next reconcile.
+		obs := observePod(existingPod)
+		class := classifyFailure(obs)
+		r.deletePodByName(ctx, existingPod.Name, existingPod.Namespace)
+		return r.enterRecovery(ctx, workspace, class)
+	}
+
+	// FN3: Pod stuck in Pending + Unschedulable → classify as Infrastructure,
+	// delete pod, enter recovery with backoff. But only if it's been stuck
+	// for > 5 minutes (give the scheduler time to find a node).
+	if existingPod.Status.Phase == corev1.PodPending {
+		obs := observePod(existingPod)
+		if obs.Unschedulable && !existingPod.CreationTimestamp.IsZero() &&
+			time.Since(existingPod.CreationTimestamp.Time) > 5*time.Minute {
+			logger.Info("Pod unschedulable for >5min; entering recovery", "pod", existingPod.Name)
+			r.deletePodByName(ctx, existingPod.Name, existingPod.Namespace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
+		}
 	}
 
 	return ctrl.Result{RequeueAfter: requeueCreating}, nil

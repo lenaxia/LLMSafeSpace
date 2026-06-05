@@ -62,6 +62,24 @@ describe("useChatStream", () => {
     });
   });
 
+  it("includes model in sendAsync when provided", async () => {
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+
+    const model = { providerID: "anthropic", modelID: "claude-sonnet-4-5" };
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hello", vi.fn(), model); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+    act(() => { result.current.notifySessionIdle("sess-1"); });
+    await act(async () => { await sendPromise; });
+
+    expect(messagesApi.sendAsync).toHaveBeenCalledWith("sb-1", "sess-1", {
+      parts: [{ type: "text", text: "hello" }],
+      model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+    });
+  });
+
   it("waits for notifySessionIdle before calling getHistory", async () => {
     let resolveSendAsync!: () => void;
     (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockReturnValue(

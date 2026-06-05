@@ -380,8 +380,8 @@ func TestGetWorkspace(t *testing.T) {
 		now := time.Now()
 		wsID := "ws-uuid-found"
 
-		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "agent_needs_refresh", "credentials_pending_since"}).
-			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now, false, nil)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since"}).
+			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now, "", false, nil)
 
 		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(wsID).
@@ -432,6 +432,55 @@ func TestGetWorkspace(t *testing.T) {
 	})
 }
 
+func TestGetDefaultModel(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer db.Close()
+	service := &Service{DB: db}
+	ctx := context.Background()
+
+	t.Run("returns model when set", func(t *testing.T) {
+		mock.ExpectQuery("SELECT default_model FROM workspaces WHERE id").
+			WithArgs("ws-1").
+			WillReturnRows(sqlmock.NewRows([]string{"default_model"}).AddRow("anthropic/claude-sonnet-4-5"))
+		model, err := service.GetDefaultModel(ctx, "ws-1")
+		assert.NoError(t, err)
+		assert.Equal(t, "anthropic/claude-sonnet-4-5", model)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns empty string when null", func(t *testing.T) {
+		mock.ExpectQuery("SELECT default_model FROM workspaces WHERE id").
+			WithArgs("ws-2").
+			WillReturnRows(sqlmock.NewRows([]string{"default_model"}).AddRow(nil))
+		model, err := service.GetDefaultModel(ctx, "ws-2")
+		assert.NoError(t, err)
+		assert.Equal(t, "", model)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns empty string when workspace not found", func(t *testing.T) {
+		mock.ExpectQuery("SELECT default_model FROM workspaces WHERE id").
+			WithArgs("no-such").
+			WillReturnError(sql.ErrNoRows)
+		model, err := service.GetDefaultModel(ctx, "no-such")
+		assert.NoError(t, err)
+		assert.Equal(t, "", model)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error on DB failure", func(t *testing.T) {
+		mock.ExpectQuery("SELECT default_model FROM workspaces WHERE id").
+			WithArgs("ws-err").
+			WillReturnError(sql.ErrConnDone)
+		model, err := service.GetDefaultModel(ctx, "ws-err")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "get default model")
+		assert.Equal(t, "", model)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestListWorkspaces(t *testing.T) {
 	t.Run("multiple_rows", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)
@@ -447,9 +496,9 @@ func TestListWorkspaces(t *testing.T) {
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "agent_needs_refresh", "credentials_pending_since"}).
-			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now, false, nil).
-			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now, true, &now)
+		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since"}).
+			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now, "", false, nil).
+			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now, "", true, &now)
 
 		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(userID, limit, offset).

@@ -85,7 +85,7 @@ func WaitPhase(ctx context.Context, c *llm.Client, id, target string, limit time
 		}
 		select {
 		case <-ctx.Done():
-			return "ctx-cancelled"
+			return "ctx-canceled"
 		case <-time.After(3 * time.Second):
 		}
 	}

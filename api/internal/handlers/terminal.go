@@ -75,6 +75,9 @@ type TerminalCache interface {
 // WorkspaceGetter resolves workspace CRDs.
 type WorkspaceGetter interface {
 	GetWorkspace(id string) (*v1.Workspace, error)
+	// GetWorkspacePassword returns the workspace's password from its K8s Secret.
+	// Used for workspace-level authentication (e.g. terminal proxy).
+	GetWorkspacePassword(id string) (string, error)
 }
 
 // k8sWorkspaceGetter once lived here as a local adapter from the K8s

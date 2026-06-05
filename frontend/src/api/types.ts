@@ -45,6 +45,7 @@ export interface WorkspaceListItem {
   phase?: string;
   imageTag?: string;
   agentVersion?: string;
+  defaultModel?: string;
   maxActiveSessions?: number;
   agentNeedsRefresh?: boolean;
   credentialsPendingSince?: string;
@@ -152,6 +153,7 @@ export interface Message {
 
 export interface SendMessageRequest {
   parts: MessagePart[];
+  model?: { providerID: string; modelID: string };
 }
 
 export interface ApiKey {

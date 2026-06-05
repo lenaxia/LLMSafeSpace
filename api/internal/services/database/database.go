@@ -343,6 +343,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 	}
 	query := `
         SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
+               COALESCE(w.default_model, '') AS default_model,
                COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
                s.last_credential_changed_at AS credentials_pending_since
         FROM workspaces w
@@ -360,6 +361,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.AgentVersion,
 		&ws.CreatedAt,
 		&ws.UpdatedAt,
+		&ws.DefaultModel,
 		&ws.AgentNeedsRefresh,
 		&ws.CredentialsPendingSince,
 	)
@@ -425,6 +427,19 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID string, updat
 		return fmt.Errorf("failed to update workspace: %w", err)
 	}
 	return nil
+}
+
+// GetDefaultModel returns the workspace's configured default model, or "" if unset.
+func (s *Service) GetDefaultModel(ctx context.Context, workspaceID string) (string, error) {
+	var model sql.NullString
+	err := s.DB.QueryRowContext(ctx, "SELECT default_model FROM workspaces WHERE id = $1", workspaceID).Scan(&model)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("get default model: %w", err)
+	}
+	return model.String, nil
 }
 
 // DeleteWorkspace removes a workspace record.
@@ -532,6 +547,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 	}
 	rows, err := s.DB.QueryContext(ctx, `
         SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
+               COALESCE(w.default_model, '') AS default_model,
                COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
                s.last_credential_changed_at AS credentials_pending_since
         FROM workspaces w
@@ -552,6 +568,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 			&ws.StorageSize,
 			&ws.ImageTag, &ws.AgentVersion,
 			&ws.CreatedAt, &ws.UpdatedAt,
+			&ws.DefaultModel,
 			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
@@ -825,6 +842,7 @@ func (s *Service) ListPendingReloadWorkspaces(ctx context.Context, userID string
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version,
 		       w.created_at, w.updated_at,
+		       COALESCE(w.default_model, '') AS default_model,
 		       TRUE AS agent_needs_refresh,
 		       s.last_credential_changed_at AS credentials_pending_since
 		FROM workspaces w
@@ -845,6 +863,7 @@ func (s *Service) ListPendingReloadWorkspaces(ctx context.Context, userID string
 			&ws.ID, &ws.UserID, &ws.Name, &ws.Runtime,
 			&ws.StorageSize, &ws.ImageTag, &ws.AgentVersion,
 			&ws.CreatedAt, &ws.UpdatedAt,
+			&ws.DefaultModel,
 			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
 		); err != nil {
 			return nil, fmt.Errorf("scan pending reload workspace: %w", err)

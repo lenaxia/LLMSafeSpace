@@ -26,8 +26,9 @@ type SecretsHandler struct {
 	manifestWriter   SecretsManifestWriter
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
-	wsUpdater        WorkspaceMetadataUpdater
+	wsUpdater        ModelStore
 	credStateWriter  CredentialStateWriter
+	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
 }
 
 // CredentialStateWriter records that workspace credentials have changed.
@@ -109,6 +110,13 @@ func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
 // is exactly Bug 2 in worklog 0085 — do not leave nil in production).
 func (h *SecretsHandler) SetLogger(l pkginterfaces.LoggerInterface) {
 	h.logger = l
+}
+
+// SetPasswordGetter injects the workspace password getter for authenticated
+// opencode calls (ListModels, SetModel). Without this, model operations
+// that require direct opencode communication will fail with 503.
+func (h *SecretsHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
+	h.passwordGetter = getter
 }
 
 // CreateSecret handles POST /api/v1/secrets

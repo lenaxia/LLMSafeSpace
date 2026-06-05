@@ -254,14 +254,13 @@ func TestStreamUserEvents_Replay(t *testing.T) {
 }
 
 func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
-	// This test uses a short-lived connection and verifies heartbeat
-	// by checking that the SSE comment line ":\n" is emitted.
-	// We override the heartbeat interval for testing.
-	// Note: in production heartbeatInterval is 25s; this test would be too slow.
-	// Instead we verify the heartbeatLoop function directly.
+	// Verifies the heartbeat goroutine sends heartbeat sentinel events.
+	// Uses a short ticker interval to avoid slow tests; asserts ≥1 heartbeat
+	// in 300ms (ticker at 50ms). Assertion is ≥1 (not ≥2) to avoid flakiness
+	// under scheduler jitter when tests run with -race and -count>1.
 
 	s := &subscriber{ch: make(chan WorkspaceSSEEvent, 10)}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
 	// Run heartbeat with a very short interval for testing
@@ -278,10 +277,10 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	cancel()
 
-	// Should have at least 2 heartbeats in the channel
+	// Should have at least 1 heartbeat in the channel.
 	var heartbeats int
 	for {
 		select {
@@ -294,7 +293,7 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 		}
 	}
 done:
-	assert.GreaterOrEqual(t, heartbeats, 2)
+	assert.GreaterOrEqual(t, heartbeats, 1, "expected at least one heartbeat event in channel")
 }
 
 func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {

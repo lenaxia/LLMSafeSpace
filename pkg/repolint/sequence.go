@@ -393,3 +393,115 @@ func hashFile(path string) (string, error) {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
+
+// ---------------------------------------------------------------------------
+// FixWorklogs — auto-renumber duplicate worklog entries
+// ---------------------------------------------------------------------------
+
+// WorklogRename records a single rename performed by FixWorklogs.
+type WorklogRename struct {
+	From string // original filename (basename only)
+	To   string // new filename (basename only)
+}
+
+// FixWorklogs resolves duplicate worklog numbers in dir by renaming the
+// conflicting file(s) to the next available number above the current
+// maximum. It never touches the older file (determined lexically — the
+// earlier slug is considered the incumbent) — only the newcomer is moved.
+//
+// The function iterates until no duplicates remain, handling the
+// pathological case where multiple files all collide on the same number.
+// It returns the list of renames performed (empty if nothing was needed).
+//
+// Only files matching WorklogPattern are considered; other files in dir
+// are ignored. Versions below the grandfather threshold (97) are never
+// touched — historical duplicates stay grandfathered.
+//
+// After renaming, any occurrence of the old basename inside the file's
+// own content is replaced with the new basename, so self-referential
+// lines like "worklogs/0140_..._foo.md — This worklog" stay accurate.
+func FixWorklogs(dir string) ([]WorklogRename, error) {
+	const grandfatherBelow = 97
+	var renames []WorklogRename
+
+	for {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return renames, fmt.Errorf("read %s: %w", dir, err)
+		}
+
+		// Build version → []filename map (only post-grandfather entries).
+		byVersion := map[int][]string{}
+		maxVer := 0
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			m := WorklogPattern.FindStringSubmatch(e.Name())
+			if m == nil {
+				continue
+			}
+			v, err := strconv.Atoi(m[1])
+			if err != nil {
+				continue
+			}
+			if v > maxVer {
+				maxVer = v
+			}
+			if v >= grandfatherBelow {
+				byVersion[v] = append(byVersion[v], e.Name())
+			}
+		}
+
+		// Find the lowest duplicated version (deterministic repair order).
+		dupVers := []int{}
+		for v, files := range byVersion {
+			if len(files) > 1 {
+				dupVers = append(dupVers, v)
+			}
+		}
+		if len(dupVers) == 0 {
+			break // nothing to fix
+		}
+		sort.Ints(dupVers)
+
+		for _, v := range dupVers {
+			files := byVersion[v]
+			sort.Strings(files) // deterministic: lexically earlier = "older"
+
+			// The last file lexically is considered the newcomer and gets
+			// renumbered. For same-date worklogs this picks the one whose
+			// slug sorts later, which is consistent and reversible.
+			newcomer := files[len(files)-1]
+			m := WorklogPattern.FindStringSubmatch(newcomer)
+			if m == nil {
+				continue // shouldn't happen; already matched above
+			}
+			datePart := m[2] // YYYY-MM-DD
+			slugPart := m[3] // slug
+
+			maxVer++
+			newName := fmt.Sprintf("%04d_%s_%s.md", maxVer, datePart, slugPart)
+
+			if err := os.Rename(
+				filepath.Join(dir, newcomer),
+				filepath.Join(dir, newName),
+			); err != nil {
+				return renames, fmt.Errorf("rename %s → %s: %w", newcomer, newName, err)
+			}
+
+			// Update any self-reference inside the file content so that
+			// e.g. "worklogs/0140_..._foo.md — This worklog" stays accurate.
+			newPath := filepath.Join(dir, newName)
+			if data, err := os.ReadFile(newPath); err == nil {
+				updated := strings.ReplaceAll(string(data), newcomer, newName)
+				if updated != string(data) {
+					_ = os.WriteFile(newPath, []byte(updated), 0o644) //nolint:gosec // markdown docs are not sensitive; 0644 is intentional
+				}
+			}
+
+			renames = append(renames, WorklogRename{From: newcomer, To: newName})
+		}
+	}
+	return renames, nil
+}

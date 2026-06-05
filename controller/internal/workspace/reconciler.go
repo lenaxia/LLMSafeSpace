@@ -25,6 +25,12 @@ type WorkspaceReconciler struct {
 	// defaultHostResolver (net.DefaultResolver) when nil.
 	HostResolver HostResolver
 
+	// InferenceRelayURL is the Cloudflare Worker URL for free-tier inference
+	// (Epic 26). When set, workspace pods route opencode provider requests
+	// through this URL for IP distribution. When empty, opencode uses its
+	// default gateway (opencode.ai/zen/v1) directly.
+	InferenceRelayURL string
+
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
 	// the next reconcile will just call it immediately).

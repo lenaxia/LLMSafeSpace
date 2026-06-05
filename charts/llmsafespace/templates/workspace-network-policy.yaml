@@ -103,6 +103,19 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Epic 26: Relay egress — workspace pods must connect back to the API
+    # service WebSocket relay endpoint (/api/v1/workspaces/:id/relay?role=agentd).
+    # Pod-selector based (not CIDR) so it works regardless of ClusterIP range.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.apiPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
     # External egress: allowedEgressCIDRs minus blockedEgressCIDRs.
     {{- if .Values.networkPolicy.allowedEgressCIDRs }}
     - to:

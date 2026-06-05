@@ -45,10 +45,12 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPendingTimeout, "workspace timed out in Pending phase")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		// If we're in backoff from a prior PVC creation failure, wait.
+		if wait := timeUntilNextRetry(workspace); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
 		}
+		workspace.Status.NextRetryAt = nil
+
 		newPVC := r.buildPVC(workspace, pvcName)
 		if err := controllerutil.SetControllerReference(workspace, newPVC, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -76,8 +78,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			return ctrl.Result{}, r.Status().Update(ctx, workspace)
 		}
 		if r.pendingTimedOut(workspace) {
-			markFailed(workspace, v1.FailureReasonPVCBindTimeout, "PVC not bound after timeout")
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
 		}
 		return ctrl.Result{RequeueAfter: requeueActive}, nil
 	}

@@ -270,6 +270,7 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 		StorageSize:             meta.StorageSize,
 		CreatedAt:               meta.CreatedAt,
 		UpdatedAt:               meta.UpdatedAt,
+		DefaultModel:            meta.DefaultModel,
 		AgentNeedsRefresh:       meta.AgentNeedsRefresh,
 		CredentialsPendingSince: meta.CredentialsPendingSince,
 	}
@@ -321,6 +322,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			AgentVersion:            m.AgentVersion,
 			CreatedAt:               m.CreatedAt,
 			UpdatedAt:               m.UpdatedAt,
+			DefaultModel:            m.DefaultModel,
 			AgentNeedsRefresh:       m.AgentNeedsRefresh,
 			CredentialsPendingSince: m.CredentialsPendingSince,
 		})

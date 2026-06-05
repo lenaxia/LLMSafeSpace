@@ -15,6 +15,7 @@ import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
 import { AgentReloadBanner } from "../components/workspace/AgentReloadBanner";
 import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
+import { ModelSelector } from "../components/chat/ModelSelector";
 import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
@@ -61,6 +62,14 @@ export function ChatPage() {
   const activateMutation = useActivateWorkspace();
 
   const isReady = status?.phase === "Active";
+
+  // Current model for prompt injection — reads from same cache as ModelSelector
+  const { data: modelsData } = useQuery({
+    queryKey: ["models", workspaceId],
+    queryFn: () => workspacesApi.listModels(workspaceId!),
+    enabled: isReady && !!workspaceId,
+    staleTime: 30_000,
+  });
 
   // [ws-timing] Log every phase change and the moment isReady flips true.
   // prevPhaseRef tracks the last seen phase so we only log on actual changes.
@@ -481,6 +490,15 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
+    // Parse current model selection into opencode's PromptInput.model format
+    const currentModelRef = (() => {
+      const id = modelsData?.currentModel;
+      if (!id) return undefined;
+      const slash = id.indexOf("/");
+      if (slash < 0) return undefined;
+      return { providerID: id.slice(0, slash), modelID: id.slice(slash + 1) };
+    })();
+
     setSseStreamParts([]);
     sentTextRef.current = text;
     activePartTypeRef.current = null;
@@ -507,7 +525,7 @@ export function ChatPage() {
       // No-op: the assistant message is delivered via the streaming bubble
       // (live) and via history (after reconcile). We don't need to manage
       // it in localMessages.
-    });
+    }, currentModelRef);
   };
 
   const sessionDisplayName = sessionTitle || "New chat";
@@ -548,10 +566,15 @@ export function ChatPage() {
           <span className="text-muted-foreground/50 mx-1">/</span>
           <span>{sessionDisplayName}</span>
         </h2>
-        <KebabMenu items={kebabItems} footer={[
-          ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
-          ...(status?.imageTag ? [`image: ${status.imageTag}`] : []),
-        ]} />
+        <div className="flex items-center gap-2">
+          {isReady && workspaceId && (
+            <ModelSelector workspaceId={workspaceId} disabled={!isReady} />
+          )}
+          <KebabMenu items={kebabItems} footer={[
+            ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),
+            ...(status?.imageTag ? [`image: ${status.imageTag}`] : []),
+          ]} />
+        </div>
       </div>
 
       {isSuspended && (
