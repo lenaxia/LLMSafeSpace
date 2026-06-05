@@ -25,11 +25,15 @@ type WorkspaceReconciler struct {
 	// defaultHostResolver (net.DefaultResolver) when nil.
 	HostResolver HostResolver
 
-	// APIServiceURL is the cluster-internal URL to the API service's HTTP
+	// InferenceRelayURL is the Cloudflare Worker URL for free-tier inference
+	// (Epic 26). When set, workspace pods route opencode provider requests
+	// through this URL for IP distribution. When empty, opencode uses its
+	// default gateway (opencode.ai/zen/v1) directly.
+	InferenceRelayURL string
+
 	// endpoint (e.g. "http://llmsafespace-api.llmsafespace.svc:8080").
 	// Used to construct LLMSAFESPACE_RELAY_URL for workspace pods (Epic 26).
 	// When empty, relay env vars are not injected.
-	APIServiceURL string
 
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
