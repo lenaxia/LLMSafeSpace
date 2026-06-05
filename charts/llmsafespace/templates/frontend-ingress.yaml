@@ -33,10 +33,27 @@ spec:
                 name: {{ include "llmsafespace.fullname" . }}-frontend
                 port:
                   name: http
+    {{- range .Values.frontend.ingress.additionalHosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "llmsafespace.fullname" $ }}-frontend
+                port:
+                  name: http
+    {{- end }}
   {{- if .Values.frontend.ingress.tls }}
   tls:
     - hosts:
         - {{ .Values.frontend.ingress.host | quote }}
       secretName: {{ .Values.frontend.ingress.tlsSecret | default (printf "%s-frontend-tls" (include "llmsafespace.fullname" .)) }}
+    {{- range .Values.frontend.ingress.additionalHosts }}
+    - hosts:
+        - {{ .host | quote }}
+      secretName: {{ .tlsSecret | default (printf "%s-tls" (.host | replace "." "-")) }}
+    {{- end }}
   {{- end }}
 {{- end }}

@@ -579,6 +579,11 @@ frontend:
         more_set_headers "X-Content-Type-Options: nosniff";
         more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
         more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
+    # additionalHosts: additional hostnames for the frontend (frontend-only,
+    # no /api path). Each entry becomes a separate Ingress rule + TLS entry.
+    # Use for serving the frontend on multiple domains (e.g. chat.safespaces.dev).
+    # Each entry: { host: "chat.example.com" [, tlsSecret: "override-secret"] }
+    additionalHosts: []
 
 mcp:
   enabled: true
