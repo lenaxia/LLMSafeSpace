@@ -1,4 +1,4 @@
-# Epic 30: VPN Sidecars, VPC Connectivity & AWS IAM
+# Epic 32: VPN Sidecars, VPC Connectivity & AWS IAM
 
 **Status:** Planning
 **Created:** 2026-06-04
