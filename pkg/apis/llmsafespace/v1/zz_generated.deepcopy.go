@@ -402,10 +402,6 @@ func (in *WorkspaceStatus) DeepCopyInto(out *WorkspaceStatus) {
 		in, out := &in.StartTime, &out.StartTime
 		*out = (*in).DeepCopy()
 	}
-	if in.LastTransientFailureAt != nil {
-		in, out := &in.LastTransientFailureAt, &out.LastTransientFailureAt
-		*out = (*in).DeepCopy()
-	}
 	if in.LastHealthCheckAt != nil {
 		in, out := &in.LastHealthCheckAt, &out.LastHealthCheckAt
 		*out = (*in).DeepCopy()

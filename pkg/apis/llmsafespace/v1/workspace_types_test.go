@@ -44,7 +44,6 @@ func TestWorkspaceSpec_PodLifecycleFields(t *testing.T) {
 		Storage:           WorkspaceStorageConfig{Size: "10Gi"},
 		Timeout:           3600,
 		RestartGeneration: 2,
-		MaxRetries:        5,
 		Resources: &ResourceRequirements{
 			CPU:              "1000m",
 			Memory:           "1Gi",
@@ -65,7 +64,6 @@ func TestWorkspaceSpec_PodLifecycleFields(t *testing.T) {
 
 	assert.Equal(t, 3600, roundtrip.Timeout)
 	assert.Equal(t, int64(2), roundtrip.RestartGeneration)
-	assert.Equal(t, int32(5), roundtrip.MaxRetries)
 	assert.Equal(t, "1000m", roundtrip.Resources.CPU)
 	assert.Equal(t, "1Gi", roundtrip.Resources.Memory)
 	assert.Equal(t, int64(1001), roundtrip.PodSecurityContext.RunAsUser)
@@ -80,7 +78,6 @@ func TestWorkspaceStatus_PodFields(t *testing.T) {
 		PodIP:                     "10.0.1.5",
 		Endpoint:                  "http://10.0.1.5:4096",
 		RestartCount:              1,
-		TransientFailureCount:     0,
 		ObservedRestartGeneration: 2,
 		CredentialSecretHash:      "sha256:abc123",
 	}
@@ -154,14 +151,12 @@ func TestWorkspaceDeepCopy_NewFields(t *testing.T) {
 				RunAsGroup: 1000,
 			},
 			RestartGeneration: 3,
-			MaxRetries:        5,
 			Timeout:           1800,
 		},
 		Status: WorkspaceStatus{
 			Phase:                     WorkspacePhaseActive,
 			PodName:                   "ws-pod-1",
 			PodIP:                     "10.0.0.1",
-			TransientFailureCount:     1,
 			ObservedRestartGeneration: 3,
 		},
 	}

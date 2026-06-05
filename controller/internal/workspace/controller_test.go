@@ -457,7 +457,6 @@ func TestReconcile_Failed_NoBump_NoPod_RetriesCreating(t *testing.T) {
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-nopod", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "Failed workspace with no pod should auto-retry Creating")
-	assert.Equal(t, int32(0), updated.Status.TransientFailureCount)
 	assert.Empty(t, updated.Status.Message)
 }
 
@@ -481,9 +480,6 @@ func TestReconcile_Failed_RestartGenerationBump_Recovers(t *testing.T) {
 	ws.Status.PodNamespace = "default"
 	ws.Status.PodIP = "10.0.0.99"
 	ws.Status.Endpoint = "http://10.0.0.99:4096"
-	ws.Status.TransientFailureCount = 3
-	now := metav1.Now()
-	ws.Status.LastTransientFailureAt = &now
 	ws.Status.RestartCount = 0
 	r := reconcilerFor(t, ws)
 
@@ -507,8 +503,6 @@ func TestReconcile_Failed_RestartGenerationBump_Recovers(t *testing.T) {
 	assert.Empty(t, updated.Status.PodIP)
 	assert.Empty(t, updated.Status.Endpoint)
 	// Transient counters reset so the new run gets a fresh budget.
-	assert.Equal(t, int32(0), updated.Status.TransientFailureCount)
-	assert.Nil(t, updated.Status.LastTransientFailureAt)
 }
 
 // TestReconcile_Failed_RestartGenerationStale_NoRecovery: spec.restartGeneration

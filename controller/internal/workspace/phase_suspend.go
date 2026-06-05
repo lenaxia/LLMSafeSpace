@@ -23,7 +23,6 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.PodIP = ""
 	workspace.Status.Endpoint = ""
 	workspace.Status.SuspendedAt = &now
-	workspace.Status.TransientFailureCount = 0
 	workspace.Status.ConsecutiveFailures = 0
 	workspace.Status.NextRetryAt = nil
 	workspace.Status.LastFailureClass = ""

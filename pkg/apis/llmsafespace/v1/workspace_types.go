@@ -138,11 +138,6 @@ type WorkspaceSpec struct {
 	Resources         *ResourceRequirements `json:"resources,omitempty"`
 	RestartGeneration int64                 `json:"restartGeneration,omitempty"`
 
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=10
-	// +kubebuilder:default=3
-	MaxRetries int32 `json:"maxRetries,omitempty"`
-
 	PodSecurityContext *PodSecurityContext `json:"podSecurityContext,omitempty"`
 
 	// AutoApprovePermissions controls whether permission requests from the agent
@@ -257,10 +252,7 @@ type WorkspaceStatus struct {
 	ImageTag               string       `json:"imageTag,omitempty"`
 	Endpoint               string       `json:"endpoint,omitempty"`
 	StartTime              *metav1.Time `json:"startTime,omitempty"`
-	RestartCount           int32        `json:"restartCount,omitempty"`
-	TransientFailureCount  int32        `json:"transientFailureCount,omitempty"`
-	LastTransientFailureAt *metav1.Time `json:"lastTransientFailureAt,omitempty"`
-	// Recovery state (Epic 24 — replaces TransientFailureCount/LastTransientFailureAt)
+	RestartCount              int32        `json:"restartCount,omitempty"`
 	ConsecutiveFailures       int32        `json:"consecutiveFailures,omitempty"`
 	LastFailureClass          string       `json:"lastFailureClass,omitempty"`
 	LastFailureAt             *metav1.Time `json:"lastFailureAt,omitempty"`
