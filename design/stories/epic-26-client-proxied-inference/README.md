@@ -353,3 +353,80 @@ US-26.2 (WebSocket Relay Endpoint) ────┼──→ US-26.3 (Browser Cli
 3. **Alternative: opencode transport plugin.** Instead of an HTTP proxy, could we contribute a custom AI SDK transport to opencode that delegates to a Unix socket? This would be cleaner but requires upstream acceptance.
 
 4. **Rate limit signals.** When the free provider rate-limits the client, how does that signal propagate back to opencode? The proxy response will be a 429 — opencode's retry logic should handle this, but needs testing.
+
+
+---
+
+## US-26.7: Relay Activation — Auth Fix, Boot-Time Push, UI Integration
+
+**Status:** Open
+**Priority:** Critical (relay is non-functional without this)
+**Depends On:** US-26.1 through US-26.6 (all merged)
+**Identified:** Worklog 0153 (2026-06-05 audit)
+
+### Problem
+
+The relay system is structurally complete but operationally inert. Three issues prevent it from functioning in production:
+
+1. **Auth failure on relay baseURL push** — `isFreeTierModel` and `pushRelayBaseURL` call opencode endpoints without Basic Auth. opencode v1.15.12 requires auth on all endpoints (see worklog 0127). Both calls 401 silently → relay never activates via model selection.
+
+2. **No boot-time activation** — The relay baseURL is only pushed when the user explicitly calls `PUT /model`. But workspaces boot with free-tier opencode as the default provider. opencode sends requests directly to opencode.ai, bypassing the relay entirely, until a model selection is made.
+
+3. **Browser relay client not integrated** — `useRelayClient.ts` exists as a hook but is never imported into any page or component. The relay WebSocket has no consumer → all proxy requests time out (5s) → opencode gets 504.
+
+### Scope
+
+#### Task A: Fix Basic Auth on relay push functions
+
+**Files:** `api/internal/handlers/models.go`
+
+- `isFreeTierModel` must call `req.SetBasicAuth(agentd.AuthUsername, password)` (same as `modelExistsInCatalog`)
+- `pushRelayBaseURL` must call `req.SetBasicAuth(agentd.AuthUsername, password)`
+- `clearRelayBaseURL` inherits the fix (calls `pushRelayBaseURL`)
+- Requires a `passwordGetter` function — the `SecretsHandler` already has one (wired in worklog 0148)
+- Add workspace ID parameter to both functions so they can resolve the password
+- Unit test: mock opencode server rejects requests without auth header
+
+#### Task B: Push relay baseURL on workspace boot
+
+**Files:** `cmd/workspace-agentd/relay_proxy.go` or `cmd/workspace-agentd/main.go`
+
+**Option 1 (preferred):** Agentd pushes the relay baseURL to opencode on boot when `LLMSAFESPACE_RELAY_URL` is set.
+
+- After opencode becomes ready (detected via existing healthz polling), agentd calls `PUT /auth/opencode` with `baseURL: http://localhost:4097/relay/inference` and `key: "public"`
+- This uses the existing agentd → opencode Basic Auth path (password from `/sandbox-cfg/password`)
+- Idempotent: safe to re-push on reconnect
+
+**Option 2 (alternative):** Controller injects the relay baseURL into `OPENCODE_AUTH_CONTENT` at pod creation time.
+
+- Change `{"opencode":{"type":"api","key":"public"}}` to `{"opencode":{"type":"api","key":"public","metadata":{"baseURL":"http://localhost:4097/relay/inference"}}}`
+- Simpler (no runtime push), but requires the controller to know the relay inference port
+- Risk: if opencode's auth.json schema doesn't support metadata in the initial content
+
+**Decision:** Option 1. It uses a proven code path (agentd already pushes credentials via `pkg/agent/opencode/client.go`) and doesn't depend on undocumented `OPENCODE_AUTH_CONTENT` schema.
+
+#### Task C: Integrate `useRelayClient` into the frontend
+
+**Files:** `frontend/src/pages/ChatPage.tsx` or `frontend/src/components/layout/AppShell.tsx`
+
+- Import and call `useRelayClient({ workspaceId, enabled })` in the chat page
+- `enabled` should be `true` when the active model has `proxyRequired: true`
+- Show a small status indicator (e.g., "Relay: connected" / "Relay: connecting...")
+- When relay status is `"error"` or `"disconnected"` and the model requires proxy, show a warning: "Free model requires browser relay — reconnecting..."
+- Do NOT block chat input while relay is reconnecting (messages will fall through to CORS fallback)
+
+### Acceptance Criteria
+
+- [ ] `pushRelayBaseURL` succeeds against a real opencode pod (no 401)
+- [ ] Fresh workspace with free-tier default has relay active within 30s of pod readiness (no user action required)
+- [ ] Browser relay client connects automatically when a free-tier model is active
+- [ ] Sending a prompt with a free-tier model results in a `proxy_request` appearing on the browser relay WebSocket
+- [ ] All existing relay tests continue to pass
+- [ ] New tests: auth header assertion on pushRelayBaseURL, boot-time push in agentd
+
+### Estimated Effort
+
+- Task A: 0.5pt (add SetBasicAuth + password param, minor test)
+- Task B: 1pt (agentd boot-time push after healthz, test with mock opencode)
+- Task C: 1pt (React integration, status indicator, conditional enable)
+- **Total: 2.5pt**
