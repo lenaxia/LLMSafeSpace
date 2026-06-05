@@ -725,12 +725,6 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// parseTokenAcceptingRotatedKeys parses a JWT, accepting either the
-// current jwtSecret or any of jwtPreviousSecrets as a valid signature
-// key. Closes F1.7.5 (Epic 17): operators rotate by adding the
-// previous key to JWTPreviousSecrets, setting a new JWTSecret, and
-// restarting. Existing sessions stay valid until they expire.
-//
 // OptionalAuthMiddleware is like AuthMiddleware but never aborts. It sets
 // "userID" in the context when a valid JWT/API key is present, and calls
 // c.Next() unconditionally. Handlers that use this middleware must check
