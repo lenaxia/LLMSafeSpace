@@ -1,58 +1,75 @@
 # Worklog: Epic 26 Architecture Pivot — WebSocket Relay → Cloudflare Worker
 
 **Date:** 2026-06-05
-**Session:** Remove WebSocket relay system, replace with CF Worker CORS proxy
-**Status:** Complete (PR #35)
+**Session:** Remove WebSocket relay, replace with CF Worker proxy. Final simplification.
+**Status:** Complete (PR #35 merged as `65d26b5`)
 
 ---
 
 ## Objective
 
-Replace the Epic 26 WebSocket relay architecture with a Cloudflare Worker after discovering that the browser relay path is fundamentally broken (CORS).
+Replace the Epic 26 WebSocket relay architecture with a Cloudflare Worker after discovering the browser relay path is fundamentally broken (CORS), and simplify to the minimum viable implementation.
 
 ---
 
-## Discovery
+## Key Discoveries (validated this session)
 
-### Validated findings:
-1. `opencode.ai/zen/v1` (the real inference endpoint, from `models.dev/api.json`) returns NO CORS headers
-2. Browser `fetch()` to a cross-origin endpoint without CORS headers will always fail (same-origin policy blocks response reading)
-3. The relay's browser execution path can NEVER work for the opencode.ai provider
-4. PR #34's live test captured `url=https://opencode.ai/responses` — which 404s (correct URL is `opencode.ai/zen/v1/responses`)
-5. A Cloudflare Worker adding CORS headers provides IP distribution via 300+ edge POPs at zero/minimal cost
-
-### Architecture decision:
-Replace the entire relay system (agentd ↔ API WebSocket ↔ browser ↔ provider) with a 20-line CF Worker (browser → Worker → provider). The Worker adds CORS headers so browsers can call it. IP distribution is achieved naturally via Cloudflare's global edge network.
-
----
-
-## Work Completed
-
-- Deleted 3972 lines of relay code (15 files removed, 9 edited)
-- Added CF Worker (`workers/inference-relay/`) — CORS proxy to opencode.ai/zen/v1
-- Added `--inference-relay-url` controller flag + `buildOpenCodeAuthContent()` helper
-- Added `inferenceRelayURL` Helm value
-- Fixed wiring bug (inferenceRelayURL not passed to reconciler)
-- Removed all stale relay references (SSLRedirect skip, comments)
-- Closed PR #34 (relay fixes superseded)
+| # | Finding | Evidence |
+|---|---------|----------|
+| 1 | `opencode.ai/zen/v1` has NO CORS headers | `curl -sI` — no `Access-Control-Allow-Origin` in response |
+| 2 | Browser relay path can never work for opencode.ai | Same-origin policy blocks response reading without CORS |
+| 3 | Real provider URL is `opencode.ai/zen/v1` (not `opencode.ai`) | `models.dev/api.json` → `opencode.api = "https://opencode.ai/zen/v1"` |
+| 4 | opencode uses `/responses` path (OpenAI Responses API) | `provider.ts:29` defines `"openai/responses"` endpoint type |
+| 5 | `OPENCODE_AUTH_CONTENT` with `metadata.baseURL` DOES work | `account.ts:36`: `Object.assign(provider.options.aisdk.provider, metadata)` → `catalog.ts:138-139` moves to endpoint.url |
+| 6 | `Authorization: Bearer public` sent regardless of baseURL | `auth-options.ts:52`: reads `apiKey` independently from baseURL |
+| 7 | Agentd middleman adds resource contention for zero security benefit | Worker URL is the "secret"; anyone who finds it just gets free-tier access |
+| 8 | One CF Worker = 300+ global IPs (all edge POPs) | Cloudflare's `smart` placement runs from nearest POP |
 
 ---
 
-## Files Modified
+## Final Architecture
 
-### Deleted
-- `pkg/relay/` (protocol + SDK client)
+```
+opencode (in pod) → https://relay.safespaces.dev → CF Worker → opencode.ai/zen/v1
+```
+
+- `OPENCODE_AUTH_CONTENT` = `{"opencode":{"type":"api","key":"public","metadata":{"baseURL":"https://relay.safespaces.dev"}}}`
+- Controller injects via `--inference-relay-url` flag (Helm value)
+- Worker is 37 lines — transparent proxy, no auth
+- URL rotation via DNS CNAME update (zero pod disruption)
+
+---
+
+## What Was Removed (~4000 lines)
+
+- `pkg/relay/` — protocol types, Go SDK client
 - `cmd/workspace-agentd/relay_proxy.go`, `relay_config.go`
-- `api/internal/handlers/relay_handler.go`, `relay_fallback.go`, `relay_integration_test.go`
-- `frontend/src/hooks/useRelayClient.ts` + test
-- `controller/internal/workspace/relay_test.go`
+- `api/internal/handlers/relay_handler.go`, `relay_fallback.go`, integration tests
+- `frontend/src/hooks/useRelayClient.ts`
+- Controller relay env vars (`LLMSAFESPACE_RELAY_URL`, `LLMSAFESPACE_RELAY_TOKEN`)
+- `OptionalAuthMiddleware` relay routes, SSLRedirect relay skip
+- All relay-specific tests
 
-### Added
-- `workers/inference-relay/src/index.ts` — CF Worker
-- `workers/inference-relay/wrangler.toml` + `package.json`
-- `controller/internal/workspace/inference_relay_test.go`
+## What Was Added (~100 lines)
 
-### Modified
-- `controller/` — flag, reconciler field, `buildOpenCodeAuthContent()`
-- `api/internal/` — removed relay handlers, routes, stale comments
-- `charts/` — removed relay flag, added inferenceRelayURL value
+- `workers/inference-relay/` — 37-line CF Worker + wrangler.toml + README
+- `--inference-relay-url` controller flag
+- `buildOpenCodeAuthContent()` in pod_builder.go
+- `inferenceRelayURL: "https://relay.safespaces.dev"` Helm value
+- 2 unit tests for `buildOpenCodeAuthContent`
+
+---
+
+## Activation Steps
+
+1. `cd workers/inference-relay && npm i && npx wrangler deploy`
+2. Add custom domain route `relay.safespaces.dev/*` → Worker in CF dashboard
+3. Deploy chart (controller injects baseURL into new workspace pods)
+4. Existing pods: suspend + resume to pick up new env var
+
+---
+
+## Filed
+
+- Issue #36: `TestE2E_RealAuth_ChangePassword` hangs (pre-existing, unrelated)
+- PR #34: Closed (superseded — fixed relay that we then removed)
