@@ -378,7 +378,7 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 			// Epic 26: If the selected model is free-tier, configure the
 			// opencode provider's baseURL to route through the relay proxy.
 			// If switching to a paid model, reset to direct (no relay).
-			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
+			if h.isFreeTierModel(c.Request.Context(), podIP, password, req.Model) {
 				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
 				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, password, relayBaseURL); pushErr != nil {
 					h.warn("push relay baseURL failed", "error", pushErr.Error())
@@ -458,11 +458,14 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, m
 }
 
 // isFreeTierModel checks if the given model ID is a free-tier model in the live catalog.
-func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID string) bool {
+func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, password, modelID string) bool {
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
 	if err != nil {
 		return false
+	}
+	if password != "" {
+		req.SetBasicAuth(agentd.AuthUsername, password)
 	}
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
