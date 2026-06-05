@@ -519,6 +519,19 @@ func main() {
 
 	var proc *managedProcess
 	if supervise {
+		// Epic 26: If relay is enabled, inject the relay baseURL into the
+		// opencode config before launching opencode. This routes all LLM
+		// requests through the relay inference proxy (localhost:4097/relay/inference)
+		// so they can be forwarded to the connected relay client.
+		// Must run before proc.start() so opencode reads the updated config.
+		if os.Getenv("LLMSAFESPACE_RELAY_URL") != "" {
+			relayBase := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
+			if injectErr := injectRelayConfig(agentd.AgentConfigPath, relayBase); injectErr != nil {
+				log.Warn("relay config inject failed", zap.Error(injectErr))
+			} else {
+				log.Info("relay config injected", zap.String("baseURL", relayBase))
+			}
+		}
 		proc = &managedProcess{}
 		proc.start()
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -436,4 +437,64 @@ func TestBuildProxyHeaders_StripsHopByHop(t *testing.T) {
 	assert.Empty(t, result["connection"])
 	assert.Empty(t, result["transfer-encoding"])
 	assert.Empty(t, result["host"])
+}
+
+// TestInjectRelayConfig_WritesBaseURL verifies that injectRelayConfig writes
+// the relay baseURL into the opencode config file under provider.opencode.options.baseURL.
+func TestInjectRelayConfig_WritesBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := dir + "/agent-config.json"
+
+	const relayBase = "http://localhost:4097/relay/inference"
+	require.NoError(t, injectRelayConfig(cfgPath, relayBase))
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	providerRaw, ok := cfg["provider"]
+	require.True(t, ok, "provider key must be present")
+
+	var providers map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(providerRaw, &providers))
+
+	opencodeProvider, ok := providers["opencode"]
+	require.True(t, ok, "opencode provider must be present")
+
+	optionsRaw, ok := opencodeProvider["options"]
+	require.True(t, ok, "options key must be present")
+
+	var options map[string]string
+	require.NoError(t, json.Unmarshal(optionsRaw, &options))
+	require.Equal(t, relayBase, options["baseURL"], "baseURL must be the relay inference endpoint")
+}
+
+// TestInjectRelayConfig_MergesWithExisting verifies that injectRelayConfig
+// preserves existing keys (e.g. model) when the config file already exists.
+func TestInjectRelayConfig_MergesWithExisting(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := dir + "/agent-config.json"
+
+	existing := `{"$schema":"https://opencode.ai/config.json","model":"nemotron-3-ultra-free"}`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(existing), 0o600))
+
+	require.NoError(t, injectRelayConfig(cfgPath, "http://localhost:4097/relay/inference"))
+
+	data, _ := os.ReadFile(cfgPath)
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	// model must be preserved
+	var model string
+	require.NoError(t, json.Unmarshal(cfg["model"], &model))
+	require.Equal(t, "nemotron-3-ultra-free", model, "existing model must be preserved")
+
+	// baseURL must be present
+	var providers map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg["provider"], &providers))
+	var options map[string]string
+	require.NoError(t, json.Unmarshal(providers["opencode"]["options"], &options))
+	require.Equal(t, "http://localhost:4097/relay/inference", options["baseURL"])
 }
