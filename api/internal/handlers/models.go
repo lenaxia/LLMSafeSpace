@@ -493,7 +493,11 @@ func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, password, m
 }
 
 // pushRelayBaseURL configures the opencode provider's baseURL to route
-// through the in-pod relay proxy (Epic 26).
+// through the in-pod relay proxy (Epic 26). After updating auth.json via
+// PUT /auth/opencode, it calls POST /instance/dispose to invalidate the
+// cached provider state so opencode picks up the new baseURL on the next
+// request. Without the dispose, the cached endpoint.url is used until the
+// opencode process restarts.
 func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, password, relayBaseURL string) error {
 	type payload struct {
 		Type     string            `json:"type"`
@@ -520,6 +524,27 @@ func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, password, 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("PUT /auth/opencode returned %d", resp.StatusCode)
+	}
+
+	// Dispose the opencode instance so it reloads provider config (including
+	// the new baseURL) on the next request. Without this, opencode uses the
+	// cached provider state and never routes through the relay.
+	disposeURL := fmt.Sprintf("http://%s:%d/instance/dispose", podIP, agentd.AgentPort)
+	dispReq, err := http.NewRequestWithContext(ctx, http.MethodPost, disposeURL, http.NoBody) //nolint:gosec // G107: internal pod
+	if err != nil {
+		return fmt.Errorf("create dispose request: %w", err)
+	}
+	dispReq.Header.Set("Content-Type", "application/json")
+	if password != "" {
+		dispReq.SetBasicAuth(agentd.AuthUsername, password)
+	}
+	dispResp, err := modelHTTPClient.Do(dispReq)
+	if err != nil {
+		return fmt.Errorf("POST /instance/dispose: %w", err)
+	}
+	defer func() { _ = dispResp.Body.Close() }()
+	if dispResp.StatusCode >= 400 {
+		return fmt.Errorf("POST /instance/dispose returned %d", dispResp.StatusCode)
 	}
 	return nil
 }

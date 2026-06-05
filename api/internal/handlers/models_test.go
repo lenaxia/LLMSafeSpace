@@ -395,6 +395,7 @@ func TestSetModel_FreeTierModel_PushesRelayBaseURL(t *testing.T) {
 	const testPassword = "relay-push-pw"
 
 	var relayBaseURLPushed string
+	var instanceDisposed bool
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
 	if err != nil {
 		t.Skip("port 4096 not available")
@@ -415,6 +416,10 @@ func TestSetModel_FreeTierModel_PushesRelayBaseURL(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
 				relayBaseURLPushed = body.Metadata["baseURL"]
 			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/instance/dispose":
+			// Must be called after PUT /auth/opencode for new baseURL to take effect
+			instanceDisposed = true
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.NotFound(w, r)
@@ -445,6 +450,7 @@ func TestSetModel_FreeTierModel_PushesRelayBaseURL(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, true, resp["applied"], "applied must be true when PATCH /global/config succeeds")
 	require.NotEmpty(t, relayBaseURLPushed, "relay baseURL must be pushed to opencode for free-tier model")
+	require.True(t, instanceDisposed, "POST /instance/dispose must be called after PUT /auth/opencode to activate new baseURL")
 }
 
 func TestSetModel_Unauthenticated(t *testing.T) {
