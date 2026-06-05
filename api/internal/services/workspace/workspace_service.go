@@ -45,8 +45,19 @@ type Service struct {
 	metricsService   apiinterfaces.MetricsService
 	sessionIndex     apiinterfaces.SessionIndexService
 	secretInjector   SecretInjector
+	credProvisioner  CredentialProvisioner
 	instanceSettings *settings.InstanceService
 	config           *Config
+}
+
+// CredentialProvisioner seeds workspace_credential_bindings from credential_auto_apply.
+type CredentialProvisioner interface {
+	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
+}
+
+// SetCredentialProvisioner installs the credential auto-apply seeder.
+func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
+	s.credProvisioner = cp
 }
 
 // markDeleted soft-deletes a workspace metadata row in the background.
@@ -211,7 +222,12 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
-	// Auto-provision default credentials if enabled
+	// Auto-provision default credentials if enabled (Epic 30).
+	if s.credProvisioner != nil {
+		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID); err != nil {
+			s.logger.Warn("credential auto-apply seeding failed", "workspaceID", meta.ID, "error", err.Error())
+		}
+	}
 
 	ws := &types.Workspace{
 		ID:          meta.ID,

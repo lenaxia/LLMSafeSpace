@@ -185,3 +185,59 @@ func (s *PgSecretStore) DeleteAdminCredential(ctx context.Context, id string) er
 	_, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'admin'`, id)
 	return err
 }
+
+// CreateAutoApply inserts an auto-apply rule.
+func (s *PgSecretStore) CreateAutoApply(ctx context.Context, credentialID, targetType string, targetID *string, priority int) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO credential_auto_apply (credential_id, target_type, target_id, within_priority)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING
+	`, credentialID, targetType, targetID, priority)
+	return err
+}
+
+// DeleteAutoApply removes an auto-apply rule.
+func (s *PgSecretStore) DeleteAutoApply(ctx context.Context, credentialID, targetType string, targetID *string) error {
+	if targetID == nil {
+		_, err := s.pool.Exec(ctx, `
+			DELETE FROM credential_auto_apply
+			WHERE credential_id = $1 AND target_type = $2 AND target_id IS NULL
+		`, credentialID, targetType)
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM credential_auto_apply
+		WHERE credential_id = $1 AND target_type = $2 AND target_id = $3
+	`, credentialID, targetType, *targetID)
+	return err
+}
+
+// AutoApplyRule is a row from credential_auto_apply (exported for handler use).
+type AutoApplyRule struct {
+	CredentialID string
+	TargetType   string
+	TargetID     *string
+	Priority     int
+}
+
+// ListAutoApply returns all auto-apply rules for a credential.
+func (s *PgSecretStore) ListAutoApply(ctx context.Context, credentialID string) ([]AutoApplyRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT credential_id, target_type, target_id, within_priority
+		FROM credential_auto_apply WHERE credential_id = $1
+	`, credentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AutoApplyRule
+	for rows.Next() {
+		var r AutoApplyRule
+		if err := rows.Scan(&r.CredentialID, &r.TargetType, &r.TargetID, &r.Priority); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

@@ -198,6 +198,9 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		adminCreds.GET("/:id", cfg.AdminProviderCredentialsHandler.Get)
 		adminCreds.PUT("/:id", cfg.AdminProviderCredentialsHandler.Update)
 		adminCreds.DELETE("/:id", cfg.AdminProviderCredentialsHandler.Delete)
+		adminCreds.POST("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.CreateAutoApply)
+		adminCreds.GET("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.ListAutoApply)
+		adminCreds.DELETE("/:id/auto-apply/:targetType/:targetId", cfg.AdminProviderCredentialsHandler.DeleteAutoApply)
 	}
 
 	// Secret management routes (Epic 10)

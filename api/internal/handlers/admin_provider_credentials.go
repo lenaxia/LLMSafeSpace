@@ -44,8 +44,9 @@ type createAdminCredentialRequest struct {
 
 // AdminProviderCredentialsHandler handles CRUD for admin provider credentials.
 type AdminProviderCredentialsHandler struct {
-	store     AdminCredentialStore
-	deriveKey secrets.AdminKeyDeriver
+	store          AdminCredentialStore
+	autoApplyStore AutoApplyStore
+	deriveKey      secrets.AdminKeyDeriver
 }
 
 // NewAdminProviderCredentialsHandler creates a new handler.
@@ -254,6 +255,114 @@ func (h *AdminProviderCredentialsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.store.DeleteAdminCredential(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// --- Auto-apply endpoints ---
+
+type createAutoApplyRequest struct {
+	TargetType string `json:"targetType" binding:"required"`
+	TargetID   string `json:"targetId"`
+	Priority   int    `json:"withinPriority"`
+}
+
+type autoApplyResponse struct {
+	CredentialID string `json:"credentialId"`
+	TargetType   string `json:"targetType"`
+	TargetID     string `json:"targetId,omitempty"`
+	Priority     int    `json:"withinPriority"`
+}
+
+// AutoApplyStore abstracts auto-apply DB operations.
+type AutoApplyStore interface {
+	CreateAutoApply(ctx context.Context, credentialID, targetType string, targetID *string, priority int) error
+	DeleteAutoApply(ctx context.Context, credentialID, targetType string, targetID *string) error
+	ListAutoApply(ctx context.Context, credentialID string) ([]secrets.AutoApplyRule, error)
+}
+
+// SetAutoApplyStore sets the auto-apply store (called after construction).
+func (h *AdminProviderCredentialsHandler) SetAutoApplyStore(s AutoApplyStore) {
+	h.autoApplyStore = s
+}
+
+// CreateAutoApply handles POST /api/v1/admin/provider-credentials/:id/auto-apply.
+func (h *AdminProviderCredentialsHandler) CreateAutoApply(c *gin.Context) {
+	credID := c.Param("id")
+	var req createAutoApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.TargetType != "all" && req.TargetType != "user" && req.TargetType != "org" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "targetType must be 'all', 'user', or 'org'"})
+		return
+	}
+	if h.autoApplyStore == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auto-apply not configured"})
+		return
+	}
+
+	var targetID *string
+	if req.TargetType != "all" {
+		if req.TargetID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "targetId required when targetType is not 'all'"})
+			return
+		}
+		targetID = &req.TargetID
+	}
+
+	if err := h.autoApplyStore.CreateAutoApply(c.Request.Context(), credID, req.TargetType, targetID, req.Priority); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create auto-apply rule"})
+		return
+	}
+	c.JSON(http.StatusCreated, autoApplyResponse{
+		CredentialID: credID,
+		TargetType:   req.TargetType,
+		TargetID:     req.TargetID,
+		Priority:     req.Priority,
+	})
+}
+
+// ListAutoApply handles GET /api/v1/admin/provider-credentials/:id/auto-apply.
+func (h *AdminProviderCredentialsHandler) ListAutoApply(c *gin.Context) {
+	credID := c.Param("id")
+	if h.autoApplyStore == nil {
+		c.JSON(http.StatusOK, []autoApplyResponse{})
+		return
+	}
+	rules, err := h.autoApplyStore.ListAutoApply(c.Request.Context(), credID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list auto-apply rules"})
+		return
+	}
+	resp := make([]autoApplyResponse, 0, len(rules))
+	for _, r := range rules {
+		ar := autoApplyResponse{CredentialID: r.CredentialID, TargetType: r.TargetType, Priority: r.Priority}
+		if r.TargetID != nil {
+			ar.TargetID = *r.TargetID
+		}
+		resp = append(resp, ar)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// DeleteAutoApply handles DELETE /api/v1/admin/provider-credentials/:id/auto-apply/:targetType/:targetId.
+func (h *AdminProviderCredentialsHandler) DeleteAutoApply(c *gin.Context) {
+	credID := c.Param("id")
+	targetType := c.Param("targetType")
+	targetIDParam := c.Param("targetId")
+	if h.autoApplyStore == nil {
+		c.Status(http.StatusNoContent)
+		return
+	}
+	var targetID *string
+	if targetType != "all" && targetIDParam != "" {
+		targetID = &targetIDParam
+	}
+	if err := h.autoApplyStore.DeleteAutoApply(c.Request.Context(), credID, targetType, targetID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete auto-apply rule"})
 		return
 	}
 	c.Status(http.StatusNoContent)

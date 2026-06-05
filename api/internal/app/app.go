@@ -145,6 +145,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
+		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
 		// Without this the SecretsHandler returns 503 for every reload
 		// request and the SetBindings auto-push silently no-ops; see
@@ -201,6 +202,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
+			wsSvc.SetCredentialProvisioner(pgStore)
 		}
 	}
 
