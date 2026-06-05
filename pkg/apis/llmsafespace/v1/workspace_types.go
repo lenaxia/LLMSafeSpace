@@ -246,12 +246,12 @@ type WorkspaceStatus struct {
 	FailureReason FailureReason `json:"failureReason,omitempty"`
 
 	// Pod status fields (absorbed from Sandbox):
-	PodName                string       `json:"podName,omitempty"`
-	PodNamespace           string       `json:"podNamespace,omitempty"`
-	PodIP                  string       `json:"podIP,omitempty"`
-	ImageTag               string       `json:"imageTag,omitempty"`
-	Endpoint               string       `json:"endpoint,omitempty"`
-	StartTime              *metav1.Time `json:"startTime,omitempty"`
+	PodName                   string       `json:"podName,omitempty"`
+	PodNamespace              string       `json:"podNamespace,omitempty"`
+	PodIP                     string       `json:"podIP,omitempty"`
+	ImageTag                  string       `json:"imageTag,omitempty"`
+	Endpoint                  string       `json:"endpoint,omitempty"`
+	StartTime                 *metav1.Time `json:"startTime,omitempty"`
 	RestartCount              int32        `json:"restartCount,omitempty"`
 	ConsecutiveFailures       int32        `json:"consecutiveFailures,omitempty"`
 	LastFailureClass          string       `json:"lastFailureClass,omitempty"`
