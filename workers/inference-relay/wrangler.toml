@@ -6,9 +6,4 @@ compatibility_date = "2024-01-01"
 mode = "smart"
 
 [vars]
-# Comma-separated allowed origins. Requests from other origins are rejected (403).
-# Set to empty string for open mode (development only).
-ALLOWED_ORIGINS = "https://safespace.thekao.cloud"
-
-# Upstream provider base URL. The worker proxies: worker.dev/<path> → UPSTREAM_URL/<path>
 UPSTREAM_URL = "https://opencode.ai/zen/v1"
