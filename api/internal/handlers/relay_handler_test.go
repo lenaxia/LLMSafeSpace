@@ -35,6 +35,13 @@ func waitBothConnected(t *testing.T, h *RelayHandler, workspaceID string) {
 	}, 2*time.Second, 5*time.Millisecond, "both participants did not connect within 2s")
 }
 
+func waitAgentConnected(t *testing.T, h *RelayHandler, workspaceID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return h.IsAgentConnected(workspaceID)
+	}, 2*time.Second, 5*time.Millisecond, "agentd did not connect within 2s")
+}
+
 func TestRelayHandler_NoUpgrade(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewRelayHandler(nil)
@@ -455,7 +462,7 @@ func TestRelayHandler_AgentdPasswordAuth_Success(t *testing.T) {
 	require.NoError(t, err, "agentd with correct password should connect; got HTTP %v", resp)
 	defer agentConn.Close()
 
-	assert.True(t, h.IsAgentConnected("ws1"))
+	waitAgentConnected(t, h, "ws1")
 }
 
 // TestRelayHandler_AgentdPasswordAuth_WrongPassword verifies that agentd with a
