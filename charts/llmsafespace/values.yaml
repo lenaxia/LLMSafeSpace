@@ -608,5 +608,5 @@ mcp:
 # When set, workspace pods use this URL as the opencode provider baseURL
 # instead of opencode.ai/zen/v1 directly. Deploy the Cloudflare Worker
 # from workers/inference-relay/ and set the URL here.
-# Example: https://llmsafespace-inference-relay.workers.dev
-inferenceRelayURL: ""
+# Stable CNAME that rotates to fresh Worker deployments.
+inferenceRelayURL: "https://relay.safespaces.dev"
