@@ -17,16 +17,8 @@ const (
 )
 
 // pendingPhaseTimeout is how long a workspace can stay in Pending before
-// being marked Failed.
+// entering recovery backoff.
 const pendingPhaseTimeout = 5 * time.Minute
-
-// MaxTransientFailures is the maximum consecutive transient pod-loss events
-// the controller will self-heal before declaring the workspace Failed.
-const MaxTransientFailures = 3
-
-// TransientFailureResetWindow is how long (seconds) the workspace must remain
-// Active before TransientFailureCount resets to 0.
-const TransientFailureResetWindow = 5 * 60
 
 // Labels applied to workspace pods.
 const (

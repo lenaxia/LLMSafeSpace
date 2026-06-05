@@ -160,7 +160,6 @@ func TestHandleActive_TerminatingPod_TransitionsToCreating(t *testing.T) {
 	ws.Status.StartTime = &past
 	ws.Status.PodIP = "10.0.0.1"
 	ws.Status.Endpoint = "http://10.0.0.1:4096"
-	ws.Status.TransientFailureCount = 0
 
 	now := metav1.Now()
 	pod := &corev1.Pod{
@@ -185,12 +184,9 @@ func TestHandleActive_TerminatingPod_TransitionsToCreating(t *testing.T) {
 	result, err := r.handleActive(context.Background(), ws)
 	require.NoError(t, err)
 
-	// Must transition to Creating, NOT increment TransientFailureCount
 	assert.Equal(t, v1.WorkspacePhaseCreating, ws.Status.Phase)
 	assert.Empty(t, ws.Status.PodIP, "PodIP must be cleared")
 	assert.Empty(t, ws.Status.Endpoint, "Endpoint must be cleared")
-	assert.Equal(t, int32(0), ws.Status.TransientFailureCount,
-		"terminating pod must NOT increment transient failure count")
 	assert.Equal(t, requeueCreating, result.RequeueAfter)
 }
 

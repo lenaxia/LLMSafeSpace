@@ -136,11 +136,6 @@ spec:
                   type: integer
                   format: int64
                   default: 0
-                maxRetries:
-                  type: integer
-                  minimum: 0
-                  maximum: 10
-                  default: 3
                 podSecurityContext:
                   type: object
                   properties:
@@ -231,12 +226,6 @@ spec:
                 restartCount:
                   type: integer
                   format: int32
-                transientFailureCount:
-                  type: integer
-                  format: int32
-                lastTransientFailureAt:
-                  type: string
-                  format: date-time
                 consecutiveFailures:
                   type: integer
                   format: int32
