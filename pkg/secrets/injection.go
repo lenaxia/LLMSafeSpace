@@ -63,7 +63,12 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		}
 		pd, err := s.decryptBinding(ctx, b, sessionID, serverKEK)
 		if err != nil {
-			continue // skip failed decryption, don't set seen
+			// Log the failure for operator visibility. Without this, a corrupted
+			// ciphertext or expired DEK silently falls through to a lower-priority
+			// credential with no signal (reviewer finding: observability gap).
+			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
+				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+			continue // don't set seen — allow fallback to lower-priority credential
 		}
 		if len(b.ModelAllowlist) > 0 {
 			allowed := make(map[string]bool, len(b.ModelAllowlist))

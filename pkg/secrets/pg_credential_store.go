@@ -123,9 +123,6 @@ func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, p
 		)
 	`, userID, provider).Scan(&exists)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return false, nil
-		}
 		return false, fmt.Errorf("check user provider credential: %w", err)
 	}
 	return exists, nil

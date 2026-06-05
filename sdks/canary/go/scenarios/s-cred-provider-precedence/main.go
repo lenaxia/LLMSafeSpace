@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Canary scenario: S-CRED-PROVIDER-PRECEDENCE
-// Verifies the unified credential model (Epic 30):
-// - Admin free-tier credential exists after API startup
-// - User can create provider credentials
-// - User credential binds to workspace as explicit (overrides admin auto)
-// - Cleanup restores original state
-//
-// Requires: CANARY_ADMIN_API_KEY set (admin-level API key for admin endpoint access).
+// Verifies the unified credential model (Epic 30) using the new
+// /api/v1/provider-credentials and /api/v1/admin/provider-credentials endpoints.
 package main
 
 import (
@@ -43,42 +38,49 @@ func main() {
 
 func runPrecedence(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	c := cfg.Client()
-	_ = ctx
-	_ = c
 
-	// Step 1: Verify admin free-tier credential was seeded at startup.
-	// This uses the admin credentials list endpoint.
-	adminCreds, err := c.Secrets.List(ctx)
-	if !run.AssertNoError(err, "list-secrets: no error") {
+	// P1: Admin list — verify free-tier credential was seeded at startup.
+	adminCreds, err := c.AdminProviderCredentials.List(ctx)
+	if !run.AssertNoError(err, "admin-list: no error") {
 		return
 	}
-	run.Assert(len(adminCreds) >= 0, "list-secrets: returns list", "")
+	found := false
+	for _, cred := range adminCreds {
+		if cred.Provider == "opencode" {
+			found = true
+			break
+		}
+	}
+	run.Assert(found, "admin-list: free-tier opencode credential exists", "")
 
-	// Step 2: Create a user llm-provider credential for a test provider.
-	cred, err := c.Secrets.Create(ctx, "canary-precedence-test", "llm-provider",
-		`{"provider":"canary-test","apiKey":"canary-key-001"}`)
-	if !run.AssertNoError(err, "create-user-cred: no error") {
+	// P2: User create — create a provider credential via the new endpoint.
+	userCred, err := c.ProviderCredentials.Create(ctx, "canary-precedence", "canary-test", "canary-key-001", "")
+	if !run.AssertNoError(err, "user-create: no error") {
 		return
 	}
-	run.Assert(cred.ID != "", "create-user-cred: id non-empty", "")
-	credID := cred.ID
+	run.Assert(userCred.ID != "", "user-create: id non-empty", "")
+	credID := userCred.ID
 
-	defer func() { _ = c.Secrets.Delete(context.Background(), credID) }()
+	defer func() { _ = c.ProviderCredentials.Delete(context.Background(), credID) }()
 
-	// Step 3: Verify credential appears in list.
-	list, err := c.Secrets.List(ctx)
-	if run.AssertNoError(err, "list-after-create: no error") {
-		found := false
-		for _, s := range list {
-			if s.ID == credID {
-				found = true
+	// P3: User list — verify credential appears.
+	list, err := c.ProviderCredentials.List(ctx)
+	if run.AssertNoError(err, "user-list: no error") {
+		listFound := false
+		for _, cred := range list {
+			if cred.ID == credID {
+				listFound = true
 				break
 			}
 		}
-		run.Assert(found, "list-after-create: new cred present", "")
+		run.Assert(listFound, "user-list: new credential present", "")
 	}
 
-	// Step 4: Delete (cleanup).
-	err = c.Secrets.Delete(ctx, credID)
-	run.AssertNoError(err, "delete-user-cred: no error")
+	// P4: Delete credential.
+	err = c.ProviderCredentials.Delete(ctx, credID)
+	run.AssertNoError(err, "user-delete: no error")
+
+	// N1: Get deleted credential — should fail.
+	_, err = c.ProviderCredentials.Get(ctx, credID)
+	run.Assert(err != nil, "get-deleted: returns error", canary.ErrDetail(err, "expected 404"))
 }

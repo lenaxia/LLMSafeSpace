@@ -320,3 +320,63 @@ func (s *AccountService) Recover(ctx context.Context, userID, recoveryKey, newPa
 	err := s.c.do(ctx, "POST", "/account/recover", body, &result)
 	return result, err
 }
+
+// --- Provider Credentials (Epic 30) ---
+
+// ProviderCredentialResponse is the API response for a provider credential.
+type ProviderCredentialResponse struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Provider       string   `json:"provider"`
+	BaseURL        string   `json:"baseURL,omitempty"`
+	ModelAllowlist []string `json:"modelAllowlist"`
+	CreatedAt      string   `json:"createdAt"`
+	UpdatedAt      string   `json:"updatedAt"`
+}
+
+// ProviderCredentialsService handles user provider credential operations.
+type ProviderCredentialsService struct{ c *Client }
+
+func (s *ProviderCredentialsService) Create(ctx context.Context, name, provider, apiKey, baseURL string) (*ProviderCredentialResponse, error) {
+	body := map[string]string{"name": name, "provider": provider, "apiKey": apiKey}
+	if baseURL != "" {
+		body["baseURL"] = baseURL
+	}
+	var result ProviderCredentialResponse
+	err := s.c.do(ctx, "POST", "/provider-credentials", body, &result)
+	return &result, err
+}
+
+func (s *ProviderCredentialsService) List(ctx context.Context) ([]ProviderCredentialResponse, error) {
+	var result []ProviderCredentialResponse
+	err := s.c.do(ctx, "GET", "/provider-credentials", nil, &result)
+	return result, err
+}
+
+func (s *ProviderCredentialsService) Get(ctx context.Context, id string) (*ProviderCredentialResponse, error) {
+	var result ProviderCredentialResponse
+	err := s.c.do(ctx, "GET", "/provider-credentials/"+id, nil, &result)
+	return &result, err
+}
+
+func (s *ProviderCredentialsService) Delete(ctx context.Context, id string) error {
+	return s.c.do(ctx, "DELETE", "/provider-credentials/"+id, nil, nil)
+}
+
+func (s *ProviderCredentialsService) Bind(ctx context.Context, credID, workspaceID string) error {
+	var result map[string]any
+	return s.c.do(ctx, "POST", "/provider-credentials/"+credID+"/bind/"+workspaceID, nil, &result)
+}
+
+func (s *ProviderCredentialsService) Unbind(ctx context.Context, credID, workspaceID string) error {
+	return s.c.do(ctx, "DELETE", "/provider-credentials/"+credID+"/bind/"+workspaceID, nil, nil)
+}
+
+// AdminProviderCredentialsService handles admin provider credential operations.
+type AdminProviderCredentialsService struct{ c *Client }
+
+func (s *AdminProviderCredentialsService) List(ctx context.Context) ([]ProviderCredentialResponse, error) {
+	var result []ProviderCredentialResponse
+	err := s.c.do(ctx, "GET", "/admin/provider-credentials", nil, &result)
+	return result, err
+}

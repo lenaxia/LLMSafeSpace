@@ -76,6 +76,145 @@ func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 	assert.Equal(t, "anthropic", pd.Provider)
 }
 
+// TestCredentialPrecedence_ModelAllowlistFiltering verifies that model_allowlist
+// restricts which models appear in the injected LLMProviderData.
+func TestCredentialPrecedence_ModelAllowlistFiltering(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	adminPlaintext, _ := json.Marshal(LLMProviderData{
+		Provider: "anthropic", APIKey: "key",
+		Models: []LLMModelConfig{
+			{ID: "claude-3", Label: "Claude 3"},
+			{ID: "claude-2", Label: "Claude 2"},
+			{ID: "claude-1", Label: "Claude 1"},
+		},
+	})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-filtered", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "anthropic", Ciphertext: adminCipher,
+			SourceType: "auto", ModelAllowlist: []string{"claude-3", "claude-1"},
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	assert.Len(t, pd.Models, 2)
+	assert.Equal(t, "claude-3", pd.Models[0].ID)
+	assert.Equal(t, "claude-1", pd.Models[1].ID)
+}
+
+// TestCredentialPrecedence_ModelAllowlistFallback verifies that when no models
+// match the allowlist, synthetic stubs are created from the allowlist IDs.
+func TestCredentialPrecedence_ModelAllowlistFallback(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "key"})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-stub", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "openai", Ciphertext: adminCipher,
+			SourceType: "auto", ModelAllowlist: []string{"gpt-4o", "gpt-4o-mini"},
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	assert.Len(t, pd.Models, 2)
+	assert.Equal(t, "gpt-4o", pd.Models[0].ID)
+	assert.Equal(t, "gpt-4o-mini", pd.Models[1].ID)
+}
+
+// TestCredentialPrecedence_DecryptionFailureFallback verifies that when a
+// higher-priority credential fails to decrypt, the system falls through to
+// a lower-priority one for the same provider.
+func TestCredentialPrecedence_DecryptionFailureFallback(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	goodPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "good-key"})
+	goodCipher, err := EncryptSecret(adminKEK, goodPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{
+			{ID: "bad", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic",
+				Ciphertext: []byte("corrupt"), SourceType: "explicit", WithinPriority: 10},
+			{ID: "good", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic",
+				Ciphertext: goodCipher, SourceType: "auto", WithinPriority: 0},
+		},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1, "should fall through to good credential")
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	assert.Equal(t, "good-key", pd.APIKey)
+}
+
 // TestCredentialPrecedence_AdminOnlyNoSession verifies that admin credentials
 // work without an active user session (no DEK needed).
 func TestCredentialPrecedence_AdminOnlyNoSession(t *testing.T) {
