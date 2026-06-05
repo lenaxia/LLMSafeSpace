@@ -66,12 +66,6 @@ type RouterConfig struct {
 
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
-
-	// RelayHandler handles GET /api/v1/workspaces/:id/relay WebSocket (optional, Epic 26)
-	RelayHandler *handlers.RelayHandler
-
-	// RelayFallbackHandler handles POST /api/v1/workspaces/:id/relay/fallback (optional, Epic 26 US-26.6)
-	RelayFallbackHandler *handlers.RelayFallbackHandler
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -137,21 +131,6 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
 	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler, cfg)
-
-	// Epic 26: Relay routes use OptionalAuthMiddleware — agentd authenticates
-	// with a workspace password Bearer token (not a user JWT/API key), so the
-	// standard AuthMiddleware would abort those requests. The relay handler
-	// performs its own full auth check after this middleware.
-	if cfg.RelayHandler != nil || cfg.RelayFallbackHandler != nil {
-		relayGroup := router.Group("/api/v1/workspaces")
-		relayGroup.Use(services.GetAuth().OptionalAuthMiddleware())
-		if cfg.RelayHandler != nil {
-			relayGroup.GET("/:id/relay", cfg.RelayHandler.HandleRelay)
-		}
-		if cfg.RelayFallbackHandler != nil {
-			relayGroup.POST("/:id/relay/fallback", cfg.RelayFallbackHandler.HandleFallback)
-		}
-	}
 
 	// Epic 27b: Bulk agent reload across all pending workspaces.
 	if cfg.BulkReloadHandler != nil {

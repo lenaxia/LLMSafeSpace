@@ -729,10 +729,6 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // "userID" in the context when a valid JWT/API key is present, and calls
 // c.Next() unconditionally. Handlers that use this middleware must check
 // the userID themselves and handle the unauthenticated case.
-//
-// Used by the relay endpoint which accepts workspace-password Bearer tokens
-// for the agentd role — a token type the standard AuthMiddleware does not
-// know about. The relay handler performs its own auth after this middleware.
 func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := extractToken(c)

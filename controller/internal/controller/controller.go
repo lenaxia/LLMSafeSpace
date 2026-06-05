@@ -15,14 +15,14 @@ func init() {
 	opencode.Register()
 }
 
-func SetupControllers(mgr ctrl.Manager, apiServiceURL string) error {
+func SetupControllers(mgr ctrl.Manager, inferenceRelayURL string) error {
 	logger := log.Log.WithName("controller")
 	logger.Info("Setting up controllers")
 
 	if err := (&workspace.WorkspaceReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		APIServiceURL: apiServiceURL,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		InferenceRelayURL: inferenceRelayURL,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err

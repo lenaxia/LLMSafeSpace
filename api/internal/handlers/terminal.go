@@ -76,7 +76,7 @@ type TerminalCache interface {
 type WorkspaceGetter interface {
 	GetWorkspace(id string) (*v1.Workspace, error)
 	// GetWorkspacePassword returns the workspace's password from its K8s Secret.
-	// Used by the relay handler to authenticate agentd connections.
+	// Used for workspace-level authentication (e.g. terminal proxy).
 	GetWorkspacePassword(id string) (string, error)
 }
 

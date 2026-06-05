@@ -519,19 +519,6 @@ func main() {
 
 	var proc *managedProcess
 	if supervise {
-		// Epic 26: If relay is enabled, inject the relay baseURL into the
-		// opencode config before launching opencode. This routes all LLM
-		// requests through the relay inference proxy (localhost:4097/relay/inference)
-		// so they can be forwarded to the connected relay client.
-		// Must run before proc.start() so opencode reads the updated config.
-		if os.Getenv("LLMSAFESPACE_RELAY_URL") != "" {
-			relayBase := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
-			if injectErr := injectRelayConfig(agentd.AgentConfigPath, relayBase); injectErr != nil {
-				log.Warn("relay config inject failed", zap.Error(injectErr))
-			} else {
-				log.Info("relay config injected", zap.String("baseURL", relayBase))
-			}
-		}
 		proc = &managedProcess{}
 		proc.start()
 	}
@@ -692,39 +679,6 @@ func main() {
 	// User endpoints — user port.
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
-
-	// Epic 26: Relay inference endpoint. opencode sends LLM requests here
-	// when the provider baseURL is redirected to localhost:4097/relay/inference.
-	relayURL := os.Getenv("LLMSAFESPACE_RELAY_URL")
-	var relayProxyInstance *relayProxy
-	if relayURL != "" {
-		relayToken := os.Getenv("LLMSAFESPACE_RELAY_TOKEN")
-		relayProxyInstance = newRelayProxy(&relayProxyConfig{
-			relayURL:  relayURL,
-			authToken: relayToken,
-		})
-		go func() {
-			backoff := time.Second
-			for {
-				select {
-				case <-relayProxyInstance.closeCh:
-					return
-				default:
-				}
-				if err := relayProxyInstance.connect(); err != nil {
-					log.Warn("relay proxy connect failed", zap.Error(err), zap.Duration("backoff", backoff))
-					time.Sleep(backoff)
-					if backoff < 30*time.Second {
-						backoff *= 2
-					}
-					continue
-				}
-				backoff = time.Second // reset on successful connect
-			}
-		}()
-		userMux.Handle("/relay/inference/", relayProxyInstance.handler())
-		log.Info("relay proxy enabled", zap.String("relay_url", relayURL))
-	}
 
 	// Start admin server (health probes) on dedicated port.
 	adminSrv := &http.Server{
