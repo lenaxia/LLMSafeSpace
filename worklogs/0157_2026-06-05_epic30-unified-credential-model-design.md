@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-05
 **Session type:** Investigation + Design
-**Status:** Complete — implementation starting next session
+**Status:** Complete — merged as PR #37 — implementation starting next session
 
 ---
 
@@ -97,6 +97,19 @@ The epic went through 7 rounds of skeptical review (rounds 2–6 delegated to a 
 | 7+ | ~10 remaining documentation nits | Pseudocode compile errors, internal consistency |
 
 **Final assessment:** Architecture is sound. Remaining issues are pseudocode detail that implementation will resolve naturally. Ready to implement.
+
+---
+
+## PR #37 — Automated reviewer feedback
+
+**Verdict: APPROVE**
+
+Two nits identified and fixed before merge:
+
+1. **Stale `s.credStore` reference** in `PrepareSecretsForInjection` sketch — `s.credStore == nil || s.deriveAdminKey == nil` should be `s.deriveAdminKey == nil` only (Option A eliminates the separate `credStore` field).
+2. **Duplicate code block** — copy-paste artifact at lines 1349–1357 of the SetModel pseudocode.
+
+All CI checks passed (design-only PR, no Go code changes). Merged to main.
 
 ---
 
