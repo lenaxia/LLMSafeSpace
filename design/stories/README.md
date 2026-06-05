@@ -37,6 +37,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 25 | **API Server Robustness & Correctness** — fix double-release/double-write bugs, proxy decomposition, body size limits, SSE write deadlines, session cleanup, context propagation | Epics 22, 23 Story 1 |
 | 27a | **Credential Reload Foundation** — explicit user-driven `agent/reload` endpoint replaces auto-dispose; `workspace_agent_state` schema with `pending_refresh` flag; banner UI; Bug 11 type-mismatch fix | Epic 10 |
 | 27b | **Credential Reload Polish** — drain mode (event-driven via existing SSETracker), bulk reload (streaming NDJSON), chat-proxy error enrichment with refresh hints, SDK ergonomics, Prometheus metrics | Epic 27a |
+| 30 | **Unified Credential Model** — single `provider_credentials` table replaces `credential_sets` + `user_secret` LLM rows; priority-merge injection pipeline; user LLM provider UI; admin auto-apply; free-tier key moved out of controller hardcode; `SetModel` serial round-trip fix; model cache in Redis | Epics 10, 27a |
 
 ## V2.1 (Deferred)
 
