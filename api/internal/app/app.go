@@ -146,6 +146,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
+
+		// Seed the free-tier opencode credential (Epic 30 US-30.4).
+		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {
+			log.Warn("free-tier credential seeding skipped", "error", err.Error())
+		}
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
 		// Without this the SecretsHandler returns 503 for every reload
 		// request and the SetBindings auto-push silently no-ops; see

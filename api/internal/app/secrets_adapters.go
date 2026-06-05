@@ -554,3 +554,23 @@ func (r *secretsPodIPResolver) GetWorkspacePodIP(ctx context.Context, userID, wo
 	}
 	return ws.Status.PodIP, nil
 }
+
+// CredentialSeeder is the narrow interface for free-tier credential seeding.
+type credentialSeeder interface {
+	UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error
+}
+
+// EnsureFreeTierCredential upserts the platform free-tier opencode credential
+// at API startup. Idempotent — safe on every boot.
+func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, logger pkginterfaces.LoggerInterface) error {
+	kek := deriveServerKey("provider-credentials")
+	if kek == nil {
+		return fmt.Errorf("LLMSAFESPACE_MASTER_SECRET not set; skipping free-tier credential seed")
+	}
+	plaintext := []byte(`{"provider":"opencode","apiKey":"public"}`)
+	ciphertext, err := secrets.EncryptSecret(kek, plaintext)
+	if err != nil {
+		return fmt.Errorf("encrypt free-tier key: %w", err)
+	}
+	return seeder.UpsertFreeTierCredential(ctx, ciphertext)
+}
