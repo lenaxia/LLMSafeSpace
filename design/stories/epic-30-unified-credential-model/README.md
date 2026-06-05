@@ -961,7 +961,7 @@ func (s *SecretService) prepareSecretsLegacy(
 func (s *SecretService) PrepareSecretsForInjection(
     ctx context.Context, userID, sessionID, workspaceID string,
 ) ([]byte, error) {
-    if s.credStore == nil || s.deriveAdminKey == nil {
+    if s.deriveAdminKey == nil {
         return s.prepareSecretsLegacy(ctx, userID, sessionID, workspaceID)
     }
 
@@ -1346,16 +1346,6 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
 ```
-                _ = h.clearRelayBaseURL(context.Background(), podIP, password)
-            }
-        }()
-    }
-
-    applied := podIP != ""
-    c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
-}
-```
-
 `fetchCatalogOnce` replaces the three separate catalog-fetching functions. `modelExistsInCatalog` and `isFreeTierModel` are deleted.
 
 ### US-30.11 — Model cache in Redis
