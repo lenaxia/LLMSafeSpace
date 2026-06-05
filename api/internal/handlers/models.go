@@ -363,7 +363,13 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	if h.podIPResolver != nil {
 		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
 		if err == nil && podIP != "" {
-			if patchErr := h.patchAgentModel(c.Request.Context(), podIP, req.Model); patchErr != nil {
+			// Fetch workspace password once; used for all opencode Basic-auth calls below.
+			password := ""
+			if h.passwordGetter != nil {
+				password, _ = h.passwordGetter(c.Request.Context(), workspaceID)
+			}
+
+			if patchErr := h.patchAgentModel(c.Request.Context(), podIP, password, req.Model); patchErr != nil {
 				h.warn("PATCH model to agent failed", "error", patchErr.Error())
 			} else {
 				applied = true
@@ -374,11 +380,11 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 			// If switching to a paid model, reset to direct (no relay).
 			if h.isFreeTierModel(c.Request.Context(), podIP, req.Model) {
 				relayBaseURL := fmt.Sprintf("http://localhost:%d/relay/inference", agentd.AgentdPort)
-				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, relayBaseURL); pushErr != nil {
+				if pushErr := h.pushRelayBaseURL(c.Request.Context(), podIP, password, relayBaseURL); pushErr != nil {
 					h.warn("push relay baseURL failed", "error", pushErr.Error())
 				}
 			} else {
-				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP); pushErr != nil {
+				if pushErr := h.clearRelayBaseURL(c.Request.Context(), podIP, password); pushErr != nil {
 					h.warn("clear relay baseURL failed", "error", pushErr.Error())
 				}
 			}
@@ -428,7 +434,7 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, worksp
 }
 
 // patchAgentModel sends the model selection to the running opencode agent.
-func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model string) error {
+func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) error {
 	body := []byte(fmt.Sprintf(`{"model":%q}`, model))
 	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
@@ -436,6 +442,9 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, model strin
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if password != "" {
+		req.SetBasicAuth(agentd.AuthUsername, password)
+	}
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -482,7 +491,7 @@ func (h *SecretsHandler) isFreeTierModel(ctx context.Context, podIP, modelID str
 
 // pushRelayBaseURL configures the opencode provider's baseURL to route
 // through the in-pod relay proxy (Epic 26).
-func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseURL string) error {
+func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, password, relayBaseURL string) error {
 	type payload struct {
 		Type     string            `json:"type"`
 		Key      string            `json:"key"`
@@ -498,6 +507,9 @@ func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseU
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if password != "" {
+		req.SetBasicAuth(agentd.AuthUsername, password)
+	}
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -510,6 +522,6 @@ func (h *SecretsHandler) pushRelayBaseURL(ctx context.Context, podIP, relayBaseU
 }
 
 // clearRelayBaseURL resets the opencode provider to its default base URL.
-func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP string) error {
-	return h.pushRelayBaseURL(ctx, podIP, "")
+func (h *SecretsHandler) clearRelayBaseURL(ctx context.Context, podIP, password string) error {
+	return h.pushRelayBaseURL(ctx, podIP, password, "")
 }

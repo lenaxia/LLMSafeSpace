@@ -331,6 +331,60 @@ func TestSetModel_NoPod_AppliedFalse(t *testing.T) {
 	updater.mu.Unlock()
 }
 
+// TestSetModel_LivePush_SendsBasicAuth verifies that when a pod is running,
+// SetModel sends the workspace password as Basic auth to PATCH /global/config.
+// Without Basic auth opencode returns 401 and applied stays false.
+func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+	const testPassword = "ws-live-push-pw"
+
+	// Mock opencode: only accepts authenticated PATCH /global/config (paid model).
+	// For the model list (GET /api/model) return a paid model so relay baseURL is
+	// not pushed (keeps the test focused on patchAgentModel auth).
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/global/config":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/model":
+			// Return a paid model so relay baseURL logic is not triggered
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"id":"anthropic/claude-paid","providerID":"anthropic","enabled":true,"cost":[{"input":3,"output":15}]}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	updater := &mockWSUpdater{ownerUserID: "user-1"}
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(updater)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "anthropic/claude-paid"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "anthropic/claude-paid", resp["model"])
+	require.Equal(t, true, resp["applied"], "applied must be true when PATCH /global/config succeeds with Basic auth")
+}
+
 func TestSetModel_Unauthenticated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
