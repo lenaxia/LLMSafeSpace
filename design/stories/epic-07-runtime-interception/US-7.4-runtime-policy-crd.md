@@ -1,7 +1,7 @@
 # US-7.4: RuntimePolicy CRD
 
 **Epic:** 7 — Runtime Interception Layer
-**Status:** Planning
+**Status:** Closed — Architecture incompatible with current codebase (see issue #40 and epic README)
 **Dependencies:** None
 
 ## Objective

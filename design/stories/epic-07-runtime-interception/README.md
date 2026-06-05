@@ -1,9 +1,36 @@
 # Epic 7: Runtime Interception Layer
 
-**Status:** Planning
+**Status:** Partially Closed — Architecture Incompatible
 **Created:** 2026-05-24
-**Priority:** Medium
+**Updated:** 2026-06-05
+**Priority:** Deferred
 **Depends on:** Epic 6 (Collapse Sandbox into Workspace)
+
+## Decision (2026-06-05)
+
+The sidecar daemon + PATH-wrapper architecture described in this epic is **incompatible with the current codebase**:
+- `ReadOnlyRootFilesystem: true` is locked in by Epic 17 regression tests (`security_test.go:79-81`)
+- The mise shim layer at `/usr/local/share/mise/shims` conflicts with PATH-intercepting wrappers
+- A root sidecar daemon cannot write to the main container's read-only rootfs
+
+### Story Dispositions
+
+| Story | Disposition | Issue |
+|-------|------------|-------|
+| US-7.1 System Daemon | **Closed** — sidecar approach incompatible | #40 |
+| US-7.2 Package Manager Wrappers | **Closed** — binary relocation incompatible with ReadOnlyRootFilesystem | #40 |
+| US-7.3 Language Runtime Wrappers | **Redesigned** — reimplement as env-var injection (PYTHONSTARTUP, NODE_OPTIONS) | #41 |
+| US-7.4 RuntimePolicy CRD | **Closed** — no consuming implementation | #40 |
+| US-7.5 Workspace Spec: languages + runtimeClass | **Partially closed** — `runtimeClass` field for gVisor still valuable; `languages[]` field deferred with US-7.3 redesign | #40 |
+| US-7.6 RuntimeEnvironment Cleanup | **Open** — actionable, no conflicts | #42 |
+| US-7.7 Base Dockerfile Rewrite | **Closed** — daemon/wrapper stage approach abandoned | #40 |
+| US-7.8 Delete Legacy Artifacts | **Open** — actionable, no conflicts (after US-7.3 migrates scripts) | #42 |
+
+### Future Direction
+
+Runtime policy enforcement will be revisited as a **Dockerfile-baked wrapper script** approach rather than a runtime interception daemon. The preferred mechanism for language restrictions (US-7.3) is env-var injection using the existing V1 policy scripts. See issue #41 for the redesigned scope.
+
+---
 
 ## Rationale
 

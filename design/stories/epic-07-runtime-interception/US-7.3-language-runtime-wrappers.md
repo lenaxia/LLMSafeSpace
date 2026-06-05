@@ -1,7 +1,7 @@
 # US-7.3: Language Runtime Wrappers
 
 **Epic:** 7 — Runtime Interception Layer
-**Status:** Planning
+**Status:** Redesigned — implement as env-var injection (PYTHONSTARTUP, NODE_OPTIONS); see issue #41
 **Dependencies:** US-7.4 (RuntimePolicy CRD — for policy config format)
 
 ## Objective

@@ -1,9 +1,11 @@
 # Epic 26: Client-Proxied Inference for Free Models
 
-**Status:** Design
+**Status:** Complete (CF Worker architecture — see pivot note below)
 **Priority:** Medium
 **Depends On:** Epic 10 (Multi-Tenant Trust & Secret Management)
 **Motivation:** Enable free-tier LLM models at scale without platform IP throttling/banning
+
+> **Architecture Pivot (2026-06-05, worklog 0155):** The original WebSocket relay design was replaced by a 37-line Cloudflare Worker. US-26.1–26.6 (WebSocket relay infrastructure) were built and then deleted in PR #35. US-26.7 is superseded — its Tasks A-E targeted the deleted relay code and no longer apply. The current implementation: controller injects `OPENCODE_AUTH_CONTENT` with `metadata.baseURL: "https://relay.safespaces.dev"` at pod creation; the CF Worker proxies requests from Cloudflare's edge POPs. Epic goal achieved.
 
 ---
 
@@ -359,14 +361,35 @@ US-26.2 (WebSocket Relay Endpoint) ────┼──→ US-26.3 (Browser Cli
 
 ## US-26.7: Relay Activation — Critical Fixes for Production Functionality
 
-**Status:** Open
-**Priority:** Critical (relay is non-functional without this)
-**Depends On:** US-26.1 through US-26.6 (all merged)
-**Identified:** Worklog 0153 (2026-06-05 audit)
+**Status:** ~~Open~~ **SUPERSEDED** — Architecture pivot to Cloudflare Worker (worklog 0155, 2026-06-05)
+**Priority:** N/A
+**Depends On:** N/A
 
-### Problem
+### Why Superseded
 
-The relay system is structurally complete but operationally non-functional in production. Five validated issues prevent it from working:
+After this story was written (worklog 0153), a full architectural pivot occurred (worklog 0155, PR #35). The entire WebSocket relay system (~4000 lines: `relay_proxy.go`, `relay_handler.go`, `relay_config.go`, `useRelayClient.ts`, etc.) was **deleted** and replaced with a 37-line Cloudflare Worker.
+
+**New architecture:**
+```
+Workspace Pod (opencode) → https://relay.safespaces.dev → CF Worker → opencode.ai/zen/v1
+```
+
+The controller injects `OPENCODE_AUTH_CONTENT` with `metadata.baseURL: "https://relay.safespaces.dev"` at pod creation time (no runtime push needed). The CF Worker is deployed separately via Wrangler and routes from Cloudflare's 300+ edge POPs, providing natural IP diversity.
+
+**Why the pivot resolved all 5 issues in this story:**
+1. Basic Auth → N/A (no relay push calls exist; `pushRelayBaseURL`/`isFreeTierModel` deleted)
+2. DisposeInstance after push → N/A (no runtime push; `baseURL` injected at pod creation)
+3. No boot-time activation → N/A (controller injects at pod creation, not at model selection)
+4. CORS blocks browser relay → N/A (CF Worker is server-side; browser never makes direct opencode.ai calls)
+5. No CORS fallback → N/A (same as #4)
+
+**Tasks A-E below are preserved for historical context only. All have been rendered moot by the pivot.**
+
+---
+
+### [HISTORICAL] Original Problem (superseded)
+
+The relay system was structurally complete but operationally non-functional in production. Five validated issues prevented it from working:
 
 1. **Basic Auth missing on relay push** — `isFreeTierModel` and `pushRelayBaseURL` call opencode without Basic Auth → 401 → relay never activates via model selection.
 

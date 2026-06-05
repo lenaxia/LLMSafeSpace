@@ -954,8 +954,10 @@ Future enhancement: emit SSE `workspace.health` event with `CredentialRotated` b
 | US-8.6 | Agent Health Check in Controller (5-min interval, grace period, backoff) | US-8.1, US-8.5 | M |
 | US-8.7 | Init Container Fix (remove `{}` else branch in `buildCredentialSetupInit`) | None | S |
 | US-8.8 | API CredentialState + AgentHealth in Status Response | US-8.5, US-8.6 | M |
-| US-8.9 | SSE workspace.health Events (transition-only) | US-8.8 | M |
+| ~~US-8.9~~ | ~~SSE workspace.health Events (transition-only)~~ | ~~US-8.8~~ | ~~M~~ |
 | US-8.10 | Self-Healing: Suspend on Credential Loss | US-8.5 | S |
+
+> **US-8.9 Status (2026-06-05):** Superseded and generalized. The original story scoped push events to `workspace.health` only. The decision is to implement a broader push notification system for any backend→frontend state change (health, credential reload, workspace updates, system announcements). Epic 28's `UserEventBroker` is ready infrastructure. See GitHub issue #43 for the generalized design. US-8.9 as originally scoped is closed; the broader capability will be designed separately.
 
 ---
 

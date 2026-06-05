@@ -1,7 +1,7 @@
 # US-7.1: System Daemon (Sidecar)
 
 **Epic:** 7 — Runtime Interception Layer
-**Status:** Planning
+**Status:** Closed — Architecture incompatible with current codebase (see issue #40 and epic README)
 **Dependencies:** None
 
 ## Objective

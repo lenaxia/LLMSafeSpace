@@ -1,7 +1,7 @@
 # US-7.5: Workspace Spec — Languages + RuntimeClass
 
 **Epic:** 7 — Runtime Interception Layer
-**Status:** Planning
+**Status:** Planning — runtimeClass field still relevant; languages[] field deferred with US-7.3 redesign
 **Dependencies:** US-7.4 (RuntimePolicy CRD)
 
 ## Objective
