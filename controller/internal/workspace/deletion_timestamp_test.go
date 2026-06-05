@@ -196,7 +196,7 @@ func TestHandleActive_TerminatingPod_TransitionsToCreating(t *testing.T) {
 
 func TestHandleActive_NonRunningPod_NoDeletionTimestamp_RecoverTransient(t *testing.T) {
 	// Regression: a non-running pod without DeletionTimestamp must still
-	// trigger recoverFromTransientPodLoss.
+	// trigger recovery (via enterRecovery with failure classification).
 	scheme := testScheme(t)
 	ws := makeWorkspace("ws-active-lost", "default", v1.WorkspacePhaseActive)
 	ws.UID = "ws-active-lost-uid"

@@ -24,6 +24,11 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.Endpoint = ""
 	workspace.Status.SuspendedAt = &now
 	workspace.Status.TransientFailureCount = 0
+	workspace.Status.ConsecutiveFailures = 0
+	workspace.Status.NextRetryAt = nil
+	workspace.Status.LastFailureClass = ""
+	workspace.Status.LastFailureAt = nil
+	workspace.Status.LastStableAt = nil
 	workspace.Status.Sessions = nil
 	workspace.Status.ActiveSessions = 0
 	return ctrl.Result{}, r.Status().Update(ctx, workspace)

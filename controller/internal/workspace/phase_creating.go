@@ -31,6 +31,20 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
 
+	// F19: restartGeneration bump bypasses backoff — user wants immediate retry.
+	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
+		logger.Info("RestartGeneration bumped in Creating phase; clearing recovery state",
+			"gen", workspace.Spec.RestartGeneration)
+		workspace.Status.ConsecutiveFailures = 0
+		workspace.Status.NextRetryAt = nil
+		workspace.Status.LastFailureClass = ""
+		workspace.Status.LastFailureAt = nil
+		workspace.Status.SafeMode = false
+		workspace.Status.RestartCount++
+		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
+		// Fall through to pod creation below.
+	}
+
 	// Check if pod already exists.
 	existingPod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, existingPod)
@@ -133,6 +147,19 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		class := classifyFailure(obs)
 		r.deletePodByName(ctx, existingPod.Name, existingPod.Namespace)
 		return r.enterRecovery(ctx, workspace, class)
+	}
+
+	// FN3: Pod stuck in Pending + Unschedulable → classify as Infrastructure,
+	// delete pod, enter recovery with backoff. But only if it's been stuck
+	// for > 5 minutes (give the scheduler time to find a node).
+	if existingPod.Status.Phase == corev1.PodPending {
+		obs := observePod(existingPod)
+		if obs.Unschedulable && !existingPod.CreationTimestamp.IsZero() &&
+			time.Since(existingPod.CreationTimestamp.Time) > 5*time.Minute {
+			logger.Info("Pod unschedulable for >5min; entering recovery", "pod", existingPod.Name)
+			r.deletePodByName(ctx, existingPod.Name, existingPod.Namespace)
+			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
+		}
 	}
 
 	return ctrl.Result{RequeueAfter: requeueCreating}, nil
