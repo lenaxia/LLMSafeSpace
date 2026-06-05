@@ -157,7 +157,11 @@ func TestE2E_WorkerProxy_ErrorPassthrough(t *testing.T) {
 		target := upstream.URL + r.URL.Path
 		proxyReq, _ := http.NewRequest(r.Method, target, r.Body)
 		proxyReq.Header = r.Header.Clone()
-		resp, _ := http.DefaultClient.Do(proxyReq)
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil || resp == nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
 		defer resp.Body.Close()
 		for k, vals := range resp.Header {
 			for _, v := range vals {
@@ -195,7 +199,11 @@ func TestE2E_WorkerProxy_QueryParams(t *testing.T) {
 			target += "?" + r.URL.RawQuery
 		}
 		proxyReq, _ := http.NewRequest(r.Method, target, r.Body)
-		resp, _ := http.DefaultClient.Do(proxyReq)
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil || resp == nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
 		defer resp.Body.Close()
 		w.WriteHeader(resp.StatusCode)
 	}))
