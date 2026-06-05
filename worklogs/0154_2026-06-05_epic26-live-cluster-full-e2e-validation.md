@@ -1,7 +1,7 @@
 # Worklog: Epic 26 Live Cluster Validation — Full E2E Pass
 
 **Date:** 2026-06-05
-**Session:** Validated Epic 26 (Client-Proxied Inference) end-to-end on the live cluster. Discovered and fixed 8 bugs across the Helm chart, network policy, auth middleware, API handlers, and workspace-agentd startup.
+**Session:** Two-part session. Part 1 (earlier today): fixed bugs 1–3 and validated steps 1–3, 7. Part 2 (this entry): debugged why `proxy_request` never arrived despite relay client connecting; found and fixed bugs 4–8; confirmed step 6 end-to-end. Opened PR #34.
 **Status:** Complete
 
 ---
@@ -26,6 +26,36 @@ Execute the Epic 26 test plan against the live cluster (`default` namespace, ing
 | 6 | `pushRelayBaseURL` didn't activate new baseURL | `PUT /auth/opencode` writes to `auth.json` but opencode uses cached provider state until `POST /instance/dispose` | Added `POST /instance/dispose` call after `PUT /auth/opencode` in `pushRelayBaseURL` | `1b69985` |
 | 7 | Relay baseURL never routed opencode inference | `metadata.baseURL` in `auth.json` doesn't override opencode's hardcoded `endpoint.url` for the built-in `opencode` provider. BaseURL must be in the config file (`provider.opencode.options.baseURL`) | `injectRelayConfig()` writes relay baseURL to `AgentConfigPath` at agentd startup, before opencode launches | `8654046` |
 | 8 | `isFreeTierModel` always returned false | `GET /api/model` sent without Basic auth → 401 → `false` → relay baseURL never pushed | Pass password to `isFreeTierModel` | `b81a300` |
+
+### Investigation Log (Part 2 — Why `proxy_request` Never Arrived)
+
+After bugs 1–3 were fixed and the relay WebSocket handshake succeeded, Step 6 (`proxy_request` received) still failed across multiple attempts. Investigation proceeded bottom-up through the full relay chain:
+
+**Attempt 1** — relay client timed out after 35s with no messages.
+- API log showed `PATCH model to agent failed: PATCH /global/config returned 401`. Both `patchAgentModel` and `pushRelayBaseURL` had no Basic auth. opencode requires HTTP Basic for all API calls. → Bug 5.
+
+**Attempt 2** — `applied: true`, but `PUT /auth/opencode` showed `PUT /auth/opencode returned 401`.
+- `isFreeTierModel` also lacked Basic auth, so it returned `false` for every model → `clearRelayBaseURL` ran instead of `pushRelayBaseURL`. → Bug 8 (fixed alongside 5).
+
+**Attempt 3** — `applied: true`, no more 401s in API log. But `proxy_request` still didn't arrive; prompt returned an LLM response directly.
+- Verified `auth.json` in pod: `{"opencode":{"type":"api","key":"public","metadata":{"baseURL":"http://localhost:4097/relay/inference"}}}` — the auth write was working.
+- Checked `GET /api/provider`: `endpoint.url = "https://opencode.ai/zen/v1"` — unchanged despite PUT + dispose.
+- Conclusion: `metadata.baseURL` in opencode's `auth.json` is not applied to `endpoint.url` for the built-in `opencode` provider. The `auth.json` metadata mechanism only works for user-defined providers where the base URL is configurable at the provider level. The built-in `opencode` provider has a hardcoded endpoint that `PUT /auth/opencode` cannot override. → Bug 7 (needed config file injection instead).
+
+**Attempt 4** — `injectRelayConfig()` deployed. Confirmed `relay config injected` in agentd log. `/tmp/agent-config.json` shows `provider.opencode.options.baseURL = "http://localhost:4097/relay/inference"`. But `GET /api/provider` still shows `endpoint.url = "https://opencode.ai/zen/v1"`.
+- Direct test from pod: `POST localhost:4097/relay/inference/` → `{"error":"relay timeout"}` (504). Relay IS intercepting.
+- Sent prompt via API → prompt hung for >60s then timed out with `"timeout awaiting response headers"` in API logs. opencode was waiting for the relay response, not going direct. The relay path is active.
+- But relay client received `ConnectionClosedError` instead of `proxy_request`. Relay client's WS connection was dropped when agentd cycled its 60s pongWait reconnect, deleting the relay room briefly.
+
+**Attempt 5** — added retry loop to relay client (auto-reconnect on close, `ping_interval=20`). Sent prompt immediately after confirming relay client was connected.
+- `proxy_request` received:
+  ```
+  method=POST url=https://opencode.ai/responses
+  body[:120]={"model":"gpt-5-nano","input":[{"role":"developer","content":"You are a title generator...
+  ```
+  This was opencode's auto-title-generation call, which proves the relay chain is end-to-end functional. The relay client responded with `proxy_error` and the round-trip completed.
+
+**Key insight from Bug 7:** `injectRelayConfig()` writes to `/tmp/agent-config.json` (= `OPENCODE_CONFIG` env var in opencode's process). Although `GET /api/provider` still shows the hardcoded `endpoint.url`, opencode actually *does* use `provider.opencode.options.baseURL` from the config file when making outbound requests — the `/api/provider` response reflects the static provider definition, not the runtime-overridden endpoint. The 504 relay timeout and eventually the `proxy_request` confirm that inference traffic was routing through `localhost:4097/relay/inference` as intended.
 
 ### Additional Fixes (pre-existing issues found during this session)
 
