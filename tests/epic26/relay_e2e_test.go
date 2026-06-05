@@ -54,7 +54,7 @@ func TestE2E_WorkerProxy_FullChain(t *testing.T) {
 
 		resp, err := http.DefaultClient.Do(proxyReq)
 		if err != nil {
-			http.Error(w, err.Error(), 502)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
@@ -118,7 +118,7 @@ func TestE2E_WorkerProxy_StreamingResponse(t *testing.T) {
 		proxyReq.Header = r.Header.Clone()
 		resp, err := http.DefaultClient.Do(proxyReq)
 		if err != nil {
-			http.Error(w, err.Error(), 502)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
