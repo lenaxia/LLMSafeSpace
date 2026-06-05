@@ -127,6 +127,16 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 			return
 		}
 
+		// Skip SSLRedirect for the relay WebSocket endpoint. Agentd connects
+		// via ws:// (HTTP) directly to the in-cluster ClusterIP — no TLS, no
+		// X-Forwarded-Proto header. A 301 redirect causes gorilla/websocket to
+		// report "bad handshake" because it does not follow redirects.
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/workspaces/") &&
+			strings.HasSuffix(c.Request.URL.Path, "/relay") {
+			c.Next()
+			return
+		}
+
 		// Apply secure middleware
 		err := secureMiddleware.Process(c.Writer, c.Request)
 		if err != nil {

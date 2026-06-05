@@ -186,3 +186,40 @@ func TestSecurityMiddleware_TrustsXForwardedProto(t *testing.T) {
 		assert.Equal(t, http.StatusMovedPermanently, w.Code)
 	})
 }
+
+// TestSecurityMiddleware_RelaySkipsSSLRedirect pins the contract that
+// /api/v1/workspaces/<id>/relay is exempt from SSLRedirect.
+// Agentd connects via ws:// (HTTP) directly to the in-cluster service
+// with no TLS and no X-Forwarded-Proto header. Without the skip, the
+// API returns 301 and gorilla/websocket interprets it as "bad handshake".
+func TestSecurityMiddleware_RelaySkipsSSLRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockLogger := logmock.NewMockLogger()
+	mockLogger.On("Warn", mock.Anything, mock.Anything).Maybe()
+
+	router := gin.New()
+	config := middleware.SecurityConfig{
+		RequireHTTPS: true,
+		Development:  false,
+	}
+	router.Use(middleware.SecurityMiddleware(mockLogger, config))
+	router.GET("/api/v1/workspaces/:id/relay", func(c *gin.Context) {
+		c.String(http.StatusSwitchingProtocols, "upgrading")
+	})
+
+	paths := []string{
+		"/api/v1/workspaces/some-workspace-id/relay",
+		"/api/v1/workspaces/cae45355-9b08-4998-b2f9-8f988c1179ad/relay",
+	}
+	for _, path := range paths {
+		t.Run(path+" plain HTTP not redirected", func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", path, nil)
+			// No X-Forwarded-Proto — simulates agentd's in-cluster ws:// connect.
+			router.ServeHTTP(w, req)
+
+			assert.NotEqual(t, http.StatusMovedPermanently, w.Code,
+				"relay path must not be SSL-redirected; got %d", w.Code)
+		})
+	}
+}
