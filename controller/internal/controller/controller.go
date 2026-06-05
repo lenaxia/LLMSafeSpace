@@ -20,8 +20,9 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL string) error {
 	logger.Info("Setting up controllers")
 
 	if err := (&workspace.WorkspaceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		InferenceRelayURL: inferenceRelayURL,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err

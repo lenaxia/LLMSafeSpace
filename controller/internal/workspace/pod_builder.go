@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -482,5 +483,15 @@ func (r *WorkspaceReconciler) buildOpenCodeAuthContent() string {
 	if r.InferenceRelayURL == "" {
 		return `{"opencode":{"type":"api","key":"public"}}`
 	}
-	return `{"opencode":{"type":"api","key":"public","metadata":{"baseURL":"` + r.InferenceRelayURL + `"}}}`
+	type meta struct {
+		BaseURL string `json:"baseURL"`
+	}
+	type entry struct {
+		Type     string `json:"type"`
+		Key      string `json:"key"`
+		Metadata meta   `json:"metadata"`
+	}
+	content := map[string]entry{"opencode": {Type: "api", Key: "public", Metadata: meta{BaseURL: r.InferenceRelayURL}}}
+	out, _ := json.Marshal(content)
+	return string(out)
 }
