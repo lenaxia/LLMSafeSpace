@@ -186,4 +186,3 @@ func TestSecurityMiddleware_TrustsXForwardedProto(t *testing.T) {
 		assert.Equal(t, http.StatusMovedPermanently, w.Code)
 	})
 }
-
