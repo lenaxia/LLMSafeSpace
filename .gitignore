@@ -59,3 +59,7 @@ frontend/test-results/
 design/stories/epic-17-security-review/phase-0/phase-0-artefacts/
 design/stories/epic-17-security-review/phase-0-prod/phase-0-prod-artefacts/
 .tmp/
+
+# Compiled canary scenario binaries (built by CI, not committed)
+sdks/canary/go/s-*
+sdks/canary/go/d-*
