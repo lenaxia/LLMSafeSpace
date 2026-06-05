@@ -158,7 +158,7 @@ func TestE2E_WorkerProxy_ErrorPassthrough(t *testing.T) {
 		proxyReq, _ := http.NewRequest(r.Method, target, r.Body)
 		proxyReq.Header = r.Header.Clone()
 		resp, err := http.DefaultClient.Do(proxyReq)
-		if err != nil || resp == nil {
+		if err != nil {
 			http.Error(w, "proxy error", http.StatusBadGateway)
 			return
 		}
@@ -200,7 +200,7 @@ func TestE2E_WorkerProxy_QueryParams(t *testing.T) {
 		}
 		proxyReq, _ := http.NewRequest(r.Method, target, r.Body)
 		resp, err := http.DefaultClient.Do(proxyReq)
-		if err != nil || resp == nil {
+		if err != nil {
 			http.Error(w, "proxy error", http.StatusBadGateway)
 			return
 		}
