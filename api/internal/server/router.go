@@ -55,6 +55,9 @@ type RouterConfig struct {
 	// AdminProviderCredentialsHandler handles admin credential CRUD (optional)
 	AdminProviderCredentialsHandler *handlers.AdminProviderCredentialsHandler
 
+	// UserProviderCredentialsHandler handles user credential CRUD (optional)
+	UserProviderCredentialsHandler *handlers.UserProviderCredentialsHandler
+
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 
@@ -201,6 +204,18 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		adminCreds.POST("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.CreateAutoApply)
 		adminCreds.GET("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.ListAutoApply)
 		adminCreds.DELETE("/:id/auto-apply/:targetType/:targetId", cfg.AdminProviderCredentialsHandler.DeleteAutoApply)
+	}
+
+	// User provider credentials routes (Epic 30)
+	if cfg.UserProviderCredentialsHandler != nil {
+		userCreds := router.Group("/api/v1/provider-credentials")
+		userCreds.Use(services.GetAuth().AuthMiddleware())
+		userCreds.POST("", cfg.UserProviderCredentialsHandler.Create)
+		userCreds.GET("", cfg.UserProviderCredentialsHandler.List)
+		userCreds.GET("/:id", cfg.UserProviderCredentialsHandler.Get)
+		userCreds.DELETE("/:id", cfg.UserProviderCredentialsHandler.Delete)
+		userCreds.POST("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Bind)
+		userCreds.DELETE("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Unbind)
 	}
 
 	// Secret management routes (Epic 10)

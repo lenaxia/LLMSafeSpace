@@ -241,3 +241,97 @@ func (s *PgSecretStore) ListAutoApply(ctx context.Context, credentialID string) 
 	}
 	return out, rows.Err()
 }
+
+// UserCredentialRow is the DB row shape for user-owned provider credentials.
+type UserCredentialRow struct {
+	ID             string
+	OwnerID        string
+	Name           string
+	Provider       string
+	Ciphertext     []byte
+	KeyVersion     int
+	ModelAllowlist []string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// CreateUserCredential inserts a user-owned provider credential.
+func (s *PgSecretStore) CreateUserCredential(ctx context.Context, row *UserCredentialRow) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at)
+		VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9)
+	`, row.ID, row.OwnerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.CreatedAt, row.UpdatedAt)
+	return err
+}
+
+// ListUserCredentials returns all credentials owned by a user.
+func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) ([]*UserCredentialRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at
+		FROM provider_credentials WHERE owner_type = 'user' AND owner_id = $1
+		ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*UserCredentialRow
+	for rows.Next() {
+		var r UserCredentialRow
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &r)
+	}
+	return out, rows.Err()
+}
+
+// GetUserCredential returns a single user credential by ID, or nil if not found/not owned.
+func (s *PgSecretStore) GetUserCredential(ctx context.Context, userID, id string) (*UserCredentialRow, error) {
+	var r UserCredentialRow
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at
+		FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2
+	`, id, userID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.CreatedAt, &r.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// UpdateUserCredential updates a user credential.
+func (s *PgSecretStore) UpdateUserCredential(ctx context.Context, row *UserCredentialRow) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE provider_credentials
+		SET name = $3, provider = $4, ciphertext = $5, key_version = $6, model_allowlist = $7, updated_at = $8
+		WHERE id = $1 AND owner_type = 'user' AND owner_id = $2
+	`, row.ID, row.OwnerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.UpdatedAt)
+	return err
+}
+
+// DeleteUserCredential deletes a user credential by ID.
+func (s *PgSecretStore) DeleteUserCredential(ctx context.Context, userID, id string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2`, id, userID)
+	return err
+}
+
+// BindCredentialToWorkspace explicitly binds a credential to a workspace.
+func (s *PgSecretStore) BindCredentialToWorkspace(ctx context.Context, credentialID, workspaceID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		VALUES ($1, $2, 'explicit', 0)
+		ON CONFLICT (credential_id, workspace_id) DO UPDATE SET source_type = 'explicit'
+	`, credentialID, workspaceID)
+	return err
+}
+
+// UnbindCredentialFromWorkspace removes a credential binding from a workspace.
+func (s *PgSecretStore) UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM workspace_credential_bindings WHERE credential_id = $1 AND workspace_id = $2
+	`, credentialID, workspaceID)
+	return err
+}

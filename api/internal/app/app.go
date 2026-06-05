@@ -97,6 +97,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var secretsHandler *handlers.SecretsHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
+	var userProvCredHandler *handlers.UserProviderCredentialsHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -146,6 +147,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretsHandler = handlers.NewSecretsHandler(secretService)
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
+		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
 
 		// Seed the free-tier opencode credential (Epic 30 US-30.4).
 		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {
@@ -309,6 +311,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SettingsHandler:                 settingsHandler,
 		InstanceSettings:                instanceSettings,
 		AdminProviderCredentialsHandler: adminProvCredHandler,
+		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
 		RotateKeyHandler:                rotateKeyHandler,
 		TerminalHandler:                 terminalHandler,
