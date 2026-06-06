@@ -17,7 +17,7 @@ Rules:
 
 | Agent | What | Files Claimed | Status | Started |
 |-------|------|---------------|--------|---------|
-| agent-relay-jun06 | Fix metric cardinality + postgres billing event writer | `api/internal/services/metrics/metrics.go`, `api/internal/services/metrics/metrics_test.go`, `api/internal/handlers/session_tracker.go`, `api/internal/app/app.go`, `controller/internal/workspace/phase_creating.go`, `controller/internal/workspace/phase_suspend.go` | IN PROGRESS | 2026-06-06 08:30 |
+
 
 ---
 
@@ -38,6 +38,7 @@ Agents waiting to work on files currently held by an active claim. When the bloc
 | 2026-06-06 | agent-audit-0606 | Epic 28 S28.8 — goroutine leak + write-deadline tests | f1af270 |
 | 2026-06-06 | agent-audit-0606 | sseConnection cleanup + 2 new weak-point tests + worklog 0171 | 1baac7d |
 | 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | dc38ad8 |
+| 2026-06-06 | agent-relay-jun06 | Fix metric cardinality: remove workspace_id/user_id from high-cardinality labels (deployed ts-1780777762 rev 157) | 5df27b0 |
 | 2026-06-06 | agent-relay-jun06 | Active workspace gauge + session duration + auth failure counter (deployed ts-1780733287 rev 155) | 7f9dcd8 |
 | 2026-06-06 | agent-relay-jun06 | Fix #1: resolveModelIDFromCatalog relay providerID remap + billing/metering/ops metrics | b77b9c0 |
 | 2026-06-06 | agent-relay-jun06 | CF Worker secret-path auth + phase-2 relay injector + opencode-relay model surfacing | d836c94 |
