@@ -63,3 +63,7 @@ design/stories/epic-17-security-review/phase-0-prod/phase-0-prod-artefacts/
 # Compiled canary scenario binaries (built by CI, not committed)
 sdks/canary/go/s-*
 sdks/canary/go/d-*
+
+# Local credentials and binaries
+.cf
+mcp

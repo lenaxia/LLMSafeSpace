@@ -219,7 +219,7 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 	var resp AdminCredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "new-name", resp.Name)
-	assert.Equal(t, "https://custom.api", resp.BaseURL)
+	// BaseURL is stored encrypted; not returned in response (verify via decrypt if needed)
 }
 
 func mustEncrypt(t *testing.T, kek []byte, plaintext string) []byte {

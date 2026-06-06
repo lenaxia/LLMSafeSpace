@@ -48,6 +48,16 @@ type createAdminCredentialRequest struct {
 	ModelAllowlist []string `json:"modelAllowlist"`
 }
 
+// updateAdminCredentialRequest is used for PUT — all fields are optional so
+// callers can rotate just the API key without resending name/provider.
+type updateAdminCredentialRequest struct {
+	Name           *string  `json:"name"`
+	Provider       *string  `json:"provider"`
+	APIKey         *string  `json:"apiKey"`
+	BaseURL        *string  `json:"baseURL"`
+	ModelAllowlist []string `json:"modelAllowlist"`
+}
+
 // AdminProviderCredentialsHandler handles CRUD for admin provider credentials.
 type AdminProviderCredentialsHandler struct {
 	store          AdminCredentialStore
@@ -221,42 +231,57 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 		return
 	}
 
-	var req createAdminCredentialRequest
+	var req updateAdminCredentialRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
-	kek := h.kek()
-	if kek == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
-		return
+	// Apply partial updates — only fields present in the request are changed.
+	if req.Name != nil {
+		existing.Name = *req.Name
 	}
-
-	plaintext, marshalErr := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // marshaling for encryption, not API response
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-	})
-	if marshalErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
-		return
+	if req.Provider != nil {
+		existing.Provider = *req.Provider
 	}
-	ciphertext, err := secrets.EncryptSecret(kek, plaintext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
-		return
-	}
-
-	existing.Name = req.Name
-	existing.Provider = req.Provider
-	existing.Ciphertext = ciphertext
-	existing.UpdatedAt = time.Now()
 	if req.ModelAllowlist != nil {
 		existing.ModelAllowlist = req.ModelAllowlist
 	}
-	if existing.ModelAllowlist == nil {
-		existing.ModelAllowlist = []string{}
+
+	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).
+	if req.APIKey != nil || req.BaseURL != nil {
+		kek := h.kek()
+		if kek == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
+			return
+		}
+		// Decrypt the existing ciphertext to get current values.
+		existingPlain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext)
+		var existingData secrets.LLMProviderData
+		if decErr == nil {
+			_ = json.Unmarshal(existingPlain, &existingData)
+		}
+		// Apply only the fields being changed.
+		if req.Provider != nil {
+			existingData.Provider = *req.Provider
+		}
+		if req.APIKey != nil {
+			existingData.APIKey = *req.APIKey
+		}
+		if req.BaseURL != nil {
+			existingData.BaseURL = *req.BaseURL
+		}
+		plaintext, marshalErr := json.Marshal(existingData) //nolint:gosec // marshaling for encryption
+		if marshalErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
+			return
+		}
+		ciphertext, encErr := secrets.EncryptSecret(kek, plaintext)
+		if encErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
+			return
+		}
+		existing.Ciphertext = ciphertext
 	}
 
 	if err := h.store.UpdateAdminCredential(c.Request.Context(), existing); err != nil {
@@ -265,10 +290,10 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, AdminCredentialResponse{
-		ID:             existing.ID,
-		Name:           existing.Name,
-		Provider:       existing.Provider,
-		BaseURL:        req.BaseURL,
+		ID:       existing.ID,
+		Name:     existing.Name,
+		Provider: existing.Provider,
+		// BaseURL lives inside Ciphertext; we don't decrypt for the response.
 		ModelAllowlist: existing.ModelAllowlist,
 		CreatedAt:      existing.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:      existing.UpdatedAt.Format(time.RFC3339),

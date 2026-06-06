@@ -229,18 +229,18 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 		go h.fetchAndPersistTitle(wid, sid)
 	}
 
-	// Epic 27b US-27b.5: If the upstream returned an error and the workspace
-	// has staged credentials, rewrite the response body to include an
-	// agentNeedsRefresh hint. The headers are already committed so we can only
-	// do this when the writer supports body replacement (buffered writers in
-	// tests; in production gin uses a streaming writer so we log instead).
+	// Epic 27b US-27b.5: When the upstream returns an error and the workspace
+	// has staged credentials (agentNeedsRefresh=true), the response body should
+	// include a hint. The correct implementation requires buffering the response
+	// body inside doProxy before flushing it, so that we can rewrite it here.
+	// That buffering refactor is tracked separately. For now: log the hint so
+	// it's observable in server traces, and expose it via the status endpoint
+	// (GET /workspaces/:id/status returns agentNeedsRefresh:true independently).
 	if status >= 400 && h.agentStateChecker != nil {
-		changedAt, err := h.agentStateChecker.GetLastCredentialChangedAt(c.Request.Context(), wid)
-		if err == nil && !changedAt.IsZero() {
-			if rw, ok := c.Writer.(interface{ Body() []byte }); ok {
-				enriched := EnrichChatErrorBody(rw.Body(), true, changedAt, wid)
-				_, _ = c.Writer.Write(enriched)
-			}
+		changedAt, checkerErr := h.agentStateChecker.GetLastCredentialChangedAt(c.Request.Context(), wid)
+		if checkerErr == nil && !changedAt.IsZero() {
+			h.logger.Info("Proxied message failed with staged credentials — client should call agent/reload",
+				"workspaceID", wid, "credentialsPendingSince", changedAt.Format("2006-01-02T15:04:05Z"))
 		}
 	}
 }
@@ -474,11 +474,15 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		// Limit request body to prevent OOM on oversized payloads (Epic 25 G1).
 		// 10 MB is generous for any legitimate opencode prompt or tool result.
-		limited := http.MaxBytesReader(c.Writer, c.Request.Body, 10*1024*1024)
+		// Pass http.NoBody (discard) as the ResponseWriter so MaxBytesReader cannot
+		// write its own 413 response — we write our own JSON error below to avoid
+		// a double-write where net/http and c.JSON both append to the response.
+		limited := http.MaxBytesReader(nil, c.Request.Body, 10*1024*1024)
 		bodyBytes, err = io.ReadAll(limited)
 		_ = c.Request.Body.Close()
 		if err != nil {
-			if err.Error() == "http: request body too large" {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
 				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body exceeds 10 MB limit"})
 				return
 			}
@@ -496,7 +500,11 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	stripPatch := false
 	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
 
-	if proxyErr != nil && isConnectionError(proxyErr) {
+	// Only attempt a pod-IP retry when the response headers have NOT yet been
+	// committed. If doProxy flushed headers (streaming path), the response is
+	// already partially written and a retry would produce a double-write.
+	// c.Writer.Written() returns true once WriteHeader has been called.
+	if proxyErr != nil && isConnectionError(proxyErr) && !c.Writer.Written() {
 		freshWS, getErr := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
@@ -509,11 +517,18 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		if isWriteOp && sessionID != "" {
 			h.removeActiveSession(workspaceID, sessionID)
 		}
-		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":      "workspace connection failed",
-			"retryAfter": retryAfterSec,
-		})
+		// Only write an error response if headers have not yet been committed.
+		// For streaming responses (SSE, prompt_async) the status code was already
+		// flushed — calling c.JSON here would append JSON to the partial stream,
+		// producing an invalid response. Log and return; the client's stream is
+		// already truncated and will need to reconnect. (Epic 25 B2)
+		if !c.Writer.Written() {
+			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":      "workspace connection failed",
+				"retryAfter": retryAfterSec,
+			})
+		}
 		return
 	}
 
@@ -616,15 +631,19 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			}
 		}
 		if readErr != nil {
-			// io.EOF is the normal end of stream — not an error.
-			// Any other error (pod restart, network cut) means the stream was
-			// truncated mid-response. The HTTP status code was already flushed
-			// as 200, so we cannot change it here; instead log and return the
-			// error so the caller can record a proxy metric. (Epic 25 B2)
-			if readErr != io.EOF {
-				return fmt.Errorf("upstream stream cut short: %w", readErr)
+			// io.EOF and io.ErrUnexpectedEOF are both normal stream termination
+			// signals. HTTP/1.1 responses without Content-Length use connection
+			// close to signal end-of-body, which produces ErrUnexpectedEOF in
+			// Go's HTTP client. SSE streams also terminate this way when the pod
+			// restarts cleanly. Treat both as normal completion. (Epic 25 B2)
+			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				break
 			}
-			break
+			// Any other error is a true mid-stream failure. Headers are already
+			// flushed (status 200), so we cannot change the status code. Log the
+			// error and return it to suppress the spurious retry+c.JSON path in
+			// the caller (headers are committed — retry would double-write).
+			return fmt.Errorf("upstream stream cut short: %w", readErr)
 		}
 	}
 

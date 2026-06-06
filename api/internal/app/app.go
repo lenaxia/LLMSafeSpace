@@ -299,10 +299,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			}
 		}
 	}
-	// Wire metrics into reload handlers.
-	if metricsSvc, ok := svc.Metrics.(*metrics.Service); ok {
-		agentReloadHandler.SetMetrics(metricsSvc)
-		bulkReloadHandler.SetMetrics(metricsSvc)
+	// Wire metrics into reload handlers (guarded: handlers are nil when workspace
+	// service type assertion fails, e.g. in tests or future refactors).
+	if agentReloadHandler != nil {
+		if metricsSvc, ok := svc.Metrics.(*metrics.Service); ok {
+			agentReloadHandler.SetMetrics(metricsSvc)
+			bulkReloadHandler.SetMetrics(metricsSvc)
+		}
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
