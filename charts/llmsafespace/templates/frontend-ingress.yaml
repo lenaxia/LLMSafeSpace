@@ -37,6 +37,13 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "llmsafespace.fullname" $ }}-api
+                port:
+                  number: 8080
           - path: /
             pathType: Prefix
             backend:

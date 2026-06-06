@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "llmsafespace.fullname" . }}-mcp
-  namespace: {{ .Values.namespace.name }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespace.labels" . | nindent 4 }}
     app.kubernetes.io/component: mcp

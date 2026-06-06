@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "llmsafespace.fullname" . }}-mcp
-  namespace: {{ .Values.namespace.name }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespace.labels" . | nindent 4 }}
     app.kubernetes.io/component: mcp
@@ -20,10 +20,26 @@ spec:
         app.kubernetes.io/component: mcp
     spec:
       serviceAccountName: {{ include "llmsafespace.api.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mcp
           image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
           args:
             - "--sse"
             - "--addr=:{{ .Values.mcp.service.port }}"
@@ -40,12 +56,25 @@ spec:
             - name: mcp
               containerPort: {{ .Values.mcp.service.port }}
               protocol: TCP
+          # mcp-go SSEServer only exposes /sse and /message — no dedicated
+          # health endpoint exists. tcpSocket probes confirm the port is
+          # accepting connections without triggering a hanging SSE stream.
           livenessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: mcp
             initialDelaySeconds: 5
             periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 3
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.mcp.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}
