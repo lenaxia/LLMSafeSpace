@@ -29,8 +29,13 @@ type CredentialStore interface {
 	UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error
 
 	// SeedWorkspaceCredentials inserts auto-apply credential bindings for a
-	// newly created workspace based on matching credential_auto_apply rules.
+	// newly created workspace: admin auto-apply rules AND all user-owned credentials.
 	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
+
+	// BindCredentialToAllUserWorkspaces binds a credential to every workspace
+	// owned by userID. Called on credential create to maintain the invariant
+	// that all credentials are bound to all of a user's workspaces.
+	BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error
 
 	// HasUserProviderCredential returns true if the user owns a credential for the given provider.
 	HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error)

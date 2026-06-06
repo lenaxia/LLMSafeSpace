@@ -23,6 +23,13 @@ type UserCredentialStore interface {
 	DeleteUserCredential(ctx context.Context, userID, id string) error
 	BindCredentialToWorkspace(ctx context.Context, credentialID, workspaceID string) error
 	UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error
+	// GetCredentialBindings returns all workspace IDs the credential is bound to,
+	// filtered to workspaces owned by the given userID.
+	GetCredentialBindings(ctx context.Context, credentialID, userID string) ([]string, error)
+	// BindCredentialToAllUserWorkspaces binds a credential to every workspace
+	// owned by userID. Called on create to maintain the invariant that all
+	// credentials are always bound to all of a user's workspaces.
+	BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error
 }
 
 // WorkspaceOwnerChecker verifies workspace ownership for bind operations.
@@ -124,6 +131,14 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
 		return
+	}
+
+	// Bind to all existing workspaces immediately so the invariant holds:
+	// every credential a user owns is always bound to every workspace they own.
+	// Failures are non-fatal — the user can re-bind via the UI, and the next
+	// workspace create will pick it up via SeedWorkspaceCredentials.
+	if bindErr := h.store.BindCredentialToAllUserWorkspaces(c.Request.Context(), row.ID, userID); bindErr != nil {
+		c.Header("X-Warning", "credential created but workspace auto-bind failed")
 	}
 
 	c.JSON(http.StatusCreated, AdminCredentialResponse{
@@ -266,4 +281,31 @@ func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// ListBindings handles GET /api/v1/provider-credentials/:id/bindings.
+// Returns the workspace IDs that this credential is currently bound to,
+// scoped to workspaces owned by the calling user.
+func (h *UserProviderCredentialsHandler) ListBindings(c *gin.Context) {
+	userID := c.GetString("userID")
+	credID := c.Param("id")
+
+	// Verify the credential belongs to this user.
+	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
+		return
+	}
+	if cred == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
+		return
+	}
+
+	wsIDs, err := h.store.GetCredentialBindings(c.Request.Context(), credID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list bindings"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"workspaceIds": wsIDs})
 }

@@ -214,6 +214,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		userCreds.GET("", cfg.UserProviderCredentialsHandler.List)
 		userCreds.GET("/:id", cfg.UserProviderCredentialsHandler.Get)
 		userCreds.DELETE("/:id", cfg.UserProviderCredentialsHandler.Delete)
+		userCreds.GET("/:id/bindings", cfg.UserProviderCredentialsHandler.ListBindings)
 		userCreds.POST("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Bind)
 		userCreds.DELETE("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Unbind)
 	}

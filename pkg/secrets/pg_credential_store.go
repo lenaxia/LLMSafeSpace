@@ -74,9 +74,15 @@ func (s *PgSecretStore) UpsertFreeTierCredential(ctx context.Context, ciphertext
 	return tx.Commit(ctx)
 }
 
-// SeedWorkspaceCredentials inserts auto-apply credential bindings for a
-// workspace based on matching credential_auto_apply rules.
+// SeedWorkspaceCredentials inserts credential bindings for a new workspace:
+//  1. Admin auto-apply rules (target_type='all' or matching user rule).
+//  2. All user-owned credentials belonging to userID — every personal key the
+//     user has is always bound to every workspace they own. This keeps the
+//     invariant: no workspace is ever missing credentials the user has access to.
+//
+// Idempotent — uses ON CONFLICT DO NOTHING throughout.
 func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error {
+	// Bind admin auto-apply rules (existing behavior).
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
 		SELECT caa.credential_id, $1, 'auto', caa.within_priority
@@ -86,7 +92,39 @@ func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceI
 		ON CONFLICT (credential_id, workspace_id) DO NOTHING
 	`, workspaceID, userID)
 	if err != nil {
-		return fmt.Errorf("seed workspace credentials: %w", err)
+		return fmt.Errorf("seed workspace credentials (admin rules): %w", err)
+	}
+
+	// Bind all personal credentials owned by this user (priority 10 = below explicit=0 but
+	// above auto-admin=0 only in tie-break; explicit bind remains respected via ON CONFLICT DO NOTHING).
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT pc.id, $1, 'auto', 10
+		FROM provider_credentials pc
+		WHERE pc.owner_type = 'user' AND pc.owner_id = $2
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`, workspaceID, userID)
+	if err != nil {
+		return fmt.Errorf("seed workspace credentials (user creds): %w", err)
+	}
+
+	return nil
+}
+
+// BindCredentialToAllUserWorkspaces binds a user credential to every workspace
+// owned by userID. Called when a user creates a new personal credential so that
+// the invariant "all credentials bound to all workspaces" is maintained without
+// requiring a full backfill. Idempotent.
+func (s *PgSecretStore) BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT $1, w.id, 'auto', 10
+		FROM workspaces w
+		WHERE w.user_id = $2
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`, credentialID, userID)
+	if err != nil {
+		return fmt.Errorf("bind credential to all user workspaces: %w", err)
 	}
 	return nil
 }
@@ -343,4 +381,33 @@ func (s *PgSecretStore) UnbindCredentialFromWorkspace(ctx context.Context, crede
 		DELETE FROM workspace_credential_bindings WHERE credential_id = $1 AND workspace_id = $2
 	`, credentialID, workspaceID)
 	return err
+}
+
+// GetCredentialBindings returns all workspace IDs that the given credential is
+// explicitly or automatically bound to, filtered to workspaces owned by ownerID.
+func (s *PgSecretStore) GetCredentialBindings(ctx context.Context, credentialID, ownerID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT wcb.workspace_id
+		FROM workspace_credential_bindings wcb
+		JOIN workspaces w ON w.id = wcb.workspace_id
+		WHERE wcb.credential_id = $1
+		  AND w.user_id = $2
+		ORDER BY wcb.workspace_id
+	`, credentialID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, rows.Err()
 }

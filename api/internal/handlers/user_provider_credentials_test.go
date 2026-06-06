@@ -72,6 +72,28 @@ func (f *fakeUserCredStore) BindCredentialToWorkspace(_ context.Context, credID,
 }
 
 func (f *fakeUserCredStore) UnbindCredentialFromWorkspace(_ context.Context, credID, wsID string) error {
+	orig := f.bindings[credID]
+	filtered := orig[:0]
+	for _, id := range orig {
+		if id != wsID {
+			filtered = append(filtered, id)
+		}
+	}
+	f.bindings[credID] = filtered
+	return nil
+}
+
+func (f *fakeUserCredStore) GetCredentialBindings(_ context.Context, credID, _ string) ([]string, error) {
+	ids := f.bindings[credID]
+	if ids == nil {
+		return []string{}, nil
+	}
+	return ids, nil
+}
+
+func (f *fakeUserCredStore) BindCredentialToAllUserWorkspaces(_ context.Context, credID, _ string) error {
+	// No-op in tests — workspace auto-bind is covered by dedicated integration tests.
+	_ = credID
 	return nil
 }
 
@@ -103,6 +125,7 @@ func setupUserCredRouter(h *UserProviderCredentialsHandler) *gin.Engine {
 	g.GET("", h.List)
 	g.GET("/:id", h.Get)
 	g.DELETE("/:id", h.Delete)
+	g.GET("/:id/bindings", h.ListBindings)
 	g.POST("/:id/bind/:workspaceId", h.Bind)
 	g.DELETE("/:id/bind/:workspaceId", h.Unbind)
 	return r
@@ -300,6 +323,75 @@ func TestUserProviderCredentials_Delete(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Empty(t, store.creds)
+}
+
+func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.bindings["c1"] = []string{"ws-1", "ws-2"}
+	h := &UserProviderCredentialsHandler{store: store}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/provider-credentials/c1/bindings", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		WorkspaceIds []string `json:"workspaceIds"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.ElementsMatch(t, []string{"ws-1", "ws-2"}, resp.WorkspaceIds)
+}
+
+func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	h := &UserProviderCredentialsHandler{store: store}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/provider-credentials/c1/bindings", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		WorkspaceIds []string `json:"workspaceIds"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.WorkspaceIds)
+}
+
+func TestUserProviderCredentials_ListBindings_NotFoundForWrongOwner(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	h := &UserProviderCredentialsHandler{store: store}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/provider-credentials/c1/bindings", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.bindings["c1"] = []string{"ws-1", "ws-2"}
+	h := &UserProviderCredentialsHandler{
+		store:        store,
+		wsOwnerCheck: func(_ context.Context, _, _ string) error { return nil },
+	}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/provider-credentials/c1/bind/ws-1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.NotContains(t, store.bindings["c1"], "ws-1")
+	assert.Contains(t, store.bindings["c1"], "ws-2")
 }
 
 // testDEKCacheForHandler is a minimal DEKCache for handler tests.

@@ -281,6 +281,9 @@ func (m *mockCredentialStore) UpsertFreeTierCredential(_ context.Context, _ []by
 func (m *mockCredentialStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
 	return nil
 }
+func (m *mockCredentialStore) BindCredentialToAllUserWorkspaces(_ context.Context, _, _ string) error {
+	return nil
+}
 func (m *mockCredentialStore) HasUserProviderCredential(_ context.Context, _, _ string) (bool, error) {
 	return false, nil
 }
