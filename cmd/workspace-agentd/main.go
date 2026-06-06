@@ -520,67 +520,6 @@ func main() {
 
 	var proc *managedProcess
 	if supervise {
-		// Epic 26: If INFERENCE_RELAY_BASEURL is set (injected by the controller),
-		// write the relay baseURL into the opencode agent config before launching
-		// opencode so it routes free-tier inference through the CF Worker on boot.
-		// This runs in the main agentd process (not the init container), which is
-		// the only context where INFERENCE_RELAY_BASEURL is available.
-		if relayBaseURL := os.Getenv("INFERENCE_RELAY_BASEURL"); relayBaseURL != "" {
-			cfgPath := envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath)
-			existing, _ := os.ReadFile(cfgPath)
-			var cfg map[string]json.RawMessage
-			if len(existing) > 0 {
-				_ = json.Unmarshal(existing, &cfg)
-			}
-			if cfg == nil {
-				cfg = map[string]json.RawMessage{}
-			}
-			cfg = injectRelayBaseURL(cfg, relayBaseURL)
-			if schema, _ := json.Marshal("https://opencode.ai/config.json"); cfg["$schema"] == nil {
-				cfg["$schema"] = schema
-			}
-			if merged, err := json.MarshalIndent(cfg, "", "  "); err == nil {
-				if writeErr := os.WriteFile(cfgPath, merged, 0o600); writeErr == nil {
-					log.Info("relay baseURL injected into opencode config",
-						zap.String("baseURL", relayBaseURL[:min(len(relayBaseURL), 50)]))
-				}
-			}
-
-			// Clear stale auth.json entries that may override the relay baseURL.
-			// The old Epic 26 WS implementation wrote localhost:4097 to auth.json;
-			// opencode merges auth.json over OPENCODE_CONFIG so we must neutralize it.
-			xdgData := envOrDefault("XDG_DATA_HOME", "")
-			homeDir, _ := os.UserHomeDir()
-			authJSONPath := filepath.Join(homeDir, ".local", "opencode", "auth.json")
-			if xdgData != "" {
-				authJSONPath = filepath.Join(xdgData, "opencode", "auth.json")
-			}
-			if data, err := os.ReadFile(authJSONPath); err == nil {
-				var authCfg map[string]json.RawMessage
-				if json.Unmarshal(data, &authCfg) == nil {
-					if oc, ok := authCfg["opencode"]; ok {
-						var entry map[string]json.RawMessage
-						if json.Unmarshal(oc, &entry) == nil {
-							if meta, ok := entry["metadata"]; ok {
-								var m map[string]string
-								if json.Unmarshal(meta, &m) == nil && m["baseURL"] != "" && m["baseURL"] != relayBaseURL {
-									// Stale URL detected — clear it so OPENCODE_CONFIG takes effect.
-									delete(m, "baseURL")
-									newMeta, _ := json.Marshal(m)
-									entry["metadata"] = newMeta
-									newOC, _ := json.Marshal(entry)
-									authCfg["opencode"] = newOC
-									newAuth, _ := json.MarshalIndent(authCfg, "", "  ")
-									_ = os.WriteFile(authJSONPath, newAuth, 0o600)
-									log.Info("cleared stale relay baseURL from auth.json")
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
 		proc = &managedProcess{}
 		proc.start()
 	}
@@ -604,6 +543,28 @@ func main() {
 	// making inline opencode calls.
 	healthCache := newHealthzCache()
 	go refreshIsHealthyLoop(context.Background(), client, healthCache, log, gr)
+
+	// Epic 26: Phase-2 relay injection.
+	// After opencode is healthy, fetch the live free model list and rewrite
+	// the config to use the CF Worker relay. Runs at most once per pod lifetime.
+	// Skipped if the user has a personal opencode API key (paying Zen subscriber).
+	if relayURL := os.Getenv("INFERENCE_RELAY_BASEURL"); relayURL != "" && proc != nil {
+		xdgData := os.Getenv("XDG_DATA_HOME")
+		homeDir, _ := os.UserHomeDir()
+		authJSONPath := filepath.Join(homeDir, ".local", "opencode", "auth.json")
+		if xdgData != "" {
+			authJSONPath = filepath.Join(xdgData, "opencode", "auth.json")
+		}
+		startRelayInjector(relayInjectorConfig{
+			RelayURL:         relayURL,
+			OpenCodeBaseURL:  getAgentAddr(),
+			OpenCodePassword: password,
+			AgentConfigPath:  envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+			AuthJSONPath:     authJSONPath,
+			HealthCheck:      func() bool { snap := healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
+			KillOpenCode:     func() { proc.restart() },
+		})
+	}
 
 	// US-22.8: Two separate http.Server instances eliminate listener-layer
 	// head-of-line blocking. Admin port serves health probes (kubelet,

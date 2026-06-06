@@ -1,0 +1,285 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package main
+
+// Tests for relay_injector.go — the Epic 26 post-boot relay config injection.
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- buildRelayConfig tests ---
+
+// TestBuildRelayConfig_WritesDisabledAndCustomProvider verifies that
+// buildRelayConfig produces a valid opencode.json config with:
+//   - disabled_providers: ["opencode"]
+//   - provider.opencode-relay.options.baseURL = relay URL
+//   - provider.opencode-relay.npm = "@ai-sdk/openai-compatible"
+//   - provider.opencode-relay.models = the given free model list
+func TestBuildRelayConfig_WritesDisabledAndCustomProvider(t *testing.T) {
+	relayURL := "https://relay.safespaces.dev/secret123"
+	models := []relayModel{
+		{ID: "nemotron-3-ultra-free", Name: "Nemotron 3 Ultra Free", ContextLimit: 1000000, OutputLimit: 128000},
+		{ID: "glm-5-free", Name: "GLM-5 Free", ContextLimit: 204800, OutputLimit: 131072},
+	}
+
+	cfg, err := buildRelayConfig(relayURL, models)
+	require.NoError(t, err)
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg, &parsed))
+
+	// disabled_providers must contain "opencode"
+	var disabled []string
+	require.NoError(t, json.Unmarshal(parsed["disabled_providers"], &disabled))
+	assert.Contains(t, disabled, "opencode")
+
+	// provider.opencode-relay must exist with correct fields
+	var providers map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(parsed["provider"], &providers))
+
+	relayProvider, ok := providers["opencode-relay"]
+	require.True(t, ok, "opencode-relay provider must be present")
+
+	var rp map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(relayProvider, &rp))
+
+	var npm string
+	require.NoError(t, json.Unmarshal(rp["npm"], &npm))
+	assert.Equal(t, "@ai-sdk/openai-compatible", npm)
+
+	var options map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rp["options"], &options))
+	var baseURL string
+	require.NoError(t, json.Unmarshal(options["baseURL"], &baseURL))
+	assert.Equal(t, relayURL, baseURL)
+
+	// Models must be present with context+output limits (no input)
+	var modelsCfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rp["models"], &modelsCfg))
+	assert.Len(t, modelsCfg, 2)
+
+	var nemotron map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(modelsCfg["nemotron-3-ultra-free"], &nemotron))
+
+	var limit map[string]int
+	require.NoError(t, json.Unmarshal(nemotron["limit"], &limit))
+	assert.Equal(t, 1000000, limit["context"])
+	assert.Equal(t, 128000, limit["output"])
+	_, hasInput := limit["input"]
+	assert.False(t, hasInput, "limit.input must be absent — opencode config schema rejects it")
+}
+
+// TestBuildRelayConfig_OnlyProducesExpectedTopLevelKeys verifies buildRelayConfig
+// doesn't produce unexpected top-level keys.
+func TestBuildRelayConfig_OnlyProducesExpectedTopLevelKeys(t *testing.T) {
+	cfg, err := buildRelayConfig("https://relay.example.com/s",
+		[]relayModel{{ID: "m", Name: "M", ContextLimit: 1000, OutputLimit: 100}})
+	require.NoError(t, err)
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg, &parsed))
+
+	for key := range parsed {
+		assert.Contains(t, []string{"$schema", "disabled_providers", "provider"}, key,
+			"buildRelayConfig must not produce unexpected top-level keys")
+	}
+}
+
+// --- shouldSkipRelay tests ---
+
+func TestShouldSkipRelay_SkipsWhenPersonalKey(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath, []byte(`{
+		"opencode": {"type": "api", "key": "sk-personal-key-abc123"}
+	}`), 0o600))
+
+	skip, reason := shouldSkipRelay(authPath)
+	assert.True(t, skip)
+	assert.Contains(t, reason, "personal")
+}
+
+func TestShouldSkipRelay_DoesNotSkipWithPublicKey(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath, []byte(`{
+		"opencode": {"type": "api", "key": "public"}
+	}`), 0o600))
+
+	skip, _ := shouldSkipRelay(authPath)
+	assert.False(t, skip)
+}
+
+func TestShouldSkipRelay_DoesNotSkipWithNoEntry(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath, []byte(`{}`), 0o600))
+
+	skip, _ := shouldSkipRelay(authPath)
+	assert.False(t, skip)
+}
+
+func TestShouldSkipRelay_DoesNotSkipWithMissingFile(t *testing.T) {
+	skip, _ := shouldSkipRelay("/nonexistent/auth.json")
+	assert.False(t, skip)
+}
+
+// --- fetchFreeModels tests ---
+
+func TestFetchFreeModels_FiltersCorrectly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/model" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[
+				{"id":"free-1","providerID":"opencode","enabled":true,"cost":[{"input":0,"output":0}],"limit":{"context":100000,"output":10000,"input":null}},
+				{"id":"paid-1","providerID":"opencode","enabled":true,"cost":[{"input":3,"output":15}],"limit":{"context":200000,"output":20000}},
+				{"id":"free-disabled","providerID":"opencode","enabled":false,"cost":[{"input":0,"output":0}],"limit":{"context":50000,"output":5000}},
+				{"id":"other-provider","providerID":"anthropic","enabled":true,"cost":[{"input":0,"output":0}],"limit":{"context":200000,"output":10000}}
+			]`))
+		}
+	}))
+	defer srv.Close()
+
+	models, err := fetchFreeModels(srv.URL, "testpassword")
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	assert.Equal(t, "free-1", models[0].ID)
+	assert.Equal(t, 100000, models[0].ContextLimit)
+	assert.Equal(t, 10000, models[0].OutputLimit)
+}
+
+func TestFetchFreeModels_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"crashed"}`))
+	}))
+	defer srv.Close()
+
+	_, err := fetchFreeModels(srv.URL, "pw")
+	assert.Error(t, err)
+}
+
+// --- updateAuthJSONForRelay tests ---
+
+func TestUpdateAuthJSONForRelay_AddsRelayEntry(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+
+	existing := map[string]interface{}{
+		"opencode":  map[string]string{"type": "api", "key": "public"},
+		"anthropic": map[string]string{"type": "api", "key": "sk-ant-real-key"},
+	}
+	data, _ := json.Marshal(existing)
+	require.NoError(t, os.WriteFile(authPath, data, 0o600))
+
+	require.NoError(t, updateAuthJSONForRelay(authPath))
+
+	var updated map[string]map[string]string
+	raw, _ := os.ReadFile(authPath)
+	require.NoError(t, json.Unmarshal(raw, &updated))
+
+	assert.Equal(t, "public", updated["opencode-relay"]["key"])
+	assert.Equal(t, "sk-ant-real-key", updated["anthropic"]["key"],
+		"existing anthropic key must be preserved")
+}
+
+func TestUpdateAuthJSONForRelay_CreatesFileIfMissing(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+
+	require.NoError(t, updateAuthJSONForRelay(authPath))
+
+	var updated map[string]map[string]string
+	raw, _ := os.ReadFile(authPath)
+	require.NoError(t, json.Unmarshal(raw, &updated))
+	assert.Equal(t, "public", updated["opencode-relay"]["key"])
+}
+
+// --- startRelayInjector integration tests ---
+
+func TestStartRelayInjector_SkipsWhenNoRelayURL(t *testing.T) {
+	killed := false
+	startRelayInjector(relayInjectorConfig{
+		RelayURL:     "",
+		KillOpenCode: func() { killed = true },
+		HealthCheck:  func() bool { return true },
+	})
+	time.Sleep(50 * time.Millisecond)
+	assert.False(t, killed, "KillOpenCode must not be called when RelayURL is empty")
+}
+
+func TestStartRelayInjector_SkipsWhenPersonalKey(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath,
+		[]byte(`{"opencode":{"type":"api","key":"sk-personal-abc123"}}`), 0o600))
+
+	killed := false
+	startRelayInjector(relayInjectorConfig{
+		RelayURL:     "https://relay.safespaces.dev/secret",
+		AuthJSONPath: authPath,
+		HealthCheck:  func() bool { return true },
+		KillOpenCode: func() { killed = true },
+	})
+	time.Sleep(100 * time.Millisecond)
+	assert.False(t, killed, "KillOpenCode must not be called when user has personal key")
+}
+
+func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath,
+		[]byte(`{"opencode":{"type":"api","key":"public"}}`), 0o600))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"id":"free-model","providerID":"opencode","enabled":true,"cost":[{"input":0}],"limit":{"context":100000,"output":10000}}
+		]`))
+	}))
+	defer srv.Close()
+
+	killed := make(chan struct{}, 1)
+	startRelayInjector(relayInjectorConfig{
+		RelayURL:         "https://relay.safespaces.dev/mysecret",
+		OpenCodeBaseURL:  srv.URL,
+		OpenCodePassword: "testpw",
+		AgentConfigPath:  cfgPath,
+		AuthJSONPath:     authPath,
+		HealthCheck:      func() bool { return true },
+		KillOpenCode:     func() { close(killed) },
+	})
+
+	select {
+	case <-killed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("KillOpenCode was not called within 2s")
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	var disabled []string
+	require.NoError(t, json.Unmarshal(cfg["disabled_providers"], &disabled))
+	assert.Contains(t, disabled, "opencode")
+
+	authData, _ := os.ReadFile(authPath)
+	var auth map[string]map[string]string
+	require.NoError(t, json.Unmarshal(authData, &auth))
+	assert.Equal(t, "public", auth["opencode-relay"]["key"])
+}
