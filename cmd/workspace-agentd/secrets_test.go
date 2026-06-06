@@ -620,3 +620,25 @@ func TestApplyWorkspaceConfig_NoRelay_NoProviderKey(t *testing.T) {
 	_, err := os.ReadFile(cfgPath)
 	assert.True(t, os.IsNotExist(err), "config file must not be created when no relay and no workspace config")
 }
+
+// TestInjectRelayBaseURL_ClearsStaleURL verifies that injectRelayBaseURL
+// replaces any pre-existing stale baseURL (e.g. localhost:4097 from the old
+// Epic 26 WS implementation) with the new relay URL.
+func TestInjectRelayBaseURL_ClearsStaleURL(t *testing.T) {
+	existing := map[string]json.RawMessage{}
+	existingProvider, _ := json.Marshal(map[string]interface{}{
+		"opencode": map[string]interface{}{
+			"options": map[string]string{"baseURL": "http://localhost:4097/relay/inference"},
+		},
+	})
+	existing["provider"] = existingProvider
+
+	const newURL = "https://relay.safespaces.dev/newsecret"
+	result := injectRelayBaseURL(existing, newURL)
+
+	var providers map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(result["provider"], &providers))
+	var options map[string]string
+	require.NoError(t, json.Unmarshal(providers["opencode"]["options"], &options))
+	assert.Equal(t, newURL, options["baseURL"], "stale baseURL must be replaced with new relay URL")
+}
