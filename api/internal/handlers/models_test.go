@@ -836,7 +836,8 @@ func TestResolveModelIDFromCatalog_PrefixesProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.catalogID, func(t *testing.T) {
-			got := resolveModelIDFromCatalog(context.Background(), "127.0.0.1", pw, tt.catalogID)
+			h := NewSecretsHandler(nil)
+			got := h.resolveModelIDFromCatalog(context.Background(), "127.0.0.1", pw, tt.catalogID)
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -894,4 +895,118 @@ func TestSetModel_LivePush_ResolvesProviderPrefix(t *testing.T) {
 	require.Equal(t, true, resp["applied"], "applied must be true")
 	require.Equal(t, "openai/gpt-5.5", receivedModel,
 		"patchAgentModel must send providerID/modelID, not flat catalog ID")
+}
+
+// TestSetModel_RelayActive_FreeTierUsesRelayProvider verifies that when the
+// relay is active and a free-tier opencode model is selected, patchAgentModel
+// sends "opencode-relay/<modelID>" instead of "opencode/<modelID>".
+// Without this fix the model set fails with ProviderModelNotFoundError because
+// disabled_providers:["opencode"] blocks the built-in opencode provider.
+func TestSetModel_RelayActive_FreeTierUsesRelayProvider(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+	const testPassword = "relay-remap-pw"
+
+	var receivedModel string
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/model":
+			w.Header().Set("Content-Type", "application/json")
+			// Catalog: free opencode model with providerID=opencode (as returned live)
+			w.Write([]byte(`[{"id":"nemotron-3-ultra-free","providerID":"opencode","enabled":true,"cost":[{"input":0,"output":0}]}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/global/config":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			receivedModel = body["model"]
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	updater := &mockWSUpdater{ownerUserID: "user-1"}
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(updater)
+	handler.SetRelayActive(true) // relay is active
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "nemotron-3-ultra-free"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, true, resp["applied"])
+	require.Equal(t, "opencode-relay/nemotron-3-ultra-free", receivedModel,
+		"relay-active free model must use opencode-relay providerID in patchAgentModel")
+}
+
+// TestSetModel_RelayActive_PaidModelKeepsDirectProvider verifies that paid
+// opencode models are NOT remapped when relay is active — they go direct.
+func TestSetModel_RelayActive_PaidModelKeepsDirectProvider(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+	const testPassword = "relay-paid-pw"
+
+	var receivedModel string
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/model":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"id":"gpt-5.5-pro","providerID":"opencode","enabled":true,"cost":[{"input":30,"output":90}]}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/global/config":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			receivedModel = body["model"]
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	updater := &mockWSUpdater{ownerUserID: "user-1"}
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(updater)
+	handler.SetRelayActive(true)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "gpt-5.5-pro"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, true, resp["applied"])
+	require.Equal(t, "opencode/gpt-5.5-pro", receivedModel,
+		"paid opencode model must keep opencode providerID even when relay is active")
 }

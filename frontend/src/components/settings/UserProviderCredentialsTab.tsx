@@ -10,6 +10,8 @@ import {
   userProviderCredentialsApi,
   type UserProviderCredential,
   type CreateUserCredentialRequest,
+  type CredentialBindingInfo,
+  type CreateUserCredentialResponse,
 } from "../../api/providerCredentials";
 import { workspacesApi } from "../../api/workspaces";
 import type { WorkspaceListItem } from "../../api/types";
@@ -64,10 +66,16 @@ export function UserProviderCredentialsTab() {
     }
   };
 
-  const handleCreated = (c: UserProviderCredential) => {
-    setCreds((prev) => [...prev, c]);
+  // handleCreated handles both 201 (success) and 207 (created, bind partially failed).
+  const handleCreated = (res: CreateUserCredentialResponse) => {
+    const cred: UserProviderCredential = res.credential ?? res;
+    setCreds((prev) => [...prev, cred]);
     setShowCreate(false);
-    toast(`Added "${c.name}"`);
+    if (res.bindWarning) {
+      toast(`Added "${cred.name}" — workspace auto-bind failed; bind manually`, "error");
+    } else {
+      toast(`Added "${cred.name}"`);
+    }
   };
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;
@@ -159,12 +167,12 @@ function CredentialRow({
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[] | null>(null);
-  const [boundIds, setBoundIds] = useState<Set<string>>(new Set());
+  const [bindings, setBindings] = useState<CredentialBindingInfo[]>([]);
   const [loadingWs, setLoadingWs] = useState(false);
   const [bindingId, setBindingId] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Load workspace list + current bindings when row expands
+  // Load workspace list + bindings (with sourceType) on expand (M-1 fix).
   useEffect(() => {
     if (!expanded || workspaces !== null) return;
     setLoadingWs(true);
@@ -176,17 +184,20 @@ function CredentialRow({
       .then(([wsRes, bindingsRes]) => {
         const list = (wsRes as { workspaces?: WorkspaceListItem[] }).workspaces ?? [];
         setWorkspaces(list);
-        setBoundIds(new Set(bindingsRes.workspaceIds));
+        setBindings(bindingsRes.bindings ?? []);
       })
       .catch(() => setWorkspaces([]))
       .finally(() => setLoadingWs(false));
   }, [expanded, workspaces, cred.id]);
 
+  const getBinding = (wsId: string): CredentialBindingInfo | undefined =>
+    bindings.find((b) => b.workspaceId === wsId);
+
   const handleBind = async (wsId: string) => {
     setBindingId(wsId);
     try {
       await userProviderCredentialsApi.bindToWorkspace(cred.id, wsId);
-      setBoundIds((prev) => new Set([...prev, wsId]));
+      setBindings((prev) => [...prev, { workspaceId: wsId, sourceType: "explicit" }]);
       toast(`Bound to workspace`);
     } catch (e: unknown) {
       onError(e instanceof Error ? e.message : "Bind failed");
@@ -199,10 +210,12 @@ function CredentialRow({
     setBindingId(wsId);
     try {
       await userProviderCredentialsApi.unbindFromWorkspace(cred.id, wsId);
-      setBoundIds((prev) => { const s = new Set(prev); s.delete(wsId); return s; });
+      setBindings((prev) => prev.filter((b) => b.workspaceId !== wsId));
       toast(`Unbound from workspace`);
     } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Unbind failed");
+      // 409 = auto-binding protected (H-1 fix: surface meaningful message)
+      const msg = e instanceof Error ? e.message : "Unbind failed";
+      onError(msg);
     } finally {
       setBindingId(null);
     }
@@ -301,7 +314,9 @@ function CredentialRow({
             {!loadingWs && workspaces !== null && workspaces.length > 0 && (
               <div className="divide-y divide-border rounded border border-border">
                 {workspaces.map((ws) => {
-                  const isBound = boundIds.has(ws.id);
+                  const binding = getBinding(ws.id);
+                  const isAuto = binding?.sourceType === "auto";
+                  const isBound = !!binding;
                   const isPending = bindingId === ws.id;
                   return (
                     <div key={ws.id} className="flex items-center justify-between px-3 py-2">
@@ -310,24 +325,36 @@ function CredentialRow({
                         <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                           {ws.phase || "unknown"}
                         </span>
-                      </div>
-                      <button
-                        onClick={() => isBound ? handleUnbind(ws.id) : handleBind(ws.id)}
-                        disabled={isPending}
-                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
-                          isBound
-                            ? "text-destructive hover:bg-destructive/10"
-                            : "text-primary hover:bg-primary/10"
-                        }`}
-                      >
-                        {isPending ? (
-                          "…"
-                        ) : isBound ? (
-                          <><Unlink className="h-3 w-3" /> Unbind</>
-                        ) : (
-                          <><Link className="h-3 w-3" /> Bind</>
+                        {isAuto && (
+                          <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            title="Auto-bound by credential seeding. Cannot be manually unbound.">
+                            auto
+                          </span>
                         )}
-                      </button>
+                      </div>
+                      {isAuto ? (
+                        <span className="text-[10px] text-muted-foreground" title="Auto-bindings are managed automatically">
+                          seeded
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => isBound ? handleUnbind(ws.id) : handleBind(ws.id)}
+                          disabled={isPending}
+                          className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+                            isBound
+                              ? "text-destructive hover:bg-destructive/10"
+                              : "text-primary hover:bg-primary/10"
+                          }`}
+                        >
+                          {isPending ? (
+                            "…"
+                          ) : isBound ? (
+                            <><Unlink className="h-3 w-3" /> Unbind</>
+                          ) : (
+                            <><Link className="h-3 w-3" /> Bind</>
+                          )}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -350,7 +377,7 @@ function CreateUserCredentialForm({
   onCancel,
   onError,
 }: {
-  onCreated: (c: UserProviderCredential) => void;
+  onCreated: (c: CreateUserCredentialResponse) => void;
   onCancel: () => void;
   onError: (msg: string) => void;
 }) {

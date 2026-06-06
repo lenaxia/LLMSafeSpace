@@ -75,28 +75,27 @@ func (s *PgSecretStore) UpsertFreeTierCredential(ctx context.Context, ciphertext
 }
 
 // SeedWorkspaceCredentials inserts credential bindings for a new workspace:
-//  1. Admin auto-apply rules (target_type='all' or matching user rule).
-//  2. All user-owned credentials belonging to userID — every personal key the
-//     user has is always bound to every workspace they own. This keeps the
-//     invariant: no workspace is ever missing credentials the user has access to.
+//  1. Admin auto-apply rules (target_type='all', 'user', or 'org' matching workspace owner).
+//     org rules use userID as a placeholder until org membership is implemented.
+//  2. All user-owned credentials belonging to userID.
 //
 // Idempotent — uses ON CONFLICT DO NOTHING throughout.
 func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error {
-	// Bind admin auto-apply rules (existing behavior).
+	// Bind admin auto-apply rules (all target types including org — H-4 fix).
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
 		SELECT caa.credential_id, $1, 'auto', caa.within_priority
 		FROM credential_auto_apply caa
 		WHERE caa.target_type = 'all'
 		   OR (caa.target_type = 'user' AND caa.target_id = $2)
+		   OR (caa.target_type = 'org'  AND caa.target_id = $2)
 		ON CONFLICT (credential_id, workspace_id) DO NOTHING
 	`, workspaceID, userID)
 	if err != nil {
 		return fmt.Errorf("seed workspace credentials (admin rules): %w", err)
 	}
 
-	// Bind all personal credentials owned by this user (priority 10 = below explicit=0 but
-	// above auto-admin=0 only in tie-break; explicit bind remains respected via ON CONFLICT DO NOTHING).
+	// Bind all personal credentials owned by this user.
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
 		SELECT pc.id, $1, 'auto', 10
@@ -113,8 +112,7 @@ func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceI
 
 // BindCredentialToAllUserWorkspaces binds a user credential to every workspace
 // owned by userID. Called when a user creates a new personal credential so that
-// the invariant "all credentials bound to all workspaces" is maintained without
-// requiring a full backfill. Idempotent.
+// the invariant "all credentials bound to all workspaces" is maintained. Idempotent.
 func (s *PgSecretStore) BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
@@ -212,11 +210,12 @@ func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*AdminCrede
 }
 
 // GetAdminCredential returns a single admin credential by ID, or nil if not found.
+// Filters on both owner_type AND owner_id (L-4 fix: safer against future multi-admin).
 func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*AdminCredentialRow, error) {
 	var r AdminCredentialRow
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at
-		FROM provider_credentials WHERE id = $1 AND owner_type = 'admin'
+		FROM provider_credentials WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'
 	`, id).Scan(&r.ID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.CreatedAt, &r.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -228,19 +227,28 @@ func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*Adm
 }
 
 // UpdateAdminCredential updates an existing admin credential.
+// Omits updated_at from the SET clause so the DB trigger sets it to now(),
+// then reads it back via RETURNING so the response timestamp is accurate (M-8 fix).
 func (s *PgSecretStore) UpdateAdminCredential(ctx context.Context, row *AdminCredentialRow) error {
-	_, err := s.pool.Exec(ctx, `
+	return s.pool.QueryRow(ctx, `
 		UPDATE provider_credentials
-		SET name = $2, provider = $3, ciphertext = $4, key_version = $5, model_allowlist = $6, updated_at = $7
+		SET name = $2, provider = $3, ciphertext = $4, key_version = $5, model_allowlist = $6
 		WHERE id = $1 AND owner_type = 'admin'
-	`, row.ID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.UpdatedAt)
-	return err
+		RETURNING updated_at
+	`, row.ID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist).Scan(&row.UpdatedAt)
 }
 
 // DeleteAdminCredential deletes an admin credential by ID. FK cascades handle bindings.
+// Returns pgx.ErrNoRows if no row was deleted so callers can distinguish 404 (L-1 fix).
 func (s *PgSecretStore) DeleteAdminCredential(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'admin'`, id)
-	return err
+	tag, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // CreateAutoApply inserts an auto-apply rule.
@@ -375,16 +383,35 @@ func (s *PgSecretStore) BindCredentialToWorkspace(ctx context.Context, credentia
 	return err
 }
 
-// UnbindCredentialFromWorkspace removes a credential binding from a workspace.
+// UnbindCredentialFromWorkspace removes an EXPLICIT credential binding.
+// Returns ErrAutoBindingProtected if the binding is auto-managed (H-1 fix).
 func (s *PgSecretStore) UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error {
-	_, err := s.pool.Exec(ctx, `
-		DELETE FROM workspace_credential_bindings WHERE credential_id = $1 AND workspace_id = $2
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM workspace_credential_bindings
+		WHERE credential_id = $1 AND workspace_id = $2 AND source_type = 'explicit'
 	`, credentialID, workspaceID)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish "already gone" (idempotent OK) from "auto-binding" (protected).
+		var sourceType string
+		scanErr := s.pool.QueryRow(ctx, `
+			SELECT source_type FROM workspace_credential_bindings
+			WHERE credential_id = $1 AND workspace_id = $2
+		`, credentialID, workspaceID).Scan(&sourceType)
+		if scanErr == pgx.ErrNoRows {
+			return nil // Already gone — idempotent.
+		}
+		if scanErr == nil && sourceType == "auto" {
+			return ErrAutoBindingProtected
+		}
+	}
+	return nil
 }
 
-// GetCredentialBindings returns all workspace IDs that the given credential is
-// explicitly or automatically bound to, filtered to workspaces owned by ownerID.
+// GetCredentialBindings returns workspace IDs the credential is bound to,
+// scoped to workspaces owned by ownerID.
 func (s *PgSecretStore) GetCredentialBindings(ctx context.Context, credentialID, ownerID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT wcb.workspace_id
@@ -410,4 +437,33 @@ func (s *PgSecretStore) GetCredentialBindings(ctx context.Context, credentialID,
 		ids = []string{}
 	}
 	return ids, rows.Err()
+}
+
+// GetCredentialBindingsWithSource returns workspace IDs and source type for bindings,
+// scoped to workspaces owned by ownerID (M-1 fix: allows UI to distinguish auto vs explicit).
+func (s *PgSecretStore) GetCredentialBindingsWithSource(ctx context.Context, credentialID, ownerID string) ([]CredentialBindingInfo, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT wcb.workspace_id, wcb.source_type
+		FROM workspace_credential_bindings wcb
+		JOIN workspaces w ON w.id = wcb.workspace_id
+		WHERE wcb.credential_id = $1
+		  AND w.user_id = $2
+		ORDER BY wcb.workspace_id
+	`, credentialID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CredentialBindingInfo
+	for rows.Next() {
+		var b CredentialBindingInfo
+		if err := rows.Scan(&b.WorkspaceID, &b.SourceType); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if out == nil {
+		out = []CredentialBindingInfo{}
+	}
+	return out, rows.Err()
 }

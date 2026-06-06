@@ -20,13 +20,19 @@ import (
 )
 
 type fakeUserCredStore struct {
-	creds    map[string]*secrets.UserCredentialRow
-	bindings map[string][]string // credID -> []wsID
-	nextErr  error
+	creds      map[string]*secrets.UserCredentialRow
+	bindings   map[string][]string // credID -> []wsID
+	autoBinds  map[string]bool     // wsID -> true if auto-bound (for protection test)
+	nextErr    error
+	bindAllErr error
 }
 
 func newFakeUserCredStore() *fakeUserCredStore {
-	return &fakeUserCredStore{creds: make(map[string]*secrets.UserCredentialRow), bindings: make(map[string][]string)}
+	return &fakeUserCredStore{
+		creds:     make(map[string]*secrets.UserCredentialRow),
+		bindings:  make(map[string][]string),
+		autoBinds: make(map[string]bool),
+	}
 }
 
 func (f *fakeUserCredStore) CreateUserCredential(_ context.Context, row *secrets.UserCredentialRow) error {
@@ -72,6 +78,9 @@ func (f *fakeUserCredStore) BindCredentialToWorkspace(_ context.Context, credID,
 }
 
 func (f *fakeUserCredStore) UnbindCredentialFromWorkspace(_ context.Context, credID, wsID string) error {
+	if f.autoBinds[wsID] {
+		return secrets.ErrAutoBindingProtected
+	}
 	orig := f.bindings[credID]
 	filtered := orig[:0]
 	for _, id := range orig {
@@ -91,9 +100,24 @@ func (f *fakeUserCredStore) GetCredentialBindings(_ context.Context, credID, _ s
 	return ids, nil
 }
 
+func (f *fakeUserCredStore) GetCredentialBindingsWithSource(_ context.Context, credID, _ string) ([]secrets.CredentialBindingInfo, error) {
+	ids := f.bindings[credID]
+	out := make([]secrets.CredentialBindingInfo, len(ids))
+	for i, id := range ids {
+		sourceType := "explicit"
+		if f.autoBinds[id] {
+			sourceType = "auto"
+		}
+		out[i] = secrets.CredentialBindingInfo{WorkspaceID: id, SourceType: sourceType}
+	}
+	return out, nil
+}
+
 func (f *fakeUserCredStore) BindCredentialToAllUserWorkspaces(_ context.Context, credID, _ string) error {
-	// No-op in tests — workspace auto-bind is covered by dedicated integration tests.
 	_ = credID
+	if f.bindAllErr != nil {
+		return f.bindAllErr
+	}
 	return nil
 }
 
@@ -129,6 +153,18 @@ func setupUserCredRouter(h *UserProviderCredentialsHandler) *gin.Engine {
 	g.POST("/:id/bind/:workspaceId", h.Bind)
 	g.DELETE("/:id/bind/:workspaceId", h.Unbind)
 	return r
+}
+
+// mockCredStateWriter captures MarkCredentialChanged calls for testing.
+type mockCredStateWriter struct {
+	fn func(ctx context.Context, wsID string) error
+}
+
+func (m *mockCredStateWriter) MarkCredentialChanged(ctx context.Context, wsID string) error {
+	if m.fn != nil {
+		return m.fn(ctx, wsID)
+	}
+	return nil
 }
 
 func TestUserProviderCredentials_Create_Success(t *testing.T) {
@@ -392,6 +428,79 @@ func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.NotContains(t, store.bindings["c1"], "ws-1")
 	assert.Contains(t, store.bindings["c1"], "ws-2")
+}
+
+// TestUserProviderCredentials_Unbind_RejectsAutoBinding verifies H-1 fix:
+// auto-bindings (seeded by SeedWorkspaceCredentials) return 409, not 204.
+func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.bindings["c1"] = []string{"ws-auto"}
+	store.autoBinds["ws-auto"] = true // simulate auto-bound
+	h := &UserProviderCredentialsHandler{
+		store:        store,
+		wsOwnerCheck: func(_ context.Context, _, _ string) error { return nil },
+	}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/provider-credentials/c1/bind/ws-auto", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// TestUserProviderCredentials_Delete_NotifiesBoundWorkspaces verifies C-3 fix:
+// deleting a credential marks all previously-bound workspaces as credential-changed.
+func TestUserProviderCredentials_Delete_NotifiesBoundWorkspaces(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.bindings["c1"] = []string{"ws-1", "ws-2"}
+
+	notified := make(map[string]bool)
+	h := &UserProviderCredentialsHandler{
+		store: store,
+		credStateWriter: &mockCredStateWriter{fn: func(ctx context.Context, wsID string) error {
+			notified[wsID] = true
+			return nil
+		}},
+	}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/provider-credentials/c1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.True(t, notified["ws-1"], "ws-1 should be notified")
+	assert.True(t, notified["ws-2"], "ws-2 should be notified")
+}
+
+// TestUserProviderCredentials_Create_Returns207OnBindFailure verifies C-2 fix:
+// if BindCredentialToAllUserWorkspaces fails, Create returns 207 not 201.
+func TestUserProviderCredentials_Create_Returns207OnBindFailure(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.bindAllErr = errors.New("db timeout")
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		keys:     secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache),
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	body := `{"name":"my-openai","provider":"openai","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusMultiStatus, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "bindWarning")
+	assert.Contains(t, resp, "credential")
 }
 
 // testDEKCacheForHandler is a minimal DEKCache for handler tests.

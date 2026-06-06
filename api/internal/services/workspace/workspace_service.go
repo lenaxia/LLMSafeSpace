@@ -223,9 +223,12 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	s.logger.Info("Workspace created", "workspaceID", created.Name, "userID", userID)
 
 	// Auto-provision default credentials if enabled (Epic 30).
+	// Seeding is best-effort: a failure does NOT roll back workspace creation,
+	// but is logged at Error (not Warn) so it surfaces in alerting dashboards.
 	if s.credProvisioner != nil {
 		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID); err != nil {
-			s.logger.Warn("credential auto-apply seeding failed", "workspaceID", meta.ID, "error", err.Error())
+			s.logger.Error("credential seeding failed for new workspace; it will have no LLM credentials",
+				err, "workspaceID", meta.ID, "userID", userID)
 		}
 	}
 

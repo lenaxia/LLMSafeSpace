@@ -90,14 +90,34 @@ export interface CreateUserCredentialRequest {
   modelAllowlist?: string[];
 }
 
+// CredentialBindingInfo is returned by GET /provider-credentials/:id/bindings.
+// sourceType distinguishes user-initiated (explicit) from seeded (auto) bindings.
+// Auto-bound workspaces cannot be unbound via the UI — the backend returns 409 Conflict.
+export interface CredentialBindingInfo {
+  workspaceId: string;
+  sourceType: "explicit" | "auto";
+}
+
+export interface ListBindingsResponse {
+  workspaceIds: string[];
+  bindings: CredentialBindingInfo[];
+}
+
+// CreateUserCredentialResponse: 201 on success, 207 when credential was created
+// but auto-bind to existing workspaces failed (bindWarning present).
+export interface CreateUserCredentialResponse extends UserProviderCredential {
+  bindWarning?: string;
+  credential?: UserProviderCredential; // present on 207 — cred nested under this key
+}
+
 export const userProviderCredentialsApi = {
   list: () => api.get<UserProviderCredential[]>("/provider-credentials"),
   get: (id: string) => api.get<UserProviderCredential>(`/provider-credentials/${id}`),
   create: (req: CreateUserCredentialRequest) =>
-    api.post<UserProviderCredential>("/provider-credentials", req),
+    api.post<CreateUserCredentialResponse>("/provider-credentials", req),
   delete: (id: string) => api.delete<void>(`/provider-credentials/${id}`),
   listBindings: (id: string) =>
-    api.get<{ workspaceIds: string[] }>(`/provider-credentials/${id}/bindings`),
+    api.get<ListBindingsResponse>(`/provider-credentials/${id}/bindings`),
   bindToWorkspace: (id: string, workspaceId: string) =>
     api.post<{ bound: boolean }>(`/provider-credentials/${id}/bind/${workspaceId}`, {}),
   unbindFromWorkspace: (id: string, workspaceId: string) =>

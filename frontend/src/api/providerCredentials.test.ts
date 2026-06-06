@@ -59,7 +59,7 @@ describe("userProviderCredentialsApi.listBindings", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ workspaceIds: ["ws-1", "ws-2"] }),
+      json: () => Promise.resolve({ workspaceIds: ["ws-1", "ws-2"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }, { workspaceId: "ws-2", sourceType: "auto" }] }),
     });
 
     const result = await userProviderCredentialsApi.listBindings("cred-abc");

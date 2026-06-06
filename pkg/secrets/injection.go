@@ -24,6 +24,21 @@ type InjectedSecret struct {
 // When deriveAdminKey is wired (US-30.5+), uses the new multi-source path
 // that queries workspace_credential_bindings and merges by provider priority.
 // Otherwise falls back to the legacy path (user_secrets only).
+//
+// ARCHITECTURAL NOTE — user credential injection in non-interactive contexts (C-1):
+//
+// Admin credentials (owner_type='admin') use a server-side KEK derived from
+// LLMSAFESPACE_MASTER_SECRET and can always be decrypted regardless of session.
+//
+// User credentials (owner_type='user') are encrypted with the user's DEK, which
+// requires an active authenticated session. When called without a session (e.g.
+// controller-initiated restart, resume after browser close), DEK retrieval fails
+// and the user credential is skipped with an audit event. The workspace falls
+// back to any lower-priority admin credential, or boots with no LLM access.
+//
+// This is intentional: zero-knowledge design means the server cannot decrypt
+// user credentials without the user's session. The reload banner (Epic 27a)
+// prompts the user to refresh credentials when they next open the workspace.
 func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
 	if s.deriveAdminKey == nil {
 		return s.prepareSecretsLegacy(ctx, userID, sessionID, workspaceID)
@@ -33,10 +48,13 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		return nil, err
 	}
 
-	// Cast store to CredentialStore. PgSecretStore satisfies both interfaces.
+	// Cast store to CredentialStore. All production store types implement this.
+	// If the cast fails, a store wrapper was added without implementing CredentialStore —
+	// return an explicit error rather than silently falling back to the legacy path
+	// (which omits all admin credentials entirely). (H-3 fix)
 	credStore, ok := s.store.(CredentialStore)
 	if !ok {
-		return s.prepareSecretsLegacy(ctx, userID, sessionID, workspaceID)
+		return nil, fmt.Errorf("store does not implement CredentialStore: Epic 30 credential injection unavailable; ensure all store wrappers implement CredentialStore")
 	}
 
 	// Load all bound credentials, ordered by priority.
@@ -152,6 +170,10 @@ func (s *SecretService) buildNonLLMSecrets(ctx context.Context, userID, sessionI
 	for _, secret := range relevant {
 		plaintext, err := DecryptSecret(dek, secret.Ciphertext)
 		if err != nil {
+			// Audit non-LLM decrypt failures so operators have signal (M-5 fix).
+			sid := secret.ID
+			s.audit(ctx, userID, "secret_decrypt_failed", &sid, &workspaceID,
+				map[string]string{"name": secret.Name, "type": string(secret.Type), "error": err.Error()})
 			continue
 		}
 		out = append(out, InjectedSecret{
