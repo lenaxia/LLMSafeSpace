@@ -102,13 +102,13 @@ func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
 }
 
 // SetOnInference installs the callback fired when a session produces token output.
+func (t *SSETracker) SetOnInference(cb InferenceCallback) {
+	t.onInference = cb
+}
+
 // SetSessionMetrics installs the recorder for session duration observations.
 func (t *SSETracker) SetSessionMetrics(r SessionMetricsRecorder) {
 	t.sessionMetrics = r
-}
-
-func (t *SSETracker) SetOnInference(cb InferenceCallback) {
-	t.onInference = cb
 }
 
 func (t *SSETracker) SetOnRawEvent(callback RawEventCallback) {
