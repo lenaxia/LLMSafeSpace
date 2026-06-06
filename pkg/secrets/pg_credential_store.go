@@ -321,16 +321,6 @@ func (s *PgSecretStore) GetUserCredential(ctx context.Context, userID, id string
 	return &r, nil
 }
 
-// UpdateUserCredential updates a user credential.
-func (s *PgSecretStore) UpdateUserCredential(ctx context.Context, row *UserCredentialRow) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE provider_credentials
-		SET name = $3, provider = $4, ciphertext = $5, key_version = $6, model_allowlist = $7, updated_at = $8
-		WHERE id = $1 AND owner_type = 'user' AND owner_id = $2
-	`, row.ID, row.OwnerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.UpdatedAt)
-	return err
-}
-
 // DeleteUserCredential deletes a user credential by ID.
 func (s *PgSecretStore) DeleteUserCredential(ctx context.Context, userID, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2`, id, userID)

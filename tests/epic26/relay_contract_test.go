@@ -4,7 +4,6 @@
 // Package relaycftest validates the assumptions Epic 26 relies on:
 // - opencode provider catalog format (models.dev/api.json)
 // - opencode.ai/zen/v1 endpoint behavior
-// - OPENCODE_AUTH_CONTENT metadata.baseURL mechanism
 //
 // These tests hit the real opencode.ai API (no mocks) and will fail
 // if opencode changes their provider format, endpoint paths, or auth.

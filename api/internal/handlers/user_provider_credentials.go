@@ -20,7 +20,6 @@ type UserCredentialStore interface {
 	CreateUserCredential(ctx context.Context, row *secrets.UserCredentialRow) error
 	ListUserCredentials(ctx context.Context, userID string) ([]*secrets.UserCredentialRow, error)
 	GetUserCredential(ctx context.Context, userID, id string) (*secrets.UserCredentialRow, error)
-	UpdateUserCredential(ctx context.Context, row *secrets.UserCredentialRow) error
 	DeleteUserCredential(ctx context.Context, userID, id string) error
 	BindCredentialToWorkspace(ctx context.Context, credentialID, workspaceID string) error
 	UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error

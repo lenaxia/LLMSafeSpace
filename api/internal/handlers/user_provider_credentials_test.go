@@ -57,11 +57,6 @@ func (f *fakeUserCredStore) GetUserCredential(_ context.Context, userID, id stri
 	return c, nil
 }
 
-func (f *fakeUserCredStore) UpdateUserCredential(_ context.Context, row *secrets.UserCredentialRow) error {
-	f.creds[row.ID] = row
-	return nil
-}
-
 func (f *fakeUserCredStore) DeleteUserCredential(_ context.Context, userID, id string) error {
 	c, ok := f.creds[id]
 	if !ok || c.OwnerID != userID {
