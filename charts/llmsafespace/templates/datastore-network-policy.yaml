@@ -107,4 +107,15 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # Allow migration Job to reach Valkey (symmetric with the Postgres
+    # policy above) so future Redis-flushing migrations are not silently
+    # blocked by the network policy.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: migrate
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 6379
 {{- end }}

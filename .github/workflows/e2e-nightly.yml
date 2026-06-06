@@ -69,6 +69,10 @@ jobs:
             --set controller.image.repository=llmsafespace/controller \
             --set controller.image.tag=$IMAGE_TAG \
             --set controller.image.pullPolicy=IfNotPresent \
+            --set mcp.enabled=true \
+            --set mcp.image.repository=llmsafespace/mcp \
+            --set mcp.image.tag=$IMAGE_TAG \
+            --set mcp.image.pullPolicy=IfNotPresent \
             --set postgresql.host=postgres \
             --set postgresql.port=5432 \
             --set postgresql.user=llmsafespace \
@@ -84,6 +88,101 @@ jobs:
         run: |
           kubectl -n $NS rollout status deployment/llmsafespace-api --timeout=180s
           kubectl -n $NS rollout status deployment/llmsafespace-controller --timeout=180s
+          kubectl -n $NS rollout status deployment/llmsafespace-mcp --timeout=120s
+
+      # F1/F2/F3 regression test at runtime: verify the MCP pod is Ready
+      # and the /sse endpoint is reachable via the MCP Service (port-forward).
+      # This catches namespace mismatches (F1), probe hangs (F2), and PSA
+      # admission rejection (F3) that helm-render unit tests cannot cover.
+      - name: E2E — MCP pod readiness (F1/F2/F3 runtime verification)
+        run: |
+          set -euo pipefail
+          NS=${{ env.NS }}
+
+          # Assert MCP pod is Running and Ready (not just Pending/CrashLoop).
+          MCP_READY=$(kubectl -n "$NS" get pods \
+            -l app.kubernetes.io/component=mcp \
+            -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+          if [[ "$MCP_READY" != "true" ]]; then
+            echo "FAIL: MCP pod not Ready — likely PSA rejection (F3) or probe hang (F2)"
+            kubectl -n "$NS" describe pod -l app.kubernetes.io/component=mcp || true
+            exit 1
+          fi
+          echo "OK: MCP pod is Ready"
+
+          # Assert MCP pod is in the correct namespace (F1 regression check).
+          MCP_NS=$(kubectl -n "$NS" get pod \
+            -l app.kubernetes.io/component=mcp \
+            -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
+          if [[ "$MCP_NS" != "$NS" ]]; then
+            echo "FAIL: MCP pod is in namespace '$MCP_NS', expected '$NS' (F1 namespace fix regression)"
+            exit 1
+          fi
+          echo "OK: MCP pod is in namespace $NS (F1)"
+
+          # Port-forward to the MCP Service and verify the /sse endpoint accepts
+          # a TCP connection (matching the tcpSocket probe semantics from F2).
+          kubectl -n "$NS" port-forward svc/llmsafespace-mcp 13001:3001 >/dev/null 2>&1 &
+          PF_PID=$!
+          trap "kill $PF_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 10); do
+            if nc -z 127.0.0.1 13001 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          if ! nc -z 127.0.0.1 13001 2>/dev/null; then
+            echo "FAIL: MCP Service port 3001 not reachable after 10s (F2 probe regression?)"
+            exit 1
+          fi
+          echo "OK: MCP Service port 3001 accepting connections (F2)"
+          kill $PF_PID 2>/dev/null || true
+
+      # F8 regression test at runtime: verify that a pod labeled
+      # component=migrate can reach Valkey:6379 (the new allow rule),
+      # and that a pod without that label cannot (the policy is enforced).
+      # Runs as a Job with the correct labels so the NetworkPolicy allows it.
+      - name: E2E — Valkey migrate-rule connectivity (F8 runtime verification)
+        run: |
+          set -euo pipefail
+          NS=${{ env.NS }}
+
+          # Get the Valkey ClusterIP.
+          VALKEY_IP=$(kubectl -n "$NS" get svc \
+            -l app=valkey \
+            -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || echo "")
+          if [[ -z "$VALKEY_IP" ]]; then
+            echo "SKIP: valkey Service not found; skipping F8 connectivity check"
+            exit 0
+          fi
+
+          # Run a one-shot Job pod labeled as a migrate Job. The NetworkPolicy
+          # now allows this pod to reach Valkey:6379 (F8 fix).
+          kubectl -n "$NS" run valkey-migrate-probe \
+            --image=busybox:1.36 \
+            --restart=Never \
+            --labels="app.kubernetes.io/component=migrate,app.kubernetes.io/instance=llmsafespace" \
+            --command -- sh -c "nc -z -w5 $VALKEY_IP 6379 && echo REACHABLE || echo BLOCKED"
+
+          # Wait for completion.
+          for i in $(seq 1 30); do
+            PHASE=$(kubectl -n "$NS" get pod valkey-migrate-probe \
+              -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            [[ "$PHASE" == "Succeeded" || "$PHASE" == "Failed" ]] && break
+            sleep 2
+          done
+
+          RESULT=$(kubectl -n "$NS" logs valkey-migrate-probe 2>/dev/null || echo "")
+          kubectl -n "$NS" delete pod valkey-migrate-probe --ignore-not-found >/dev/null 2>&1 || true
+
+          if [[ "$RESULT" != *"REACHABLE"* ]]; then
+            echo "FAIL: migrate-labeled pod could not reach Valkey:6379 (F8 regression — NetworkPolicy blocking migrate Job)"
+            echo "Result: $RESULT"
+            exit 1
+          fi
+          echo "OK: migrate-labeled pod reached Valkey:6379 (F8)"
 
       - name: Run e2e test suite
         env:

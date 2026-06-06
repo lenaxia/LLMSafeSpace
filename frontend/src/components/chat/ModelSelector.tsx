@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../../api/workspaces";
 import type { ModelInfo } from "../../api/workspaces";
 import { ChevronDown } from "lucide-react";
@@ -20,6 +20,9 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
     enabled: !!workspaceId,
     staleTime: 10_000,
     retry: 1,
+    // Keep the previous data visible during background refetches so the
+    // selector doesn't collapse to null while invalidateQueries re-fetches.
+    placeholderData: keepPreviousData,
   });
 
   const setModelMutation = useMutation({
@@ -49,7 +52,8 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
     return () => clearTimeout(id);
   }, [toast]);
 
-  if (isLoading) {
+  // Show spinner only on the very first load (no prior data in cache).
+  if (isLoading && models.length === 0) {
     return (
       <span className="text-xs text-muted-foreground px-2 py-1">
         Loading models...
@@ -57,7 +61,7 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
     );
   }
 
-  if (isError) {
+  if (isError && models.length === 0) {
     return (
       <span className="text-xs text-destructive px-2 py-1" title="Could not load models">
         ⚠ Models
@@ -65,7 +69,8 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
     );
   }
 
-  if (models.length === 0) {
+  // Return null only when we have a confirmed empty result (not a loading race).
+  if (!isLoading && models.length === 0) {
     return null;
   }
 
@@ -86,7 +91,8 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
           {/* Backdrop to close on click outside */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full z-50 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
-            {models.filter((m: ModelInfo) => m.enabled).map((m: ModelInfo) => (
+            {/* Backend already filters out unavailable models; no frontend re-filter needed */}
+            {models.map((m: ModelInfo) => (
               <button
                 key={m.id}
                 type="button"
