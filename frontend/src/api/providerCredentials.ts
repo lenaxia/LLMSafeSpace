@@ -30,16 +30,16 @@ export interface UpdateAdminCredentialRequest {
   modelAllowlist?: string[];
 }
 
-// Go handler validates "all" | "user" | "org" — "workspace" is not a valid type.
 export interface AutoApplyRule {
+  id: string;
   credentialId: string;
-  targetType: "all" | "user" | "org";
-  targetId?: string;
-  withinPriority: number;
+  targetType: "all" | "user" | "workspace";
+  targetId: string;
+  priority: number;
 }
 
 export interface CreateAutoApplyRequest {
-  targetType: "all" | "user" | "org";
+  targetType: "all" | "user" | "workspace";
   targetId?: string;
   priority?: number;
 }
@@ -56,27 +56,19 @@ export const adminProviderCredentialsApi = {
     api.get<AutoApplyRule[]>(`/admin/provider-credentials/${id}/auto-apply`),
   createAutoApply: (id: string, req: CreateAutoApplyRequest) =>
     api.post<AutoApplyRule>(`/admin/provider-credentials/${id}/auto-apply`, req),
-  deleteAutoApply: (id: string, targetType: string, targetId?: string) =>
-    api.delete<void>(
-      targetId
-        ? `/admin/provider-credentials/${id}/auto-apply/${targetType}/${targetId}`
-        : `/admin/provider-credentials/${id}/auto-apply/${targetType}`
-    ),
+  deleteAutoApply: (id: string, targetType: string, targetId: string) =>
+    api.delete<void>(`/admin/provider-credentials/${id}/auto-apply/${targetType}/${targetId}`),
 };
 
 // ---------------------------------------------------------------------------
 // User provider credentials (Epic 30 US-30.8)
 // Routes: /api/v1/provider-credentials
-// The backend returns AdminCredentialResponse for user creds too, so include
-// baseURL and modelAllowlist even though users can't set them from the UI yet.
 // ---------------------------------------------------------------------------
 
 export interface UserProviderCredential {
   id: string;
   name: string;
   provider: string;
-  baseURL?: string;
-  modelAllowlist?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -86,7 +78,6 @@ export interface CreateUserCredentialRequest {
   provider: string;
   apiKey: string;
   baseURL?: string;
-  modelAllowlist?: string[];
 }
 
 export const userProviderCredentialsApi = {
@@ -96,7 +87,7 @@ export const userProviderCredentialsApi = {
     api.post<UserProviderCredential>("/provider-credentials", req),
   delete: (id: string) => api.delete<void>(`/provider-credentials/${id}`),
   bindToWorkspace: (id: string, workspaceId: string) =>
-    api.post<{ bound: boolean }>(`/provider-credentials/${id}/bind/${workspaceId}`, {}),
+    api.post<void>(`/provider-credentials/${id}/bind/${workspaceId}`, {}),
   unbindFromWorkspace: (id: string, workspaceId: string) =>
     api.delete<void>(`/provider-credentials/${id}/bind/${workspaceId}`),
 };
