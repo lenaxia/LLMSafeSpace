@@ -849,6 +849,287 @@ func TestF137_StorageClassesIsAlwaysClusterRole(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Helm audit fixes (worklog 0175) — regression tests for 7 bugs found in
+// the chart audit. Each test is designed to turn red if the corresponding
+// fix is accidentally reverted.
+// =============================================================================
+
+// findDeploymentByNameSubstr returns the first Deployment whose metadata.name
+// contains the given substring.
+func findDeploymentByNameSubstr(docs []map[string]any, substr string) map[string]any {
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		if strings.Contains(metaName(d), substr) {
+			return d
+		}
+	}
+	return nil
+}
+
+// findServiceByNameSubstr returns the first Service whose metadata.name
+// contains the given substring.
+func findServiceByNameSubstr(docs []map[string]any, substr string) map[string]any {
+	for _, d := range docs {
+		if d["kind"] != "Service" {
+			continue
+		}
+		if strings.Contains(metaName(d), substr) {
+			return d
+		}
+	}
+	return nil
+}
+
+// containerByName returns the first container spec matching the given name
+// from a Deployment doc.
+func containerByName(deploy map[string]any, name string) map[string]any {
+	spec, _ := deploy["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	podSpec, _ := tmpl["spec"].(map[string]any)
+	containers, _ := podSpec["containers"].([]any)
+	for _, c := range containers {
+		cm, _ := c.(map[string]any)
+		if n, _ := cm["name"].(string); n == name {
+			return cm
+		}
+	}
+	return nil
+}
+
+// podSecCtx returns the pod-level securityContext from a Deployment doc.
+func podSecCtx(deploy map[string]any) map[string]any {
+	spec, _ := deploy["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	podSpec, _ := tmpl["spec"].(map[string]any)
+	ctx, _ := podSpec["securityContext"].(map[string]any)
+	return ctx
+}
+
+// TestF1_MCPResourcesUseReleaseNamespace guards the F1 fix: both the MCP
+// Deployment and Service must render into .Release.Namespace, not into
+// whatever .Values.namespace.name resolves to (undefined = "").
+func TestF1_MCPResourcesUseReleaseNamespace(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy, "MCP Deployment must be rendered when mcp.enabled=true")
+	meta, _ := deploy["metadata"].(map[string]any)
+	ns, _ := meta["namespace"].(string)
+	require.Equal(t, "test-ns", ns,
+		"MCP Deployment namespace must equal .Release.Namespace (F1 fix: was .Values.namespace.name)")
+
+	svc := findServiceByNameSubstr(docs, "-mcp")
+	require.NotNil(t, svc, "MCP Service must be rendered when mcp.enabled=true")
+	smeta, _ := svc["metadata"].(map[string]any)
+	sns, _ := smeta["namespace"].(string)
+	require.Equal(t, "test-ns", sns,
+		"MCP Service namespace must equal .Release.Namespace (F1 fix)")
+}
+
+// TestF2_MCPProbesAreTCPSocket guards the F2 fix: the MCP container's
+// liveness and readiness probes must use tcpSocket, not httpGet. The old
+// httpGet /sse hung indefinitely because /sse is a streaming endpoint.
+func TestF2_MCPProbesAreTCPSocket(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy, "MCP Deployment must be rendered")
+	c := containerByName(deploy, "mcp")
+	require.NotNil(t, c, "mcp container must exist")
+
+	liveness, _ := c["livenessProbe"].(map[string]any)
+	require.NotNil(t, liveness, "MCP container must have a livenessProbe")
+	_, hasTCP := liveness["tcpSocket"]
+	_, hasHTTP := liveness["httpGet"]
+	require.True(t, hasTCP, "MCP livenessProbe must use tcpSocket (F2 fix: httpGet /sse hung)")
+	require.False(t, hasHTTP, "MCP livenessProbe must NOT use httpGet")
+
+	readiness, _ := c["readinessProbe"].(map[string]any)
+	require.NotNil(t, readiness, "MCP container must have a readinessProbe (F2 fix: was missing)")
+	_, hasTCPR := readiness["tcpSocket"]
+	require.True(t, hasTCPR, "MCP readinessProbe must use tcpSocket")
+}
+
+// TestF3_MCPSecurityContext guards the F3 fix: the MCP pod must have a
+// podSecurityContext and containerSecurityContext that satisfy PSA restricted
+// (the chart's own namespace default). Pre-fix, the pod had neither and was
+// rejected immediately by admission.
+func TestF3_MCPSecurityContext(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy)
+
+	// Pod-level security context.
+	psc := podSecCtx(deploy)
+	require.NotNil(t, psc, "MCP Deployment must have a podSecurityContext (F3 fix)")
+	require.Equal(t, true, psc["runAsNonRoot"],
+		"MCP podSecurityContext.runAsNonRoot must be true (PSA restricted)")
+	seccomp, _ := psc["seccompProfile"].(map[string]any)
+	require.Equal(t, "RuntimeDefault", seccomp["type"],
+		"MCP podSecurityContext.seccompProfile.type must be RuntimeDefault")
+
+	// Container-level security context.
+	c := containerByName(deploy, "mcp")
+	require.NotNil(t, c)
+	csc, _ := c["securityContext"].(map[string]any)
+	require.NotNil(t, csc, "MCP container must have a securityContext (F3 fix)")
+	require.Equal(t, false, csc["allowPrivilegeEscalation"],
+		"MCP container.allowPrivilegeEscalation must be false")
+	require.Equal(t, true, csc["readOnlyRootFilesystem"],
+		"MCP container.readOnlyRootFilesystem must be true (F3 fix)")
+	caps, _ := csc["capabilities"].(map[string]any)
+	drop, _ := caps["drop"].([]any)
+	var droppedAll bool
+	for _, d := range drop {
+		if d == "ALL" {
+			droppedAll = true
+		}
+	}
+	require.True(t, droppedAll, "MCP container must drop ALL capabilities (F3 fix)")
+}
+
+// TestF4_FrontendReadOnlyRootFilesystem guards the F4 fix: the frontend
+// container must have readOnlyRootFilesystem=true with emptyDir volumes
+// for the paths nginx needs to write. Pre-fix, readOnlyRootFilesystem was
+// explicitly false.
+func TestF4_FrontendReadOnlyRootFilesystem(t *testing.T) {
+	docs := helmTemplate(t, "frontend:\n  enabled: true\n")
+
+	deploy := findDeploymentByNameSubstr(docs, "-frontend")
+	require.NotNil(t, deploy, "frontend Deployment must be rendered when frontend.enabled=true")
+
+	c := containerByName(deploy, "frontend")
+	require.NotNil(t, c, "frontend container must exist")
+	csc, _ := c["securityContext"].(map[string]any)
+	require.NotNil(t, csc, "frontend container must have a securityContext")
+	require.Equal(t, true, csc["readOnlyRootFilesystem"],
+		"frontend container.readOnlyRootFilesystem must be true (F4 fix: was false)")
+
+	// Must have emptyDir volumes for the writable nginx paths.
+	spec, _ := deploy["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	podSpec, _ := tmpl["spec"].(map[string]any)
+	volumes, _ := podSpec["volumes"].([]any)
+	volumeNames := map[string]bool{}
+	for _, v := range volumes {
+		vm, _ := v.(map[string]any)
+		if name, ok := vm["name"].(string); ok {
+			_, isEmptyDir := vm["emptyDir"]
+			if isEmptyDir {
+				volumeNames[name] = true
+			}
+		}
+	}
+	for _, required := range []string{"nginx-cache", "nginx-run", "tmp"} {
+		require.True(t, volumeNames[required],
+			"frontend Deployment must have an emptyDir volume %q for nginx writability (F4 fix)", required)
+	}
+}
+
+// TestF5_AdditionalHostsHaveAPIPath guards the F5 fix: when additionalHosts
+// is configured, every additional host's ingress rule must include both an
+// /api path (to the API service) and a / path (to the frontend). Pre-fix,
+// only the / path was generated, causing 502 for all API calls on extra hosts.
+func TestF5_AdditionalHostsHaveAPIPath(t *testing.T) {
+	docs := helmTemplate(t, `frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "primary.example.com"
+    additionalHosts:
+      - host: "extra.example.com"
+`)
+
+	var frontendIngress map[string]any
+	for _, d := range docs {
+		if d["kind"] != "Ingress" {
+			continue
+		}
+		if strings.Contains(metaName(d), "frontend") {
+			frontendIngress = d
+			break
+		}
+	}
+	require.NotNil(t, frontendIngress, "frontend Ingress must be rendered")
+
+	spec, _ := frontendIngress["spec"].(map[string]any)
+	rules, _ := spec["rules"].([]any)
+
+	// Find the rule for extra.example.com.
+	var extraRule map[string]any
+	for _, r := range rules {
+		rm, _ := r.(map[string]any)
+		if h, _ := rm["host"].(string); h == "extra.example.com" {
+			extraRule = rm
+			break
+		}
+	}
+	require.NotNil(t, extraRule,
+		"Ingress must contain a rule for the additionalHost extra.example.com")
+
+	http, _ := extraRule["http"].(map[string]any)
+	paths, _ := http["paths"].([]any)
+
+	var hasAPI, hasRoot bool
+	for _, p := range paths {
+		pm, _ := p.(map[string]any)
+		path, _ := pm["path"].(string)
+		if path == "/api" {
+			hasAPI = true
+		}
+		if path == "/" {
+			hasRoot = true
+		}
+	}
+	require.True(t, hasAPI,
+		"additionalHost rule must include /api path to the API service (F5 fix: was missing)")
+	require.True(t, hasRoot,
+		"additionalHost rule must include / path to the frontend service")
+}
+
+// TestF8_ValkeyPolicyAllowsMigrateJob guards the F8 fix: the Valkey
+// NetworkPolicy must include an ingress rule for the migrate Job pod selector,
+// symmetric with the Postgres policy. Pre-fix, only the API pod was allowed.
+func TestF8_ValkeyPolicyAllowsMigrateJob(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var vkPolicy map[string]any
+	for _, p := range policies {
+		spec, _ := p["spec"].(map[string]any)
+		sel, _ := spec["podSelector"].(map[string]any)
+		ml, _ := sel["matchLabels"].(map[string]any)
+		if app, _ := ml["app"].(string); app == "valkey" {
+			vkPolicy = p
+			break
+		}
+	}
+	require.NotNil(t, vkPolicy, "Valkey NetworkPolicy must exist")
+
+	spec, _ := vkPolicy["spec"].(map[string]any)
+	ingress, _ := spec["ingress"].([]any)
+
+	var foundMigrateRule bool
+	for _, rule := range ingress {
+		rm, _ := rule.(map[string]any)
+		from, _ := rm["from"].([]any)
+		for _, f := range from {
+			fm, _ := f.(map[string]any)
+			podSel, _ := fm["podSelector"].(map[string]any)
+			ml, _ := podSel["matchLabels"].(map[string]any)
+			if comp, _ := ml["app.kubernetes.io/component"].(string); comp == "migrate" {
+				foundMigrateRule = true
+			}
+		}
+	}
+	require.True(t, foundMigrateRule,
+		"Valkey NetworkPolicy must allow the migrate Job pod selector (F8 fix: was missing)")
+}
+
 // TestF133_ControllerSecretsAreNamespaceScoped asserts that secrets
 // and pods are NEVER granted CRUD verbs via ClusterRole, even when
 // rbac.scope=cluster. Read-only verbs (get/list/watch) are

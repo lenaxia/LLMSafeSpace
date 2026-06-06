@@ -583,9 +583,8 @@ frontend:
         more_set_headers "X-Content-Type-Options: nosniff";
         more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
         more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
-    # additionalHosts: additional hostnames for the frontend. Each entry
-    # produces a separate Ingress rule with both /api → API service and
-    # / → frontend paths, identical in structure to the primary host rule.
+    # additionalHosts: additional hostnames for the frontend (frontend-only,
+    # no /api path). Each entry becomes a separate Ingress rule + TLS entry.
     # Use for serving the frontend on multiple domains (e.g. chat.safespaces.dev).
     # Each entry: { host: "chat.example.com" [, tlsSecret: "override-secret"] }
     additionalHosts: []
@@ -613,6 +612,24 @@ mcp:
     limits:
       cpu: 200m
       memory: 128Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
 
 # Epic 26: Inference relay for free-tier models.
 # When set, workspace pods use this URL as the opencode provider baseURL

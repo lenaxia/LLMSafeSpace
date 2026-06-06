@@ -21,25 +21,13 @@ spec:
     spec:
       serviceAccountName: {{ include "llmsafespace.api.serviceAccountName" . }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        fsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml .Values.mcp.podSecurityContext | nindent 8 }}
       containers:
         - name: mcp
           image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml .Values.mcp.containerSecurityContext | nindent 12 }}
           args:
             - "--sse"
             - "--addr=:{{ .Values.mcp.service.port }}"
