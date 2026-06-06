@@ -414,6 +414,7 @@ func (a *App) Run() error {
 				tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
 					metricsSvc.RecordInference(workspaceID, modelID, providerID, inputTokens, outputTokens, costDollars)
 				})
+				tracker.SetSessionMetrics(metricsSvc)
 			}
 		}
 	}

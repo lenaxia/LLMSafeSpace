@@ -17,7 +17,7 @@ Rules:
 
 | Agent | What | Files Claimed | Status | Started |
 |-------|------|---------------|--------|---------|
-| agent-relay-jun06 | Relay+metrics work complete. Deployed ts-1780727304 (rev 152). | — | DONE | 2026-06-06 00:00 |
+| agent-relay-jun06 | Active workspace gauge + session duration histogram + auth failure counter | `controller/internal/workspace/reconciler.go`, `controller/internal/workspace/phase_active.go`, `api/internal/services/metrics/metrics.go`, `api/internal/middleware/auth.go`, `api/internal/handlers/session_tracker.go` | IN PROGRESS | 2026-06-06 07:30 |
 
 ---
 

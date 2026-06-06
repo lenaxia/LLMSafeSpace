@@ -275,3 +275,35 @@ func RecordRelayInjector(outcome string) {
 func RecordWorkspacePhaseTransition(fromPhase, toPhase string) {
 	workspacePhaseTotalTransitions.WithLabelValues(fromPhase, toPhase).Inc()
 }
+
+// --- Authentication + Session Metrics ---
+
+var (
+	// authFailuresTotal counts authentication failures by reason.
+	// Security signal: detect brute-force, expired tokens, compromised keys.
+	authFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_auth_failures_total",
+		Help: "Authentication failures by reason (invalid_token, expired, wrong_password, revoked).",
+	}, []string{"reason"})
+
+	// sessionDurationSeconds tracks how long inference sessions run.
+	// Metering signal: distribution of session lengths for capacity planning.
+	sessionDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "llmsafespace_session_duration_seconds",
+		Help:    "Duration of opencode sessions from first message to idle (seconds).",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800},
+	}, []string{"workspace_id"})
+)
+
+// RecordAuthFailure records an authentication failure with the given reason.
+// reason values: "invalid_token", "expired_token", "wrong_password", "revoked_token",
+// "missing_token", "insufficient_scope".
+func RecordAuthFailure(reason string) {
+	authFailuresTotal.WithLabelValues(reason).Inc()
+}
+
+// RecordSessionCompleted records a completed inference session.
+// durationSeconds is the elapsed time from first message to idle status.
+func (s *Service) RecordSessionCompleted(workspaceID string, durationSeconds float64) {
+	sessionDurationSeconds.WithLabelValues(workspaceID).Observe(durationSeconds)
+}

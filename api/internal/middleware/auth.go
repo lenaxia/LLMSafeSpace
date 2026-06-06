@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/api/internal/errors"
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -77,6 +78,7 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 				)
 			}
 
+			metrics.RecordAuthFailure("missing_token")
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,
@@ -97,6 +99,7 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 				)
 			}
 
+			metrics.RecordAuthFailure("invalid_token")
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,

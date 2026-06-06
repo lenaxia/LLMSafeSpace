@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -18,6 +20,9 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 
 	now := metav1.Now()
 	workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspending), string(v1.WorkspacePhaseSuspended)).Inc()
+	runtime := workspace.Spec.Runtime
+	userID := workspace.Labels["user-id"]
+	metrics.WorkspacesRunning.WithLabelValues(runtime, userID).Dec()
 	workspace.Status.Phase = v1.WorkspacePhaseSuspended
 	workspace.Status.PodName = ""
 	workspace.Status.PodNamespace = ""

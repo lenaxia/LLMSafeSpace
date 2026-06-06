@@ -26,6 +26,11 @@ type RawEventCallback func(workspaceID, eventType, rawData string)
 // modelID/providerID identify the model; input/output are delta tokens.
 type InferenceCallback func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64)
 
+// SessionMetricsRecorder records session duration observations.
+type SessionMetricsRecorder interface {
+	RecordSessionCompleted(workspaceID string, durationSeconds float64)
+}
+
 type sseEvent struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
@@ -50,6 +55,10 @@ type SSETracker struct {
 	// sessionTokenSeen tracks cumulative tokens per sessionID:workspaceID for delta computation.
 	tokensMu         sync.Mutex
 	sessionTokenSeen map[string]int64
+	// sessionStartTime tracks when each session first went busy (for duration metric).
+	startTimeMu      sync.Mutex
+	sessionStartTime map[string]time.Time
+	sessionMetrics   SessionMetricsRecorder
 	subscriptions    map[string]context.CancelFunc
 	subMu            sync.Mutex
 	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
@@ -76,6 +85,7 @@ func NewSSETracker(
 		onSessionIdle:    onSessionIdle,
 		subscriptions:    make(map[string]context.CancelFunc),
 		sessionTokenSeen: make(map[string]int64),
+		sessionStartTime: make(map[string]time.Time),
 	}
 }
 
@@ -92,6 +102,10 @@ func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
 }
 
 // SetOnInference installs the callback fired when a session produces token output.
+func (t *SSETracker) SetSessionMetrics(r SessionMetricsRecorder) {
+	t.sessionMetrics = r
+}
+
 func (t *SSETracker) SetOnInference(cb InferenceCallback) {
 	t.onInference = cb
 }
@@ -318,6 +332,16 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 
 	switch p.Status.Type {
 	case "idle":
+		if t.sessionMetrics != nil {
+			t.startTimeMu.Lock()
+			if start, ok := t.sessionStartTime[p.SessionID]; ok {
+				delete(t.sessionStartTime, p.SessionID)
+				t.startTimeMu.Unlock()
+				t.sessionMetrics.RecordSessionCompleted(workspaceID, time.Since(start).Seconds())
+			} else {
+				t.startTimeMu.Unlock()
+			}
+		}
 		if t.onSessionIdle != nil {
 			t.onSessionIdle(workspaceID, p.SessionID)
 		}
@@ -331,6 +355,11 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 			s.onIdle(workspaceID, p.SessionID)
 		}
 	case "busy", "retry":
+		t.startTimeMu.Lock()
+		if _, exists := t.sessionStartTime[p.SessionID]; !exists {
+			t.sessionStartTime[p.SessionID] = time.Now()
+		}
+		t.startTimeMu.Unlock()
 		if t.onSessionActive != nil {
 			t.onSessionActive(workspaceID, p.SessionID)
 		}

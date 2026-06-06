@@ -124,3 +124,39 @@ func histogramSum(h prometheus.Histogram) float64 {
 	}
 	return d.Histogram.GetSampleSum()
 }
+
+func TestRecordAuthFailure_IncrementsCounter(t *testing.T) {
+	pre := getCounterValue(authFailuresTotal.With(prometheus.Labels{"reason": "invalid_token"}))
+	RecordAuthFailure("invalid_token")
+	post := getCounterValue(authFailuresTotal.With(prometheus.Labels{"reason": "invalid_token"}))
+	assert.Equal(t, pre+1, post)
+}
+
+func TestRecordSessionCompleted_ObservesHistogram(t *testing.T) {
+	// Histogram observe shouldn't panic and sum should increase.
+	pre := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{"workspace_id": "ws-test"}))
+	metricsService.RecordSessionCompleted("ws-test", 42.5)
+	post := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{"workspace_id": "ws-test"}))
+	assert.Greater(t, post, pre, "session duration histogram sum must increase")
+}
+
+func getHistogramSum(h prometheus.Observer) float64 {
+	// Observer doesn't expose Write directly; use type assertion.
+	if hv, ok := h.(prometheus.Histogram); ok {
+		var d dto.Metric
+		if err := hv.Write(&d); err != nil {
+			return 0
+		}
+		return d.Histogram.GetSampleSum()
+	}
+	return 0
+}
+
+// getCounterValue reads the current value of a prometheus counter.
+func getCounterValue(c prometheus.Counter) float64 {
+	var d dto.Metric
+	if err := c.Write(&d); err != nil {
+		return 0
+	}
+	return d.Counter.GetValue()
+}
