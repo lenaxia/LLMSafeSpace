@@ -29,6 +29,10 @@ type SecretsHandler struct {
 	wsUpdater        ModelStore
 	credStateWriter  CredentialStateWriter
 	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
+	// relayActive is true when INFERENCE_RELAY_BASEURL is set in the pod env,
+	// meaning free-tier opencode models should route through the CF Worker relay.
+	// When true, ListModels remaps free opencode models to providerID=opencode-relay.
+	relayActive bool
 }
 
 // CredentialStateWriter records that workspace credentials have changed.
@@ -74,6 +78,13 @@ type PasswordVerifier interface {
 // NewSecretsHandler creates a new SecretsHandler.
 func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
+}
+
+// SetRelayActive configures whether the inference relay is active for this
+// handler. When true, ListModels remaps free-tier opencode models to
+// providerID=opencode-relay so clients route inference through the CF Worker.
+func (h *SecretsHandler) SetRelayActive(active bool) {
+	h.relayActive = active
 }
 
 // SetPasswordVerifier installs the verifier used to confirm the

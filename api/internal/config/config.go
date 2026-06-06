@@ -21,6 +21,9 @@ type Config struct {
 		Host            string        `mapstructure:"host"`
 		Port            int           `mapstructure:"port"`
 		ShutdownTimeout time.Duration `mapstructure:"shutdownTimeout"`
+		// InferenceRelayURL is the CF Worker URL for free-tier inference relay (Epic 26).
+		// When set, ListModels remaps free-tier opencode models to providerID=opencode-relay.
+		InferenceRelayURL string `mapstructure:"inferenceRelayURL"`
 	} `mapstructure:"server"`
 
 	// Use the shared Kubernetes config
@@ -123,6 +126,7 @@ func Load(path string) (*Config, error) {
 	// viper only replaces dots→underscores in env names, not the reverse.
 	_ = v.BindEnv("kubernetes.inCluster", "LLMSAFESPACE_KUBERNETES_INCLUSTER")
 	_ = v.BindEnv("kubernetes.configPath", "LLMSAFESPACE_KUBERNETES_CONFIGPATH")
+	_ = v.BindEnv("server.inferenceRelayURL", "LLMSAFESPACE_SERVER_INFERENCERELAYURL")
 
 	// Unmarshal config
 	if err := v.Unmarshal(&config); err != nil {

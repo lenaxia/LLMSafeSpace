@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -537,7 +538,7 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid OpenCode","enabled":true,"cost":[{"input":1,"output":2,"cache":{"read":0,"write":0}}],"status":"active"}
 	]`
 
-	result, err := annotateModels([]byte(raw))
+	result, err := annotateModels([]byte(raw), false)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
@@ -555,12 +556,12 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 }
 
 func TestAnnotateModels_InvalidJSON(t *testing.T) {
-	_, err := annotateModels([]byte("not json"))
+	_, err := annotateModels([]byte("not json"), false)
 	require.Error(t, err)
 }
 
 func TestAnnotateModels_EmptyArray(t *testing.T) {
-	result, err := annotateModels([]byte("[]"))
+	result, err := annotateModels([]byte("[]"), false)
 	require.NoError(t, err)
 	require.Len(t, result, 0)
 }
@@ -568,7 +569,7 @@ func TestAnnotateModels_EmptyArray(t *testing.T) {
 func TestAnnotateModels_PreservesDetails(t *testing.T) {
 	raw := `[{"id":"test/model","providerID":"anthropic","name":"Test","enabled":true,"cost":[{"input":3,"output":15,"cache":{"read":0.3,"write":3.75}}],"status":"active","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"limit":{"context":200000,"output":8192}}]`
 
-	result, err := annotateModels([]byte(raw))
+	result, err := annotateModels([]byte(raw), false)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
@@ -629,6 +630,50 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	require.True(t, resp.Models[0].ProxyRequired, "free-tier models must have proxyRequired=true (Epic 26)")
 	require.Equal(t, "opencode/test", resp.Models[0].ID)
 	require.Equal(t, "", resp.CurrentModel) // no updater set = empty
+}
+
+// TestAnnotateModels_RelayActive_RemapsProviderID verifies that when the relay
+// is active, free-tier opencode models have ProviderID remapped to
+// "opencode-relay" so clients use the relay provider for inference.
+func TestAnnotateModels_RelayActive_RemapsProviderID(t *testing.T) {
+	raw := `[
+		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]},
+		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid","enabled":true,"cost":[{"input":1,"output":2}]},
+		{"id":"anthropic/claude","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15}]}
+	]`
+
+	result, err := annotateModels([]byte(raw), true /* relayActive */)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+
+	// Free opencode model: ProviderID must be remapped to opencode-relay
+	assert.Equal(t, "opencode-relay", result[0].ProviderID,
+		"free-tier opencode model must use opencode-relay providerID when relay is active")
+	assert.True(t, result[0].ProxyRequired)
+	assert.True(t, result[0].FreeTier)
+
+	// Paid opencode model: ProviderID stays "opencode" (not free, not relayed)
+	assert.Equal(t, "opencode", result[1].ProviderID,
+		"paid opencode model must keep opencode providerID")
+	assert.False(t, result[1].ProxyRequired)
+
+	// Non-opencode model: unaffected
+	assert.Equal(t, "anthropic", result[2].ProviderID)
+}
+
+// TestAnnotateModels_RelayInactive_DoesNotRemap verifies that when the relay
+// is not active, providerIDs are not remapped.
+func TestAnnotateModels_RelayInactive_DoesNotRemap(t *testing.T) {
+	raw := `[
+		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]}
+	]`
+
+	result, err := annotateModels([]byte(raw), false /* relayActive */)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	assert.Equal(t, "opencode", result[0].ProviderID,
+		"providerID must not be remapped when relay is inactive")
 }
 
 // mockModelReader implements WorkspaceDefaultModelReader for testing.

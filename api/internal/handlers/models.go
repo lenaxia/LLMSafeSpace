@@ -172,7 +172,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	}
 
 	// Annotate models with tier information.
-	annotated, err := annotateModels(body)
+	annotated, err := annotateModels(body, h.relayActive)
 	if err != nil {
 		// Fallback: return raw response if annotation fails.
 		c.Data(http.StatusOK, "application/json", body)
@@ -254,7 +254,12 @@ const (
 	ModelFreeTier    ModelAvailability = "free"
 )
 
-func annotateModels(raw []byte) ([]annotatedModel, error) {
+// annotateModels enriches the raw /api/model response with tier, availability,
+// and relay information. When relayActive is true, free-tier opencode models
+// have their ProviderID remapped to "opencode-relay" so clients send inference
+// requests to the relay provider rather than the (disabled) built-in opencode
+// provider.
+func annotateModels(raw []byte, relayActive bool) ([]annotatedModel, error) {
 	var models []opencodeModel
 	if err := json.Unmarshal(raw, &models); err != nil {
 		return nil, err
@@ -276,13 +281,20 @@ func annotateModels(raw []byte) ([]annotatedModel, error) {
 	result := make([]annotatedModel, len(models))
 	for i, m := range models {
 		avail := classifyAvailability(m.ProviderID, m.Cost, loadedProviders)
+		providerID := m.ProviderID
+		if relayActive && avail == ModelFreeTier {
+			// Remap free-tier opencode models to opencode-relay so inference
+			// requests route through the CF Worker. The relay provider shares
+			// the same model IDs but has a different providerID.
+			providerID = "opencode-relay"
+		}
 		var details json.RawMessage
 		if i < len(rawModels) {
 			details = rawModels[i]
 		}
 		result[i] = annotatedModel{
 			ID:            m.ID,
-			ProviderID:    m.ProviderID,
+			ProviderID:    providerID,
 			Name:          m.Name,
 			Family:        m.Family,
 			Enabled:       m.Enabled,

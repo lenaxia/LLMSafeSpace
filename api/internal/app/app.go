@@ -147,6 +147,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		// Epic 26: mark relay active when LLMSAFESPACE_INFERENCE_RELAY_URL is
+		// configured. This causes ListModels to remap free-tier opencode model
+		// providerIDs to "opencode-relay" so clients route inference through
+		// the CF Worker (which the phase-2 relay injector configures in agentd).
+		if inferenceRelayURL := cfg.Server.InferenceRelayURL; inferenceRelayURL != "" {
+			secretsHandler.SetRelayActive(true)
+		}
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))

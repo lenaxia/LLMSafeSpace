@@ -69,6 +69,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- with .Values.inferenceRelayURL }}
+            - name: LLMSAFESPACE_SERVER_INFERENCERELAYURL
+              value: {{ . | quote }}
+            {{- end }}
           {{- with .Values.api.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
