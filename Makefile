@@ -130,6 +130,18 @@ helm-render:
 	$(HELM) lint $(CHART_DIR)
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) >/dev/null
 
+# helm-chart-test: run the Go-based chart rendering tests (chart_test.go).
+# These tests render manifests via `helm template` and assert structural
+# invariants that `helm-render` (lint + template) cannot catch — e.g. that
+# the MCP namespace uses .Release.Namespace, that probes use tcpSocket, that
+# additionalHosts includes the /api path, etc.
+#
+# Requires helm on PATH. Silently skips if helm is absent (see chart_test.go).
+# Run by CI in both the `test` and `test-full` jobs (helm installed there).
+# Also run by `make check` so local contributors catch regressions before push.
+helm-chart-test:
+	$(GOTEST) ./charts/llmsafespace/...
+
 # ---------------------------------------------------------------------------
 # OpenAPI validation
 # ---------------------------------------------------------------------------
@@ -191,7 +203,7 @@ tools-install:
 #   - lint          : golangci-lint finds nothing
 #   - helm-render   : chart lints and renders
 #   - repolint      : migration/worklog/chart-drift sequence checks
-check: fmt-check imports-check vet lint helm-render repolint
+check: fmt-check imports-check vet lint helm-render helm-chart-test repolint
 	@echo ""
 	@echo "All quality gates passed."
 

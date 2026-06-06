@@ -109,6 +109,13 @@ jobs:
           go-version: "1.25.11"
           cache: true
 
+      # helm is required by chart_test.go (charts/llmsafespace/...). Without
+      # it the chart tests silently skip via t.Skip("helm not on PATH").
+      # Install before the test run so TestF1–TestF8 and the G16/G26/G2/G5
+      # regression suite actually execute on every PR.
+      - name: Install helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
       # Coverage-instrumented test run. -coverpkg=./... means we count
       # coverage for ALL packages, even those without their own _test.go
       # (so a function in pkg/utilities that's exercised by an
@@ -248,6 +255,10 @@ jobs:
         with:
           go-version: "1.25.11"
           cache: true
+
+      # helm is required by chart_test.go — without it the tests skip silently.
+      - name: Install helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       - name: Run full test suite with race detector
         run: |

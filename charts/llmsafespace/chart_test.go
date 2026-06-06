@@ -1130,6 +1130,279 @@ func TestF8_ValkeyPolicyAllowsMigrateJob(t *testing.T) {
 		"Valkey NetworkPolicy must allow the migrate Job pod selector (F8 fix: was missing)")
 }
 
+// =============================================================================
+// Helm audit — additional depth tests (gap analysis follow-up)
+//
+// The initial TestF1–TestF8 suite verified the fixes at a coarse level.
+// These tests close the specific gaps identified in the gap analysis:
+//   - F2: probe thresholds (not just type)
+//   - F3: non-zero UID; /tmp emptyDir declared AND mounted
+//   - F4: volumeMounts wired into the frontend container (not just declared)
+//   - F5: primary host also has /api path; TLS entry for additionalHost
+//   - F8: API-allow rule still present after adding the migrate rule
+//   - Negative: MCP disabled → no Deployment/Service rendered
+// =============================================================================
+
+// volumeMountPaths returns the set of mountPath values for a container.
+func volumeMountPaths(c map[string]any) map[string]bool {
+	out := map[string]bool{}
+	mounts, _ := c["volumeMounts"].([]any)
+	for _, m := range mounts {
+		mm, _ := m.(map[string]any)
+		if mp, ok := mm["mountPath"].(string); ok {
+			out[mp] = true
+		}
+	}
+	return out
+}
+
+// TestF2_MCPProbeThresholds guards probe timing so a revert to the old
+// config (5s initial delay, 30s period, no readiness) is caught.
+func TestF2_MCPProbeThresholds(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy)
+	c := containerByName(deploy, "mcp")
+	require.NotNil(t, c)
+
+	liveness, _ := c["livenessProbe"].(map[string]any)
+	require.NotNil(t, liveness)
+	require.EqualValues(t, 5, liveness["initialDelaySeconds"],
+		"MCP liveness initialDelaySeconds must be 5")
+	require.EqualValues(t, 30, liveness["periodSeconds"],
+		"MCP liveness periodSeconds must be 30")
+
+	readiness, _ := c["readinessProbe"].(map[string]any)
+	require.NotNil(t, readiness)
+	require.EqualValues(t, 3, readiness["initialDelaySeconds"],
+		"MCP readiness initialDelaySeconds must be 3")
+	require.EqualValues(t, 10, readiness["periodSeconds"],
+		"MCP readiness periodSeconds must be 10")
+}
+
+// TestF3_MCPNonZeroUID guards that the MCP pod runs as a non-zero UID
+// (65532). runAsNonRoot=true alone is not sufficient — some runtimes accept
+// numeric UID 0 and rely on the admission webhook to block it.
+func TestF3_MCPNonZeroUID(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy)
+
+	psc := podSecCtx(deploy)
+	require.NotNil(t, psc)
+	uid := psc["runAsUser"]
+	require.NotNil(t, uid, "MCP podSecurityContext must set runAsUser")
+	require.NotEqual(t, float64(0), uid,
+		"MCP podSecurityContext.runAsUser must not be 0 (root)")
+}
+
+// TestF3_MCPTmpVolumeAndMount guards that the /tmp emptyDir is both declared
+// as a volume AND mounted into the mcp container. A regression could add the
+// volume but forget the mount (or vice versa), causing readOnlyRootFilesystem
+// to reject any write to /tmp at runtime.
+func TestF3_MCPTmpVolumeAndMount(t *testing.T) {
+	docs := helmTemplate(t, "mcp:\n  enabled: true\n")
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.NotNil(t, deploy)
+
+	// Check volume declared at pod spec level.
+	spec, _ := deploy["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	podSpec, _ := tmpl["spec"].(map[string]any)
+	volumes, _ := podSpec["volumes"].([]any)
+	var hasTmpVolume bool
+	for _, v := range volumes {
+		vm, _ := v.(map[string]any)
+		if n, _ := vm["name"].(string); n == "tmp" {
+			_, isEmptyDir := vm["emptyDir"]
+			if isEmptyDir {
+				hasTmpVolume = true
+			}
+		}
+	}
+	require.True(t, hasTmpVolume,
+		"MCP pod must declare a 'tmp' emptyDir volume (F3 fix: readOnlyRootFilesystem=true requires writable /tmp)")
+
+	// Check mount wired into the container.
+	c := containerByName(deploy, "mcp")
+	require.NotNil(t, c)
+	mounts := volumeMountPaths(c)
+	require.True(t, mounts["/tmp"],
+		"MCP container must have a volumeMount for /tmp (F3 fix)")
+}
+
+// TestF4_FrontendVolumeMountsWired guards that the three emptyDir volumes
+// (nginx-cache, nginx-run, tmp) are not just declared but actually wired
+// into the frontend container at the correct paths. A regression could add
+// the volumes without the mounts, leaving nginx unable to write and crashing
+// on startup with readOnlyRootFilesystem=true.
+func TestF4_FrontendVolumeMountsWired(t *testing.T) {
+	docs := helmTemplate(t, "frontend:\n  enabled: true\n")
+	deploy := findDeploymentByNameSubstr(docs, "-frontend")
+	require.NotNil(t, deploy)
+
+	c := containerByName(deploy, "frontend")
+	require.NotNil(t, c)
+	mounts := volumeMountPaths(c)
+
+	for path, desc := range map[string]string{
+		"/var/cache/nginx": "nginx cache dir (F4 fix)",
+		"/var/run":         "nginx pid/socket dir (F4 fix)",
+		"/tmp":             "tmp dir (F4 fix)",
+	} {
+		require.True(t, mounts[path],
+			"frontend container must have volumeMount at %s — %s", path, desc)
+	}
+}
+
+// TestF5_PrimaryHostHasAPIPath guards the primary host rule in the frontend
+// Ingress. A refactor that broke only the primary host while keeping
+// additionalHosts intact would not be caught by TestF5 alone.
+func TestF5_PrimaryHostHasAPIPath(t *testing.T) {
+	docs := helmTemplate(t, `frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "primary.example.com"
+`)
+	var frontendIngress map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Ingress" && strings.Contains(metaName(d), "frontend") {
+			frontendIngress = d
+			break
+		}
+	}
+	require.NotNil(t, frontendIngress)
+
+	spec, _ := frontendIngress["spec"].(map[string]any)
+	rules, _ := spec["rules"].([]any)
+	var primaryRule map[string]any
+	for _, r := range rules {
+		rm, _ := r.(map[string]any)
+		if h, _ := rm["host"].(string); h == "primary.example.com" {
+			primaryRule = rm
+			break
+		}
+	}
+	require.NotNil(t, primaryRule, "primary host rule must exist")
+
+	http, _ := primaryRule["http"].(map[string]any)
+	paths, _ := http["paths"].([]any)
+	var hasAPI, hasRoot bool
+	for _, p := range paths {
+		pm, _ := p.(map[string]any)
+		switch pm["path"] {
+		case "/api":
+			hasAPI = true
+		case "/":
+			hasRoot = true
+		}
+	}
+	require.True(t, hasAPI, "primary host must have /api path to API service")
+	require.True(t, hasRoot, "primary host must have / path to frontend service")
+}
+
+// TestF5_AdditionalHostsTLSEntry guards that when tls=true, the additionalHost
+// gets its own TLS entry in the Ingress spec. Without it, HTTPS terminates
+// with the primary host's certificate (wrong cert for the SNI name).
+func TestF5_AdditionalHostsTLSEntry(t *testing.T) {
+	docs := helmTemplate(t, `frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "primary.example.com"
+    tls: true
+    tlsSecret: "primary-tls"
+    additionalHosts:
+      - host: "extra.example.com"
+        tlsSecret: "extra-tls"
+`)
+	var frontendIngress map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Ingress" && strings.Contains(metaName(d), "frontend") {
+			frontendIngress = d
+			break
+		}
+	}
+	require.NotNil(t, frontendIngress)
+
+	spec, _ := frontendIngress["spec"].(map[string]any)
+	tls, _ := spec["tls"].([]any)
+	require.NotEmpty(t, tls, "tls block must be present when frontend.ingress.tls=true")
+
+	var foundExtraTLS bool
+	for _, t := range tls {
+		tm, _ := t.(map[string]any)
+		hosts, _ := tm["hosts"].([]any)
+		for _, h := range hosts {
+			if h == "extra.example.com" {
+				foundExtraTLS = true
+			}
+		}
+	}
+	require.True(t, foundExtraTLS,
+		"additionalHost extra.example.com must have a TLS entry (F5 fix)")
+}
+
+// TestF8_ValkeyAPIAllowRulePreserved guards that the existing API pod allow
+// rule in the Valkey policy was not accidentally removed when the migrate
+// rule was added. A regression that replaced rather than appended would
+// break Valkey cache for the API.
+func TestF8_ValkeyAPIAllowRulePreserved(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var vkPolicy map[string]any
+	for _, p := range policies {
+		spec, _ := p["spec"].(map[string]any)
+		sel, _ := spec["podSelector"].(map[string]any)
+		ml, _ := sel["matchLabels"].(map[string]any)
+		if app, _ := ml["app"].(string); app == "valkey" {
+			vkPolicy = p
+			break
+		}
+	}
+	require.NotNil(t, vkPolicy)
+
+	spec, _ := vkPolicy["spec"].(map[string]any)
+	ingress, _ := spec["ingress"].([]any)
+	require.GreaterOrEqual(t, len(ingress), 2,
+		"Valkey NetworkPolicy must have at least 2 ingress rules (API + migrate)")
+
+	var foundAPIRule bool
+	for _, rule := range ingress {
+		rm, _ := rule.(map[string]any)
+		from, _ := rm["from"].([]any)
+		for _, f := range from {
+			fm, _ := f.(map[string]any)
+			podSel, _ := fm["podSelector"].(map[string]any)
+			ml, _ := podSel["matchLabels"].(map[string]any)
+			if comp, _ := ml["app.kubernetes.io/component"].(string); comp == "api" {
+				foundAPIRule = true
+			}
+		}
+	}
+	require.True(t, foundAPIRule,
+		"Valkey NetworkPolicy must still allow the API pod (F8 fix must not have removed it)")
+}
+
+// TestF_MCPDisabled_NoResourcesRendered guards that when mcp.enabled=false
+// (the chart default), no MCP Deployment or Service is rendered. If the
+// gating condition is accidentally removed, every install would ship an
+// MCP pod even when the operator didn't want one.
+func TestF_MCPDisabled_NoResourcesRendered(t *testing.T) {
+	// Explicitly disable to verify the default behavior is honored.
+	docs := helmTemplate(t, "mcp:\n  enabled: false\n")
+
+	deploy := findDeploymentByNameSubstr(docs, "-mcp")
+	require.Nil(t, deploy,
+		"no MCP Deployment must be rendered when mcp.enabled=false")
+
+	svc := findServiceByNameSubstr(docs, "-mcp")
+	require.Nil(t, svc,
+		"no MCP Service must be rendered when mcp.enabled=false")
+}
+
 // TestF133_ControllerSecretsAreNamespaceScoped asserts that secrets
 // and pods are NEVER granted CRUD verbs via ClusterRole, even when
 // rbac.scope=cluster. Read-only verbs (get/list/watch) are
