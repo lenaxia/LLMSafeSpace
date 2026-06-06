@@ -850,7 +850,7 @@ func TestF137_StorageClassesIsAlwaysClusterRole(t *testing.T) {
 }
 
 // =============================================================================
-// Helm audit fixes (worklog 0176) — regression tests for 7 bugs found in
+// Helm audit fixes (worklog 0174) — regression tests for 7 bugs found in
 // the chart audit. Each test is designed to turn red if the corresponding
 // fix is accidentally reverted.
 // =============================================================================
