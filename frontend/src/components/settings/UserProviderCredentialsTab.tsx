@@ -15,6 +15,7 @@ import { workspacesApi } from "../../api/workspaces";
 import type { WorkspaceListItem } from "../../api/types";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
+import { MetaRow } from "./MetaRow";
 import {
   KeyRound,
   Trash2,
@@ -170,16 +171,12 @@ function CredentialRow({
 
     Promise.all([
       workspacesApi.list(),
-      // Fetch which workspaces this cred is already bound to by listing all workspace
-      // bindings. We probe each workspace — an optimistic approach since there's no
-      // "list workspaces for credential" endpoint yet.
+      userProviderCredentialsApi.listBindings(cred.id),
     ])
-      .then(([wsRes]) => {
+      .then(([wsRes, bindingsRes]) => {
         const list = (wsRes as { workspaces?: WorkspaceListItem[] }).workspaces ?? [];
         setWorkspaces(list);
-        // We don't have a direct "list workspaces bound to cred" endpoint.
-        // Leave boundIds empty — user can see the bound state via the workspace settings drawer.
-        // If the bind call returns bound:true we update local state optimistically.
+        setBoundIds(new Set(bindingsRes.workspaceIds));
       })
       .catch(() => setWorkspaces([]))
       .finally(() => setLoadingWs(false));
@@ -227,7 +224,7 @@ function CredentialRow({
             </span>
             {(cred.modelAllowlist?.length ?? 0) > 0 && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                {cred.modelAllowlist!.length} model{cred.modelAllowlist!.length > 1 ? "s" : ""}
+                {cred.modelAllowlist?.length} model{(cred.modelAllowlist?.length ?? 0) > 1 ? "s" : ""}
               </span>
             )}
           </div>
@@ -282,7 +279,7 @@ function CredentialRow({
             )}
             {(cred.modelAllowlist?.length ?? 0) > 0 && (
               <div className="col-span-2">
-                <MetaRow label="Model allowlist" value={cred.modelAllowlist!.join(", ")} />
+                <MetaRow label="Model allowlist" value={cred.modelAllowlist?.join(", ") ?? ""} />
               </div>
             )}
           </div>
@@ -346,16 +343,7 @@ function CredentialRow({
   );
 }
 
-// ─── Metadata row helper ──────────────────────────────────────────────────────
-
-function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex min-w-0 gap-2">
-      <span className="shrink-0 text-muted-foreground">{label}:</span>
-      <span className={`truncate ${mono ? "font-mono text-[10px]" : ""}`}>{value || "—"}</span>
-    </div>
-  );
-}
+// ─── Create form ──────────────────────────────────────────────────────────────
 
 // ─── Create form ──────────────────────────────────────────────────────────────
 

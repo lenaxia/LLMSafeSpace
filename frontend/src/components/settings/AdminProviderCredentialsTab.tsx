@@ -15,6 +15,7 @@ import {
 } from "../../api/providerCredentials";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
+import { MetaRow } from "./MetaRow";
 import {
   Shield,
   Trash2,
@@ -57,18 +58,14 @@ export function AdminProviderCredentialsTab() {
   useEffect(() => { load(); }, []);
 
   const handleDelete = async (id: string, name: string) => {
-    // Inline confirm — no window.confirm
-    setExpanded((prev) => (prev === id ? `confirm-delete:${id}` : prev));
-    void (async () => {
-      try {
-        await adminProviderCredentialsApi.delete(id);
-        setCreds((prev) => prev.filter((c) => c.id !== id));
-        if (expanded === id) setExpanded(null);
-        toast(`Deleted "${name}"`);
-      } catch (e: unknown) {
-        toast(e instanceof Error ? e.message : "Delete failed", "error");
-      }
-    })();
+    try {
+      await adminProviderCredentialsApi.delete(id);
+      setCreds((prev) => prev.filter((c) => c.id !== id));
+      setExpanded((prev) => (prev === id ? null : prev));
+      toast(`Deleted "${name}"`);
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "Delete failed", "error");
+    }
   };
 
   const handleCreated = (c: AdminProviderCredential) => {
@@ -457,17 +454,6 @@ function AddAutoApplyRuleForm({
           Cancel
         </button>
       </div>
-    </div>
-  );
-}
-
-// ─── Metadata row helper ──────────────────────────────────────────────────────
-
-function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex min-w-0 gap-2">
-      <span className="shrink-0 text-muted-foreground">{label}:</span>
-      <span className={`truncate ${mono ? "font-mono text-[10px]" : ""}`}>{value || "—"}</span>
     </div>
   );
 }

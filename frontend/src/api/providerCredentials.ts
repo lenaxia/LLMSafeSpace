@@ -57,10 +57,11 @@ export const adminProviderCredentialsApi = {
   createAutoApply: (id: string, req: CreateAutoApplyRequest) =>
     api.post<AutoApplyRule>(`/admin/provider-credentials/${id}/auto-apply`, req),
   deleteAutoApply: (id: string, targetType: string, targetId?: string) =>
+    // The backend route always requires both :targetType and :targetId path segments
+    // (DELETE /:id/auto-apply/:targetType/:targetId). For "all" rules the handler
+    // ignores the targetId value, so we send "_" as a sentinel.
     api.delete<void>(
-      targetId
-        ? `/admin/provider-credentials/${id}/auto-apply/${targetType}/${targetId}`
-        : `/admin/provider-credentials/${id}/auto-apply/${targetType}`
+      `/admin/provider-credentials/${id}/auto-apply/${targetType}/${targetId ?? "_"}`
     ),
 };
 
@@ -95,6 +96,8 @@ export const userProviderCredentialsApi = {
   create: (req: CreateUserCredentialRequest) =>
     api.post<UserProviderCredential>("/provider-credentials", req),
   delete: (id: string) => api.delete<void>(`/provider-credentials/${id}`),
+  listBindings: (id: string) =>
+    api.get<{ workspaceIds: string[] }>(`/provider-credentials/${id}/bindings`),
   bindToWorkspace: (id: string, workspaceId: string) =>
     api.post<{ bound: boolean }>(`/provider-credentials/${id}/bind/${workspaceId}`, {}),
   unbindFromWorkspace: (id: string, workspaceId: string) =>
