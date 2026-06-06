@@ -25,7 +25,8 @@ Rules:
 
 | Completed | Agent | What | Commit |
 |-----------|-------|------|--------|
-| 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | pending |
+| 2026-06-06 | agent-audit-0606 | sseConnection cleanup + 2 new weak-point tests + worklog 0171 | pending |
+| 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | dc38ad8 |
 | 2026-06-06 | agent-oc-jun05-2330 | API key SHA-256 hashing (migration 000017, auth service, DB service, types) + CPU/disk/memory cgroup metering (agentd getCPUUsage, StatuszResponse, WorkspaceStatus delta tracking) + full controller metrics taxonomy (operational/recovery/metering/billing) | pending |
 | 2026-06-06 | agent-relay-jun06 | Fix #1: resolveModelIDFromCatalog relay providerID remap + billing/metering/ops metrics (inference tokens, model selections, relay injector outcomes, workspace phase transitions) | b77b9c0 |
 | 2026-06-06 | agent-relay-jun06 | CF Worker secret-path auth + phase-2 relay injector + opencode-relay model surfacing in ListModels | d836c94 |

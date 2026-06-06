@@ -200,11 +200,9 @@ describe("createSSEConnection", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
 
     let connectCount = 0;
-    const connectTimes: number[] = [];
 
     const mock = vi.fn().mockImplementation(() => {
       connectCount++;
-      connectTimes.push(Date.now());
       return Promise.resolve({ ok: false, status: 503, body: null });
     });
     globalThis.fetch = mock;
@@ -220,11 +218,11 @@ describe("createSSEConnection", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(connectCount).toBe(1);
 
-    // First retry delay = 1000 * 0.5 = 500ms — advance 500ms
+    // First retry delay = 1000 * 0.5 = 500ms — retryDelay doubles to 2000 inside timer
     await vi.advanceTimersByTimeAsync(500);
     expect(connectCount).toBe(2);
 
-    // Second retry delay = 2000 * 0.5 = 1000ms — advance 1000ms
+    // Second retry delay = 2000 * 0.5 = 1000ms
     await vi.advanceTimersByTimeAsync(1_000);
     expect(connectCount).toBe(3);
 
@@ -322,5 +320,79 @@ describe("createSSEConnection", () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(connectCount).toBe(1); // no reconnect after destroy
+  });
+
+  it("reader.cancel() in finally block does not throw when reader already cancelled by timeout", async () => {
+    // When read timeout fires, the production code does `await reader.cancel()` then breaks.
+    // The `finally` block then calls `reader.cancel()` again on the same cancelled reader.
+    // The second call must not propagate — it is caught by `.catch(() => {})`.
+    const cancelSpy = vi.fn()
+      .mockResolvedValueOnce(undefined) // first cancel (timeout path) succeeds
+      .mockRejectedValueOnce(new TypeError("Cannot cancel a stream that already has a reader")); // second cancel (finally) throws
+    const reader = {
+      read: () => new Promise<never>(() => {}), // hangs forever — timeout fires first
+      cancel: cancelSpy,
+    };
+    const mock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { getReader: () => reader },
+    });
+    globalThis.fetch = mock;
+    const onDisconnect = vi.fn();
+
+    const conn = createSSEConnection({
+      url: "/test",
+      onEvent: vi.fn(),
+      onDisconnect,
+      readTimeoutMs: 100,
+      minReconnectMs: 1_000_000, // prevent reconnect from obscuring the result
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    // Fire read timeout — first cancel called, then finally calls second cancel (rejected)
+    await expect(vi.advanceTimersByTimeAsync(100)).resolves.not.toThrow();
+
+    // Both cancel calls were made
+    expect(cancelSpy).toHaveBeenCalledTimes(2);
+    // Error was suppressed — onDisconnect still fires normally
+    expect(onDisconnect).toHaveBeenCalled();
+
+    conn.destroy();
+  });
+
+  it("caps retryDelay at maxReconnectMs", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    let connectCount = 0;
+    const mock = vi.fn().mockImplementation(() => {
+      connectCount++;
+      return Promise.resolve({ ok: false, status: 503, body: null });
+    });
+    globalThis.fetch = mock;
+
+    const conn = createSSEConnection({
+      url: "/test",
+      onEvent: vi.fn(),
+      minReconnectMs: 1_000,
+      maxReconnectMs: 2_000, // cap at 2s
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectCount).toBe(1);
+
+    // Retry 1: delay = 1000 * 0.5 = 500ms, then retryDelay doubles to 2000
+    await vi.advanceTimersByTimeAsync(500);
+    expect(connectCount).toBe(2);
+
+    // Retry 2: delay = 2000 * 0.5 = 1000ms, then retryDelay would double to 4000 but is capped at 2000
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connectCount).toBe(3);
+
+    // Retry 3: delay = 2000 * 0.5 = 1000ms (capped — same as retry 2, not 4000*0.5=2000)
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connectCount).toBe(4);
+
+    conn.destroy();
   });
 });
