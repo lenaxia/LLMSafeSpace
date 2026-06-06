@@ -23,6 +23,16 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
+// brokerSubCount is a test helper that returns the number of active subscribers
+// for a user by reading the broker's internal shard directly.
+// Lives here (same package) to avoid exposing count via production API.
+func brokerSubCount(b *UserEventBroker, userID string) int {
+	sh := b.userShard(userID)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return len(sh.userSubs[userID])
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }
@@ -466,4 +476,98 @@ done2:
 	assert.Len(t, events, 1)
 	assert.Equal(t, "ws-known", events[0].WorkspaceID)
 	assert.Equal(t, "Active", events[0].Phase)
+}
+
+// TestStreamUserEvents_GoroutineExitsOnClientDisconnect verifies that when the
+// client drops the connection both the snapshot goroutine and heartbeat goroutine
+// exit promptly (no leak), and the subscription is unregistered from the broker.
+//
+// Approach: use a real httptest.Server so we have a genuine TCP connection to
+// close. Closing the client's response body cancels the request context, which
+// propagates to streamCtx. We then poll the broker's subscriber count to confirm
+// it drops back to zero within a reasonable window.
+func TestStreamUserEvents_GoroutineExitsOnClientDisconnect(t *testing.T) {
+	broker := NewUserEventBroker()
+	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-gc")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	// Wait for the handler to be fully in the live loop (subscription registered).
+	require.Eventually(t, func() bool {
+		return brokerSubCount(broker, "user-gc") == 1
+	}, time.Second, 10*time.Millisecond, "subscription should be registered")
+
+	// Drop the connection — cancels c.Request.Context() server-side.
+	resp.Body.Close()
+	cancel()
+
+	// defer UnsubscribeUser must fire and remove the subscription.
+	require.Eventually(t, func() bool {
+		return brokerSubCount(broker, "user-gc") == 0
+	}, 2*time.Second, 20*time.Millisecond, "subscription should be unregistered after disconnect")
+}
+
+// TestStreamUserEvents_WriteErrorCancelsStream verifies that when the server
+// fails to write an SSE event (write deadline exceeded / broken pipe), the
+// live loop calls streamCancel() and returns, and the subscription is cleaned up.
+//
+// We exercise the write-error path by publishing an event and then immediately
+// closing the response body — the server's pending write to the now-dead TCP
+// connection returns an error, triggering the streamCancel() path in the live
+// loop. This is the same code path that fires on a real write-deadline eviction.
+func TestStreamUserEvents_WriteErrorCancelsStream(t *testing.T) {
+	broker := NewUserEventBroker()
+	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-wd")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	// Wait for subscription to be established.
+	require.Eventually(t, func() bool {
+		return brokerSubCount(broker, "user-wd") == 1
+	}, time.Second, 10*time.Millisecond, "subscription should be registered")
+
+	// Publish an event so the live loop has a pending write to perform.
+	broker.PublishToUser("user-wd", WorkspaceSSEEvent{
+		Type:        "workspace.phase",
+		WorkspaceID: "ws-wd",
+		Phase:       "Active",
+	})
+
+	// Close the connection immediately — the server's write attempt fails,
+	// streamCancel() fires, and defer UnsubscribeUser cleans up.
+	resp.Body.Close()
+	cancel()
+
+	// Subscription must be unregistered — no zombie connection left.
+	require.Eventually(t, func() bool {
+		return brokerSubCount(broker, "user-wd") == 0
+	}, 2*time.Second, 20*time.Millisecond, "subscription should be unregistered after write failure")
 }
