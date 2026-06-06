@@ -18,6 +18,7 @@ Rules:
 |-------|------|---------------|--------|---------|
 | agent-relay-jun06 | Relay+metrics work complete. Deployed ts-1780727304 (rev 152). | — | DONE | 2026-06-06 00:00 |
 | agent-oc-jun05-2330 | API key hashing + CPU/disk/memory metering + controller metrics taxonomy — fixing test failures | `api/internal/services/auth/auth.go`, `api/internal/services/auth/auth_test.go`, `pkg/types/types.go`, `api/internal/services/database/database.go`, `pkg/agentd/types.go`, `cmd/workspace-agentd/main.go`, `pkg/apis/llmsafespace/v1/workspace_types.go`, `controller/internal/workspace/health.go`, `controller/internal/workspace/health_enrichment_test.go`, `controller/internal/metrics/metrics.go`, `COORDINATE.md` | IN PROGRESS | 2026-06-06 06:17 |
+| agent-audit-0606 | Epic 28 S28.8 — goroutine leak + write deadline tests | `api/internal/handlers/stream_user_events_test.go`, `COORDINATE.md` | IN PROGRESS | 2026-06-06 06:55 |
 
 ---
 
