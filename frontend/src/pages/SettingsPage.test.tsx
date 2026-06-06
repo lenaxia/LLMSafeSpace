@@ -23,12 +23,10 @@ vi.mock("../api/settings", () => ({
   },
 }));
 
-// Mock credentials API
-vi.mock("../api/credentials", () => ({
-  credentialsApi: {
-    list: () => Promise.resolve([]),
-    rotateKey: vi.fn(),
-  },
+// Mock new provider credentials APIs
+vi.mock("../api/providerCredentials", () => ({
+  adminProviderCredentialsApi: { list: () => Promise.resolve([]) },
+  userProviderCredentialsApi: { list: () => Promise.resolve([]) },
 }));
 
 function renderSettings() {
@@ -50,7 +48,8 @@ describe("SettingsPage", () => {
   it("renders all tabs for admin user", () => {
     renderSettings();
     expect(screen.getByText("Preferences")).toBeInTheDocument();
-    expect(screen.getByText("Credentials")).toBeInTheDocument();
+    expect(screen.getByText("Platform Credentials")).toBeInTheDocument();
+    expect(screen.getByText("Provider Keys")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();
   });
 
