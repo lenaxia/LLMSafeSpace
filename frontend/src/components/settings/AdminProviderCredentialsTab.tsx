@@ -355,8 +355,8 @@ function CredentialRow({
                 )}
                 {autoApplyRules.length > 0 && (
                   <div className="divide-y divide-border rounded border border-border">
-                    {autoApplyRules.map((rule, i) => (
-                      <div key={i} className="flex items-center justify-between px-3 py-2">
+                    {autoApplyRules.map((rule) => (
+                      <div key={`${rule.credentialId}:${rule.targetType}:${rule.targetId ?? "_"}`} className="flex items-center justify-between px-3 py-2">
                         <div className="text-xs">
                           <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
                             {rule.targetType}

@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -22,13 +23,14 @@ type UserCredentialStore interface {
 	GetUserCredential(ctx context.Context, userID, id string) (*secrets.UserCredentialRow, error)
 	DeleteUserCredential(ctx context.Context, userID, id string) error
 	BindCredentialToWorkspace(ctx context.Context, credentialID, workspaceID string) error
+	// UnbindCredentialFromWorkspace removes an EXPLICIT binding.
+	// Returns secrets.ErrAutoBindingProtected for auto-managed bindings.
 	UnbindCredentialFromWorkspace(ctx context.Context, credentialID, workspaceID string) error
-	// GetCredentialBindings returns all workspace IDs the credential is bound to,
-	// filtered to workspaces owned by the given userID.
+	// GetCredentialBindingsWithSource returns bindings with source type (explicit vs auto).
+	GetCredentialBindingsWithSource(ctx context.Context, credentialID, userID string) ([]secrets.CredentialBindingInfo, error)
+	// GetCredentialBindings returns workspace IDs bound to the credential.
 	GetCredentialBindings(ctx context.Context, credentialID, userID string) ([]string, error)
-	// BindCredentialToAllUserWorkspaces binds a credential to every workspace
-	// owned by userID. Called on create to maintain the invariant that all
-	// credentials are always bound to all of a user's workspaces.
+	// BindCredentialToAllUserWorkspaces binds a credential to every workspace owned by userID.
 	BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error
 }
 
@@ -60,6 +62,15 @@ func (h *UserProviderCredentialsHandler) SetCredentialStateWriter(w CredentialSt
 }
 
 // Create handles POST /api/v1/provider-credentials.
+//
+// NOTE — DEK rotation (L-2 known limitation):
+// User credentials are encrypted with the user's DEK at creation time.
+// If the user later rotates their password (re-wrapping the DEK), existing
+// provider credentials in provider_credentials are NOT re-encrypted, because
+// the server cannot access the old DEK without an active session holding it.
+// Credentials whose key_version is stale will fail to decrypt after a DEK rotation.
+// A future improvement should re-encrypt provider_credentials as part of the
+// password-rotation flow.
 func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	userID := c.GetString("userID")
 	sessionID := c.GetString("sessionID")
@@ -133,22 +144,27 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Bind to all existing workspaces immediately so the invariant holds:
-	// every credential a user owns is always bound to every workspace they own.
-	// Failures are non-fatal — the user can re-bind via the UI, and the next
-	// workspace create will pick it up via SeedWorkspaceCredentials.
-	if bindErr := h.store.BindCredentialToAllUserWorkspaces(c.Request.Context(), row.ID, userID); bindErr != nil {
-		c.Header("X-Warning", "credential created but workspace auto-bind failed")
-	}
-
-	c.JSON(http.StatusCreated, AdminCredentialResponse{
+	resp := AdminCredentialResponse{
 		ID:             row.ID,
 		Name:           row.Name,
 		Provider:       row.Provider,
 		ModelAllowlist: row.ModelAllowlist,
 		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
-	})
+	}
+
+	// Bind to all existing workspaces (C-2 fix: surface failure via 207 not silent header).
+	// Non-transactional with the credential insert by design: partial bind failures are
+	// recoverable (SeedWorkspaceCredentials covers new workspaces; user can manually re-bind).
+	if bindErr := h.store.BindCredentialToAllUserWorkspaces(c.Request.Context(), row.ID, userID); bindErr != nil {
+		c.JSON(http.StatusMultiStatus, gin.H{
+			"credential":  resp,
+			"bindWarning": "credential created but failed to auto-bind to existing workspaces; please bind manually",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, resp)
 }
 
 // List handles GET /api/v1/provider-credentials.
@@ -200,12 +216,31 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 }
 
 // Delete handles DELETE /api/v1/provider-credentials/:id.
+// Notifies all workspaces that had this credential bound so running pods
+// pick up the revocation on their next secret reload (C-3 fix).
 func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
 	userID := c.GetString("userID")
-	if err := h.store.DeleteUserCredential(c.Request.Context(), userID, c.Param("id")); err != nil {
+	credID := c.Param("id")
+
+	// Snapshot bound workspaces BEFORE the FK cascade removes the bindings.
+	boundWSIDs, listErr := h.store.GetCredentialBindings(c.Request.Context(), credID, userID)
+	if listErr != nil {
+		boundWSIDs = nil // non-fatal; worst case pods keep old key until next restart
+	}
+
+	if err := h.store.DeleteUserCredential(c.Request.Context(), userID, credID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
 		return
 	}
+
+	// Signal each previously-bound workspace so the reload banner appears and
+	// the next pod restart writes a secrets manifest without this credential.
+	if h.credStateWriter != nil {
+		for _, wsID := range boundWSIDs {
+			_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+		}
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -215,7 +250,6 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
 
-	// Verify the user owns the credential.
 	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
@@ -226,7 +260,6 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 		return
 	}
 
-	// Verify the user owns the workspace (via the workspace owner verifier on the store).
 	if h.wsOwnerCheck != nil {
 		if err := h.wsOwnerCheck(c.Request.Context(), userID, wsID); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
@@ -239,7 +272,6 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 		return
 	}
 
-	// Trigger reload banner (Epic 27a).
 	if h.credStateWriter != nil {
 		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
 	}
@@ -248,12 +280,12 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 }
 
 // Unbind handles DELETE /api/v1/provider-credentials/:id/bind/:workspaceId.
+// Returns 409 Conflict if the binding is auto-managed (H-1 fix: auto-bindings protected).
 func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 	userID := c.GetString("userID")
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
 
-	// Verify the user owns the credential.
 	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
@@ -272,6 +304,10 @@ func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 	}
 
 	if err := h.store.UnbindCredentialFromWorkspace(c.Request.Context(), credID, wsID); err != nil {
+		if errors.Is(err, secrets.ErrAutoBindingProtected) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unbind credential"})
 		return
 	}
@@ -284,13 +320,12 @@ func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 }
 
 // ListBindings handles GET /api/v1/provider-credentials/:id/bindings.
-// Returns the workspace IDs that this credential is currently bound to,
-// scoped to workspaces owned by the calling user.
+// Returns workspace IDs with their binding source type (explicit vs auto) so the
+// UI can show which workspaces have user-initiated vs seeded bindings (M-1 fix).
 func (h *UserProviderCredentialsHandler) ListBindings(c *gin.Context) {
 	userID := c.GetString("userID")
 	credID := c.Param("id")
 
-	// Verify the credential belongs to this user.
 	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
@@ -301,11 +336,19 @@ func (h *UserProviderCredentialsHandler) ListBindings(c *gin.Context) {
 		return
 	}
 
-	wsIDs, err := h.store.GetCredentialBindings(c.Request.Context(), credID, userID)
+	bindings, err := h.store.GetCredentialBindingsWithSource(c.Request.Context(), credID, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list bindings"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"workspaceIds": wsIDs})
+	wsIDs := make([]string, len(bindings))
+	for i, b := range bindings {
+		wsIDs[i] = b.WorkspaceID
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"workspaceIds": wsIDs,
+		"bindings":     bindings,
+	})
 }

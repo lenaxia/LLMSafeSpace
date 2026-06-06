@@ -20,6 +20,11 @@ func isDuplicateErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
 }
 
+// isNotFound checks for pgx.ErrNoRows or similar "not found" sentinel errors.
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no rows")
+}
+
 // AdminCredentialStore abstracts DB operations for admin provider credentials.
 type AdminCredentialStore interface {
 	CreateAdminCredential(ctx context.Context, row *secrets.AdminCredentialRow) error
@@ -255,11 +260,22 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
 			return
 		}
-		// Decrypt the existing ciphertext to get current values.
+		// Decrypt the existing ciphertext to get current values (C-4 fix).
+		// If decryption fails, return 500 — do NOT proceed with a zeroed struct,
+		// which would silently corrupt the stored credential.
 		existingPlain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext)
+		if decErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "existing credential data is unreadable; manual remediation required before key rotation",
+			})
+			return
+		}
 		var existingData secrets.LLMProviderData
-		if decErr == nil {
-			_ = json.Unmarshal(existingPlain, &existingData)
+		if err := json.Unmarshal(existingPlain, &existingData); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "existing credential data is corrupt; cannot apply partial update",
+			})
+			return
 		}
 		// Apply only the fields being changed.
 		if req.Provider != nil {
@@ -282,28 +298,47 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		existing.Ciphertext = ciphertext
+		existing.KeyVersion++ // increment on every ciphertext write (M-2 fix)
 	}
 
 	if err := h.store.UpdateAdminCredential(c.Request.Context(), existing); err != nil {
+		if isDuplicateErr(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "a credential for that provider already exists"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})
 		return
 	}
 
-	c.JSON(http.StatusOK, AdminCredentialResponse{
-		ID:       existing.ID,
-		Name:     existing.Name,
-		Provider: existing.Provider,
-		// BaseURL lives inside Ciphertext; we don't decrypt for the response.
+	// existing.UpdatedAt is now populated from RETURNING updated_at (M-8 fix).
+	// Decrypt to include baseURL in the response (consistent with GET/List).
+	resp := AdminCredentialResponse{
+		ID:             existing.ID,
+		Name:           existing.Name,
+		Provider:       existing.Provider,
 		ModelAllowlist: existing.ModelAllowlist,
 		CreatedAt:      existing.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:      existing.UpdatedAt.Format(time.RFC3339),
-	})
+	}
+	if kek := h.kek(); kek != nil {
+		if plain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext); decErr == nil {
+			var pd secrets.LLMProviderData
+			if json.Unmarshal(plain, &pd) == nil {
+				resp.BaseURL = pd.BaseURL
+			}
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Delete handles DELETE /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.store.DeleteAdminCredential(c.Request.Context(), id); err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
 		return
 	}
@@ -350,7 +385,7 @@ func (h *AdminProviderCredentialsHandler) CreateAutoApply(c *gin.Context) {
 		return
 	}
 	if h.autoApplyStore == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "auto-apply not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auto-apply not configured"})
 		return
 	}
 
@@ -379,7 +414,7 @@ func (h *AdminProviderCredentialsHandler) CreateAutoApply(c *gin.Context) {
 func (h *AdminProviderCredentialsHandler) ListAutoApply(c *gin.Context) {
 	credID := c.Param("id")
 	if h.autoApplyStore == nil {
-		c.JSON(http.StatusOK, []autoApplyResponse{})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auto-apply not configured"})
 		return
 	}
 	rules, err := h.autoApplyStore.ListAutoApply(c.Request.Context(), credID)
@@ -404,7 +439,7 @@ func (h *AdminProviderCredentialsHandler) DeleteAutoApply(c *gin.Context) {
 	targetType := c.Param("targetType")
 	targetIDParam := c.Param("targetId")
 	if h.autoApplyStore == nil {
-		c.Status(http.StatusNoContent)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auto-apply not configured"})
 		return
 	}
 	var targetID *string

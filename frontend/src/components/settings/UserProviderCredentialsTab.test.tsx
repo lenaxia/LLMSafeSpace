@@ -55,7 +55,7 @@ function renderTab() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockListBindings.mockResolvedValue({ workspaceIds: [] });
+  mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
   mockListWorkspaces.mockResolvedValue({ workspaces: [] });
 });
 
@@ -96,7 +96,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("expands row and loads workspace list and bindings", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"] });
+    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
     renderTab();
     await waitFor(() => screen.getByText("My OpenAI Key"));
@@ -112,7 +112,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("shows Unbind button for already-bound workspace", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"] });
+    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
     renderTab();
     await waitFor(() => screen.getByText("My OpenAI Key"));
@@ -124,7 +124,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("shows Bind button for unbound workspace", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [] });
+    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
     renderTab();
     await waitFor(() => screen.getByText("My OpenAI Key"));
@@ -136,7 +136,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("bind calls API and updates button to Unbind", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [] });
+    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
     mockBind.mockResolvedValue({ bound: true });
     renderTab();
@@ -153,7 +153,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("unbind calls API and updates button to Bind", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"] });
+    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
     mockUnbind.mockResolvedValue(undefined);
     renderTab();
@@ -251,7 +251,7 @@ describe("UserProviderCredentialsTab", () => {
 
   it("shows 'No workspaces found' when workspace list is empty", async () => {
     mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [] });
+    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
     mockListWorkspaces.mockResolvedValue({ workspaces: [] });
     renderTab();
     await waitFor(() => screen.getByText("My OpenAI Key"));

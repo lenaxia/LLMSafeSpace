@@ -3,7 +3,16 @@
 
 package secrets
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrAutoBindingProtected is returned when a caller attempts to Unbind a
+// credential that is bound via an auto-apply rule (source_type='auto').
+// Auto-bindings are managed by SeedWorkspaceCredentials and can only be
+// removed by deleting the underlying credential or the workspace.
+var ErrAutoBindingProtected = errors.New("auto-binding cannot be removed via unbind; delete the credential or workspace to remove it")
 
 // CredentialBinding is a joined row from workspace_credential_bindings + provider_credentials.
 type CredentialBinding struct {
@@ -18,6 +27,14 @@ type CredentialBinding struct {
 	WithinPriority int
 }
 
+// CredentialBindingInfo is a minimal binding row used for the ListBindings API.
+// It carries the workspace ID and the source type so the UI can distinguish
+// auto-seeded bindings (which cannot be manually unbound) from explicit ones.
+type CredentialBindingInfo struct {
+	WorkspaceID string
+	SourceType  string // "explicit" or "auto"
+}
+
 // CredentialStore abstracts database operations for provider credentials.
 type CredentialStore interface {
 	// GetWorkspaceCredentials returns all credential bindings for a workspace,
@@ -28,8 +45,9 @@ type CredentialStore interface {
 	// credential row and its auto-apply rule in a single transaction.
 	UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error
 
-	// SeedWorkspaceCredentials inserts auto-apply credential bindings for a
-	// newly created workspace: admin auto-apply rules AND all user-owned credentials.
+	// SeedWorkspaceCredentials inserts credential bindings for a new workspace:
+	// admin auto-apply rules (all, user, and org target types) AND all
+	// user-owned credentials for userID.
 	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
 
 	// BindCredentialToAllUserWorkspaces binds a credential to every workspace
