@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
 import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
@@ -63,12 +63,18 @@ export function ChatPage() {
 
   const isReady = status?.phase === "Active";
 
-  // Current model for prompt injection — reads from same cache as ModelSelector
+  // Current model for prompt injection — subscribes to the same cache key that
+  // ModelSelector populates. enabled:!!workspaceId (not gated on isReady) so
+  // it fires at the same time as ModelSelector's query and shares the cache.
+  // staleTime matches ModelSelector so no duplicate re-fetches are triggered.
+  // notifyOnChangeProps keeps re-renders minimal.
   const { data: modelsData } = useQuery({
     queryKey: ["models", workspaceId],
     queryFn: () => workspacesApi.listModels(workspaceId!),
-    enabled: isReady && !!workspaceId,
-    staleTime: 30_000,
+    enabled: !!workspaceId,
+    staleTime: 10_000,
+    placeholderData: keepPreviousData,
+    notifyOnChangeProps: ["data"],
   });
 
   // [ws-timing] Log every phase change and the moment isReady flips true.
