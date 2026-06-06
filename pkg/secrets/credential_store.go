@@ -31,8 +31,8 @@ type CredentialBinding struct {
 // It carries the workspace ID and the source type so the UI can distinguish
 // auto-seeded bindings (which cannot be manually unbound) from explicit ones.
 type CredentialBindingInfo struct {
-	WorkspaceID string
-	SourceType  string // "explicit" or "auto"
+	WorkspaceID string `json:"workspaceId"`
+	SourceType  string `json:"sourceType"` // "explicit" or "auto"
 }
 
 // CredentialStore abstracts database operations for provider credentials.
