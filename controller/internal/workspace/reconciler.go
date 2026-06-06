@@ -14,6 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 type WorkspaceReconciler struct {
@@ -140,3 +143,10 @@ func imageTagFromPod(pod *corev1.Pod) string {
 	}
 	return image
 }
+
+// --- Operations Metrics ---
+
+var workspacePhaseTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "llmsafespace_workspace_phase_transitions_total",
+	Help: "Workspace phase transitions observed by the controller.",
+}, []string{"from_phase", "to_phase"})

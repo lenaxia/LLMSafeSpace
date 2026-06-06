@@ -147,6 +147,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		// Wire billing/metering metrics recorder.
+		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
+			secretsHandler.SetMetricsRecorder(metricsSvc)
+		}
 		// Epic 26: mark relay active when LLMSAFESPACE_INFERENCE_RELAY_URL is
 		// configured. This causes ListModels to remap free-tier opencode model
 		// providerIDs to "opencode-relay" so clients route inference through
@@ -395,18 +399,24 @@ func (a *App) Run() error {
 	}
 
 	// Epic 27a/27b: Wire drain mode dependencies now that proxyHandler.Start()
-	// has initialized the SSETracker. This MUST run after Start() — the tracker
-	// is nil until Start() allocates it, so wiring in New() always produced a
-	// nil tracker and drain mode was a silent no-op in production.
+	// has initialized the SSETracker.
 	if a.agentReloadHandler != nil {
 		if tracker := a.proxyHandler.GetSSETracker(); tracker != nil {
 			a.agentReloadHandler.SetSSETracker(tracker)
 			if a.bulkReloadHandler != nil {
 				a.bulkReloadHandler.SetSSETracker(tracker)
 			}
+			// Epic 26 / billing: wire inference callback so session.updated events
+			// feed token/cost counters. The workspace→user mapping is not needed
+			// here — the SSE tracker fires per-workspace and the metrics record
+			// workspaceID which can be joined to userID at query time.
+			if metricsSvc, ok := a.services.Metrics.(*metrics.Service); ok {
+				tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
+					metricsSvc.RecordInference(workspaceID, modelID, providerID, inputTokens, outputTokens, costDollars)
+				})
+			}
 		}
 	}
-
 	// Epic 27b US-27b.5: Wire agent state checker into proxy for chat error enrichment.
 	// dbSvc is referenced via services; use a type assertion to get the concrete type
 	// which implements AgentStateChecker (GetLastCredentialChangedAt).

@@ -17,6 +17,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	r.deletePodByName(ctx, name, workspace.Namespace)
 
 	now := metav1.Now()
+	workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspending), string(v1.WorkspacePhaseSuspended)).Inc()
 	workspace.Status.Phase = v1.WorkspacePhaseSuspended
 	workspace.Status.PodName = ""
 	workspace.Status.PodNamespace = ""
@@ -40,6 +41,7 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *v1
 	elapsed := time.Since(workspace.Status.SuspendedAt.Time)
 	ttl := time.Duration(workspace.Spec.TTLSecondsAfterSuspended) * time.Second
 	if elapsed >= ttl {
+		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspended), string(v1.WorkspacePhaseTerminating)).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseTerminating
 		return ctrl.Result{}, r.Status().Update(ctx, workspace)
 	}

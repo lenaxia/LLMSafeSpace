@@ -22,6 +22,10 @@ type SessionIdleCallback func(workspaceID, sessionID string)
 
 type RawEventCallback func(workspaceID, eventType, rawData string)
 
+// InferenceCallback fires when a session.updated event carries token output.
+// modelID/providerID identify the model; input/output are delta tokens.
+type InferenceCallback func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64)
+
 type sseEvent struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
@@ -41,10 +45,15 @@ type SSETracker struct {
 	onSessionIdle   SessionIdleCallback
 	onSessionActive SessionIdleCallback
 	onRawEvent      RawEventCallback
-	subscriptions   map[string]context.CancelFunc
-	subMu           sync.Mutex
-	passwordGetter  func(ctx context.Context, workspaceID string) (string, error)
-	podIPResolver   func(workspaceID string) string
+	// onInference fires when a session produces new output tokens (billing/metering).
+	onInference InferenceCallback
+	// sessionTokenSeen tracks cumulative tokens per sessionID:workspaceID for delta computation.
+	tokensMu         sync.Mutex
+	sessionTokenSeen map[string]int64
+	subscriptions    map[string]context.CancelFunc
+	subMu            sync.Mutex
+	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
+	podIPResolver    func(workspaceID string) string
 	// Drain subscribers (Epic 27b)
 	drainMu         sync.Mutex
 	drainSubs       map[string]map[uint64]*drainSub
@@ -62,10 +71,11 @@ func NewSSETracker(
 	onSessionIdle SessionIdleCallback,
 ) *SSETracker {
 	return &SSETracker{
-		httpClient:    httpClient,
-		logger:        logger,
-		onSessionIdle: onSessionIdle,
-		subscriptions: make(map[string]context.CancelFunc),
+		httpClient:       httpClient,
+		logger:           logger,
+		onSessionIdle:    onSessionIdle,
+		subscriptions:    make(map[string]context.CancelFunc),
+		sessionTokenSeen: make(map[string]int64),
 	}
 }
 
@@ -79,6 +89,11 @@ func (t *SSETracker) SetPodIPResolver(resolver func(workspaceID string) string) 
 
 func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
 	t.onSessionActive = callback
+}
+
+// SetOnInference installs the callback fired when a session produces token output.
+func (t *SSETracker) SetOnInference(cb InferenceCallback) {
+	t.onInference = cb
 }
 
 func (t *SSETracker) SetOnRawEvent(callback RawEventCallback) {
@@ -284,6 +299,9 @@ func (t *SSETracker) processEvent(workspaceID, data string) {
 }
 
 func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props json.RawMessage) {
+	if eventType == "session.updated" && len(props) > 0 && t.onInference != nil {
+		t.handleSessionUpdated(workspaceID, props)
+	}
 	if eventType != "session.status" || len(props) == 0 {
 		return
 	}
@@ -326,4 +344,39 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 			s.onActive(workspaceID, p.SessionID)
 		}
 	}
+}
+
+// handleSessionUpdated fires the inference callback when a session.updated event
+// carries new token output. Uses per-session cumulative tracking to emit deltas.
+func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
+	var p struct {
+		ID    string `json:"id"`
+		Model struct {
+			ID         string `json:"id"`
+			ProviderID string `json:"providerID"`
+		} `json:"model"`
+		Tokens struct {
+			Input  int64 `json:"input"`
+			Output int64 `json:"output"`
+		} `json:"tokens"`
+		Cost float64 `json:"cost"`
+	}
+	if json.Unmarshal(props, &p) != nil || p.ID == "" || p.Tokens.Output == 0 || p.Model.ID == "" {
+		return
+	}
+	key := workspaceID + ":" + p.ID
+	totalNow := p.Tokens.Input + p.Tokens.Output
+	t.tokensMu.Lock()
+	prev := t.sessionTokenSeen[key]
+	if totalNow <= prev {
+		t.tokensMu.Unlock()
+		return
+	}
+	t.sessionTokenSeen[key] = totalNow
+	t.tokensMu.Unlock()
+	inputDelta, outputDelta := p.Tokens.Input, p.Tokens.Output
+	if prev > 0 {
+		inputDelta, outputDelta = 0, totalNow-prev
+	}
+	t.onInference(workspaceID, p.Model.ID, p.Model.ProviderID, inputDelta, outputDelta, p.Cost)
 }

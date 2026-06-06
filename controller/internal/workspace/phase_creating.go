@@ -129,6 +129,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		// Record startup latency metrics and clear anchors.
 		recordStartupMetrics(workspace, existingPod)
 
+		workspacePhaseTransitions.WithLabelValues(string(workspace.Status.Phase), string(v1.WorkspacePhaseActive)).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.PodName = existingPod.Name
 		workspace.Status.PodNamespace = existingPod.Namespace

@@ -33,6 +33,13 @@ type SecretsHandler struct {
 	// meaning free-tier opencode models should route through the CF Worker relay.
 	// When true, ListModels remaps free opencode models to providerID=opencode-relay.
 	relayActive bool
+	// metricsRecorder records billing/metering events (optional).
+	metricsRecorder ModelSelectionRecorder
+}
+
+// ModelSelectionRecorder records model selection events for billing/metering.
+type ModelSelectionRecorder interface {
+	RecordModelSelection(modelID, providerID string)
 }
 
 // CredentialStateWriter records that workspace credentials have changed.
@@ -80,9 +87,13 @@ func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
 }
 
-// SetRelayActive configures whether the inference relay is active for this
-// handler. When true, ListModels remaps free-tier opencode models to
-// providerID=opencode-relay so clients route inference through the CF Worker.
+// SetMetricsRecorder installs the recorder for billing/metering events.
+func (h *SecretsHandler) SetMetricsRecorder(r ModelSelectionRecorder) {
+	h.metricsRecorder = r
+}
+
+// SetRelayActive configures whether the inference relay is active.
+// When true, ListModels remaps free-tier opencode models to providerID=opencode-relay.
 func (h *SecretsHandler) SetRelayActive(active bool) {
 	h.relayActive = active
 }

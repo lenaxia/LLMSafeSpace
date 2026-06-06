@@ -195,3 +195,83 @@ func (s *Service) RecordAgentReloadBulk(total, succeeded, failed int) {
 	}
 	agentReloadBulkTotal.WithLabelValues(outcome).Inc()
 }
+
+// --- Billing, Metering and Operations Metrics (Epic 26+) ---
+
+var (
+	inferenceRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_inference_requests_total",
+		Help: "Total inference requests (session.updated with output tokens).",
+	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+
+	inferenceInputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_inference_input_tokens_total",
+		Help: "Total input tokens consumed.",
+	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+
+	inferenceOutputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_inference_output_tokens_total",
+		Help: "Total output tokens produced.",
+	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+
+	inferenceCostDollarsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_inference_cost_dollars_total",
+		Help: "Estimated inference cost in USD from opencode session metadata.",
+	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+
+	modelSelectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_model_selections_total",
+		Help: "Model selection events (PUT /model calls that succeeded).",
+	}, []string{"model_id", "provider_id", "tier"})
+
+	relayInjectorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_relay_injector_total",
+		Help: "Phase-2 relay injector outcomes per agentd boot.",
+	}, []string{"outcome"})
+
+	workspacePhaseTotalTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llmsafespace_workspace_phase_transitions_total",
+		Help: "Workspace phase transitions.",
+	}, []string{"from_phase", "to_phase"})
+)
+
+// RecordInference records a completed inference event.
+// workspaceID is used as the metering key (join to userID at query time).
+// tier is "free" for opencode-relay, "paid" otherwise.
+func (s *Service) RecordInference(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
+	tier := "paid"
+	if providerID == "opencode-relay" {
+		tier = "free"
+	}
+	inferenceRequestsTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Inc()
+	if inputTokens > 0 {
+		inferenceInputTokensTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(float64(inputTokens))
+	}
+	if outputTokens > 0 {
+		inferenceOutputTokensTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(float64(outputTokens))
+	}
+	if costDollars > 0 {
+		inferenceCostDollarsTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(costDollars)
+	}
+}
+
+// RecordModelSelection records a model selection event.
+func (s *Service) RecordModelSelection(modelID, providerID string) {
+	tier := "paid"
+	if providerID == "opencode-relay" {
+		tier = "free"
+	}
+	modelSelectionsTotal.WithLabelValues(modelID, providerID, tier).Inc()
+}
+
+// RecordRelayInjector records a phase-2 relay injector outcome.
+// Outcomes: "success", "skipped_personal_key", "no_free_models",
+// "unhealthy_timeout", "config_write_failed", "auth_write_failed".
+func RecordRelayInjector(outcome string) {
+	relayInjectorTotal.WithLabelValues(outcome).Inc()
+}
+
+// RecordWorkspacePhaseTransition records a workspace phase change.
+func RecordWorkspacePhaseTransition(fromPhase, toPhase string) {
+	workspacePhaseTotalTransitions.WithLabelValues(fromPhase, toPhase).Inc()
+}

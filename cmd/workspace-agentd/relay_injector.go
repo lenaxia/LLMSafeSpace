@@ -38,8 +38,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
 )
+
+var relayInjectorOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "llmsafespace_relay_injector_total",
+	Help: "Phase-2 relay injector outcomes per agentd pod boot.",
+}, []string{"outcome"})
 
 // relayModel is the minimal model info needed to build the custom provider config.
 type relayModel struct {
@@ -277,12 +284,14 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		}
 		if !cfg.HealthCheck() {
 			log.Warn("relay injector: opencode did not become healthy in time, skipping relay config")
+			relayInjectorOutcomes.WithLabelValues("unhealthy_timeout").Inc()
 			return
 		}
 
 		// Check whether to skip relay.
 		if skip, reason := shouldSkipRelay(cfg.AuthJSONPath); skip {
 			log.Info("relay injector: skipping relay injection", zap.String("reason", reason))
+			relayInjectorOutcomes.WithLabelValues("skipped_personal_key").Inc()
 			return
 		}
 
@@ -294,6 +303,7 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		}
 		if len(models) == 0 {
 			log.Warn("relay injector: no free opencode models found, skipping relay config")
+			relayInjectorOutcomes.WithLabelValues("no_free_models").Inc()
 			return
 		}
 		log.Info("relay injector: fetched free models", zap.Int("count", len(models)))
@@ -306,6 +316,7 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		}
 		if err := os.WriteFile(cfg.AgentConfigPath, cfgBytes, 0o600); err != nil {
 			log.Warn("relay injector: failed to write agent config", zap.Error(err))
+			relayInjectorOutcomes.WithLabelValues("config_write_failed").Inc()
 			return
 		}
 		log.Info("relay injector: wrote relay config",
@@ -316,12 +327,14 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		// Update auth.json with the opencode-relay entry.
 		if err := updateAuthJSONForRelay(cfg.AuthJSONPath); err != nil {
 			log.Warn("relay injector: failed to update auth.json", zap.Error(err))
+			relayInjectorOutcomes.WithLabelValues("auth_write_failed").Inc()
 			return
 		}
 		log.Info("relay injector: updated auth.json with opencode-relay entry")
 
 		// Kill opencode — the supervisor restarts it and reads the new config.
 		cfg.KillOpenCode()
+		relayInjectorOutcomes.WithLabelValues("success").Inc()
 		log.Info("relay injector: triggered opencode restart to apply relay config")
 	}()
 }
