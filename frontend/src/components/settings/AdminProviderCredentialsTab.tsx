@@ -55,6 +55,17 @@ export function AdminProviderCredentialsTab() {
     }
   };
 
+  // silentLoad refreshes the list without showing a spinner — used after key
+  // rotation where the PUT response omits the decrypted baseURL.
+  const silentLoad = async () => {
+    try {
+      const data = await adminProviderCredentialsApi.list();
+      setCreds(data);
+    } catch {
+      // Ignore background refresh failures — the user already got a success toast.
+    }
+  };
+
   useEffect(() => { load(); }, []);
 
   const handleDelete = async (id: string, name: string) => {
@@ -75,12 +86,12 @@ export function AdminProviderCredentialsTab() {
   };
 
   const handleUpdated = (updated: AdminProviderCredential) => {
-    // After a key rotation the PUT response doesn't include the decrypted baseURL,
-    // so re-fetch the full list to get accurate data.
+    // Apply the updatedAt timestamp from the PUT response immediately so the
+    // row reflects the rotation time, then silently re-fetch to get the
+    // decrypted baseURL (omitted from PUT responses for security).
     setCreds((prev) => prev.map((x) => (x.id === updated.id ? { ...x, updatedAt: updated.updatedAt } : x)));
     toast("API key updated");
-    // Silently refresh in background to pick up any baseURL/allowlist changes
-    load();
+    silentLoad();
   };
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;

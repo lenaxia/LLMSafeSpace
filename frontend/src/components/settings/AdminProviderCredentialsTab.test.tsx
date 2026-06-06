@@ -138,7 +138,7 @@ describe("AdminProviderCredentialsTab", () => {
     await waitFor(() => screen.getByText("Platform OpenAI"));
 
     // Click trash
-    fireEvent.click(screen.getAllByTitle("Delete credential")[0]);
+    fireEvent.click(screen.getAllByTitle("Delete credential")[0]!);
     expect(screen.getByText("Delete?")).toBeInTheDocument();
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
@@ -156,7 +156,7 @@ describe("AdminProviderCredentialsTab", () => {
     renderTab();
     await waitFor(() => screen.getByText("Platform OpenAI"));
 
-    fireEvent.click(screen.getAllByTitle("Delete credential")[0]);
+    fireEvent.click(screen.getAllByTitle("Delete credential")[0]!);
     fireEvent.click(screen.getByText("No"));
 
     expect(mockDelete).not.toHaveBeenCalled();
@@ -245,10 +245,11 @@ describe("AdminProviderCredentialsTab", () => {
 
     // Click the trash on the rule row (within the expanded panel)
     const trashButtons = screen.getAllByTitle("Remove rule");
-    fireEvent.click(trashButtons[0]);
+    fireEvent.click(trashButtons[0]!);
 
     await waitFor(() => {
-      // Must send "_" as sentinel — not omit the targetId segment
+      // The component passes targetId=undefined to the API function.
+      // The API function applies the sentinel "_" — verified in providerCredentials.test.ts.
       expect(mockDeleteAutoApply).toHaveBeenCalledWith("cred-1", "all", undefined);
     });
   });

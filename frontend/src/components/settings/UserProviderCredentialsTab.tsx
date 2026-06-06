@@ -345,8 +345,6 @@ function CredentialRow({
 
 // ─── Create form ──────────────────────────────────────────────────────────────
 
-// ─── Create form ──────────────────────────────────────────────────────────────
-
 function CreateUserCredentialForm({
   onCreated,
   onCancel,
