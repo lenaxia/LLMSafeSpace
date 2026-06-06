@@ -195,6 +195,10 @@ describe("createSSEConnection", () => {
   });
 
   it("applies exponential backoff with jitter on repeated failures", async () => {
+    // Pin Math.random to 0 so jitter = base * 0.5 (deterministic).
+    // jitteredDelay(base) = base * (0.5 + 0) = base * 0.5
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
     let connectCount = 0;
     const connectTimes: number[] = [];
 
@@ -212,16 +216,16 @@ describe("createSSEConnection", () => {
       maxReconnectMs: 30_000,
     });
 
-    // Initial connect
+    // Initial connect (synchronous kick-off)
     await vi.advanceTimersByTimeAsync(0);
     expect(connectCount).toBe(1);
 
-    // First retry: 1000 * [0.5, 1.5] jitter — advance 1500 to cover max
-    await vi.advanceTimersByTimeAsync(1_500);
+    // First retry delay = 1000 * 0.5 = 500ms — advance 500ms
+    await vi.advanceTimersByTimeAsync(500);
     expect(connectCount).toBe(2);
 
-    // Second retry: 2000 * [0.5, 1.5] = up to 3000
-    await vi.advanceTimersByTimeAsync(3_000);
+    // Second retry delay = 2000 * 0.5 = 1000ms — advance 1000ms
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(connectCount).toBe(3);
 
     conn.destroy();

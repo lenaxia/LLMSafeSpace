@@ -17,6 +17,7 @@ Rules:
 | Agent | What | Files Claimed | Status | Started |
 |-------|------|---------------|--------|---------|
 | agent-relay-jun06 | Monitoring CI + deploying ts built from b77b9c0/7b6e234. No files currently claimed for new work — waiting for CI green before deploy. | — | MONITORING CI | 2026-06-06 00:00 |
+| agent-oc-jun05-2330 | API key hashing + CPU/disk/memory metering + controller metrics taxonomy — fixing test failures | `api/internal/services/auth/auth.go`, `api/internal/services/auth/auth_test.go`, `pkg/types/types.go`, `api/internal/services/database/database.go`, `pkg/agentd/types.go`, `cmd/workspace-agentd/main.go`, `pkg/apis/llmsafespace/v1/workspace_types.go`, `controller/internal/workspace/health.go`, `controller/internal/workspace/health_enrichment_test.go`, `controller/internal/metrics/metrics.go`, `COORDINATE.md` | IN PROGRESS | 2026-06-06 06:17 |
 
 ---
 
@@ -24,6 +25,7 @@ Rules:
 
 | Completed | Agent | What | Commit |
 |-----------|-------|------|--------|
+| 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | pending |
 | 2026-06-06 | agent-oc-jun05-2330 | API key SHA-256 hashing (migration 000017, auth service, DB service, types) + CPU/disk/memory cgroup metering (agentd getCPUUsage, StatuszResponse, WorkspaceStatus delta tracking) + full controller metrics taxonomy (operational/recovery/metering/billing) | pending |
 | 2026-06-06 | agent-relay-jun06 | Fix #1: resolveModelIDFromCatalog relay providerID remap + billing/metering/ops metrics (inference tokens, model selections, relay injector outcomes, workspace phase transitions) | b77b9c0 |
 | 2026-06-06 | agent-relay-jun06 | CF Worker secret-path auth + phase-2 relay injector + opencode-relay model surfacing in ListModels | d836c94 |
