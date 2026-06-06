@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,8 +21,9 @@ import (
 
 // fakeAdminCredStore implements AdminCredentialStore for testing.
 type fakeAdminCredStore struct {
-	creds   map[string]*secrets.AdminCredentialRow
-	nextErr error
+	creds     map[string]*secrets.AdminCredentialRow
+	nextErr   error
+	updateErr error // returned specifically by UpdateAdminCredential
 }
 
 func newFakeAdminCredStore() *fakeAdminCredStore {
@@ -64,6 +67,11 @@ func (f *fakeAdminCredStore) GetAdminCredential(_ context.Context, id string) (*
 }
 
 func (f *fakeAdminCredStore) UpdateAdminCredential(_ context.Context, row *secrets.AdminCredentialRow) error {
+	if f.updateErr != nil {
+		err := f.updateErr
+		f.updateErr = nil
+		return err
+	}
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
@@ -78,6 +86,9 @@ func (f *fakeAdminCredStore) DeleteAdminCredential(_ context.Context, id string)
 		err := f.nextErr
 		f.nextErr = nil
 		return err
+	}
+	if _, ok := f.creds[id]; !ok {
+		return fmt.Errorf("no rows in result set") // simulate pgx.ErrNoRows
 	}
 	delete(f.creds, id)
 	return nil
@@ -227,4 +238,115 @@ func mustEncrypt(t *testing.T, kek []byte, plaintext string) []byte {
 	ct, err := secrets.EncryptSecret(kek, []byte(plaintext))
 	require.NoError(t, err)
 	return ct
+}
+
+// TestAdminProviderCredentials_Delete_NotFound verifies L-1 fix: deleting a
+// non-existent credential returns 404, not 204.
+func TestAdminProviderCredentials_Delete_NotFound(t *testing.T) {
+	store := newFakeAdminCredStore() // empty store — nothing to delete
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
+	router := setupAdminCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/admin/provider-credentials/missing-id", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500 verifies C-4 fix:
+// attempting to rotate the API key when the existing ciphertext is unreadable returns 500
+// with an actionable message, instead of silently encrypting a zeroed credential.
+func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i)
+	}
+	// Store a credential whose ciphertext was encrypted with a DIFFERENT key — simulates
+	// the "unreadable ciphertext" scenario (wrong KEK, DB corruption, etc.).
+	differentKEK := make([]byte, 32)
+	store.creds["c1"] = &secrets.AdminCredentialRow{
+		ID:         "c1",
+		Name:       "test",
+		Provider:   "openai",
+		Ciphertext: mustEncrypt(t, differentKEK, `{"provider":"openai","apiKey":"original"}`),
+	}
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	body := `{"apiKey":"new-rotated-key"}` // triggers re-encrypt path
+	req, _ := http.NewRequest("PUT", "/api/v1/admin/provider-credentials/c1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Must return 500 with an actionable error, NOT 200 with a zeroed credential.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "unreadable")
+}
+
+// TestAdminProviderCredentials_Update_DuplicateProvider_Returns409 verifies M-4 fix:
+// changing provider to one that already exists returns 409 Conflict, not 500.
+func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	store.creds["c1"] = &secrets.AdminCredentialRow{
+		ID: "c1", Name: "existing", Provider: "openai",
+		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"key1"}`),
+	}
+	// updateErr is consumed ONLY by UpdateAdminCredential; GetAdminCredential won't touch it.
+	store.updateErr = errors.New("ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)")
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	body := `{"name":"renamed"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/admin/provider-credentials/c1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// TestAdminProviderCredentials_AutoApply_NilStore_Returns503 verifies M-7 fix:
+// all three auto-apply handlers return 503 when the store is nil.
+func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
+	_ = fmt.Sprintf // suppress unused import warning
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	// autoApplyStore is nil by default — do NOT call SetAutoApplyStore
+	g := gin.New()
+	g.POST("/api/v1/admin/provider-credentials/:id/auto-apply", h.CreateAutoApply)
+	g.GET("/api/v1/admin/provider-credentials/:id/auto-apply", h.ListAutoApply)
+	g.DELETE("/api/v1/admin/provider-credentials/:id/auto-apply/:targetType/:targetId", h.DeleteAutoApply)
+
+	for _, tc := range []struct {
+		method string
+		url    string
+		body   string
+	}{
+		{"POST", "/api/v1/admin/provider-credentials/c1/auto-apply", `{"targetType":"all"}`},
+		{"GET", "/api/v1/admin/provider-credentials/c1/auto-apply", ""},
+		{"DELETE", "/api/v1/admin/provider-credentials/c1/auto-apply/all/_", ""},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			var bodyReader *bytes.Reader
+			if tc.body != "" {
+				bodyReader = bytes.NewReader([]byte(tc.body))
+			} else {
+				bodyReader = bytes.NewReader(nil)
+			}
+			req, _ := http.NewRequest(tc.method, tc.url, bodyReader)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			g.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code, "method %s should return 503", tc.method)
+		})
+	}
 }

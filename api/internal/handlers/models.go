@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -425,38 +424,13 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 		}
 	}
 
-	// Metering: record the model selection for billing dashboards.
-	if h.metricsRecorder != nil {
-		// Determine providerID for the selected model (relay or direct).
-		providerID := "opencode"
-		if h.relayActive {
-			// Use the resolved providerID from the catalog remap logic.
-			// For relay-active free models the resolved path uses opencode-relay.
-			if h.podIPResolver != nil {
-				if podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID); err == nil && podIP != "" {
-					pw, _ := func() (string, error) {
-						if h.passwordGetter != nil {
-							return h.passwordGetter(c.Request.Context(), workspaceID)
-						}
-						return "", nil
-					}()
-					resolved := h.resolveModelIDFromCatalog(c.Request.Context(), podIP, pw, req.Model)
-					if idx := strings.Index(resolved, "/"); idx >= 0 {
-						providerID = resolved[:idx]
-					}
-				}
-			}
-		}
-		h.metricsRecorder.RecordModelSelection(req.Model, providerID)
-	}
 	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
 
 // catalogEntry is the minimal model record returned by the agent catalog.
 type catalogEntry struct {
-	ID         string         `json:"id"`
-	ProviderID string         `json:"providerID"`
-	Cost       []opencodeCost `json:"cost"`
+	ID         string `json:"id"`
+	ProviderID string `json:"providerID"`
 }
 
 // fetchCatalog retrieves the model catalog from the running agent. Returns nil on any error
@@ -505,11 +479,9 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, worksp
 	return false
 }
 
-// resolveModelIDFromCatalog fetches the catalog and returns the providerID/modelID form.
-// When h.relayActive is true and the model resolves to a free-tier opencode model
-// (providerID=opencode, cost.input=0), the providerID is remapped to "opencode-relay"
-// so inference routes through the CF Worker. Falls back to model unchanged on error.
-func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, password, model string) string {
+// resolveModelIDFromCatalog fetches the catalog using the supplied password (already known
+// at the call site) and returns the providerID/modelID form. Falls back to model unchanged.
+func resolveModelIDFromCatalog(ctx context.Context, podIP, password, model string) string {
 	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
 	if err != nil {
@@ -533,14 +505,7 @@ func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, p
 	}
 	for _, e := range entries {
 		if e.ID == model && e.ProviderID != "" {
-			providerID := e.ProviderID
-			// When relay is active, remap free-tier opencode models to the relay provider.
-			// Without this, PATCH /global/config sets "opencode/<model>" which fails because
-			// disabled_providers:["opencode"] blocks the built-in provider in routing.
-			if h.relayActive && providerID == "opencode" && isZeroCostOpencode(providerID, e.Cost) {
-				providerID = "opencode-relay"
-			}
-			return providerID + "/" + e.ID
+			return e.ProviderID + "/" + e.ID
 		}
 	}
 	return model
@@ -550,7 +515,7 @@ func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, p
 // It resolves the catalog flat model ID to providerID/modelID format before patching.
 func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) error {
 	// Resolve to opencode's providerID/modelID format (e.g. "openai/gpt-5.5").
-	resolved := h.resolveModelIDFromCatalog(ctx, podIP, password, model)
+	resolved := resolveModelIDFromCatalog(ctx, podIP, password, model)
 	body := []byte(fmt.Sprintf(`{"model":%q}`, resolved))
 	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod

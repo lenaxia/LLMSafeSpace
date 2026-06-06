@@ -228,12 +228,13 @@ func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*Adm
 
 // UpdateAdminCredential updates an existing admin credential.
 // Omits updated_at from the SET clause so the DB trigger sets it to now(),
-// then reads it back via RETURNING so the response timestamp is accurate (M-8 fix).
+// then reads it back via RETURNING (M-8 fix).
+// Filters on owner_id='_platform' for defensive consistency with Get/Delete (L-4 fix).
 func (s *PgSecretStore) UpdateAdminCredential(ctx context.Context, row *AdminCredentialRow) error {
 	return s.pool.QueryRow(ctx, `
 		UPDATE provider_credentials
 		SET name = $2, provider = $3, ciphertext = $4, key_version = $5, model_allowlist = $6
-		WHERE id = $1 AND owner_type = 'admin'
+		WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'
 		RETURNING updated_at
 	`, row.ID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist).Scan(&row.UpdatedAt)
 }

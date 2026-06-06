@@ -20,7 +20,7 @@ func isDuplicateErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
 }
 
-// isNotFound checks for pgx.ErrNoRows (no row deleted/found).
+// isNotFound checks for pgx.ErrNoRows or similar "not found" sentinel errors.
 func isNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no rows")
 }
