@@ -1,4 +1,4 @@
-# Worklog 0175 — Helm Chart Audit: 7 Bugs Found and Fixed
+# Worklog 0176 — Helm Chart Audit: 7 Bugs Found and Fixed
 
 **Date:** 2026-06-06
 **Agent:** opencode
