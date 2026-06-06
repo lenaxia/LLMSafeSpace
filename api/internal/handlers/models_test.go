@@ -836,7 +836,8 @@ func TestResolveModelIDFromCatalog_PrefixesProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.catalogID, func(t *testing.T) {
-			got := resolveModelIDFromCatalog(context.Background(), "127.0.0.1", pw, tt.catalogID)
+			h := NewSecretsHandler(nil)
+			got := h.resolveModelIDFromCatalog(context.Background(), "127.0.0.1", pw, tt.catalogID)
 			require.Equal(t, tt.want, got)
 		})
 	}
