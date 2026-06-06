@@ -125,9 +125,3 @@ component: workspace
 {{- $tag := default .Chart.AppVersion .Values.controller.image.tag -}}
 {{- printf "%s:%s" .Values.controller.image.repository $tag -}}
 {{- end }}
-
-{{- define "llmsafespace.migrations.image" -}}
-{{- $repo := default .Values.api.image.repository .Values.migrations.image.repository -}}
-{{- $tag := default (default .Chart.AppVersion .Values.api.image.tag) .Values.migrations.image.tag -}}
-{{- printf "%s:%s" $repo $tag -}}
-{{- end }}
