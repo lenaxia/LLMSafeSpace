@@ -202,22 +202,22 @@ var (
 	inferenceRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_inference_requests_total",
 		Help: "Total inference requests (session.updated with output tokens).",
-	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceInputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_inference_input_tokens_total",
 		Help: "Total input tokens consumed.",
-	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceOutputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_inference_output_tokens_total",
 		Help: "Total output tokens produced.",
-	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceCostDollarsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_inference_cost_dollars_total",
 		Help: "Estimated inference cost in USD from opencode session metadata.",
-	}, []string{"workspace_id", "model_id", "provider_id", "tier"})
+	}, []string{"model_id", "provider_id", "tier"})
 
 	modelSelectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_model_selections_total",
@@ -235,23 +235,27 @@ var (
 	}, []string{"from_phase", "to_phase"})
 )
 
-// RecordInference records a completed inference event.
-// workspaceID is used as the metering key (join to userID at query time).
-// tier is "free" for opencode-relay, "paid" otherwise.
-func (s *Service) RecordInference(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
+// RecordInference records a completed inference event at the fleet level.
+// Labels are model_id, provider_id, tier only — workspace_id is intentionally
+// omitted to keep cardinality bounded (O(models × providers × tiers) ≈ 3k series
+// vs O(workspaces × models × providers × tiers) ≈ 30M at scale).
+//
+// For per-workspace billing granularity, use RecordBillingEvent which writes
+// to the postgres billing_events table.
+func (s *Service) RecordInference(modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
 	tier := "paid"
 	if providerID == "opencode-relay" {
 		tier = "free"
 	}
-	inferenceRequestsTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Inc()
+	inferenceRequestsTotal.WithLabelValues(modelID, providerID, tier).Inc()
 	if inputTokens > 0 {
-		inferenceInputTokensTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(float64(inputTokens))
+		inferenceInputTokensTotal.WithLabelValues(modelID, providerID, tier).Add(float64(inputTokens))
 	}
 	if outputTokens > 0 {
-		inferenceOutputTokensTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(float64(outputTokens))
+		inferenceOutputTokensTotal.WithLabelValues(modelID, providerID, tier).Add(float64(outputTokens))
 	}
 	if costDollars > 0 {
-		inferenceCostDollarsTotal.WithLabelValues(workspaceID, modelID, providerID, tier).Add(costDollars)
+		inferenceCostDollarsTotal.WithLabelValues(modelID, providerID, tier).Add(costDollars)
 	}
 }
 
@@ -292,7 +296,7 @@ var (
 		Name:    "llmsafespace_session_duration_seconds",
 		Help:    "Duration of opencode sessions from first message to idle (seconds).",
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800},
-	}, []string{"workspace_id"})
+	}, []string{})
 )
 
 // RecordAuthFailure records an authentication failure with the given reason.
@@ -304,6 +308,10 @@ func RecordAuthFailure(reason string) {
 
 // RecordSessionCompleted records a completed inference session.
 // durationSeconds is the elapsed time from first message to idle status.
-func (s *Service) RecordSessionCompleted(workspaceID string, durationSeconds float64) {
-	sessionDurationSeconds.WithLabelValues(workspaceID).Observe(durationSeconds)
+// RecordSessionCompleted records a completed inference session duration.
+// workspace_id is omitted from the histogram to keep cardinality bounded
+// (O(workspaces × 9 buckets) = 90k series at 10k workspaces).
+// Fleet-level P50/P99 is sufficient for capacity planning.
+func (s *Service) RecordSessionCompleted(_ string, durationSeconds float64) {
+	sessionDurationSeconds.WithLabelValues().Observe(durationSeconds)
 }

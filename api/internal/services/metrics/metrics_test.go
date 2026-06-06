@@ -134,9 +134,10 @@ func TestRecordAuthFailure_IncrementsCounter(t *testing.T) {
 
 func TestRecordSessionCompleted_ObservesHistogram(t *testing.T) {
 	// Histogram observe shouldn't panic and sum should increase.
-	pre := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{"workspace_id": "ws-test"}))
+	// workspace_id label removed for cardinality reasons; histogram is unlabelled.
+	pre := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{}))
 	metricsService.RecordSessionCompleted("ws-test", 42.5)
-	post := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{"workspace_id": "ws-test"}))
+	post := getHistogramSum(sessionDurationSeconds.With(prometheus.Labels{}))
 	assert.Greater(t, post, pre, "session duration histogram sum must increase")
 }
 

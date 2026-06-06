@@ -132,9 +132,9 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspacePhaseTransitions.WithLabelValues(string(workspace.Status.Phase), string(v1.WorkspacePhaseActive)).Inc()
 		// Increment active workspace gauge.
 		runtime := workspace.Spec.Runtime
-		userID := workspace.Labels["user-id"]
-		metrics.WorkspacesRunning.WithLabelValues(runtime, userID).Inc()
-		metrics.WorkspacesCreatedTotal.WithLabelValues(runtime, userID).Inc()
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+		metrics.WorkspacesCreatedTotal.WithLabelValues(runtime, secLevel).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.PodName = existingPod.Name
 		workspace.Status.PodNamespace = existingPod.Namespace

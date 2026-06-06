@@ -412,7 +412,7 @@ func (a *App) Run() error {
 			// workspaceID which can be joined to userID at query time.
 			if metricsSvc, ok := a.services.Metrics.(*metrics.Service); ok {
 				tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
-					metricsSvc.RecordInference(workspaceID, modelID, providerID, inputTokens, outputTokens, costDollars)
+					metricsSvc.RecordInference(modelID, providerID, inputTokens, outputTokens, costDollars)
 				})
 				tracker.SetSessionMetrics(metricsSvc)
 			}

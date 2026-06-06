@@ -17,6 +17,7 @@ Rules:
 
 | Agent | What | Files Claimed | Status | Started |
 |-------|------|---------------|--------|---------|
+| agent-relay-jun06 | Fix metric cardinality + postgres billing event writer | `api/internal/services/metrics/metrics.go`, `api/internal/services/metrics/metrics_test.go`, `api/internal/handlers/session_tracker.go`, `api/internal/app/app.go`, `controller/internal/workspace/phase_creating.go`, `controller/internal/workspace/phase_suspend.go` | IN PROGRESS | 2026-06-06 08:30 |
 
 ---
 

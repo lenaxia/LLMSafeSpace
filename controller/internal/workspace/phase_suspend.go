@@ -21,8 +21,8 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	now := metav1.Now()
 	workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspending), string(v1.WorkspacePhaseSuspended)).Inc()
 	runtime := workspace.Spec.Runtime
-	userID := workspace.Labels["user-id"]
-	metrics.WorkspacesRunning.WithLabelValues(runtime, userID).Dec()
+	secLevel := string(workspace.Spec.SecurityLevel)
+	metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 	workspace.Status.Phase = v1.WorkspacePhaseSuspended
 	workspace.Status.PodName = ""
 	workspace.Status.PodNamespace = ""
