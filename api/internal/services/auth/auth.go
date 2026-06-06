@@ -120,10 +120,25 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string
 		return cachedStatus, nil
 	}
 
-	// Get user from database
-	user, err := s.dbService.GetUserByAPIKey(ctx, apiKey)
+	// Hash-first lookup (new keys). Fall back to plaintext for legacy keys. (Epic 10 US-10.13)
+	h := sha256.Sum256([]byte(apiKey))
+	keyHash := hex.EncodeToString(h[:])
+	user, err := s.dbService.GetUserByAPIKey(ctx, keyHash)
 	if err != nil {
 		return "", fmt.Errorf("failed to authenticate API key: %w", err)
+	}
+	if user == nil {
+		// Legacy plaintext fallback — only for pre-000017 keys (short tokens).
+		// Real API tokens are 64-char hex hashes, not plaintext.
+		if len(apiKey) != 64 {
+			user, err = s.dbService.GetUserByAPIKey(ctx, apiKey)
+			if err != nil {
+				return "", fmt.Errorf("failed to authenticate API key: %w", err)
+			}
+			if user != nil {
+				s.logger.Warn("Authenticated via legacy plaintext API key — user should rotate", "user_id", user.ID)
+			}
+		}
 	}
 
 	if user == nil {
@@ -388,10 +403,18 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 		return cachedUserID, nil
 	}
 
-	// Get user from database
-	user, err := s.dbService.GetUserByAPIKey(ctx, apiKey)
+	// Hash-first lookup (new keys). Fall back to plaintext for legacy keys. (Epic 10 US-10.13)
+	h := sha256.Sum256([]byte(apiKey))
+	keyHash := hex.EncodeToString(h[:])
+	user, err := s.dbService.GetUserByAPIKey(ctx, keyHash)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user by API key: %w", err)
+	}
+	if user == nil && len(apiKey) != 64 {
+		user, err = s.dbService.GetUserByAPIKey(ctx, apiKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to get user by API key: %w", err)
+		}
 	}
 
 	if user == nil {
@@ -639,23 +662,31 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 	}
 	keyStr := s.config.Auth.APIKeyPrefix + hex.EncodeToString(raw)
 
+	h := sha256.Sum256([]byte(keyStr))
+	keyHash := hex.EncodeToString(h[:])
+	keyPrefix := keyStr
+	if len(keyPrefix) > 8 {
+		keyPrefix = keyPrefix[:8]
+	}
+
 	apiKey := &types.APIKey{
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		Name:      req.Name,
-		Key:       keyStr,
-		Prefix:    s.config.Auth.APIKeyPrefix,
+		Key:       keyHash,
+		Prefix:    keyPrefix,
 		Active:    true,
 		CreatedAt: time.Now(),
+		Legacy:    false,
 	}
 
 	if err := s.dbService.CreateAPIKey(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("failed to store api key: %w", err)
 	}
 
+	apiKey.Key = keyStr
 	return apiKey, nil
 }
-
 func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	keys, err := s.dbService.ListAPIKeys(ctx, userID)
 	if err != nil {

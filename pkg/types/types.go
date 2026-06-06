@@ -354,6 +354,8 @@ type APIKey struct {
 	Active    bool       `json:"active"`
 	CreatedAt time.Time  `json:"createdAt"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Legacy is true for keys created before hashing was introduced (migration 000017).
+	Legacy bool `json:"legacy,omitempty" db:"key_legacy"`
 }
 
 // live Kubernetes status with database metadata and pagination so callers never

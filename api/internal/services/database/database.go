@@ -583,12 +583,16 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
-        INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `
 	var expiresAt interface{}
 	if apiKey.ExpiresAt != nil {
 		expiresAt = *apiKey.ExpiresAt
+	}
+	prefix := apiKey.Prefix
+	if prefix == "" && len(apiKey.Key) >= 8 {
+		prefix = apiKey.Key[:8]
 	}
 	_, err := s.DB.ExecContext(ctx, query,
 		apiKey.ID,
@@ -598,13 +602,14 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 		apiKey.Active,
 		apiKey.CreatedAt,
 		expiresAt,
+		prefix,
+		apiKey.Legacy,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create api key: %w", err)
 	}
 	return nil
 }
-
 func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	query := `
         SELECT id, user_id, key, name, active, created_at, expires_at

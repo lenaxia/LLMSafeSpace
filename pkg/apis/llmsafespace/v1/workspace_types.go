@@ -271,8 +271,12 @@ type WorkspaceStatus struct {
 	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
 	MemoryUsedBytes  int64                `json:"memoryUsedBytes,omitempty"`
 	MemoryTotalBytes int64                `json:"memoryTotalBytes,omitempty"`
-	ContextUsed      int64                `json:"contextUsed,omitempty"`
-	ContextTotal     int64                `json:"contextTotal,omitempty"`
+	// CpuUsageMicros is cumulative CPU microseconds from cgroup v2 cpu.stat.
+	// Stored so enrichAgentStatus can compute delta on the next poll.
+	CpuUsageMicros       int64 `json:"cpuUsageMicros,omitempty"`
+	CpuLimitMicrosPerSec int64 `json:"cpuLimitMicrosPerSec,omitempty"`
+	ContextUsed          int64 `json:"contextUsed,omitempty"`
+	ContextTotal         int64 `json:"contextTotal,omitempty"`
 
 	// ---- Startup latency measurement anchors (S18.10) ----
 	//

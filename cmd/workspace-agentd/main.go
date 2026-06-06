@@ -492,6 +492,42 @@ func getDiskUsage() *agentd.DiskUsage {
 	}
 }
 
+// getCPUUsage reads cumulative CPU from cgroup v2 cpu.stat.
+// Covers entire pod cgroup (all processes). UsageMicros is monotonically
+// increasing; callers compute delta for rate.
+func getCPUUsage() *agentd.CPUUsage {
+	data, err := os.ReadFile("/sys/fs/cgroup/cpu.stat")
+	if err != nil {
+		return nil
+	}
+	var usageMicros int64
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "usage_usec ") {
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "usage_usec "), "%d", &usageMicros)
+			break
+		}
+	}
+	if usageMicros == 0 {
+		return nil
+	}
+	var limitMicrosPerSec int64
+	if maxData, merr := os.ReadFile("/sys/fs/cgroup/cpu.max"); merr == nil {
+		fields := strings.Fields(strings.TrimSpace(string(maxData)))
+		if len(fields) == 2 && fields[0] != "max" {
+			var quota, period int64
+			if _, serr := fmt.Sscanf(fields[0], "%d", &quota); serr == nil {
+				if _, serr = fmt.Sscanf(fields[1], "%d", &period); serr == nil && period > 0 {
+					limitMicrosPerSec = quota * 1_000_000 / period
+				}
+			}
+		}
+	}
+	return &agentd.CPUUsage{
+		UsageMicros:       usageMicros,
+		LimitMicrosPerSec: limitMicrosPerSec,
+	}
+}
+
 func main() {
 	var err error
 	log, err = zap.NewProduction()
@@ -690,6 +726,7 @@ func main() {
 			UptimeSeconds:       int(time.Since(startedAt).Seconds()),
 			Disk:                getDiskUsage(),
 			Memory:              getMemoryUsage(),
+			CPU:                 getCPUUsage(),
 			Context:             contextUsage,
 		})
 	})

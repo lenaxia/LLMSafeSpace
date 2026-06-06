@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
@@ -176,15 +177,22 @@ func (r *WorkspaceReconciler) maybeEnrichAgentStatus(ctx context.Context, ws *v1
 		return
 	}
 	r.lastDeepStatus[ws.Name] = time.Now()
+	elapsed := deepStatusInterval
+	if exists {
+		elapsed = time.Since(last)
+		if elapsed > 2*deepStatusInterval {
+			elapsed = deepStatusInterval
+		}
+	}
 	r.lastDeepStatusMu.Unlock()
 
-	r.enrichAgentStatus(ctx, ws)
+	r.enrichAgentStatus(ctx, ws, elapsed)
 }
 
 // enrichAgentStatus polls /v1/statusz for session/disk/provider metadata.
 // It runs on a slower cadence (deepStatusInterval) and its failures are
 // informational only — they never trigger pod restarts.
-func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Workspace) {
+func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Workspace, elapsed time.Duration) {
 	if ws.Status.PodIP == "" {
 		return
 	}
@@ -245,13 +253,33 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	} else {
 		ws.Status.Sessions = nil
 	}
+	userID := ws.Labels["user-id"]
+	elapsedSecs := elapsed.Seconds()
+
 	if status.Disk != nil {
 		ws.Status.DiskUsedBytes = status.Disk.UsedBytes
 		ws.Status.DiskTotalBytes = status.Disk.TotalBytes
+		byteSecs := float64(status.Disk.UsedBytes) * elapsedSecs
+		metrics.WorkspaceDiskUsedBytesSecondsTotal.WithLabelValues(ws.Name, userID).Add(byteSecs)
+		metrics.UserDiskBytesSecondsTotal.WithLabelValues(userID).Add(byteSecs)
+		metrics.WorkspaceDiskUsedBytes.WithLabelValues(ws.Name, userID).Set(float64(status.Disk.UsedBytes))
 	}
 	if status.Memory != nil {
 		ws.Status.MemoryUsedBytes = status.Memory.UsedBytes
 		ws.Status.MemoryTotalBytes = status.Memory.TotalBytes
+		byteSecs := float64(status.Memory.UsedBytes) * elapsedSecs
+		metrics.WorkspaceMemoryUsedBytesSecondsTotal.WithLabelValues(ws.Name, userID).Add(byteSecs)
+		metrics.UserMemoryBytesSecondsTotal.WithLabelValues(userID).Add(byteSecs)
+		metrics.WorkspaceMemoryUsedBytes.WithLabelValues(ws.Name, userID).Set(float64(status.Memory.UsedBytes))
+	}
+	if status.CPU != nil && status.CPU.UsageMicros > 0 {
+		if ws.Status.CpuUsageMicros > 0 && status.CPU.UsageMicros >= ws.Status.CpuUsageMicros {
+			deltaMs := float64(status.CPU.UsageMicros-ws.Status.CpuUsageMicros) / 1000.0
+			metrics.WorkspaceCPUMillisecondsTotal.WithLabelValues(ws.Name, userID).Add(deltaMs)
+			metrics.UserCPUMillisecondsTotal.WithLabelValues(userID).Add(deltaMs)
+		}
+		ws.Status.CpuUsageMicros = status.CPU.UsageMicros
+		ws.Status.CpuLimitMicrosPerSec = status.CPU.LimitMicrosPerSec
 	}
 	if status.Context != nil {
 		ws.Status.ContextUsed = status.Context.UsedTokens

@@ -287,6 +287,14 @@ spec:
                   type: integer
                   format: int64
                   description: "Total memory available to the workspace, reported by agentd."
+                cpuUsageMicros:
+                  type: integer
+                  format: int64
+                  description: "Cumulative CPU microseconds consumed by the workspace pod cgroup (cgroup v2 cpu.stat usage_usec)."
+                cpuLimitMicrosPerSec:
+                  type: integer
+                  format: int64
+                  description: "CPU quota in microseconds per second from cgroup v2 cpu.max (0 = unlimited)."
                 contextUsed:
                   type: integer
                   format: int64

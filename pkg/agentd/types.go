@@ -57,6 +57,16 @@ type SessionInfo struct {
 	Model  string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
 }
 
+// CPUUsage reports cumulative CPU consumption from cgroup v2 cpu.stat.
+type CPUUsage struct {
+	// UsageMicros is cumulative CPU microseconds consumed (cpu.stat usage_usec).
+	// Monotonically increasing — callers compute delta between polls for rate.
+	UsageMicros int64 `json:"usage_micros"`
+	// LimitMicrosPerSec is the CPU quota in µs/s from cpu.max (quota/period×1e6).
+	// 0 means no quota (unlimited).
+	LimitMicrosPerSec int64 `json:"limit_micros_per_sec,omitempty"`
+}
+
 // DiskUsage reports workspace filesystem usage.
 type DiskUsage struct {
 	UsedBytes  int64 `json:"used_bytes"`
@@ -90,5 +100,6 @@ type StatuszResponse struct {
 	UptimeSeconds       int           `json:"uptime_seconds"`
 	Disk                *DiskUsage    `json:"disk,omitempty"`
 	Memory              *MemoryUsage  `json:"memory,omitempty"`
+	CPU                 *CPUUsage     `json:"cpu,omitempty"`
 	Context             *ContextUsage `json:"context,omitempty"`
 }

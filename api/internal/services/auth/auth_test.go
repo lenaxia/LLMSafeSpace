@@ -71,10 +71,12 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	// Create service with mocks
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
-	// Test case: Valid API key
+	// Test case: Valid API key (legacy plaintext — "valid-key" is 9 chars, not 64)
 	user := &types.User{
 		ID: "user123",
 	}
+	validKeyHash := "cc358b85b8b74a6f82504e141c2cb5c45c70711c2420cc98bcc230843f8def6d"
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), validKeyHash).Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "valid-key").Return(user, nil).Once()
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:valid-key").Return("", errors.New("not found")).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:valid-key", "user123", mock.Anything).Return(nil).Once()
@@ -83,7 +85,9 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
-	// Test case: Invalid API key
+	// Test case: Invalid API key (both hash and plaintext return nil)
+	invalidKeyHash := "8bc840e01de28327e34b85011d17c86ce620d1057b712118fe049c647bc128bd"
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), invalidKeyHash).Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "invalid-key").Return((*types.User)(nil), nil).Once()
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:invalid-key").Return("", errors.New("not found")).Once()
 
@@ -92,8 +96,9 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "invalid API key")
 
-	// Test case: Database error
-	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "error-key").Return((*types.User)(nil), errors.New("database error")).Once()
+	// Test case: Database error on hash lookup
+	errorKeyHash := "92d7e67cf10926961e3555e408956ae0f6645e15f7a2d832b30c1e31339a255c"
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), errorKeyHash).Return((*types.User)(nil), errors.New("database error")).Once()
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:error-key").Return("", errors.New("not found")).Once()
 
 	userID, err = service.AuthenticateAPIKey(context.Background(), "error-key")
@@ -109,14 +114,18 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	assert.Equal(t, "cached-user", userID)
 
 	mockDbService.AssertExpectations(t)
-	// Test case: API key validation
+	// Test case: API key validation via ValidateToken
 	apiKey := "api_test_key"
+	apiKeyHash := "731ca82ae829a7ff88824fdeccb48aceddaf9f2ff07127b5d28a329b12413440"
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+apiKey).
 		Return("", errors.New("not found")).Once()
 
 	user = &types.User{
 		ID: "api_user",
 	}
+	// hash-first returns nil, then plaintext fallback (len("api_test_key") = 12 != 64)
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiKeyHash).
+		Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiKey).
 		Return(user, nil).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }),
@@ -132,7 +141,6 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	mockCacheService.AssertExpectations(t)
 	mockDbService.AssertExpectations(t)
 }
-
 func TestGenerateToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -372,7 +380,7 @@ func TestValidateAPIKey(t *testing.T) {
 
 	service, _ := New(cfg, log, mockDbService, mockCacheService)
 
-	// Test case: Valid API key (cached)
+	// Test case: Valid API key (cached) — cache hit before hash lookup
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_valid").Return("user123", nil).Once()
 
 	userID, err := service.validateAPIKey("api_valid")
@@ -380,7 +388,10 @@ func TestValidateAPIKey(t *testing.T) {
 	assert.Equal(t, "user123", userID)
 
 	// Test case: Valid API key (not cached)
+	// "api_new" is 7 chars (< 64) -> hash-first returns nil, plaintext fallback finds user
+	apiNewHash := "ab766fd96c8caf6ec48189978caa414e915b64c943e0f7a3415eca46039c71fa"
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiNewHash).Return((*types.User)(nil), nil).Once()
 
 	user := &types.User{
 		ID: "user456",
@@ -392,8 +403,10 @@ func TestValidateAPIKey(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "user456", userID)
 
-	// Test case: Invalid API key
+	// Test case: Invalid API key (both hash and plaintext return nil)
+	apiInvalidHash := "d1f57960469d39912c4b69202e9429d64beb40025e5bdcffc3b5bc1923399148"
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_invalid").Return("", errors.New("not found")).Once()
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiInvalidHash).Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_invalid").Return((*types.User)(nil), nil).Once()
 
 	userID, err = service.validateAPIKey("api_invalid")
@@ -401,9 +414,10 @@ func TestValidateAPIKey(t *testing.T) {
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "invalid API key")
 
-	// Test case: Database error
+	// Test case: Database error on hash lookup
+	apiErrorHash := "8265edf37575deab074c210c887db2ae4899af1e11abb0f87cbac3f26b55d352"
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_error").Return("", errors.New("not found")).Once()
-	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_error").Return((*types.User)(nil), errors.New("database error")).Once()
+	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiErrorHash).Return((*types.User)(nil), errors.New("database error")).Once()
 
 	userID, err = service.validateAPIKey("api_error")
 	assert.Error(t, err)
@@ -413,7 +427,6 @@ func TestValidateAPIKey(t *testing.T) {
 	mockCacheService.AssertExpectations(t)
 	mockDbService.AssertExpectations(t)
 }
-
 func TestIsAPIKey(t *testing.T) {
 	testCases := []struct {
 		name     string
