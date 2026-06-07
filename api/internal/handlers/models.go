@@ -129,9 +129,16 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// Check cache first (5s TTL, avoids repeated catalog fetches on page loads).
-	body := defaultModelCache.Get(workspaceID)
-	if body == nil {
+	// Check cache first (5s TTL). Cache stores the already-annotated JSON (small,
+	// connected-only) rather than the raw /provider body (potentially many MB).
+	var annotated []annotatedModel
+	if cached := defaultModelCache.Get(workspaceID); cached != nil {
+		if err := json.Unmarshal(cached, &annotated); err != nil {
+			annotated = nil // cache miss on corrupt entry
+		}
+	}
+
+	if annotated == nil {
 		// Retrieve workspace password for opencode Basic auth.
 		if h.passwordGetter == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model discovery unavailable (no password getter)"})
@@ -158,7 +165,9 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		}
 		defer resp.Body.Close() //nolint:errcheck // best-effort drain
 
-		body, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
+		// The /provider response can be large (100+ providers × many models from models.dev).
+		// 32MB is sufficient headroom; annotateModels filters to connected-only before caching.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read agent response"})
 			return
@@ -169,15 +178,15 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 			return
 		}
 
-		defaultModelCache.Set(workspaceID, body)
-	}
-
-	// Annotate models with tier information.
-	annotated, err := annotateModels(body, h.relayActive)
-	if err != nil {
-		// Fallback: return raw response if annotation fails.
-		c.Data(http.StatusOK, "application/json", body)
-		return
+		// Annotate (filters to connected providers only) and cache the compact result.
+		annotated, err = annotateModels(body, h.relayActive)
+		if err != nil {
+			// annotateModels failed — return empty rather than crashing.
+			annotated = []annotatedModel{}
+		}
+		if serialized, serErr := json.Marshal(annotated); serErr == nil {
+			defaultModelCache.Set(workspaceID, serialized)
+		}
 	}
 
 	// annotateModels already filters to connected-only models.
