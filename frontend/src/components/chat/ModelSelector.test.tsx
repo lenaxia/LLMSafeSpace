@@ -60,6 +60,36 @@ describe("ModelSelector", () => {
     await waitFor(() => expect(workspacesApi.setModel).toHaveBeenCalledWith("ws-1", "openai/gpt-4o"));
   });
 
+  it("closes dropdown immediately on selection (optimistic)", async () => {
+    vi.mocked(workspacesApi.listModels).mockResolvedValue(mockModels);
+    // setModel never resolves — verifies dropdown closes before server response
+    vi.mocked(workspacesApi.setModel).mockReturnValue(new Promise(() => {}));
+    render(<ModelSelector workspaceId="ws-1" />, { wrapper });
+    await waitFor(() => screen.getByText("Claude Sonnet"));
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/i }));
+    // Dropdown open: Claude Sonnet appears in the list
+    const listItems = screen.getAllByText("Claude Sonnet");
+    expect(listItems.length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByText("GPT-4o"));
+    // After click the dropdown list closes: only one instance of GPT-4o
+    // (the optimistic trigger label), not two (trigger + dropdown item)
+    await waitFor(() => expect(screen.getAllByText("GPT-4o").length).toBe(1));
+  });
+
+  it("shows selected model immediately on click (optimistic), reverts on error", async () => {
+    vi.mocked(workspacesApi.listModels).mockResolvedValue(mockModels);
+    vi.mocked(workspacesApi.setModel).mockRejectedValue(new Error("500"));
+    render(<ModelSelector workspaceId="ws-1" />, { wrapper });
+    await waitFor(() => screen.getByText("Claude Sonnet"));
+    fireEvent.click(screen.getByText("Claude Sonnet"));
+    fireEvent.click(screen.getByText("GPT-4o"));
+    // Immediately after click the button label should show the new model
+    expect(screen.getByText("GPT-4o")).toBeInTheDocument();
+    // After error resolves it reverts to the server-confirmed model
+    await waitFor(() => expect(screen.getByText("Claude Sonnet")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Failed to set model/)).toBeInTheDocument());
+  });
+
   it("renders nothing when no models available", async () => {
     vi.mocked(workspacesApi.listModels).mockResolvedValue({ models: [], currentModel: "" });
     const { container } = render(<ModelSelector workspaceId="ws-1" />, { wrapper });
@@ -87,7 +117,8 @@ describe("ModelSelector", () => {
     vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "openai/gpt-4o", applied: false });
     render(<ModelSelector workspaceId="ws-1" />, { wrapper });
     await waitFor(() => screen.getByText("Claude Sonnet"));
-    fireEvent.click(screen.getByText("Claude Sonnet"));
+    // open dropdown
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/i }));
     fireEvent.click(screen.getByText("GPT-4o"));
     await waitFor(() => expect(screen.getByText(/takes effect/)).toBeInTheDocument());
   });
@@ -97,7 +128,8 @@ describe("ModelSelector", () => {
     vi.mocked(workspacesApi.setModel).mockRejectedValue(new Error("500"));
     render(<ModelSelector workspaceId="ws-1" />, { wrapper });
     await waitFor(() => screen.getByText("Claude Sonnet"));
-    fireEvent.click(screen.getByText("Claude Sonnet"));
+    // open dropdown
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/i }));
     fireEvent.click(screen.getByText("GPT-4o"));
     await waitFor(() => expect(screen.getByText(/Failed to set model/)).toBeInTheDocument());
   });

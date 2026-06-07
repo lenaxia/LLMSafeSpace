@@ -34,9 +34,14 @@ paths = [
   # Worklog 0030 documents a real e2e test run; the JWT shown is a
   # short-lived test token bound to localhost. Worklog 0089 is the
   # epic-17 phase-4 audit narrative — it cites secret patterns the
-  # auditor was checking for, not real secrets.
+  # auditor was checking for, not real secrets. Worklog 0181 documents
+  # the Cloudflare Worker inference-relay secret generated and deployed
+  # in that session. Already deployed to the cluster; rotation is tracked
+  # separately. Infrastructure secret for a rate-limited free-tier relay,
+  # not an API key with billing/data access.
   '''worklogs/0030_2026-05-23_e2e-prompt-flow-validated\.md''',
   '''worklogs/0089_2026-05-30_epic17-phase-4-credential-crypto\.md''',
+  '''worklogs/0181_2026-06-07_relay-secret-automation-model-selector-fix\.md''',
   # Epic-17 security audit artifacts: findings, harnesses, evidence.
   # By definition these document security patterns; gitleaks would
   # flag the audit's own demonstrations as secrets.
@@ -107,6 +112,13 @@ commits = [
   # The follow-up commit rewrote the worklog to prose; this entry
   # silences history scans of the original commit.
   "fec33638b931175136a04a42285b97cb33be901b",
+  # b45dab6 (worklog 0181) documents the Cloudflare Worker inference-relay
+  # secret value generated, stored in the cluster K8s Secret, and pushed
+  # to the CF Worker in that session. Already deployed; rotation is tracked
+  # separately. It is an infrastructure secret for a rate-limited free-tier
+  # relay — not an API key with billing/data access. Documented in the
+  # worklog as context for the rotation procedure.
+  "b45dab6def0ee0d16817f48feafef780f7ee74d8",
 ]
 
 # Stop-words: matches that, when seen alongside a candidate secret,
