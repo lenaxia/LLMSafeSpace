@@ -379,6 +379,102 @@ func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
 	assert.Contains(t, llm[0].Plaintext, `"public"`)
 }
 
+// TestCredentialPrecedence_AllowlistOnlyDefaultID verifies the regression fix:
+// when the model allowlist contains only the invalid ID "default" (written by
+// a mis-formed create request), the provider must still be injected (not
+// silently dropped) and its pd.Models must be empty (no filtering applied).
+// Prior to the fix, FormatOpenCodeConfig would write "models":{"default":{}}
+// which made opencode return 0 providers.
+func TestCredentialPrecedence_AllowlistOnlyDefaultID(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "sk-test"})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-bad-allowlist", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "openai", Ciphertext: adminCipher,
+			SourceType:     "auto",
+			ModelAllowlist: []string{"default"}, // invalid — should be skipped
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+
+	// Provider must still be present (not dropped because of invalid allowlist).
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	// Models must be empty — no model filtering applied (safe fallback).
+	assert.Empty(t, pd.Models, "Models must be empty when allowlist contains only invalid IDs")
+}
+
+// TestCredentialPrecedence_AllowlistMixedValidAndInvalid verifies that when the
+// allowlist contains a mix of valid and invalid IDs, only the valid IDs survive.
+func TestCredentialPrecedence_AllowlistMixedValidAndInvalid(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "sk-test"})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-mixed", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "openai", Ciphertext: adminCipher,
+			SourceType:     "auto",
+			ModelAllowlist: []string{"default", "", "glm-5.1", "gpt-4o"}, // 2 invalid + 2 valid
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	// Only the 2 valid IDs must survive.
+	require.Len(t, pd.Models, 2)
+	ids := []string{pd.Models[0].ID, pd.Models[1].ID}
+	assert.ElementsMatch(t, []string{"glm-5.1", "gpt-4o"}, ids)
+}
+
 type asyncAuditTestLogger struct{}
 
 func (l *asyncAuditTestLogger) Info(_ string, _ ...interface{})           {}
