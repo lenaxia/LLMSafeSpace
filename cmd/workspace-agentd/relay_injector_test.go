@@ -27,13 +27,15 @@ import (
 //   - provider.opencode-relay.npm = "@ai-sdk/openai-compatible"
 //   - provider.opencode-relay.models = the given free model list
 func TestBuildRelayConfig_WritesDisabledAndCustomProvider(t *testing.T) {
+	dir := t.TempDir()
+	agentConfigPath := filepath.Join(dir, "agent-config.json")
 	relayURL := "https://relay.safespaces.dev/secret123"
 	models := []relayModel{
 		{ID: "nemotron-3-ultra-free", Name: "Nemotron 3 Ultra Free", ContextLimit: 1000000, OutputLimit: 128000},
 		{ID: "glm-5-free", Name: "GLM-5 Free", ContextLimit: 204800, OutputLimit: 131072},
 	}
 
-	cfg, err := buildRelayConfig(relayURL, models)
+	cfg, err := buildRelayConfig(agentConfigPath, relayURL, models)
 	require.NoError(t, err)
 
 	var parsed map[string]json.RawMessage
@@ -80,20 +82,67 @@ func TestBuildRelayConfig_WritesDisabledAndCustomProvider(t *testing.T) {
 	assert.False(t, hasInput, "limit.input must be absent — opencode config schema rejects it")
 }
 
-// TestBuildRelayConfig_OnlyProducesExpectedTopLevelKeys verifies buildRelayConfig
-// doesn't produce unexpected top-level keys.
-func TestBuildRelayConfig_OnlyProducesExpectedTopLevelKeys(t *testing.T) {
-	cfg, err := buildRelayConfig("https://relay.example.com/s",
+// TestBuildRelayConfig_MergesExistingProviders verifies that buildRelayConfig
+// preserves existing provider entries (e.g. openai written by FlushProviders)
+// rather than replacing the entire agent-config.json. This is the fix for the
+// bug where the relay injector clobbered the openai provider config.
+func TestBuildRelayConfig_MergesExistingProviders(t *testing.T) {
+	dir := t.TempDir()
+	agentConfigPath := filepath.Join(dir, "agent-config.json")
+
+	// Write an existing config as FlushProviders would (openai provider).
+	existing := `{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": {
+			"openai": {
+				"options": {
+					"apiKey": "sk-test-key",
+					"baseURL": "https://ai.thekao.cloud/v1"
+				}
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(agentConfigPath, []byte(existing), 0o600))
+
+	cfg, err := buildRelayConfig(agentConfigPath,
+		"https://relay.safespaces.dev/secret",
+		[]relayModel{{ID: "big-pickle", Name: "Big Pickle"}})
+	require.NoError(t, err)
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg, &parsed))
+
+	var providers map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(parsed["provider"], &providers))
+
+	// openai provider from existing config must survive
+	_, hasOpenAI := providers["openai"]
+	assert.True(t, hasOpenAI, "openai provider must be preserved after merge")
+
+	// opencode-relay must be added
+	_, hasRelay := providers["opencode-relay"]
+	assert.True(t, hasRelay, "opencode-relay provider must be added")
+}
+
+// TestBuildRelayConfig_WorksWithoutExistingConfig verifies that buildRelayConfig
+// handles a missing agent-config.json gracefully (fresh pod, first boot).
+func TestBuildRelayConfig_WorksWithoutExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	agentConfigPath := filepath.Join(dir, "agent-config.json")
+	// Deliberately do NOT create the file.
+
+	cfg, err := buildRelayConfig(agentConfigPath,
+		"https://relay.example.com/s",
 		[]relayModel{{ID: "m", Name: "M", ContextLimit: 1000, OutputLimit: 100}})
 	require.NoError(t, err)
 
 	var parsed map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(cfg, &parsed))
 
-	for key := range parsed {
-		assert.Contains(t, []string{"$schema", "disabled_providers", "provider"}, key,
-			"buildRelayConfig must not produce unexpected top-level keys")
-	}
+	// Must still have the required relay keys.
+	assert.Contains(t, parsed, "$schema")
+	assert.Contains(t, parsed, "disabled_providers")
+	assert.Contains(t, parsed, "provider")
 }
 
 // --- shouldSkipRelay tests ---

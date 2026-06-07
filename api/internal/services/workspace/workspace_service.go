@@ -1136,6 +1136,12 @@ func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID 
 		return
 	}
 	if len(secretsJSON) <= 2 {
+		// Empty result after a successful PrepareSecretsForInjection call means
+		// either (a) no bindings exist yet (credential seeding race) or (b) all
+		// decrypt attempts failed silently (key mismatch, audit logged separately).
+		// Log at Warn so operators can correlate with secret_audit_log entries.
+		s.logger.Warn("seedEphemeralSecrets: PrepareSecretsForInjection returned empty — workspace-secrets not written; pod will boot without platform credentials",
+			"workspaceID", workspaceID, "userID", userID)
 		return
 	}
 	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)

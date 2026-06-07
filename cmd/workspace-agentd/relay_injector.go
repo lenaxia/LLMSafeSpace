@@ -10,14 +10,16 @@ package main
 //      the relay entirely and lets opencode call opencode.ai/zen/v1 directly.
 //   2. Calls GET /provider on the running opencode server to get the live
 //      free model list (providerID in connected[], cost.input == 0).
-//   3. Writes a new agent-config.json with:
+//   3. MERGES a new provider block into the existing agent-config.json:
 //        - disabled_providers: ["opencode"] — removes the built-in provider
 //        - provider.opencode-relay — custom OpenAI-compatible provider pointing
-//          at the CF Worker relay with the free model list
+//          at the CF Worker relay with the free model list. Any other providers
+//          already in the file (e.g. openai written by the init container via
+//          the platform credential) are preserved unchanged.
 //   4. Writes the opencode-relay auth entry to auth.json (preserving existing
 //      paid provider entries from llm-provider secrets).
 //   5. Kills the opencode process — the agentd supervisor restarts it and
-//      opencode reads the new config on boot.
+//      opencode reads the merged config on boot.
 //
 // The injection is gated by a one-shot flag so it runs exactly once per pod
 // lifetime. On subsequent opencode restarts (crash recovery), agentd does NOT
@@ -56,14 +58,20 @@ type relayModel struct {
 	OutputLimit  int
 }
 
-// buildRelayConfig returns the JSON bytes for an opencode.json config that:
-//   - disables the built-in opencode provider
-//   - adds a custom opencode-relay provider using @ai-sdk/openai-compatible
-//     pointed at relayURL with the given free model list
+// buildRelayConfig merges the opencode-relay provider block into the existing
+// agent-config.json at agentConfigPath and writes the result back to disk.
 //
-// The returned JSON is suitable for writing to OPENCODE_CONFIG (agent-config.json).
-// Callers are responsible for merging with any existing non-relay provider config.
-func buildRelayConfig(relayURL string, models []relayModel) ([]byte, error) {
+// Merge semantics:
+//   - Existing top-level keys (e.g. "provider" block from FlushProviders writing
+//     the openai credential, "model" from applyWorkspaceConfig) are preserved.
+//   - The "provider" map is deep-merged: existing providers survive, opencode-relay
+//     is added. No existing provider key is removed.
+//   - "disabled_providers" is set to ["opencode"] (always, regardless of what was
+//     there before — we own this field).
+//
+// relayURL is the full CF Worker URL (https://relay.safespaces.dev/<secret>).
+// models is the free model list from fetchFreeModels.
+func buildRelayConfig(agentConfigPath, relayURL string, models []relayModel) ([]byte, error) {
 	// Build model map — only context and output limits are valid in the
 	// opencode config schema. The limit.input field returned by /api/model
 	// is not accepted and causes ConfigInvalidError.
@@ -93,27 +101,50 @@ func buildRelayConfig(relayURL string, models []relayModel) ([]byte, error) {
 		Options options               `json:"options"`
 		Models  map[string]modelEntry `json:"models"`
 	}
-	type config struct {
-		Schema            string              `json:"$schema"`
-		DisabledProviders []string            `json:"disabled_providers"`
-		Provider          map[string]provider `json:"provider"`
+
+	// Read and parse the existing agent-config.json so we can merge into it.
+	// If absent or unparseable (e.g. first boot before FlushProviders), start
+	// from an empty map — we write a valid config regardless.
+	cfg := make(map[string]json.RawMessage)
+	if existing, err := os.ReadFile(agentConfigPath); err == nil && len(existing) > 0 {
+		_ = json.Unmarshal(existing, &cfg)
 	}
 
-	cfg := config{
-		Schema:            "https://opencode.ai/config.json",
-		DisabledProviders: []string{"opencode"},
-		Provider: map[string]provider{
-			"opencode-relay": {
-				Name: "OpenCode Zen (Free)",
-				NPM:  "@ai-sdk/openai-compatible",
-				Options: options{
-					BaseURL: relayURL,
-					APIKey:  "public",
-				},
-				Models: modelMap,
-			},
-		},
+	// Ensure $schema key.
+	if _, ok := cfg["$schema"]; !ok {
+		schema, _ := json.Marshal("https://opencode.ai/config.json")
+		cfg["$schema"] = schema
 	}
+
+	// Merge opencode-relay into the existing provider map.
+	// Existing providers (e.g. "openai" from FlushProviders) are preserved.
+	existingProviders := make(map[string]json.RawMessage)
+	if raw, ok := cfg["provider"]; ok {
+		_ = json.Unmarshal(raw, &existingProviders)
+	}
+	relayEntry, err := json.Marshal(provider{
+		Name: "OpenCode Zen (Free)",
+		NPM:  "@ai-sdk/openai-compatible",
+		Options: options{
+			BaseURL: relayURL,
+			APIKey:  "public",
+		},
+		Models: modelMap,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal opencode-relay provider: %w", err)
+	}
+	existingProviders["opencode-relay"] = relayEntry
+	mergedProviders, err := json.Marshal(existingProviders)
+	if err != nil {
+		return nil, fmt.Errorf("marshal provider map: %w", err)
+	}
+	cfg["provider"] = mergedProviders
+
+	// Always disable the built-in opencode provider so routing goes through
+	// opencode-relay instead.
+	disabled, _ := json.Marshal([]string{"opencode"})
+	cfg["disabled_providers"] = disabled
 
 	return json.MarshalIndent(cfg, "", "  ")
 }
@@ -350,7 +381,7 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		log.Info("relay injector: fetched free models", zap.Int("count", len(models)))
 
 		// Build and write the relay config.
-		cfgBytes, err := buildRelayConfig(cfg.RelayURL, models)
+		cfgBytes, err := buildRelayConfig(cfg.AgentConfigPath, cfg.RelayURL, models)
 		if err != nil {
 			log.Warn("relay injector: failed to build relay config", zap.Error(err))
 			return
