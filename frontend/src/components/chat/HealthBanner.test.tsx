@@ -18,10 +18,22 @@ describe("HealthBanner", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("hides banner when no credential secret exists (default state)", () => {
-    const { container } = render(
+  it("shows Opencode Zen message when no credential secret exists", () => {
+    render(
       <HealthBanner
         credentialState={{ available: false, reason: "CredentialSecretNotFound" }}
+      />,
+    );
+    expect(screen.getByText(/No providers configured/)).toBeInTheDocument();
+    const link = screen.getByText("Click here to learn more");
+    expect(link).toBeInTheDocument();
+    expect(link.closest("a")).toHaveAttribute("href", "https://opencode.ai");
+  });
+
+  it("hides banner when credential state is not checked", () => {
+    const { container } = render(
+      <HealthBanner
+        credentialState={{ available: false, reason: "NotChecked" }}
       />,
     );
     expect(container.innerHTML).toBe("");
@@ -81,12 +93,21 @@ describe("HealthBanner", () => {
     expect(screen.getByText("down")).toBeInTheDocument();
   });
 
-  it("renders fallback message for unknown reason", () => {
+  it("renders custom message for unknown reason with message", () => {
     render(
       <HealthBanner
         credentialState={{ available: false, reason: "SomeNewReason", message: "custom msg" }}
       />,
     );
     expect(screen.getByText("custom msg")).toBeInTheDocument();
+  });
+
+  it("hides banner for unknown reason without message", () => {
+    const { container } = render(
+      <HealthBanner
+        credentialState={{ available: false, reason: "SomeNewReason" }}
+      />,
+    );
+    expect(container.innerHTML).toBe("");
   });
 });
