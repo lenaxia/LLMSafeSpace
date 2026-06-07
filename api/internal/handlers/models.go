@@ -226,7 +226,7 @@ type annotatedModel struct {
 	FreeTier      bool              `json:"freeTier"`      // convenience boolean (deprecated)
 	ProxyRequired bool              `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
 	Selected      bool              `json:"selected"`      // true if this is the workspace's current default
-	Details       json.RawMessage   `json:"details"`       // full opencode model object (unstable schema)
+	Details       json.RawMessage   `json:"details"`       // reserved: always null with /provider endpoint (unstable schema, not populated)
 }
 
 // providerListResponse is the shape of GET /provider from opencode.
