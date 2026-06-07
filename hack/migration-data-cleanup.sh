@@ -20,7 +20,7 @@ echo "== migration-data-cleanup: resetting public schema =="
 $PSQL -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 echo "== applying migrations 000001–000013 =="
-for f in $(ls api/migrations/0000[01]*.up.sql api/migrations/00001[0-3]*.up.sql 2>/dev/null | sort); do
+for f in $(ls api/migrations/00000[1-9]*.up.sql api/migrations/00001[0-3]*.up.sql 2>/dev/null | sort); do
     echo "  $f"
     $PSQL -f "$f" >/dev/null
 done

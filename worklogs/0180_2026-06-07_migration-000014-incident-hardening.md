@@ -24,7 +24,7 @@ Fix the production outage where the sessions nav bar went blank after deploying 
 
 ### 2. Hardened migration 000014 (api/migrations/ + charts/llmsafespace/migrations/)
 - **DELETE non-UUID rows** before `ALTER COLUMN workspace_id TYPE UUID` — prevents cast failure on test data
-- **Soft-delete orphan workspaces** (`user_id NOT IN users`) before adding FK — prevents FK violation
+- **Soft-delete orphan workspaces** (`user_id NOT IN users`) before adding FK — marks orphans for cleanup; FK addition catches `foreign_key_violation` gracefully if orphans remain
 - **Backfill fallback** — wraps INSERT in `EXCEPTION WHEN datatype_mismatch` with explicit `::uuid` cast for when Bug 11 ALTER was skipped
 - **Down migration** — wraps ALTER TABLE in `DO $$ ... EXCEPTION WHEN others` blocks for idempotent rollback
 
