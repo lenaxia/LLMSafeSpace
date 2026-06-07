@@ -283,10 +283,12 @@ func annotateModels(raw []byte, relayActive bool) ([]annotatedModel, error) {
 	for i, m := range models {
 		avail := classifyAvailability(m.ProviderID, m.Cost, loadedProviders)
 		providerID := m.ProviderID
-		if relayActive && avail == ModelFreeTier {
+		if relayActive && avail == ModelFreeTier && m.ProviderID == "opencode" {
 			// Remap free-tier opencode models to opencode-relay so inference
-			// requests route through the CF Worker. The relay provider shares
-			// the same model IDs but has a different providerID.
+			// requests route through the CF Worker. Only remap from "opencode"
+			// to "opencode-relay" — if the catalog already has "opencode-relay"
+			// (Phase 2: relay injected, opencode restarted) the model already
+			// has the correct providerID and no remap is needed.
 			providerID = "opencode-relay"
 		}
 		var details json.RawMessage
@@ -320,8 +322,13 @@ func classifyAvailability(providerID string, cost []opencodeCost, loadedProvider
 	return ModelAvailable
 }
 
+// isZeroCostOpencode returns true when the model is from the opencode free
+// tier — either the built-in opencode provider (Phase 1, before relay
+// injection) or the synthesized opencode-relay provider (Phase 2, after
+// relay injection). Both represent the same free-tier relay and should be
+// classified as ModelFreeTier / proxyRequired=true.
 func isZeroCostOpencode(providerID string, cost []opencodeCost) bool {
-	if providerID != "opencode" {
+	if providerID != "opencode" && providerID != "opencode-relay" {
 		return false
 	}
 	if len(cost) == 0 {

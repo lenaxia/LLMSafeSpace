@@ -519,6 +519,52 @@ func TestClassifyAvailability_OpencodePaidCost(t *testing.T) {
 	require.Equal(t, ModelAvailable, avail)
 }
 
+// TestClassifyAvailability_OpencodeRelayZeroCost verifies that models with
+// providerID="opencode-relay" and zero cost are classified as ModelFreeTier.
+// Prior to the fix, isZeroCostOpencode only matched providerID=="opencode",
+// so after Phase 2 relay injection (where the catalog uses "opencode-relay")
+// all relay models were classified as ModelAvailable instead of ModelFreeTier.
+func TestClassifyAvailability_OpencodeRelayZeroCost(t *testing.T) {
+	loaded := map[string]bool{"opencode-relay": true}
+	avail := classifyAvailability("opencode-relay", []opencodeCost{{Input: 0, Output: 0}}, loaded)
+	require.Equal(t, ModelFreeTier, avail)
+}
+
+func TestClassifyAvailability_OpencodeRelayNoCostEntries(t *testing.T) {
+	loaded := map[string]bool{"opencode-relay": true}
+	avail := classifyAvailability("opencode-relay", nil, loaded)
+	require.Equal(t, ModelFreeTier, avail)
+}
+
+func TestClassifyAvailability_OpencodeRelayPaidCost(t *testing.T) {
+	// opencode-relay models with non-zero cost should be Available, not Free.
+	loaded := map[string]bool{"opencode-relay": true}
+	avail := classifyAvailability("opencode-relay", []opencodeCost{{Input: 1.0, Output: 2.0}}, loaded)
+	require.Equal(t, ModelAvailable, avail)
+}
+
+func TestAnnotateModels_RelayActive_OnlyRemapsOpencode(t *testing.T) {
+	// When relayActive=true and the catalog already has providerID="opencode-relay"
+	// (Phase 2: relay injected), annotateModels must NOT double-remap to "opencode-relay".
+	// The remap only applies to models still using providerID="opencode".
+	raw := `[
+		{"id":"nemotron-free","providerID":"opencode-relay","name":"Nemotron Free","enabled":true,"cost":[{"input":0,"output":0}],"status":"active"},
+		{"id":"glm-5.1-free","providerID":"opencode","name":"GLM 5.1 Free","enabled":true,"cost":[{"input":0,"output":0}],"status":"active"}
+	]`
+
+	result, err := annotateModels([]byte(raw), true)
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+
+	// Phase 2 model: already opencode-relay, stays opencode-relay
+	require.Equal(t, "opencode-relay", result[0].ProviderID)
+	require.Equal(t, ModelFreeTier, result[0].Availability)
+
+	// Phase 1 model: opencode remapped to opencode-relay when relayActive
+	require.Equal(t, "opencode-relay", result[1].ProviderID)
+	require.Equal(t, ModelFreeTier, result[1].Availability)
+}
+
 func TestClassifyAvailability_NonOpencodeLoaded(t *testing.T) {
 	loaded := map[string]bool{"anthropic": true}
 	avail := classifyAvailability("anthropic", []opencodeCost{{Input: 0, Output: 0}}, loaded)
