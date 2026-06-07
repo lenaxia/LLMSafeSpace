@@ -296,15 +296,30 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		}
 
 		// Fetch the live free model list from the running opencode.
-		models, err := fetchFreeModels(cfg.OpenCodeBaseURL, cfg.OpenCodePassword)
-		if err != nil {
-			log.Warn("relay injector: failed to fetch free models, skipping", zap.Error(err))
-			return
-		}
-		if len(models) == 0 {
-			log.Warn("relay injector: no free opencode models found, skipping relay config")
-			relayInjectorOutcomes.WithLabelValues("no_free_models").Inc()
-			return
+		// Retry for up to 30s if the catalog returns no free models — this
+		// handles the race where the relay injector runs before opencode's
+		// provider catalog is fully initialized (~16s after startup). Without
+		// the retry, a 0-model response permanently skips relay injection for
+		// the pod's lifetime, leaving free-tier users with no working models.
+		var models []relayModel
+		fetchDeadline := time.Now().Add(30 * time.Second)
+		for {
+			var fetchErr error
+			models, fetchErr = fetchFreeModels(cfg.OpenCodeBaseURL, cfg.OpenCodePassword)
+			if fetchErr != nil {
+				log.Warn("relay injector: failed to fetch free models, skipping", zap.Error(fetchErr))
+				return
+			}
+			if len(models) > 0 {
+				break
+			}
+			if time.Now().After(fetchDeadline) {
+				log.Warn("relay injector: no free opencode models found after 30s wait, skipping relay config")
+				relayInjectorOutcomes.WithLabelValues("no_free_models").Inc()
+				return
+			}
+			log.Info("relay injector: no free models yet (catalog still initializing), retrying in 5s")
+			time.Sleep(5 * time.Second)
 		}
 		log.Info("relay injector: fetched free models", zap.Int("count", len(models)))
 

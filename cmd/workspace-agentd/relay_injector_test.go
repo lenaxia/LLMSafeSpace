@@ -283,3 +283,72 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 	require.NoError(t, json.Unmarshal(authData, &auth))
 	assert.Equal(t, "public", auth["opencode-relay"]["key"])
 }
+
+// TestStartRelayInjector_RetriesWhenZeroModels verifies the race-condition fix:
+// when the first /api/model call returns 0 free models (catalog not yet
+// initialized), the relay injector retries rather than permanently skipping.
+// Without the fix, a 0-model response at startup silently prevents relay
+// injection for the pod's entire lifetime.
+func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
+	// First request returns empty catalog (race window: providers not loaded).
+	// Second request returns the real free model.
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			_ = json.NewEncoder(w).Encode(map[string]bool{"healthy": true})
+		case "/api/model":
+			callCount++
+			if callCount == 1 {
+				// First call: empty catalog (provider init race)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode([]struct{}{})
+			} else {
+				// Second call: real free model present
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"id": "glm-5.1-free", "providerID": "opencode", "name": "GLM 5.1 Free",
+						"enabled": true, "cost": []map[string]float64{{"input": 0, "output": 0}},
+						"limit": map[string]int{"context": 8192, "output": 2048}},
+				})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	agentConfigPath := filepath.Join(dir, "agent-config.json")
+	authPath := filepath.Join(dir, "auth.json")
+	killed := make(chan struct{})
+
+	cfg := relayInjectorConfig{
+		RelayURL:         "https://relay.test/secret",
+		OpenCodeBaseURL:  srv.URL,
+		OpenCodePassword: "pw",
+		AgentConfigPath:  agentConfigPath,
+		AuthJSONPath:     authPath,
+		HealthCheck:      func() bool { return true },
+		KillOpenCode:     func() { close(killed) },
+	}
+
+	startRelayInjector(cfg)
+
+	// Should complete despite the first empty response: relay config written
+	// and opencode restarted within a reasonable window (retry every 5s in
+	// production, but we just need it to not hang forever in tests).
+	select {
+	case <-killed:
+		// Success — relay injector retried and found models on second attempt
+	case <-time.After(30 * time.Second):
+		t.Fatal("relay injector did not retry after 0-model response within 30s")
+	}
+
+	// Config must be written
+	_, err := os.ReadFile(agentConfigPath)
+	require.NoError(t, err)
+
+	// Both calls were made (retry happened)
+	assert.Equal(t, 2, callCount, "expected exactly 2 /api/model calls (initial + retry)")
+}
