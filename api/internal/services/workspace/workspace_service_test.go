@@ -525,6 +525,148 @@ func TestCreateWorkspace_DBCreateFails_CleansUpK8s(t *testing.T) {
 	f.ws.AssertCalled(t, "Delete", "ws-x", mock.Anything)
 }
 
+// ===== seedEphemeralSecrets =====
+//
+// seedEphemeralSecrets is the CreateWorkspace-only variant of
+// refreshEphemeralSecrets. Key differences from refreshEphemeralSecrets:
+//   - Does NOT require sessionID in context (admin credentials use server-side KEK)
+//   - Uses the same fail-open semantics (Warn + return, never fails the caller)
+//   - Called with sessionID="" — correct at creation time
+//
+// Tests mirror the refreshEphemeralSecrets suite but without the sessionID
+// precondition.
+
+func TestSeedEphemeralSecrets_NilInjector_NoOp(t *testing.T) {
+	// Service created without SetSecretInjector — seedEphemeralSecrets must be
+	// a pure no-op. No clientset call, no log entry. Same guarantee as refreshEphemeralSecrets.
+	f := newFixture(t)
+	ctx := context.Background() // no sessionID needed
+
+	// Clientset is not stubbed — calling it would panic, proving no-op.
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-1")
+}
+
+func TestSeedEphemeralSecrets_NonEmptyBindings_WritesManifest(t *testing.T) {
+	// Happy path: admin platform credentials produce a real K8s Secret named
+	// `workspace-secrets-<id>`. This is the regression test for the bug where
+	// CreateWorkspace seeded DB bindings but never wrote the K8s Secret, causing
+	// the pod init container to find no credentials on first boot.
+	// Note: no sessionID in context — this is the distinguishing property vs
+	// refreshEphemeralSecrets which would skip (and Warn) without a sessionID.
+	f := newFixtureWithFakeClientset(t)
+	payload := []byte(`[{"type":"llm-provider","name":"openai","metadata":{},"plaintext":"sk-..."}]`)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, sessionID, _ string) ([]byte, error) {
+			// Verify seedEphemeralSecrets passes sessionID="" as documented.
+			assert.Equal(t, "", sessionID, "seedEphemeralSecrets must pass sessionID='' (admin KEK path)")
+			return payload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := context.Background() // no sessionID in context
+
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-1")
+
+	got, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-1", metav1.GetOptions{})
+	require.NoError(t, err, "workspace-secrets-<id> must exist after seedEphemeralSecrets")
+	assert.Equal(t, payload, got.Data["secrets.json"],
+		"secrets.json payload must round-trip exactly through the manifest write")
+	assert.Equal(t, "true", got.Labels["llmsafespace.dev/ephemeral"])
+	assert.Equal(t, "ws-1", got.Labels["llmsafespace.dev/workspace"])
+	assert.Equal(t, 1, inj.calls)
+}
+
+func TestSeedEphemeralSecrets_PrepareFails_SkipsWriteCleanly(t *testing.T) {
+	// PrepareSecretsForInjection failure must not propagate to CreateWorkspace.
+	// The helper logs Warn and returns; the workspace is created successfully
+	// (no credentials injected — the pod boots with relay-only access).
+	f := newFixtureWithFakeClientset(t)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return nil, errors.New("KEK derivation failed")
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := context.Background()
+
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-1") // must not panic or return error
+
+	secrets, err := f.fakeCS.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items,
+		"Prepare failure must NOT result in a partial/empty Secret being written")
+}
+
+// fakeCredentialProvisioner stubs CredentialProvisioner for CreateWorkspace tests.
+type fakeCredentialProvisioner struct {
+	err   error
+	calls int
+}
+
+func (f *fakeCredentialProvisioner) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+	f.calls++
+	return f.err
+}
+
+func TestCreateWorkspace_SeedsEphemeralSecrets(t *testing.T) {
+	// Integration test: full CreateWorkspace path wires secretInjector and
+	// credProvisioner. Verifies the credential injection gap is fixed:
+	// workspace-secrets-<id> K8s Secret must exist after CreateWorkspace
+	// even on first boot (no prior ActivateWorkspace / RestartWorkspace call).
+	//
+	// This is the end-to-end guarantee that addresses the root cause
+	// described in worklog 0182: platform credential epic30-openai-1780700420
+	// was seeded into workspace_credential_bindings but workspace-secrets-<id>
+	// was never written, so the pod's init container found no credentials.
+	f := newFixtureWithFakeClientset(t)
+	payload := []byte(`[{"type":"llm-provider","name":"openai","metadata":{},"plaintext":"sk-proj-abc"}]`)
+
+	// Wire the credential provisioner (simulates SeedWorkspaceCredentials success).
+	cp := &fakeCredentialProvisioner{}
+	f.svc.SetCredentialProvisioner(cp)
+
+	// Wire the secret injector to return admin platform credentials.
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, sessionID, _ string) ([]byte, error) {
+			assert.Equal(t, "", sessionID,
+				"CreateWorkspace must call PrepareSecretsForInjection with sessionID='' (admin KEK)")
+			return payload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+
+	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+		crdWorkspace("ws-new", "default", "user1", "5Gi"), nil,
+	)
+	f.db.On("CreateWorkspace", mock.Anything, mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
+		return m.UserID == "user1"
+	})).Return(nil)
+
+	req := types.CreateWorkspaceRequest{
+		Name:        "new-workspace",
+		Runtime:     "base",
+		StorageSize: "5Gi",
+	}
+	ctx := context.Background()
+	result, err := f.svc.CreateWorkspace(ctx, "user1", req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// The credential provisioner must have been called.
+	assert.Equal(t, 1, cp.calls, "SeedWorkspaceCredentials must be called once")
+
+	// The K8s Secret must have been written by seedEphemeralSecrets.
+	workspaceID := result.ID
+	secretName := "workspace-secrets-" + workspaceID
+	got, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+	require.NoError(t, err,
+		"workspace-secrets-<id> must exist after CreateWorkspace (credential injection gap fix)")
+	assert.Equal(t, payload, got.Data["secrets.json"])
+
+	// The injector must have been called once (from seedEphemeralSecrets).
+	assert.Equal(t, 1, inj.calls, "PrepareSecretsForInjection must be called exactly once")
+}
+
 // ===== GetWorkspace =====
 
 func TestGetWorkspace_HappyPath(t *testing.T) {
