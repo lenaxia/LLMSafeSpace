@@ -34,7 +34,9 @@ Agents waiting to work on files currently held by an active claim. When the bloc
 
 | Completed | Agent | What | Commit |
 |-----------|-------|------|--------|
-| 2026-06-06 | agent-oc-jun05-2330 | API key SHA-256 hashing (migration 000017) + CPU/disk/memory cgroup metering + controller metrics taxonomy (operational/recovery/metering/billing) + Pending Claims section in COORDINATE.md | this commit |
+| 2026-06-06 | agent-audit-0606 | fix ModelSelector disappear (placeholderData, remove redundant filter, fix duplicate query race); Helm nginx-html emptyDir+initContainer; worklog sequence fix | 70fdb62 |
+| 2026-06-06 | agent-audit-0606 | CredentialBindingInfo json tags (camelCase) + regression test | db8ba34 |
+| 2026-06-06 | agent-oc-jun05-2330 | API key SHA-256 hashing (migration 000017) + CPU/disk/memory cgroup metering + controller metrics taxonomy | this commit |
 | 2026-06-06 | agent-audit-0606 | Epic 28 S28.8 — goroutine leak + write-deadline tests | f1af270 |
 | 2026-06-06 | agent-audit-0606 | sseConnection cleanup + 2 new weak-point tests + worklog 0171 | 1baac7d |
 | 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | dc38ad8 |
