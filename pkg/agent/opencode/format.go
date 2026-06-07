@@ -60,6 +60,16 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 			},
 		}
 
+		// Providers with a custom BaseURL are OpenAI-compatible third-party
+		// endpoints (e.g. LiteLLM proxies). Set npm so opencode uses the
+		// @ai-sdk/openai-compatible SDK, which calls /v1/chat/completions.
+		// Without this, built-in provider IDs like "openai" trigger opencode's
+		// first-party OpenAI SDK which calls /v1/responses — a path that most
+		// LiteLLM proxies don't expose.
+		if p.BaseURL != "" {
+			op.NPM = "@ai-sdk/openai-compatible"
+		}
+
 		if len(p.Models) > 0 {
 			op.Models = make(map[string]*opencodeModel, len(p.Models))
 			for _, m := range p.Models {
@@ -96,6 +106,14 @@ type opencodeConfig struct {
 }
 
 type opencodeProvider struct {
+	// NPM specifies the AI SDK package to use for this provider.
+	// When set to "@ai-sdk/openai-compatible", opencode uses the generic
+	// OpenAI-compatible SDK which calls /v1/chat/completions. This MUST
+	// be set for any provider with a custom BaseURL — if omitted, opencode
+	// treats built-in provider IDs (like "openai") as first-party and uses
+	// their native SDK (which may call /v1/responses or other non-standard
+	// paths that a LiteLLM proxy won't support).
+	NPM     string                    `json:"npm,omitempty"`
 	Options opencodeOptions           `json:"options"`
 	Models  map[string]*opencodeModel `json:"models,omitempty"`
 }

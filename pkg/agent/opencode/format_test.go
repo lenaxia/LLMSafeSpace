@@ -36,6 +36,7 @@ import (
 	"testing"
 
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,6 +102,10 @@ func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 	opts := anth["options"].(map[string]interface{})
 	require.Equal(t, "sk-ant-123", opts["apiKey"])
 	require.Equal(t, "https://custom.anthropic.com/v1", opts["baseURL"])
+
+	// npm must be set for custom-baseURL providers.
+	require.Equal(t, "@ai-sdk/openai-compatible", anth["npm"],
+		"custom-baseURL provider must have npm=@ai-sdk/openai-compatible")
 
 	// No endpoint key.
 	_, hasEndpoint := anth["endpoint"]
@@ -315,11 +320,14 @@ func TestFormatOpenCodeConfig_OutputIsValidJSON(t *testing.T) {
 // guard: any change to the formatter that affects the wire shape will
 // fail this test.
 //
-// The snapshot below was captured against the EXACT config that we
-// verified opencode 1.15.12 accepts (worklog 0128 cluster probe). Do
-// NOT update this snapshot without re-validating against a live
-// opencode that the new shape produces a connected provider in
-// `/provider`.
+// The snapshot below was updated in worklog 0183 to include
+// "npm": "@ai-sdk/openai-compatible" for providers with a custom BaseURL.
+// This shape was validated against a live opencode 1.15.12 pod: the
+// opencode-relay provider (which uses the same npm field) shows as
+// connected in `/provider`. Without the npm field, opencode treats
+// the built-in "openai" provider ID as first-party and calls
+// /v1/responses instead of /v1/chat/completions, causing 404 on
+// LiteLLM proxies that don't expose the Responses API.
 func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
@@ -340,6 +348,7 @@ func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
     "openai": {
+      "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "sk-test-key",
         "baseURL": "https://litellm.example/v1"
@@ -357,4 +366,30 @@ func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 	require.Equal(t, expected, string(out),
 		"snapshot mismatch — opencode rejects shapes other than this one. "+
 			"Re-validate against a live opencode pod before updating the snapshot.")
+}
+
+// TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL ensures providers without a
+// custom BaseURL (native built-in providers like plain "openai" with direct
+// API keys) do NOT get the npm field injected — they should use opencode's
+// native SDK, not the generic openai-compatible shim.
+func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
+	providers := []secrets.LLMProviderData{
+		{
+			Provider: "openai",
+			APIKey:   "sk-realkey",
+			BaseURL:  "", // no custom endpoint
+		},
+	}
+
+	out, err := FormatOpenCodeConfig(providers)
+	require.NoError(t, err)
+
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &cfg))
+	var provs map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfg["provider"], &provs))
+	var op map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(provs["openai"], &op))
+	_, hasNPM := op["npm"]
+	assert.False(t, hasNPM, "npm must not be set for providers without a custom BaseURL")
 }
