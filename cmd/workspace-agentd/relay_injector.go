@@ -8,8 +8,8 @@ package main
 // After opencode boots with its default config (Phase 1), this module:
 //   1. Checks whether the user has a personal opencode API key — if yes, skips
 //      the relay entirely and lets opencode call opencode.ai/zen/v1 directly.
-//   2. Calls GET /api/model on the running opencode server to get the live
-//      free model list (enabled, cost.input == 0, providerID == "opencode").
+//   2. Calls GET /provider on the running opencode server to get the live
+//      free model list (providerID in connected[], cost.input == 0).
 //   3. Writes a new agent-config.json with:
 //        - disabled_providers: ["opencode"] — removes the built-in provider
 //        - provider.opencode-relay — custom OpenAI-compatible provider pointing
