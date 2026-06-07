@@ -528,9 +528,13 @@ export function ChatPage() {
     // The user message stays in localMessages until reconcileOnIdle clears
     // it (after history catches up), preserving optimistic UX.
     send(text, () => {
-      // No-op: the assistant message is delivered via the streaming bubble
-      // (live) and via history (after reconcile). We don't need to manage
-      // it in localMessages.
+      // onComplete is called by useChatStream after either:
+      //   a) session.status=idle SSE fired (normal path — reconcileOnIdle already ran), or
+      //   b) the 60-second timeout fired (SSE was never connected or dropped).
+      //
+      // In case (b), reconcileOnIdle was never triggered, so the history hasn't
+      // been refetched. Force it now so the response shows without a full page reload.
+      reconcileOnIdle();
     }, currentModelRef);
   };
 
