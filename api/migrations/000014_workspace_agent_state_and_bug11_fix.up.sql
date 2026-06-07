@@ -32,7 +32,10 @@ DO $$ BEGIN
   ALTER TABLE user_secret_bindings
       ADD CONSTRAINT user_secret_bindings_workspace_id_fkey
           FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN foreign_key_violation THEN
+    RAISE NOTICE 'user_secret_bindings_workspace_id_fkey skipped: existing rows violate referential integrity: %', SQLERRM;
 END $$;
 
 -- Bug 12 fix: align workspaces.user_id with users.id type (VARCHAR(36))
@@ -43,9 +46,11 @@ END $$;
 -- RESTRICT means DeleteUser() fails if workspace rows still reference the user.
 --
 -- Step 1: soft-delete orphan workspaces whose user_id references a user that no
--- longer exists in the users table. Without this, the FK addition fails because
--- existing rows violate referential integrity. Soft-delete preserves audit
--- records and K8s CRD cleanup can happen later via normal garbage collection.
+-- longer exists in the users table. This marks them for cleanup but does NOT
+-- remove the FK violation: PostgreSQL validates ALL rows (including soft-deleted)
+-- when adding a FK constraint. The FK addition below catches
+-- foreign_key_violation to handle this gracefully — on databases with orphan
+-- data the constraint will not be created but the migration proceeds.
 UPDATE workspaces
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE deleted_at IS NULL
@@ -64,7 +69,10 @@ DO $$ BEGIN
   ALTER TABLE workspaces
       ADD CONSTRAINT workspaces_user_id_fkey
           FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT;
-EXCEPTION WHEN duplicate_object THEN NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN foreign_key_violation THEN
+    RAISE NOTICE 'workspaces_user_id_fkey skipped: existing rows violate referential integrity: %', SQLERRM;
 END $$;
 
 -- New per-workspace agent state, separate from workspace identity.

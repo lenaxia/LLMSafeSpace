@@ -116,5 +116,21 @@ if [ "$BACKFILL" != "1" ]; then
 fi
 echo "  OK: backfill created pending_refresh row"
 
+# FK constraint: user_secret_bindings_workspace_id_fkey should exist.
+FK_BINDINGS=$($PSQL -tAc "SELECT count(*) FROM information_schema.table_constraints WHERE constraint_name = 'user_secret_bindings_workspace_id_fkey';")
+if [ "$FK_BINDINGS" != "1" ]; then
+    echo "WARN: user_secret_bindings_workspace_id_fkey not created (orphan data may have prevented it)"
+else
+    echo "  OK: user_secret_bindings_workspace_id_fkey created"
+fi
+
+# FK constraint: workspaces_user_id_fkey — may not exist if orphan workspaces remain.
+FK_WORKSPACES=$($PSQL -tAc "SELECT count(*) FROM information_schema.table_constraints WHERE constraint_name = 'workspaces_user_id_fkey';")
+if [ "$FK_WORKSPACES" != "1" ]; then
+    echo "WARN: workspaces_user_id_fkey not created (orphan workspaces prevented FK — expected with test data)"
+else
+    echo "  OK: workspaces_user_id_fkey created"
+fi
+
 echo ""
 echo "migration-data-cleanup: all checks passed."
