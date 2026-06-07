@@ -66,11 +66,31 @@ spec:
               mountPath: /var/run
             - name: tmp
               mountPath: /tmp
+            # The entrypoint script (40-envsubst-env-json.sh) writes env.json
+            # into /usr/share/nginx/html at startup. readOnlyRootFilesystem
+            # blocks this even though the dir is chown'd to nginx in the image.
+            # An initContainer copies the baked-in dist files to this emptyDir
+            # so the entrypoint can write env.json at runtime.
+            - name: nginx-html
+              mountPath: /usr/share/nginx/html
+      initContainers:
+        - name: copy-html
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag | default .Chart.AppVersion }}"
+          command: ["/bin/sh", "-c", "cp -a /usr/share/nginx/html/. /html/"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101
+          volumeMounts:
+            - name: nginx-html
+              mountPath: /html
       volumes:
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-run
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: nginx-html
           emptyDir: {}
 {{- end }}
