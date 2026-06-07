@@ -232,6 +232,19 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		}
 	}
 
+	// Write the workspace-secrets K8s Secret immediately after seeding so the
+	// pod's init container finds provider credentials (OPENAI_API_KEY, etc.) on
+	// first boot without waiting for a live reload.
+	//
+	// Admin platform credentials (owner_type='admin') use a server-side KEK and
+	// do not require a user sessionID. Passing sessionID="" is correct here:
+	// the only credentials that can be bound at this point are admin-owned
+	// (SeedWorkspaceCredentials just ran; the user has no session-encrypted
+	// credentials yet). refreshEphemeralSecrets's sessionID guard is intentionally
+	// bypassed here — user credentials will be injected later when the user opens
+	// the workspace and an active session DEK is available.
+	s.seedEphemeralSecrets(ctx, userID, meta.ID)
+
 	ws := &types.Workspace{
 		ID:          meta.ID,
 		Name:        meta.Name,
@@ -1101,6 +1114,27 @@ func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspace
 	// user's explicit "unbind" path (SetBindings with []) goes
 	// through pushSecretsToAgent which is the correct place to clear
 	// the manifest.
+	if len(secretsJSON) <= 2 {
+		return
+	}
+	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
+}
+
+// seedEphemeralSecrets is the CreateWorkspace-only variant of refreshEphemeralSecrets.
+// It passes sessionID="" because only admin platform credentials (server-side KEK,
+// no session required) are bound at workspace creation time. User session-encrypted
+// credentials are not available yet and will be injected later by refreshEphemeralSecrets
+// when the user first opens the workspace with an active session.
+func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
+	if s.secretInjector == nil {
+		return
+	}
+	secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, "", workspaceID)
+	if err != nil {
+		s.logger.Warn("seedEphemeralSecrets: failed to prepare admin credentials for new workspace",
+			"workspaceID", workspaceID, "error", err.Error())
+		return
+	}
 	if len(secretsJSON) <= 2 {
 		return
 	}

@@ -12,6 +12,10 @@ interface Props {
 export function ModelSelector({ workspaceId, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // optimisticModel holds the locally-selected model ID while the mutation is
+  // in-flight. It is set immediately on click and cleared (on success or error)
+  // once the server confirms. On error it reverts to the server-confirmed value.
+  const [optimisticModel, setOptimisticModel] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
@@ -28,19 +32,29 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
   const setModelMutation = useMutation({
     mutationFn: (model: string) => workspacesApi.setModel(workspaceId, model),
     onSuccess: (data) => {
+      setOptimisticModel(null);
       queryClient.invalidateQueries({ queryKey: ["models", workspaceId] });
-      setOpen(false);
       if (data && !data.applied) {
         setToast("Model saved — takes effect on your next message.");
       }
     },
     onError: () => {
+      // Revert the optimistic selection and show an error.
+      setOptimisticModel(null);
       setToast("Failed to set model. Please try again.");
     },
   });
 
+  const handleSelectModel = (modelId: string) => {
+    setOptimisticModel(modelId);
+    setOpen(false);
+    setModelMutation.mutate(modelId);
+  };
+
   const models = data?.models ?? [];
-  const currentModel = data?.currentModel || "";
+  const serverModel = data?.currentModel || "";
+  // Show the optimistic selection immediately; fall back to server-confirmed value.
+  const currentModel = optimisticModel ?? serverModel;
   const currentDisplay = currentModel
     ? models.find((m) => m.id === currentModel)?.name || currentModel.split("/").pop()
     : "Select model";
@@ -79,7 +93,7 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        disabled={disabled || setModelMutation.isPending}
+        disabled={disabled}
         className="flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
       >
         <span className="max-w-[160px] truncate">{currentDisplay}</span>
@@ -96,7 +110,7 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
               <button
                 key={m.id}
                 type="button"
-                onClick={() => setModelMutation.mutate(m.id)}
+                onClick={() => handleSelectModel(m.id)}
                 className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-accent ${
                   m.id === currentModel ? "bg-accent/50 font-medium" : ""
                 }`}

@@ -107,6 +107,13 @@ commits = [
   # The follow-up commit rewrote the worklog to prose; this entry
   # silences history scans of the original commit.
   "fec33638b931175136a04a42285b97cb33be901b",
+  # b45dab6 (worklog 0181) documents the Cloudflare Worker inference-relay
+  # secret value generated, stored in the cluster K8s Secret, and pushed
+  # to the CF Worker in that session. Already deployed; rotation is tracked
+  # separately. It is an infrastructure secret for a rate-limited free-tier
+  # relay — not an API key with billing/data access. Documented in the
+  # worklog as context for the rotation procedure.
+  "b45dab6def0ee0d16817f48feafef780f7ee74d8",
 ]
 
 # Stop-words: matches that, when seen alongside a candidate secret,
