@@ -103,6 +103,10 @@ func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 	require.Equal(t, "sk-ant-123", opts["apiKey"])
 	require.Equal(t, "https://custom.anthropic.com/v1", opts["baseURL"])
 
+	// npm must be set for custom-baseURL providers.
+	require.Equal(t, "@ai-sdk/openai-compatible", anth["npm"],
+		"custom-baseURL provider must have npm=@ai-sdk/openai-compatible")
+
 	// No endpoint key.
 	_, hasEndpoint := anth["endpoint"]
 	require.False(t, hasEndpoint)
