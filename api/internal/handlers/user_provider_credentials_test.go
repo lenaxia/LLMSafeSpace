@@ -380,6 +380,67 @@ func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) 
 	assert.ElementsMatch(t, []string{"ws-1", "ws-2"}, resp.WorkspaceIds)
 }
 
+// TestUserProviderCredentials_ListBindings_JSONShape_CamelCase is a regression
+// test for the CredentialBindingInfo PascalCase serialization bug.
+// CredentialBindingInfo had no json struct tags, causing encoding/json to emit
+// WorkspaceID/SourceType (PascalCase) instead of workspaceId/sourceType.
+// The frontend TypeScript type expects camelCase; PascalCase caused the binding
+// panel to show every workspace as "Bind" regardless of actual binding state.
+func TestUserProviderCredentials_ListBindings_JSONShape_CamelCase(t *testing.T) {
+	store := newFakeUserCredStore()
+	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.bindings["c1"] = []string{"ws-explicit"}
+	// ws-auto is in autoBinds so GetCredentialBindingsWithSource returns sourceType="auto"
+	store.autoBinds["ws-auto"] = true
+	store.bindings["c1"] = append(store.bindings["c1"], "ws-auto")
+	h := &UserProviderCredentialsHandler{store: store}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/provider-credentials/c1/bindings", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Parse as raw map to verify exact JSON key names.
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+
+	// Flat array key must be camelCase "workspaceIds", not "WorkspaceIds".
+	assert.Contains(t, raw, "workspaceIds", "flat array key must be camelCase workspaceIds")
+	assert.NotContains(t, raw, "WorkspaceIds", "PascalCase WorkspaceIds must not appear in response")
+
+	// Bindings array key must be "bindings".
+	assert.Contains(t, raw, "bindings", "bindings key must be present")
+
+	// Each binding object must use camelCase keys.
+	var bindings []json.RawMessage
+	require.NoError(t, json.Unmarshal(raw["bindings"], &bindings))
+	require.NotEmpty(t, bindings)
+
+	for _, b := range bindings {
+		var bindingMap map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &bindingMap))
+		assert.Contains(t, bindingMap, "workspaceId", "binding key must be camelCase workspaceId")
+		assert.Contains(t, bindingMap, "sourceType", "binding key must be camelCase sourceType")
+		assert.NotContains(t, bindingMap, "WorkspaceID", "PascalCase WorkspaceID must not appear")
+		assert.NotContains(t, bindingMap, "SourceType", "PascalCase SourceType must not appear")
+	}
+
+	// Verify sourceType values are correct.
+	bindingByWs := map[string]string{}
+	for _, b := range bindings {
+		var bindingObj struct {
+			WorkspaceId string `json:"workspaceId"`
+			SourceType  string `json:"sourceType"`
+		}
+		require.NoError(t, json.Unmarshal(b, &bindingObj))
+		bindingByWs[bindingObj.WorkspaceId] = bindingObj.SourceType
+	}
+	assert.Equal(t, "explicit", bindingByWs["ws-explicit"])
+	assert.Equal(t, "auto", bindingByWs["ws-auto"])
+}
+
 func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
 	store := newFakeUserCredStore()
 	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
