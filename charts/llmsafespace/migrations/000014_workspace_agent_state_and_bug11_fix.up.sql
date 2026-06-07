@@ -6,8 +6,18 @@
 -- Step 1: purge rows with non-UUID workspace_id values (test data, validation
 -- stubs, etc.) that would prevent the type cast. These rows reference workspaces
 -- that do not exist in the workspaces table and have no K8s CRD behind them.
-DELETE FROM user_secret_bindings
-WHERE workspace_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+-- Guard: skip when column is already UUID (re-apply after successful first run).
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'user_secret_bindings'
+      AND column_name = 'workspace_id'
+      AND data_type = 'character varying'
+  ) THEN
+    DELETE FROM user_secret_bindings
+    WHERE workspace_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  END IF;
+END $$;
 
 -- Step 2: widen column to 36 chars (no-op if already VARCHAR(36)) then convert to UUID.
 DO $$ BEGIN
