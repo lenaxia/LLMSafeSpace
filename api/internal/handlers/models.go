@@ -143,7 +143,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 			return
 		}
 
-		url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+		url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
 		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil) //nolint:gosec // G107: URL constructed from trusted podIP (internal cluster network)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
@@ -180,12 +180,11 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// Filter to only usable models (available or free-tier).
+	// annotateModels already filters to connected-only models.
+	// ModelUnavailable cannot appear in the result, but keep the guard
+	// for safety in case the provider response schema changes.
 	usable := make([]annotatedModel, 0, len(annotated))
 	for _, m := range annotated {
-		if !m.Enabled {
-			continue
-		}
 		if m.Availability == ModelUnavailable {
 			continue
 		}
@@ -230,18 +229,30 @@ type annotatedModel struct {
 	Details       json.RawMessage   `json:"details"`       // full opencode model object (unstable schema)
 }
 
-// opencodeModel is the minimal subset of opencode's ModelV2.Info we parse for classification.
-type opencodeModel struct {
-	ID         string         `json:"id"`
-	ProviderID string         `json:"providerID"`
-	Name       string         `json:"name"`
-	Family     string         `json:"family,omitempty"`
-	Enabled    bool           `json:"enabled"`
-	Status     string         `json:"status,omitempty"`
-	Cost       []opencodeCost `json:"cost"`
+// providerListResponse is the shape of GET /provider from opencode.
+// all[] contains every provider from models.dev (139+) regardless of auth.
+// connected[] is the subset with live credentials — the only models we can use.
+type providerListResponse struct {
+	Connected []string       `json:"connected"`
+	All       []providerInfo `json:"all"`
 }
 
-type opencodeCost struct {
+// providerInfo is a single provider entry in the /provider response.
+type providerInfo struct {
+	ID     string                   `json:"id"`
+	Models map[string]providerModel `json:"models"`
+}
+
+// providerModel is a model entry within a provider in the /provider response.
+// cost is an object {input, output}, not an array.
+type providerModel struct {
+	ID   string       `json:"id"`
+	Name string       `json:"name"`
+	Cost providerCost `json:"cost"`
+}
+
+// providerCost is the cost object in /provider model entries.
+type providerCost struct {
 	Input  float64 `json:"input"`
 	Output float64 `json:"output"`
 }
@@ -255,67 +266,62 @@ const (
 	ModelFreeTier    ModelAvailability = "free"
 )
 
-// annotateModels enriches the raw /api/model response with tier, availability,
+// annotateModels enriches the raw GET /provider response with tier, availability,
 // and relay information. When relayActive is true, free-tier opencode models
 // have their ProviderID remapped to "opencode-relay" so clients send inference
 // requests to the relay provider rather than the (disabled) built-in opencode
 // provider.
+//
+// Only models whose providerID is in connected[] are returned as available;
+// all others (from models.dev but without credentials) are omitted.
 func annotateModels(raw []byte, relayActive bool) ([]annotatedModel, error) {
-	var models []opencodeModel
-	if err := json.Unmarshal(raw, &models); err != nil {
+	var provResp providerListResponse
+	if err := json.Unmarshal(raw, &provResp); err != nil {
 		return nil, err
 	}
 
-	var rawModels []json.RawMessage
-	if err := json.Unmarshal(raw, &rawModels); err != nil {
-		return nil, err
+	// Build a set of connected provider IDs — the only ones we have credentials for.
+	connectedSet := make(map[string]bool, len(provResp.Connected))
+	for _, id := range provResp.Connected {
+		connectedSet[id] = true
 	}
 
-	// Derive loadedProviders from catalog — which providers have enabled models.
-	loadedProviders := make(map[string]bool)
-	for _, m := range models {
-		if m.Enabled {
-			loadedProviders[m.ProviderID] = true
+	var result []annotatedModel
+	for _, p := range provResp.All {
+		if !connectedSet[p.ID] {
+			continue // no credentials — skip entire provider
 		}
-	}
-
-	result := make([]annotatedModel, len(models))
-	for i, m := range models {
-		avail := classifyAvailability(m.ProviderID, m.Cost, loadedProviders)
-		providerID := m.ProviderID
-		if relayActive && avail == ModelFreeTier && m.ProviderID == "opencode" {
-			// Remap free-tier opencode models to opencode-relay so inference
-			// requests route through the CF Worker. Only remap from "opencode"
-			// to "opencode-relay" — if the catalog already has "opencode-relay"
-			// (Phase 2: relay injected, opencode restarted) the model already
-			// has the correct providerID and no remap is needed.
-			providerID = "opencode-relay"
-		}
-		var details json.RawMessage
-		if i < len(rawModels) {
-			details = rawModels[i]
-		}
-		result[i] = annotatedModel{
-			ID:            m.ID,
-			ProviderID:    providerID,
-			Name:          m.Name,
-			Family:        m.Family,
-			Enabled:       m.Enabled,
-			Status:        m.Status,
-			Availability:  avail,
-			Tier:          tierFromAvailability(avail),
-			FreeTier:      avail == ModelFreeTier,
-			ProxyRequired: avail == ModelFreeTier,
-			Details:       details,
+		for modelKey, m := range p.Models {
+			id := m.ID
+			if id == "" {
+				id = modelKey
+			}
+			avail := classifyAvailability(p.ID, m.Cost)
+			providerID := p.ID
+			if relayActive && avail == ModelFreeTier && p.ID == "opencode" {
+				// Remap free-tier opencode models to opencode-relay so inference
+				// requests route through the CF Worker. Only remap from "opencode"
+				// to "opencode-relay" — if the catalog already has "opencode-relay"
+				// (Phase 2: relay injected, opencode restarted) the model already
+				// has the correct providerID and no remap is needed.
+				providerID = "opencode-relay"
+			}
+			result = append(result, annotatedModel{
+				ID:            id,
+				ProviderID:    providerID,
+				Name:          m.Name,
+				Enabled:       true, // connected = credentials present = enabled
+				Availability:  avail,
+				Tier:          tierFromAvailability(avail),
+				FreeTier:      avail == ModelFreeTier,
+				ProxyRequired: avail == ModelFreeTier,
+			})
 		}
 	}
 	return result, nil
 }
 
-func classifyAvailability(providerID string, cost []opencodeCost, loadedProviders map[string]bool) ModelAvailability {
-	if !loadedProviders[providerID] {
-		return ModelUnavailable
-	}
+func classifyAvailability(providerID string, cost providerCost) ModelAvailability {
 	if isZeroCostOpencode(providerID, cost) {
 		return ModelFreeTier
 	}
@@ -327,19 +333,11 @@ func classifyAvailability(providerID string, cost []opencodeCost, loadedProvider
 // injection) or the synthesized opencode-relay provider (Phase 2, after
 // relay injection). Both represent the same free-tier relay and should be
 // classified as ModelFreeTier / proxyRequired=true.
-func isZeroCostOpencode(providerID string, cost []opencodeCost) bool {
+func isZeroCostOpencode(providerID string, cost providerCost) bool {
 	if providerID != "opencode" && providerID != "opencode-relay" {
 		return false
 	}
-	if len(cost) == 0 {
-		return true // no cost data for opencode model = assume free
-	}
-	for _, c := range cost {
-		if c.Input > 0 || c.Output > 0 {
-			return false
-		}
-	}
-	return true
+	return cost.Input == 0 && cost.Output == 0
 }
 
 func tierFromAvailability(a ModelAvailability) string {
@@ -459,14 +457,16 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
 }
 
-// catalogEntry is the minimal model record returned by the agent catalog.
+// catalogEntry is a model record parsed from the /provider response, used for
+// model existence checks and providerID resolution.
 type catalogEntry struct {
-	ID         string         `json:"id"`
-	ProviderID string         `json:"providerID"`
-	Cost       []opencodeCost `json:"cost"`
+	ID         string
+	ProviderID string
+	Cost       providerCost
 }
 
-// fetchCatalog retrieves the model catalog from the running agent. Returns nil on any error
+// fetchCatalog retrieves the model catalog from the running agent via GET /provider.
+// Returns only models whose provider is in connected[]. Returns nil on any error
 // (callers should fail open when the catalog is unavailable).
 func (h *SecretsHandler) fetchCatalog(ctx context.Context, podIP, workspaceID string) []catalogEntry {
 	if h.passwordGetter == nil {
@@ -476,7 +476,7 @@ func (h *SecretsHandler) fetchCatalog(ctx context.Context, podIP, workspaceID st
 	if err != nil || password == "" {
 		return nil
 	}
-	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: URL to internal pod
 	if err != nil {
 		return nil
@@ -487,13 +487,33 @@ func (h *SecretsHandler) fetchCatalog(ctx context.Context, podIP, workspaceID st
 		return nil
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
 		return nil
 	}
-	var entries []catalogEntry
-	if json.Unmarshal(body, &entries) != nil {
+	var provResp providerListResponse
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&provResp) != nil {
 		return nil
+	}
+	connectedSet := make(map[string]bool, len(provResp.Connected))
+	for _, id := range provResp.Connected {
+		connectedSet[id] = true
+	}
+	var entries []catalogEntry
+	for _, p := range provResp.All {
+		if !connectedSet[p.ID] {
+			continue
+		}
+		for modelKey, m := range p.Models {
+			id := m.ID
+			if id == "" {
+				id = modelKey
+			}
+			entries = append(entries, catalogEntry{
+				ID:         id,
+				ProviderID: p.ID,
+				Cost:       m.Cost,
+			})
+		}
 	}
 	return entries
 }
@@ -512,12 +532,13 @@ func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, worksp
 	return false
 }
 
-// resolveModelIDFromCatalog fetches the catalog and returns the providerID/modelID form.
-// When h.relayActive is true and the model resolves to a free-tier opencode model
-// (providerID=opencode, cost.input=0), the providerID is remapped to "opencode-relay"
-// so inference routes through the CF Worker. Falls back to model unchanged on error.
+// resolveModelIDFromCatalog fetches the catalog via GET /provider and returns
+// the providerID/modelID form. When h.relayActive is true and the model
+// resolves to a free-tier opencode model (providerID=opencode, cost.input=0),
+// the providerID is remapped to "opencode-relay" so inference routes through
+// the CF Worker. Falls back to model unchanged on any error.
 func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, password, model string) string {
-	url := fmt.Sprintf("http://%s:%d/api/model", podIP, agentd.AgentPort)
+	url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
 	if err != nil {
 		return model
@@ -530,24 +551,37 @@ func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, p
 		return model
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
 		return model
 	}
-	var entries []catalogEntry
-	if json.Unmarshal(body, &entries) != nil {
+	var provResp providerListResponse
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&provResp) != nil {
 		return model
 	}
-	for _, e := range entries {
-		if e.ID == model && e.ProviderID != "" {
-			providerID := e.ProviderID
+	connectedSet := make(map[string]bool, len(provResp.Connected))
+	for _, id := range provResp.Connected {
+		connectedSet[id] = true
+	}
+	for _, p := range provResp.All {
+		if !connectedSet[p.ID] {
+			continue
+		}
+		for modelKey, m := range p.Models {
+			id := m.ID
+			if id == "" {
+				id = modelKey
+			}
+			if id != model {
+				continue
+			}
+			providerID := p.ID
 			// When relay is active, remap free-tier opencode models to the relay provider.
 			// Without this, PATCH /global/config sets "opencode/<model>" which fails because
 			// disabled_providers:["opencode"] blocks the built-in provider in routing.
-			if h.relayActive && providerID == "opencode" && isZeroCostOpencode(providerID, e.Cost) {
+			if h.relayActive && isZeroCostOpencode(providerID, m.Cost) {
 				providerID = "opencode-relay"
 			}
-			return providerID + "/" + e.ID
+			return providerID + "/" + id
 		}
 	}
 	return model

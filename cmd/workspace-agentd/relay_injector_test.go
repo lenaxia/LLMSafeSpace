@@ -139,24 +139,45 @@ func TestShouldSkipRelay_DoesNotSkipWithMissingFile(t *testing.T) {
 
 func TestFetchFreeModels_FiltersCorrectly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/model" {
+		if r.URL.Path == "/provider" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[
-				{"id":"free-1","providerID":"opencode","enabled":true,"cost":[{"input":0,"output":0}],"limit":{"context":100000,"output":10000,"input":null}},
-				{"id":"paid-1","providerID":"opencode","enabled":true,"cost":[{"input":3,"output":15}],"limit":{"context":200000,"output":20000}},
-				{"id":"free-disabled","providerID":"opencode","enabled":false,"cost":[{"input":0,"output":0}],"limit":{"context":50000,"output":5000}},
-				{"id":"other-provider","providerID":"anthropic","enabled":true,"cost":[{"input":0,"output":0}],"limit":{"context":200000,"output":10000}}
-			]`))
+			w.Write([]byte(`{
+				"connected": ["opencode"],
+				"all": [
+					{"id":"opencode","models":{
+						"free-1":      {"id":"free-1","name":"Free 1","cost":{"input":0,"output":0},"limit":{"context":100000,"output":10000}},
+						"paid-1":      {"id":"paid-1","name":"Paid 1","cost":{"input":3,"output":15},"limit":{"context":200000,"output":20000}},
+						"free-nokey":  {"id":"free-nokey","name":"Free Nokey","cost":{"input":0,"output":0},"limit":{"context":50000,"output":5000}}
+					}},
+					{"id":"anthropic","models":{
+						"claude":      {"id":"claude","name":"Claude","cost":{"input":0,"output":0},"limit":{"context":200000,"output":10000}}
+					}}
+				]
+			}`))
 		}
 	}))
 	defer srv.Close()
 
 	models, err := fetchFreeModels(srv.URL, "testpassword")
 	require.NoError(t, err)
-	require.Len(t, models, 1)
-	assert.Equal(t, "free-1", models[0].ID)
-	assert.Equal(t, 100000, models[0].ContextLimit)
-	assert.Equal(t, 10000, models[0].OutputLimit)
+	// opencode provider: free-1 and free-nokey pass (cost.input==0); paid-1 excluded
+	// anthropic: excluded (not in connected[])
+	require.Len(t, models, 2)
+	ids := make(map[string]bool)
+	for _, m := range models {
+		ids[m.ID] = true
+	}
+	assert.True(t, ids["free-1"], "free-1 must be included")
+	assert.True(t, ids["free-nokey"], "free-nokey must be included")
+	assert.False(t, ids["paid-1"], "paid-1 must be excluded (cost.input>0)")
+	assert.False(t, ids["claude"], "anthropic/claude must be excluded (not connected)")
+	// Validate limits on a specific model
+	for _, m := range models {
+		if m.ID == "free-1" {
+			assert.Equal(t, 100000, m.ContextLimit)
+			assert.Equal(t, 10000, m.OutputLimit)
+		}
+	}
 }
 
 func TestFetchFreeModels_ServerError(t *testing.T) {
@@ -245,9 +266,14 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[
-			{"id":"free-model","providerID":"opencode","enabled":true,"cost":[{"input":0}],"limit":{"context":100000,"output":10000}}
-		]`))
+		w.Write([]byte(`{
+			"connected": ["opencode"],
+			"all": [
+				{"id":"opencode","models":{
+					"free-model": {"id":"free-model","name":"Free Model","cost":{"input":0,"output":0},"limit":{"context":100000,"output":10000}}
+				}}
+			]
+		}`))
 	}))
 	defer srv.Close()
 
@@ -285,31 +311,41 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 }
 
 // TestStartRelayInjector_RetriesWhenZeroModels verifies the race-condition fix:
-// when the first /api/model call returns 0 free models (catalog not yet
-// initialized), the relay injector retries rather than permanently skipping.
-// Without the fix, a 0-model response at startup silently prevents relay
-// injection for the pod's entire lifetime.
+// when the first /provider call returns opencode connected but no free models
+// (catalog not yet fully initialized), the relay injector retries rather than
+// permanently skipping.
 func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
-	// First request returns empty catalog (race window: providers not loaded).
-	// Second request returns the real free model.
+	// First request: opencode connected but no models yet.
+	// Second request: real free model present.
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/global/health":
 			_ = json.NewEncoder(w).Encode(map[string]bool{"healthy": true})
-		case "/api/model":
+		case "/provider":
 			callCount++
+			w.Header().Set("Content-Type", "application/json")
 			if callCount == 1 {
-				// First call: empty catalog (provider init race)
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode([]struct{}{})
+				// First call: opencode connected but empty model map
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"connected": []string{"opencode"},
+					"all": []map[string]interface{}{
+						{"id": "opencode", "models": map[string]interface{}{}},
+					},
+				})
 			} else {
 				// Second call: real free model present
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode([]map[string]interface{}{
-					{"id": "glm-5.1-free", "providerID": "opencode", "name": "GLM 5.1 Free",
-						"enabled": true, "cost": []map[string]float64{{"input": 0, "output": 0}},
-						"limit": map[string]int{"context": 8192, "output": 2048}},
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"connected": []string{"opencode"},
+					"all": []map[string]interface{}{
+						{"id": "opencode", "models": map[string]interface{}{
+							"glm-5.1-free": map[string]interface{}{
+								"id": "glm-5.1-free", "name": "GLM 5.1 Free",
+								"cost":  map[string]float64{"input": 0, "output": 0},
+								"limit": map[string]int{"context": 8192, "output": 2048},
+							},
+						}},
+					},
 				})
 			}
 		default:
@@ -335,9 +371,6 @@ func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
 
 	startRelayInjector(cfg)
 
-	// Should complete despite the first empty response: relay config written
-	// and opencode restarted within a reasonable window (retry every 5s in
-	// production, but we just need it to not hang forever in tests).
 	select {
 	case <-killed:
 		// Success — relay injector retried and found models on second attempt
@@ -350,5 +383,5 @@ func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both calls were made (retry happened)
-	assert.Equal(t, 2, callCount, "expected exactly 2 /api/model calls (initial + retry)")
+	assert.Equal(t, 2, callCount, "expected exactly 2 /provider calls (initial + retry)")
 }
