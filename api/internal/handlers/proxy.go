@@ -935,6 +935,17 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		// Invalidate pwCache when transitioning Active-from-non-Active.
 		if prior != "" && prior != string(phaseActive) {
 			h.invalidateCaches(workspace.Name)
+			// The SSETracker may have been started while the workspace was
+			// still Creating/Resuming and hit "no pod IP" repeatedly, backing
+			// off up to 30s. Now that the pod is Active and has an IP, reset
+			// the subscription so it reconnects immediately instead of waiting
+			// out the current backoff interval. Without this, the first user
+			// message after workspace startup can have its idle event dropped
+			// because the tracker hasn't successfully connected to the pod yet.
+			if h.sseTracker != nil {
+				h.sseTracker.StopWatching(workspace.Name)
+				h.sseTracker.EnsureWatching(workspace.Name)
+			}
 		} else {
 			// Active→Active reconcile (no transition). Only wsConfig may be stale.
 			h.wsConfigMu.Lock()
