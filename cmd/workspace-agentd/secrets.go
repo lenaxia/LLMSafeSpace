@@ -24,6 +24,7 @@ package main
 // silently regressing the secrets path.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -132,6 +134,14 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 		return 3
 	}
+
+	// Enrich staged providers that have a custom BaseURL but no model list.
+	// This fetches the live model list from the provider's /models endpoint
+	// (e.g. ai.thekao.cloud/v1/models) so opencode uses the correct model IDs
+	// instead of its internal hardcoded list. Results are cached to cacheDir
+	// for providerModelCacheTTL so pod restarts don't re-fetch unnecessarily.
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	m.EnrichProviders(enrichProviderModels(context.Background(), cfg.secretsBaseDir, httpClient))
 
 	// Flush staged llm-provider secrets to AgentConfigPath so opencode
 	// reads them at startup. Without this, the config file is empty and
@@ -251,6 +261,12 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		if result == nil {
 			result = &secrets.MaterializeResult{}
 		}
+
+		// Enrich custom-endpoint providers with their live model list (same as
+		// the boot-time materialize path). On reload, any cached model list is
+		// reused so this is typically instant.
+		reloadHTTPClient := &http.Client{Timeout: 15 * time.Second}
+		m.EnrichProviders(enrichProviderModels(r.Context(), cfg.secretsBaseDir, reloadHTTPClient))
 
 		// Flush staged llm-provider secrets to AgentConfigPath.
 		// This MUST succeed before we notify the agent of config changes.

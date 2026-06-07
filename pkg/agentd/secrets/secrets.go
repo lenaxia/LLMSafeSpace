@@ -602,6 +602,17 @@ func (m *Materializer) StagedProviders() []sec.LLMProviderData {
 	return m.stagedProviders
 }
 
+// EnrichProviders applies fn to the staged provider slice, replacing it with
+// the result. Callers use this to inject additional fields (e.g. a live model
+// list fetched from the provider's /models endpoint) after Materialize and
+// before FlushProviders. fn must not be nil.
+func (m *Materializer) EnrichProviders(fn func([]sec.LLMProviderData) []sec.LLMProviderData) {
+	if fn == nil {
+		return
+	}
+	m.stagedProviders = fn(m.stagedProviders)
+}
+
 // FlushProviders calls the formatter with all staged LLM provider data and
 // writes the result to AgentConfigPath. Must be called after Materialize
 // returns if llm-provider secrets were in the batch.
