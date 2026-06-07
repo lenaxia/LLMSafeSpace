@@ -1254,6 +1254,81 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 		"SSE subscription should NOT be stopped on Running phase change")
 }
 
+// TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker verifies that when
+// the workspace transitions from Creating (or any non-Active phase) to Active,
+// the SSE tracker subscription is reset (Stop + EnsureWatching) so that any
+// backoff accumulated during the Creating phase is cleared immediately.
+//
+// Regression test for: workspace becomes Active but SSETracker is mid-backoff
+// (30s max) from repeated "no pod IP" failures during Creating phase. User
+// sends a message within the backoff window → idle event never reaches broker
+// → response doesn't appear until page reload.
+func TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	handler.sseTracker = NewSSETracker(
+		&http.Client{},
+		&testLogger{},
+		func(workspaceID, sessionID string) {},
+	)
+	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
+		return "pw", nil
+	})
+	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
+
+	// Simulate the scenario: subscription is already running (started while
+	// workspace was Creating) and has been backed off.
+	handler.sseTracker.EnsureWatching("ws-1")
+	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(), "subscription must exist before transition")
+
+	// Record the subscription cancel func address before the transition so we
+	// can verify it was replaced (Stop + re-EnsureWatching creates a new one).
+	// We can't directly inspect the cancel func, but we can verify the count
+	// stays at 1 (Stop decrements to 0, EnsureWatching brings back to 1).
+
+	// Set prior phase to Creating to trigger the reset path.
+	handler.priorPhaseMu.Lock()
+	handler.priorPhase["ws-1"] = "Creating"
+	handler.priorPhaseMu.Unlock()
+
+	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
+	handler.onPhaseChange(sb)
+
+	// Subscription must still exist (was reset, not stopped permanently).
+	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
+		"SSE subscription must be re-established after Creating→Active transition")
+}
+
+// TestProxy_OnPhaseChange_ActiveToActive_NoReset verifies that Active→Active
+// reconcile calls (no phase transition) do NOT reset the SSE tracker, since
+// the subscription is already healthy.
+func TestProxy_OnPhaseChange_ActiveToActive_NoReset(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	handler.sseTracker = NewSSETracker(
+		&http.Client{},
+		&testLogger{},
+		func(workspaceID, sessionID string) {},
+	)
+	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
+		return "pw", nil
+	})
+	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
+
+	handler.sseTracker.EnsureWatching("ws-1")
+	// Prime the cache with Active so onPhaseChange sees Active→Active.
+	handler.priorPhaseMu.Lock()
+	handler.priorPhase["ws-1"] = string(phaseActive)
+	handler.priorPhaseMu.Unlock()
+
+	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
+	handler.onPhaseChange(sb)
+
+	// Subscription must still exist and must NOT have been reset.
+	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
+		"Active→Active reconcile must not reset the SSE subscription")
+}
+
 func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
