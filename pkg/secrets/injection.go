@@ -91,6 +91,15 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		if len(b.ModelAllowlist) > 0 {
 			allowed := make(map[string]bool, len(b.ModelAllowlist))
 			for _, id := range b.ModelAllowlist {
+				// Skip obviously invalid model IDs. The allowlist is stored
+				// as a DB array and can accumulate stale entries (e.g. the
+				// literal string "default" from a mis-formed create request).
+				// An invalid ID passed to FormatOpenCodeConfig produces a
+				// provider entry with no valid models, causing opencode to
+				// treat the provider as unconfigured and return 0 providers.
+				if id == "" || id == "default" {
+					continue
+				}
 				allowed[id] = true
 			}
 			var filtered []LLMModelConfig
@@ -99,12 +108,20 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 					filtered = append(filtered, m)
 				}
 			}
-			if len(filtered) == 0 {
-				filtered = make([]LLMModelConfig, 0, len(b.ModelAllowlist))
+			// If pd.Models is empty (credentials don't carry a model list) but
+			// the allowlist has valid IDs, synthesize LLMModelConfig entries so
+			// the provider is rendered with an explicit model allowlist.
+			if len(filtered) == 0 && len(allowed) > 0 {
+				filtered = make([]LLMModelConfig, 0, len(allowed))
 				for _, id := range b.ModelAllowlist {
-					filtered = append(filtered, LLMModelConfig{ID: id})
+					if allowed[id] { // only valid IDs
+						filtered = append(filtered, LLMModelConfig{ID: id})
+					}
 				}
 			}
+			// If the allowlist contained only invalid IDs (e.g. all "default"),
+			// leave pd.Models empty — the provider will still be registered
+			// but with no model filtering, which is the safe fallback.
 			pd.Models = filtered
 		}
 		seen[b.Provider] = true
