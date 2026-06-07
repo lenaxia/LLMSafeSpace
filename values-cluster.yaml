@@ -3,13 +3,13 @@
 # traefik ingress, no cluster-internal DNS named redis-master, etc.)
 
 # Pin all components to the same commit so they reconcile against
-# matching CRD schema and protocol expectations. sha-9d801a2 includes:
-#   - 9d801a2: RestartWorkspace mock + GET /models OpenAPI allowlist
-#   - controller memory limit raised 256Mi → 512Mi (was OOMKilled at
-#     ~370Mi during cluster-wide informer cache sync)
+# matching CRD schema and protocol expectations. ts-1780821820 includes:
+#   - ed955fc4: fix(models): switch /api/model to /provider endpoint
+#     (model selector and relay injection now correctly use the v1
+#     /provider endpoint which is always populated in opencode 1.15.x)
 api:
   image:
-    tag: sha-9d801a2
+    tag: ts-1780821820
     pullPolicy: IfNotPresent
   ingress:
     # API is exposed via the frontend ingress at /api; no separate
@@ -18,7 +18,7 @@ api:
 
 controller:
   image:
-    tag: sha-9d801a2
+    tag: ts-1780821820
     pullPolicy: IfNotPresent
 
 # The cluster runs Valkey, not Bitnami Redis. The chart default
@@ -36,7 +36,7 @@ mcp:
 frontend:
   enabled: true
   image:
-    tag: sha-9d801a2
+    tag: ts-1780821820
     pullPolicy: IfNotPresent
   ingress:
     enabled: true
@@ -54,7 +54,7 @@ frontend:
 runtimeEnvironments:
   base:
     image:
-      tag: sha-9d801a2
+      tag: ts-1780821820
 
 # Webhook image-registry allow-list — required so the controller's
 # RuntimeEnvironment validating webhook accepts ghcr.io images.
