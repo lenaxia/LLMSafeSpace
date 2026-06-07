@@ -1,7 +1,8 @@
 {{- if .Values.migrations.enabled }}
-# Bundle every .sql file under api/migrations/ into a ConfigMap consumed by
-# the migrate Job. This avoids requiring the migrate CLI to be present in the
-# API image (or building a separate migration image).
+# Bundle every .sql file under charts/llmsafespace/migrations/ into a ConfigMap
+# consumed by the migrate Job. The canonical migration source is api/migrations/;
+# the chart copy is kept in sync by `make chart-sync-migrations` (enforced by
+# repolint in pre-commit and CI).
 apiVersion: v1
 kind: ConfigMap
 metadata:
