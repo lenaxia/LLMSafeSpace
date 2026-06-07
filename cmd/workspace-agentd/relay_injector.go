@@ -154,65 +154,91 @@ func shouldSkipRelay(authJSONPath string) (bool, string) {
 	return false, ""
 }
 
-// fetchFreeModels calls GET /api/model on the opencode server at baseURL,
+// fetchFreeModels calls GET /provider on the opencode server at baseURL,
 // authenticating with the given password, and returns models that are:
-//   - providerID == "opencode"
-//   - enabled == true
-//   - cost[0].input == 0  (free tier)
+//   - providerID == "opencode" (the built-in opencode free-tier provider)
+//   - "opencode" is in the connected[] list (credentials are live)
+//   - cost.input == 0  (free tier)
+//
+// The /provider response has shape {all:[{id, models:{id:{cost:{input,output},...}}},...], connected:[]}.
+// all[] contains every provider from models.dev regardless of auth;
+// connected[] is the subset we actually have credentials for.
+// We must use connected[] to distinguish accessible models from catalog noise.
 func fetchFreeModels(baseURL, password string) ([]relayModel, error) {
-	url := baseURL + "/api/model"
+	url := baseURL + "/provider"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil) //nolint:gosec // G107: internal pod URL
 	if err != nil {
-		return nil, fmt.Errorf("build GET /api/model request: %w", err)
+		return nil, fmt.Errorf("build GET /provider request: %w", err)
 	}
 	req.SetBasicAuth("opencode", password)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET /api/model: %w", err)
+		return nil, fmt.Errorf("GET /provider: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GET /api/model returned %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("GET /provider returned %d: %s", resp.StatusCode, body)
 	}
 
-	var raw []struct {
-		ID         string `json:"id"`
-		ProviderID string `json:"providerID"`
-		Name       string `json:"name"`
-		Enabled    bool   `json:"enabled"`
-		Cost       []struct {
-			Input float64 `json:"input"`
-		} `json:"cost"`
-		Limit struct {
-			Context int `json:"context"`
-			Output  int `json:"output"`
-		} `json:"limit"`
+	var providerResp struct {
+		Connected []string `json:"connected"`
+		All       []struct {
+			ID     string `json:"id"`
+			Models map[string]struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Cost struct {
+					Input  float64 `json:"input"`
+					Output float64 `json:"output"`
+				} `json:"cost"`
+				Limit struct {
+					Context int `json:"context"`
+					Output  int `json:"output"`
+				} `json:"limit"`
+			} `json:"models"`
+		} `json:"all"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2*1024*1024)).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode /api/model: %w", err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4*1024*1024)).Decode(&providerResp); err != nil {
+		return nil, fmt.Errorf("decode /provider: %w", err)
+	}
+
+	// Build a set of connected provider IDs for O(1) lookup.
+	connectedSet := make(map[string]bool, len(providerResp.Connected))
+	for _, id := range providerResp.Connected {
+		connectedSet[id] = true
+	}
+
+	// Only relay opencode free-tier models. If opencode is not connected
+	// (no public key yet), return empty — the caller will retry.
+	if !connectedSet["opencode"] {
+		return nil, nil
 	}
 
 	var free []relayModel
-	for _, m := range raw {
-		if m.ProviderID != "opencode" {
+	for _, p := range providerResp.All {
+		if p.ID != "opencode" {
 			continue
 		}
-		if !m.Enabled {
-			continue
+		for modelKey, m := range p.Models {
+			if m.Cost.Input != 0 {
+				continue
+			}
+			id := m.ID
+			if id == "" {
+				id = modelKey // /provider uses the map key as the model ID
+			}
+			free = append(free, relayModel{
+				ID:           id,
+				Name:         m.Name,
+				ContextLimit: m.Limit.Context,
+				OutputLimit:  m.Limit.Output,
+			})
 		}
-		if len(m.Cost) == 0 || m.Cost[0].Input != 0 {
-			continue
-		}
-		free = append(free, relayModel{
-			ID:           m.ID,
-			Name:         m.Name,
-			ContextLimit: m.Limit.Context,
-			OutputLimit:  m.Limit.Output,
-		})
+		break
 	}
 	return free, nil
 }

@@ -75,17 +75,17 @@ func TestListModels_HappyPath(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
-	// Mock opencode model endpoint on port 4096 — enforces Basic auth.
+	// Mock opencode /provider endpoint on port 4096 — enforces Basic auth.
 	const testPassword = "test-pw-456"
 	listener, err := net.Listen("tcp", "127.0.0.1:4096")
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
-	models := `[{"id":"anthropic/claude-sonnet-4-5","providerID":"anthropic","name":"Claude Sonnet 4.5","enabled":true}]`
+	providerResp := `{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude-sonnet-4-5":{"id":"claude-sonnet-4-5","name":"Claude Sonnet 4.5","cost":{"input":3,"output":15}}}}]}`
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/model", r.URL.Path)
+		require.Equal(t, "/provider", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(models))
+		w.Write([]byte(providerResp))
 	}))
 	srv.Listener = listener
 	srv.Start()
@@ -351,10 +351,10 @@ func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/global/config":
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/model":
-			// Return a paid model so relay baseURL logic is not triggered
+		case r.Method == http.MethodGet && r.URL.Path == "/provider":
+			// Return a paid anthropic model so relay remap is not triggered
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":"anthropic/claude-paid","providerID":"anthropic","enabled":true,"cost":[{"input":3,"output":15}]}]`))
+			w.Write([]byte(`{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude-paid":{"id":"claude-paid","name":"Claude Paid","cost":{"input":3,"output":15}}}}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -373,7 +373,7 @@ func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
 	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
 
-	body, _ := json.Marshal(map[string]string{"model": "anthropic/claude-paid"})
+	body, _ := json.Marshal(map[string]string{"model": "claude-paid"})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -382,7 +382,7 @@ func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Equal(t, "anthropic/claude-paid", resp["model"])
+	require.Equal(t, "claude-paid", resp["model"])
 	require.Equal(t, true, resp["applied"], "applied must be true when PATCH /global/config succeeds with Basic auth")
 }
 
@@ -496,109 +496,110 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 // --- Availability Classification Tests ---
 
 func TestClassifyAvailability_OpencodeZeroCost(t *testing.T) {
-	loaded := map[string]bool{"opencode": true}
-	avail := classifyAvailability("opencode", []opencodeCost{{Input: 0, Output: 0}}, loaded)
+	avail := classifyAvailability("opencode", providerCost{Input: 0, Output: 0})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeNoCostEntries(t *testing.T) {
-	loaded := map[string]bool{"opencode": true}
-	avail := classifyAvailability("opencode", []opencodeCost{}, loaded)
+	// zero-value providerCost = input:0, output:0 → free tier
+	avail := classifyAvailability("opencode", providerCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeNilCost(t *testing.T) {
-	loaded := map[string]bool{"opencode": true}
-	avail := classifyAvailability("opencode", nil, loaded)
+	// zero-value is indistinguishable from "no cost data" → still free tier
+	avail := classifyAvailability("opencode", providerCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodePaidCost(t *testing.T) {
-	loaded := map[string]bool{"opencode": true}
-	avail := classifyAvailability("opencode", []opencodeCost{{Input: 3.0, Output: 15.0}}, loaded)
+	avail := classifyAvailability("opencode", providerCost{Input: 3.0, Output: 15.0})
 	require.Equal(t, ModelAvailable, avail)
 }
 
 // TestClassifyAvailability_OpencodeRelayZeroCost verifies that models with
 // providerID="opencode-relay" and zero cost are classified as ModelFreeTier.
-// Prior to the fix, isZeroCostOpencode only matched providerID=="opencode",
-// so after Phase 2 relay injection (where the catalog uses "opencode-relay")
-// all relay models were classified as ModelAvailable instead of ModelFreeTier.
 func TestClassifyAvailability_OpencodeRelayZeroCost(t *testing.T) {
-	loaded := map[string]bool{"opencode-relay": true}
-	avail := classifyAvailability("opencode-relay", []opencodeCost{{Input: 0, Output: 0}}, loaded)
+	avail := classifyAvailability("opencode-relay", providerCost{Input: 0, Output: 0})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeRelayNoCostEntries(t *testing.T) {
-	loaded := map[string]bool{"opencode-relay": true}
-	avail := classifyAvailability("opencode-relay", nil, loaded)
+	avail := classifyAvailability("opencode-relay", providerCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeRelayPaidCost(t *testing.T) {
 	// opencode-relay models with non-zero cost should be Available, not Free.
-	loaded := map[string]bool{"opencode-relay": true}
-	avail := classifyAvailability("opencode-relay", []opencodeCost{{Input: 1.0, Output: 2.0}}, loaded)
+	avail := classifyAvailability("opencode-relay", providerCost{Input: 1.0, Output: 2.0})
+	require.Equal(t, ModelAvailable, avail)
+}
+
+func TestClassifyAvailability_NonOpencodeLoaded(t *testing.T) {
+	avail := classifyAvailability("anthropic", providerCost{Input: 0, Output: 0})
 	require.Equal(t, ModelAvailable, avail)
 }
 
 func TestAnnotateModels_RelayActive_OnlyRemapsOpencode(t *testing.T) {
 	// When relayActive=true and the catalog already has providerID="opencode-relay"
 	// (Phase 2: relay injected), annotateModels must NOT double-remap to "opencode-relay".
-	// The remap only applies to models still using providerID="opencode".
-	raw := `[
-		{"id":"nemotron-free","providerID":"opencode-relay","name":"Nemotron Free","enabled":true,"cost":[{"input":0,"output":0}],"status":"active"},
-		{"id":"glm-5.1-free","providerID":"opencode","name":"GLM 5.1 Free","enabled":true,"cost":[{"input":0,"output":0}],"status":"active"}
-	]`
+	raw := `{
+		"connected": ["opencode-relay","opencode"],
+		"all": [
+			{"id":"opencode-relay","models":{"nemotron-free":{"id":"nemotron-free","name":"Nemotron Free","cost":{"input":0,"output":0}}}},
+			{"id":"opencode","models":{"glm-5.1-free":{"id":"glm-5.1-free","name":"GLM 5.1 Free","cost":{"input":0,"output":0}}}}
+		]
+	}`
 
 	result, err := annotateModels([]byte(raw), true)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 
+	byID := make(map[string]annotatedModel)
+	for _, m := range result {
+		byID[m.ID] = m
+	}
 	// Phase 2 model: already opencode-relay, stays opencode-relay
-	require.Equal(t, "opencode-relay", result[0].ProviderID)
-	require.Equal(t, ModelFreeTier, result[0].Availability)
-
+	require.Equal(t, "opencode-relay", byID["nemotron-free"].ProviderID)
+	require.Equal(t, ModelFreeTier, byID["nemotron-free"].Availability)
 	// Phase 1 model: opencode remapped to opencode-relay when relayActive
-	require.Equal(t, "opencode-relay", result[1].ProviderID)
-	require.Equal(t, ModelFreeTier, result[1].Availability)
-}
-
-func TestClassifyAvailability_NonOpencodeLoaded(t *testing.T) {
-	loaded := map[string]bool{"anthropic": true}
-	avail := classifyAvailability("anthropic", []opencodeCost{{Input: 0, Output: 0}}, loaded)
-	require.Equal(t, ModelAvailable, avail)
-}
-
-func TestClassifyAvailability_ProviderNotLoaded(t *testing.T) {
-	loaded := map[string]bool{"opencode": true}
-	avail := classifyAvailability("anthropic", nil, loaded)
-	require.Equal(t, ModelUnavailable, avail)
+	require.Equal(t, "opencode-relay", byID["glm-5.1-free"].ProviderID)
+	require.Equal(t, ModelFreeTier, byID["glm-5.1-free"].Availability)
 }
 
 func TestAnnotateModels_FullResponse(t *testing.T) {
-	raw := `[
-		{"id":"opencode/free-model","providerID":"opencode","name":"Free Model","enabled":true,"cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}],"status":"active"},
-		{"id":"anthropic/claude-sonnet-4-5","providerID":"anthropic","name":"Claude Sonnet 4.5","enabled":true,"cost":[{"input":3,"output":15,"cache":{"read":0.3,"write":3.75}}],"status":"active"},
-		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid OpenCode","enabled":true,"cost":[{"input":1,"output":2,"cache":{"read":0,"write":0}}],"status":"active"}
-	]`
+	raw := `{
+		"connected": ["opencode","anthropic"],
+		"all": [
+			{"id":"opencode","models":{
+				"free-model": {"id":"free-model","name":"Free Model","cost":{"input":0,"output":0}},
+				"paid-model": {"id":"paid-model","name":"Paid OpenCode","cost":{"input":1,"output":2}}
+			}},
+			{"id":"anthropic","models":{
+				"claude-sonnet-4-5": {"id":"claude-sonnet-4-5","name":"Claude Sonnet 4.5","cost":{"input":3,"output":15}}
+			}}
+		]
+	}`
 
 	result, err := annotateModels([]byte(raw), false)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
-	require.Equal(t, "free", result[0].Tier)
-	require.True(t, result[0].FreeTier)
-	require.True(t, result[0].ProxyRequired, "free-tier model must have proxyRequired=true")
-	require.Equal(t, "opencode/free-model", result[0].ID)
+	byID := make(map[string]annotatedModel)
+	for _, m := range result {
+		byID[m.ID] = m
+	}
 
-	require.Equal(t, "paid", result[1].Tier)
-	require.False(t, result[1].FreeTier)
-	require.False(t, result[1].ProxyRequired, "paid model must have proxyRequired=false")
+	require.Equal(t, "free", byID["free-model"].Tier)
+	require.True(t, byID["free-model"].FreeTier)
+	require.True(t, byID["free-model"].ProxyRequired, "free-tier model must have proxyRequired=true")
 
-	require.Equal(t, "paid", result[2].Tier) // opencode provider but has cost > 0
-	require.False(t, result[2].ProxyRequired, "paid model must have proxyRequired=false")
+	require.Equal(t, "paid", byID["claude-sonnet-4-5"].Tier)
+	require.False(t, byID["claude-sonnet-4-5"].FreeTier)
+	require.False(t, byID["claude-sonnet-4-5"].ProxyRequired, "paid model must have proxyRequired=false")
+
+	require.Equal(t, "paid", byID["paid-model"].Tier) // opencode provider but has cost > 0
+	require.False(t, byID["paid-model"].ProxyRequired, "paid model must have proxyRequired=false")
 }
 
 func TestAnnotateModels_InvalidJSON(t *testing.T) {
@@ -606,28 +607,21 @@ func TestAnnotateModels_InvalidJSON(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAnnotateModels_EmptyArray(t *testing.T) {
-	result, err := annotateModels([]byte("[]"), false)
+func TestAnnotateModels_EmptyConnected(t *testing.T) {
+	// connected=[] → no models accessible → empty result
+	raw := `{"connected":[],"all":[{"id":"opencode","models":{"free":{"id":"free","cost":{"input":0,"output":0}}}}]}`
+	result, err := annotateModels([]byte(raw), false)
 	require.NoError(t, err)
 	require.Len(t, result, 0)
 }
 
-func TestAnnotateModels_PreservesDetails(t *testing.T) {
-	raw := `[{"id":"test/model","providerID":"anthropic","name":"Test","enabled":true,"cost":[{"input":3,"output":15,"cache":{"read":0.3,"write":3.75}}],"status":"active","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"limit":{"context":200000,"output":8192}}]`
-
+func TestAnnotateModels_PreservesProviderID(t *testing.T) {
+	raw := `{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude":{"id":"claude","name":"Claude","cost":{"input":3,"output":15}}}}]}`
 	result, err := annotateModels([]byte(raw), false)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
-
-	// Details should contain the full original object (including capabilities, limit, etc.)
-	require.NotNil(t, result[0].Details)
-	var details map[string]interface{}
-	require.NoError(t, json.Unmarshal(result[0].Details, &details))
-	require.Contains(t, details, "capabilities")
-	require.Contains(t, details, "limit")
-
-	caps := details["capabilities"].(map[string]interface{})
-	require.Equal(t, true, caps["tools"])
+	require.Equal(t, "anthropic", result[0].ProviderID)
+	require.Equal(t, "claude", result[0].ID)
 }
 
 func TestListModels_ResponseAnnotated(t *testing.T) {
@@ -639,7 +633,7 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
-	models := `[{"id":"opencode/test","providerID":"opencode","name":"Test","enabled":true,"cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}],"status":"active"}]`
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{"test":{"id":"test","name":"Test","cost":{"input":0,"output":0}}}}]}`
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
@@ -674,7 +668,7 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	require.Equal(t, "free", resp.Models[0].Tier)
 	require.True(t, resp.Models[0].FreeTier)
 	require.True(t, resp.Models[0].ProxyRequired, "free-tier models must have proxyRequired=true (Epic 26)")
-	require.Equal(t, "opencode/test", resp.Models[0].ID)
+	require.Equal(t, "test", resp.Models[0].ID)
 	require.Equal(t, "", resp.CurrentModel) // no updater set = empty
 }
 
@@ -682,37 +676,50 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 // is active, free-tier opencode models have ProviderID remapped to
 // "opencode-relay" so clients use the relay provider for inference.
 func TestAnnotateModels_RelayActive_RemapsProviderID(t *testing.T) {
-	raw := `[
-		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]},
-		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid","enabled":true,"cost":[{"input":1,"output":2}]},
-		{"id":"anthropic/claude","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15}]}
-	]`
+	raw := `{
+		"connected": ["opencode","anthropic"],
+		"all": [
+			{"id":"opencode","models":{
+				"free-model": {"id":"free-model","name":"Free","cost":{"input":0,"output":0}},
+				"paid-model": {"id":"paid-model","name":"Paid","cost":{"input":1,"output":2}}
+			}},
+			{"id":"anthropic","models":{
+				"claude": {"id":"claude","name":"Claude","cost":{"input":3,"output":15}}
+			}}
+		]
+	}`
 
 	result, err := annotateModels([]byte(raw), true /* relayActive */)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
-	// Free opencode model: ProviderID must be remapped to opencode-relay
-	assert.Equal(t, "opencode-relay", result[0].ProviderID,
-		"free-tier opencode model must use opencode-relay providerID when relay is active")
-	assert.True(t, result[0].ProxyRequired)
-	assert.True(t, result[0].FreeTier)
+	byID := make(map[string]annotatedModel)
+	for _, m := range result {
+		byID[m.ID] = m
+	}
 
-	// Paid opencode model: ProviderID stays "opencode" (not free, not relayed)
-	assert.Equal(t, "opencode", result[1].ProviderID,
+	// Free opencode model: ProviderID must be remapped to opencode-relay
+	assert.Equal(t, "opencode-relay", byID["free-model"].ProviderID,
+		"free-tier opencode model must use opencode-relay providerID when relay is active")
+	assert.True(t, byID["free-model"].ProxyRequired)
+	assert.True(t, byID["free-model"].FreeTier)
+
+	// Paid opencode model: ProviderID stays "opencode"
+	assert.Equal(t, "opencode", byID["paid-model"].ProviderID,
 		"paid opencode model must keep opencode providerID")
-	assert.False(t, result[1].ProxyRequired)
+	assert.False(t, byID["paid-model"].ProxyRequired)
 
 	// Non-opencode model: unaffected
-	assert.Equal(t, "anthropic", result[2].ProviderID)
+	assert.Equal(t, "anthropic", byID["claude"].ProviderID)
 }
 
 // TestAnnotateModels_RelayInactive_DoesNotRemap verifies that when the relay
 // is not active, providerIDs are not remapped.
 func TestAnnotateModels_RelayInactive_DoesNotRemap(t *testing.T) {
-	raw := `[
-		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]}
-	]`
+	raw := `{
+		"connected": ["opencode"],
+		"all": [{"id":"opencode","models":{"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}}}]
+	}`
 
 	result, err := annotateModels([]byte(raw), false /* relayActive */)
 	require.NoError(t, err)
@@ -748,7 +755,7 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
-	models := `[{"id":"anthropic/claude-sonnet-4-5","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15,"cache":{"read":0,"write":0}}]}]`
+	models := `{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude-sonnet-4-5":{"id":"claude-sonnet-4-5","name":"Claude","cost":{"input":3,"output":15}}}}]}`
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
@@ -760,7 +767,7 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 	handler := NewSecretsHandler(nil)
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
 	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "anthropic/claude-sonnet-4-5"})
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "claude-sonnet-4-5"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -780,7 +787,7 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 		CurrentModel string           `json:"currentModel"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Equal(t, "anthropic/claude-sonnet-4-5", resp.CurrentModel)
+	require.Equal(t, "claude-sonnet-4-5", resp.CurrentModel)
 	require.Len(t, resp.Models, 1)
 	require.Equal(t, "paid", resp.Models[0].Tier)
 }
@@ -794,13 +801,23 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
-	// Mix of models: free opencode, paid opencode, non-opencode enabled
-	models := `[
-		{"id":"opencode/free-model","providerID":"opencode","name":"Free","enabled":true,"cost":[{"input":0,"output":0}]},
-		{"id":"opencode/paid-model","providerID":"opencode","name":"Paid","enabled":true,"cost":[{"input":3,"output":15}]},
-		{"id":"anthropic/claude","providerID":"anthropic","name":"Claude","enabled":true,"cost":[{"input":3,"output":15}]},
-		{"id":"openai/disabled","providerID":"openai","name":"Disabled","enabled":false,"cost":[{"input":1,"output":2}]}
-	]`
+	// Mix of connected providers: opencode (free+paid) and anthropic
+	// openai is NOT in connected[] — should be excluded entirely
+	models := `{
+		"connected": ["opencode","anthropic"],
+		"all": [
+			{"id":"opencode","models":{
+				"free-model": {"id":"free-model","name":"Free","cost":{"input":0,"output":0}},
+				"paid-model": {"id":"paid-model","name":"Paid","cost":{"input":3,"output":15}}
+			}},
+			{"id":"anthropic","models":{
+				"claude": {"id":"claude","name":"Claude","cost":{"input":3,"output":15}}
+			}},
+			{"id":"openai","models":{
+				"gpt-5": {"id":"gpt-5","name":"GPT-5","cost":{"input":5,"output":15}}
+			}}
+		]
+	}`
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(models))
@@ -835,16 +852,16 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	// Should contain: free opencode + paid opencode + anthropic (all enabled, all providers loaded)
-	// Should NOT contain: disabled openai
+	// Should contain: free opencode + paid opencode + anthropic/claude
+	// Should NOT contain: openai/gpt-5 (not in connected[])
 	ids := make([]string, len(resp.Models))
 	for i, m := range resp.Models {
 		ids[i] = m.ID
 	}
-	require.Contains(t, ids, "opencode/free-model")
-	require.Contains(t, ids, "opencode/paid-model")
-	require.Contains(t, ids, "anthropic/claude")
-	require.NotContains(t, ids, "openai/disabled")
+	require.Contains(t, ids, "free-model")
+	require.Contains(t, ids, "paid-model")
+	require.Contains(t, ids, "claude")
+	require.NotContains(t, ids, "gpt-5")
 	require.Len(t, resp.Models, 3)
 }
 
@@ -858,12 +875,15 @@ func TestResolveModelIDFromCatalog_PrefixesProvider(t *testing.T) {
 		t.Skip("port 4096 not available")
 	}
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(pw, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/model" {
+		if r.Method == http.MethodGet && r.URL.Path == "/provider" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[
-				{"id":"gpt-5.5","providerID":"openai","enabled":true,"cost":[{"input":5,"output":15}]},
-				{"id":"claude-3","providerID":"anthropic","enabled":true,"cost":[{"input":3,"output":15}]}
-			]`))
+			w.Write([]byte(`{
+				"connected": ["openai","anthropic"],
+				"all": [
+					{"id":"openai","models":{"gpt-5.5":{"id":"gpt-5.5","name":"GPT-5.5","cost":{"input":5,"output":15}}}},
+					{"id":"anthropic","models":{"claude-3":{"id":"claude-3","name":"Claude 3","cost":{"input":3,"output":15}}}}
+				]
+			}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -903,9 +923,9 @@ func TestSetModel_LivePush_ResolvesProviderPrefix(t *testing.T) {
 	}
 	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/model":
+		case r.Method == http.MethodGet && r.URL.Path == "/provider":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":"gpt-5.5","providerID":"openai","enabled":true,"cost":[{"input":5,"output":15}]}]`))
+			w.Write([]byte(`{"connected":["openai"],"all":[{"id":"openai","models":{"gpt-5.5":{"id":"gpt-5.5","name":"GPT-5.5","cost":{"input":5,"output":15}}}}]}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/global/config":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
