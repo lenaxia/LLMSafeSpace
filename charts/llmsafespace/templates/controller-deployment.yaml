@@ -72,8 +72,14 @@ spec:
             {{- with .Values.inferenceRelayURL }}
             - --inference-relay-url={{ . }}
             {{- end }}
-            {{- with .Values.inferenceRelaySecret }}
-            - --inference-relay-secret={{ . }}
+            {{- /* inferenceRelaySecret is injected via env var from the K8s Secret
+                   (see env block below) rather than as a plaintext CLI arg, so it
+                   is not visible in `kubectl get pod -o yaml` args. */ -}}
+            {{- if and .Values.inferenceRelayURL (or .Values.externalSecret.create .Values.externalSecret.existingSecret) }}
+            - --inference-relay-secret=$(INFERENCE_RELAY_SECRET)
+            {{- else if .Values.inferenceRelaySecret }}
+            {{- /* Fallback for operators not using the managed Secret. */ -}}
+            - --inference-relay-secret={{ .Values.inferenceRelaySecret }}
             {{- end }}
           ports:
             - name: metrics
@@ -95,6 +101,19 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
+          {{- /* Inject inference-relay-secret from the managed K8s Secret so it
+                 does not appear as a plaintext CLI arg in the pod spec. The
+                 controller reads this env var as $(INFERENCE_RELAY_SECRET) in
+                 its --inference-relay-secret arg above. */ -}}
+          {{- if and .Values.inferenceRelayURL (or .Values.externalSecret.create .Values.externalSecret.existingSecret) }}
+          env:
+            - name: INFERENCE_RELAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespace.secretName" . }}
+                  key: inference-relay-secret
+                  optional: true
+          {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
