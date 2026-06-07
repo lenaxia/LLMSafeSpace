@@ -11,11 +11,12 @@ BINARY_UNIX=$(BINARY_NAME)_unix
 # Build targets
 .PHONY: all build clean test cover lint fmt fmt-check imports imports-check vet generate deepcopy \
         helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
+        helm-chart-test helm-deploy \
         openapi-validate \
         repolint chart-sync-migrations install-hooks \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
-        migration-roundtrip migration-fk-cascade migration-idempotent migration-safety \
+        migration-roundtrip migration-fk-cascade migration-idempotent migration-data-cleanup migration-safety \
         test-full cover-floor mutation
 
 all: test build
@@ -141,6 +142,47 @@ helm-render:
 # Also run by `make check` so local contributors catch regressions before push.
 helm-chart-test:
 	$(GOTEST) ./charts/llmsafespace/...
+
+# helm-deploy: upgrade the release on the live cluster. Enforces:
+#   1. Local branch is synced with origin/main (prevents deploying stale
+#      chart files — the incident cause from worklog 0140 where migration
+#      000014 was missing from the ConfigMap because the local repo was
+#      behind the CI-built image).
+#   2. CRDs are applied before helm upgrade (Helm 3 does not upgrade CRDs
+#      in crds/ on upgrade).
+#   3. Chart lint passes.
+#
+# Usage:
+#   make helm-deploy                                          # defaults
+#   make helm-deploy RELEASE_NS=default IMAGE_TAG=sha-abc1234 # override
+#   make helm-deploy HELM_FLAGS="--set frontend.enabled=true"  # extra flags
+IMAGE_TAG?=
+HELM_FLAGS?=
+helm-deploy:
+	@echo "== helm-deploy: checking git sync =="
+	@git fetch origin main --quiet
+	@LOCAL=$$(git rev-parse HEAD) && REMOTE=$$(git rev-parse origin/main) && \
+	  if [ "$$LOCAL" != "$$REMOTE" ]; then \
+	    echo "ERROR: local HEAD ($$LOCAL) != origin/main ($$REMOTE)"; \
+	    echo "Run 'git pull --ff-only' first. Deploying stale chart files"; \
+	    echo "causes missing migrations and broken deployments."; \
+	    exit 1; \
+	  fi
+	@echo "== helm-deploy: applying CRDs =="
+	kubectl apply -f $(CHART_DIR)/crds/
+	@echo "== helm-deploy: linting chart =="
+	$(HELM) lint $(CHART_DIR)
+	@echo "== helm-deploy: upgrading release $(RELEASE_NAME) in $(RELEASE_NS) =="
+	$(HELM) upgrade $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) \
+	  $(if $(IMAGE_TAG),--set api.image.tag=$(IMAGE_TAG) \
+	                      --set controller.image.tag=$(IMAGE_TAG) \
+	                      --set frontend.image.tag=$(IMAGE_TAG) \
+	                      --set runtimeEnvironments.base.image.tag=$(IMAGE_TAG)) \
+	  $(HELM_FLAGS)
+	@echo "== helm-deploy: waiting for rollout =="
+	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-api --timeout=120s || true
+	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-controller --timeout=120s || true
+	@echo "== helm-deploy: done =="
 
 # ---------------------------------------------------------------------------
 # OpenAPI validation
@@ -373,7 +415,12 @@ migration-idempotent:
 	@: $${PGHOST:?must set PG* env vars}
 	bash hack/migration-idempotent.sh
 
-migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade
+migration-data-cleanup:
+	@command -v psql >/dev/null 2>&1 || { echo "psql not installed"; exit 1; }
+	@: $${PGHOST:?must set PG* env vars}
+	bash hack/migration-data-cleanup.sh
+
+migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade migration-data-cleanup
 	@echo ""
 	@echo "All migration safety checks passed."
 
