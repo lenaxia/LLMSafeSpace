@@ -16,7 +16,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         repolint chart-sync-migrations install-hooks \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
-        migration-roundtrip migration-fk-cascade migration-idempotent migration-safety \
+        migration-roundtrip migration-fk-cascade migration-idempotent migration-data-cleanup migration-safety \
         test-full cover-floor mutation
 
 all: test build
@@ -415,7 +415,12 @@ migration-idempotent:
 	@: $${PGHOST:?must set PG* env vars}
 	bash hack/migration-idempotent.sh
 
-migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade
+migration-data-cleanup:
+	@command -v psql >/dev/null 2>&1 || { echo "psql not installed"; exit 1; }
+	@: $${PGHOST:?must set PG* env vars}
+	bash hack/migration-data-cleanup.sh
+
+migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade migration-data-cleanup
 	@echo ""
 	@echo "All migration safety checks passed."
 
