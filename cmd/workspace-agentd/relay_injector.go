@@ -103,11 +103,15 @@ func buildRelayConfig(agentConfigPath, relayURL string, models []relayModel) ([]
 	}
 
 	// Read and parse the existing agent-config.json so we can merge into it.
-	// If absent or unparseable (e.g. first boot before FlushProviders), start
-	// from an empty map — we write a valid config regardless.
+	// If absent (first boot before FlushProviders), start from an empty map.
+	// If present but unparseable (corrupt write), return an error rather than
+	// silently clobbering the existing file — the caller will log Warn and
+	// skip relay injection, leaving the existing config intact.
 	cfg := make(map[string]json.RawMessage)
 	if existing, err := os.ReadFile(agentConfigPath); err == nil && len(existing) > 0 {
-		_ = json.Unmarshal(existing, &cfg)
+		if jsonErr := json.Unmarshal(existing, &cfg); jsonErr != nil {
+			return nil, fmt.Errorf("existing agent-config.json is not valid JSON — refusing to overwrite: %w", jsonErr)
+		}
 	}
 
 	// Ensure $schema key.

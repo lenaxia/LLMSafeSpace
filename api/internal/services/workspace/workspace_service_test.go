@@ -597,6 +597,31 @@ func TestSeedEphemeralSecrets_PrepareFails_SkipsWriteCleanly(t *testing.T) {
 		"Prepare failure must NOT result in a partial/empty Secret being written")
 }
 
+func TestSeedEphemeralSecrets_EmptyResult_NoWrite(t *testing.T) {
+	// When PrepareSecretsForInjection succeeds but returns empty JSON (no
+	// bindings resolved — e.g. credential seeding race or all decrypts failed),
+	// seedEphemeralSecrets must NOT write a workspace-secrets Secret.
+	// Writing an empty Secret would be worse than writing nothing: the init
+	// container would mount it and overwrite any previously correct content.
+	f := newFixtureWithFakeClientset(t)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte(`[]`), nil // empty binding list — 2 bytes
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+	ctx := context.Background()
+
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-empty")
+
+	secrets, err := f.fakeCS.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items,
+		"Empty PrepareSecretsForInjection result must NOT write a Secret")
+	// injector must have been called exactly once
+	assert.Equal(t, 1, inj.calls)
+}
+
 // fakeCredentialProvisioner stubs CredentialProvisioner for CreateWorkspace tests.
 type fakeCredentialProvisioner struct {
 	err   error

@@ -145,6 +145,27 @@ func TestBuildRelayConfig_WorksWithoutExistingConfig(t *testing.T) {
 	assert.Contains(t, parsed, "provider")
 }
 
+// TestBuildRelayConfig_CorruptExistingConfig_ReturnsError verifies that
+// buildRelayConfig refuses to overwrite a corrupt existing agent-config.json,
+// returning an error instead of silently clobbering it. This prevents the
+// same overwrite bug this PR fixes from recurring when the file is malformed.
+func TestBuildRelayConfig_CorruptExistingConfig_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	agentConfigPath := filepath.Join(dir, "agent-config.json")
+	require.NoError(t, os.WriteFile(agentConfigPath, []byte(`{not valid json`), 0o600))
+
+	_, err := buildRelayConfig(agentConfigPath,
+		"https://relay.example.com/s",
+		[]relayModel{{ID: "m", Name: "M"}})
+	require.Error(t, err, "corrupt existing config must return an error, not silently overwrite")
+	assert.Contains(t, err.Error(), "not valid JSON")
+
+	// Original file must be unchanged.
+	content, readErr := os.ReadFile(agentConfigPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "{not valid json", string(content), "corrupt file must not be modified")
+}
+
 // --- shouldSkipRelay tests ---
 
 func TestShouldSkipRelay_SkipsWhenPersonalKey(t *testing.T) {
