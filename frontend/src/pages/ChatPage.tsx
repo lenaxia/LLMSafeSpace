@@ -532,13 +532,17 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
-    // Parse current model selection into opencode's PromptInput.model format
+    // Resolve current model selection into opencode's PromptInput.model format.
+    // currentModel is the flat model ID stored in the DB (e.g. "glm-5.1", never
+    // "provider/model"). Look up the providerID from the models array so we send
+    // the correct {providerID, modelID} pair to the agent. Without this the
+    // agent falls back to the session-level default (often opencode-relay/big-pickle).
     const currentModelRef = (() => {
       const id = modelsData?.currentModel;
       if (!id) return undefined;
-      const slash = id.indexOf("/");
-      if (slash < 0) return undefined;
-      return { providerID: id.slice(0, slash), modelID: id.slice(slash + 1) };
+      const model = modelsData?.models?.find((m) => m.id === id);
+      if (!model?.providerID) return undefined;
+      return { providerID: model.providerID, modelID: id };
     })();
 
     setSseStreamParts([]);
