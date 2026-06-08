@@ -978,9 +978,9 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => {
         const view = screen.getByTestId("chat-view");
         const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
-        const errorMsg = msgs.find((m) => m.parts.some((p) => p.type === "error"));
-        expect(errorMsg).toBeDefined();
-        expect(errorMsg?.parts[0].text).toContain("Forbidden");
+        const errorPart = msgs.flatMap((m) => m.parts).find((p) => p.type === "error");
+        expect(errorPart).toBeDefined();
+        expect(errorPart?.text).toContain("Forbidden");
       });
 
       // Fire session.status=idle — this triggers reconcileOnIdle which clears localMessages
@@ -994,9 +994,9 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => {
         const view = screen.getByTestId("chat-view");
         const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
-        const errorMsg = msgs.find((m) => m.parts.some((p) => p.type === "error"));
-        expect(errorMsg).toBeDefined();
-        expect(errorMsg?.parts[0].text).toContain("Forbidden");
+        const errorPart = msgs.flatMap((m) => m.parts).find((p) => p.type === "error");
+        expect(errorPart).toBeDefined();
+        expect(errorPart?.text).toContain("Forbidden");
       });
     });
 
