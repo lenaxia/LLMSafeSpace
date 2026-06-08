@@ -903,12 +903,29 @@ relay_injector.go:
 
 agentd /v1/readyz:
   getActiveRelayModels() != nil → ReadyzResponse.RelayInjected = true
+  readyz uses: healthCache.Snapshot() (atomic, no I/O)
+             + cachedState() (providerCache, 15s TTL; live calls on miss, bounded by 5s)
 
 API server (ListModels cache miss):
-  fetchRelayInjected() → GET /v1/readyz (Bearer token, port 4098)
+  fetchRelayInjected() → GET /v1/readyz (Bearer token, port 4098, 5s total timeout)
                        → ReadyzResponse.RelayInjected
   → cached in modelCachePayload with 5s TTL alongside model list
 ```
+
+**Stale window:** `relayInjected` can take up to **5s + 15s = 20s** to reflect a
+relay injection that has just completed:
+- The model cache TTL is 5s — a cache hit may serve the previous `relayInjected=false` value
+  for up to 5s after the cache was written.
+- The `providerCache` inside readyz has a 15s TTL — a readyz call may return stale
+  `connected[]` data for up to 15s after relay injection.
+- In the worst case, a `ListModels` request at T=1s caches `relayInjected=false` until
+  T=6s; relay injection completes at T=7s; the cache expires at T=6s but the next readyz
+  call may read stale `providerCache` for another 15s — making the first correct response
+  appear at approximately T=21s.
+
+This is acceptable: the Phase 1 window is ~7s, and users are unlikely to interact with
+the workspace within the first 20s of pod boot. The stale window is purely cosmetic
+(models show `providerID="opencode"` instead of `"opencode-relay"`) and self-corrects.
 
 #### Why the annotateModels remap is effectively dead code (but kept)
 

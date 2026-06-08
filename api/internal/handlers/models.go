@@ -297,15 +297,26 @@ type providerListResponse struct {
 // "opencode" and fail only for Phase-1 users than to break personal-key users).
 //
 // Design choices:
-//   - Uses /v1/readyz (not /v1/statusz) because readyz is cache-based and
-//     lightweight: it reads from the healthz cache and providerCache (15s TTL),
-//     making at most a few opencode calls on cache miss. statusz has "NO upper
-//     bound" latency (synchronous opencode calls under a mutex) and must never
-//     be called on hot paths.
+//   - Uses /v1/readyz (not /v1/statusz) because readyz is lighter than statusz.
+//     readyz reads from the healthz cache (atomic snapshot) and providerCache
+//     (15s TTL). On providerCache hit, zero synchronous opencode calls are made.
+//     On providerCache miss, readyz makes up to 3 live opencode calls under a
+//     mutex — but these are bounded by the 5s modelHTTPClient timeout below,
+//     after which fetchRelayInjected returns false conservatively.
+//     statusz additionally calls IsHealthy (live), reads disk/memory/CPU, and
+//     queries model context limits — significantly more expensive.
 //   - Uses Authorization: Bearer token (not Basic auth) because the agentd
 //     admin port (4098) is protected by requireBearerToken, not Basic auth.
 //     AGENTD_ADMIN_TOKEN == workspace password (both come from the password
 //     Secret), so the same value is used with a different auth scheme.
+//
+// Stale window: relayInjected is cached in modelCachePayload with a 5s TTL.
+// The providerCache inside readyz has a 15s TTL. In the worst case, the
+// relayInjected transition from false to true may take up to 5s + 15s = 20s
+// to be visible in ListModels responses after relay injection completes. This
+// is acceptable: relay injection happens at ~T+7s, and the brief window where
+// free models show providerID="opencode" is harmless (users are unlikely to
+// interact within the first 20s of pod boot).
 //
 // Backwards compatibility: pods running the old image (before RelayInjected was
 // added to ReadyzResponse) return JSON without the relay_injected field.
