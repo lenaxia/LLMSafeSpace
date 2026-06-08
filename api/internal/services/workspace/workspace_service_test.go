@@ -298,19 +298,36 @@ func TestRefreshEphemeralSecrets_NilInjector_NoOp(t *testing.T) {
 	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
 }
 
-func TestRefreshEphemeralSecrets_NoSessionID_SkipsAndWarns(t *testing.T) {
-	// Without sessionID, PrepareSecretsForInjection cannot run (no DEK).
-	// The helper must skip cleanly so that admin- or controller-driven
-	// restarts don't either crash or clobber the existing Secret.
-	f := newFixture(t)
-	inj := &fakeSecretInjector{}
+func TestRefreshEphemeralSecrets_NoSessionID_FallsBackToAdminCredentials(t *testing.T) {
+	// Without a user sessionID (e.g. API-key auth, controller reconcile),
+	// refreshEphemeralSecrets must NOT skip entirely — it falls back to
+	// seedEphemeralSecrets (sessionID="") so that admin platform credentials
+	// (server-side KEK, no session required) are still injected.
+	//
+	// Regression: the old behavior was to skip with a Warn log, leaving
+	// ActivateWorkspace callers without platform credentials when the activate
+	// request was made with an API key instead of a JWT session.
+	f := newFixtureWithFakeClientset(t)
+	payload := []byte(`[{"type":"llm-provider","name":"thekao","metadata":{},"plaintext":"sk-..."}]`)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, sessionID, _ string) ([]byte, error) {
+			// The fallback path calls PrepareSecretsForInjection with sessionID=""
+			assert.Equal(t, "", sessionID, "fallback must pass sessionID='' (admin KEK path)")
+			return payload, nil
+		},
+	}
 	f.svc.SetSecretInjector(inj)
 	ctx := context.Background() // no sessionID
 
 	f.svc.refreshEphemeralSecrets(ctx, "user1", "ws-1")
 
-	assert.Equal(t, 0, inj.calls,
-		"injector must NOT be called without sessionID — DEK retrieval would fail")
+	// Injector must have been called once (via seedEphemeralSecrets fallback)
+	assert.Equal(t, 1, inj.calls, "injector must be called once via seedEphemeralSecrets fallback")
+
+	// workspace-secrets must have been written
+	got, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-1", metav1.GetOptions{})
+	require.NoError(t, err, "workspace-secrets must be written via admin-credential fallback")
+	assert.Equal(t, payload, got.Data["secrets.json"])
 }
 
 func TestRefreshEphemeralSecrets_EmptyBindings_NoWrite(t *testing.T) {
