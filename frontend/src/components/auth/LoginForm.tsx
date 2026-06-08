@@ -4,12 +4,13 @@ import { Button, Input } from "../ui";
 import { ApiClientError } from "../../api/client";
 
 interface Props {
-  onSubmit: (username: string, password: string) => Promise<void>;
+  onSubmit: (username: string, password: string, rememberMe: boolean) => Promise<void>;
 }
 
 export function LoginForm({ onSubmit }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,7 +19,7 @@ export function LoginForm({ onSubmit }: Props) {
     setError("");
     setLoading(true);
     try {
-      await onSubmit(username, password);
+      await onSubmit(username, password, rememberMe);
     } catch (err) {
       setError(err instanceof ApiClientError ? "Invalid email or password" : "Something went wrong");
     } finally {
@@ -45,6 +46,15 @@ export function LoginForm({ onSubmit }: Props) {
         required
         autoComplete="current-password"
       />
+      <label className="flex items-center gap-2 text-sm select-none cursor-pointer">
+        <input
+          type="checkbox"
+          checked={rememberMe}
+          onChange={(e) => setRememberMe(e.target.checked)}
+          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+        />
+        Remember me for 30 days
+      </label>
       <Button type="submit" disabled={loading}>
         {loading ? "Signing in..." : "Sign in"}
       </Button>
