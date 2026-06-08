@@ -962,3 +962,101 @@ func TestSetModel_LivePush_ResolvesProviderPrefix(t *testing.T) {
 	require.Equal(t, "openai/gpt-5.5", receivedModel,
 		"patchAgentModel must send providerID/modelID, not flat catalog ID")
 }
+
+// TestListModels_CurrentModelProviderID verifies that the currentModelProviderID
+// field is populated with the resolved providerID for the selected model.
+func TestListModels_CurrentModelProviderID(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "providerid-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	models := `{"connected":["thekao"],"all":[{"id":"thekao","models":{
+		"glm-5.1":{"id":"glm-5.1","name":"GLM 5.1","cost":{"input":1,"output":2}},
+		"gpt-5.4":{"id":"gpt-5.4","name":"GPT 5.4","cost":{"input":1,"output":2}}
+	}}]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "glm-5.1", resp.CurrentModel)
+	require.Equal(t, "thekao", resp.CurrentModelProviderID,
+		"currentModelProviderID must be the provider that owns the selected model")
+}
+
+// TestListModels_CurrentModelProviderID_Collision verifies that when two
+// connected providers expose the same model ID, currentModelProviderID is ""
+// (signals ambiguity; client falls back to find()).
+func TestListModels_CurrentModelProviderID_Collision(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "collision-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Two connected providers both expose model ID "shared-model".
+	models := `{"connected":["provider-a","provider-b"],"all":[
+		{"id":"provider-a","models":{"shared-model":{"id":"shared-model","name":"Shared A","cost":{"input":1,"output":2}}}},
+		{"id":"provider-b","models":{"shared-model":{"id":"shared-model","name":"Shared B","cost":{"input":1,"output":2}}}}
+	]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "shared-model"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "shared-model", resp.CurrentModel)
+	require.Equal(t, "", resp.CurrentModelProviderID,
+		"collision must produce empty currentModelProviderID")
+}
