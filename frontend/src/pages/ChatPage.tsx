@@ -31,16 +31,10 @@ export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
-  // sessionErrors holds error messages surfaced by session.error SSE events.
-  // Kept separate from localMessages so reconcileOnIdle (which clears
-  // localMessages) cannot wipe them — errors must persist until the user
-  // navigates away or starts a new session.
-  const [sessionErrors, setSessionErrors] = useState<Message[]>([]);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     setLocalMessages([]);
-    setSessionErrors([]);
     setSseStreamParts([]);
     setServerBusy(false);
     sseHasDrivenBusy.current = false;
@@ -463,9 +457,7 @@ export function ChatPage() {
           });
         }
       }
-      // Handle session.error — surface LLM/provider errors as a message bubble.
-      // Written to sessionErrors (not localMessages) so reconcileOnIdle's
-      // setLocalMessages([]) cannot wipe the error before the user sees it.
+      // Handle session.error — surface LLM/provider errors as a message bubble
       if (oe.event_type === "session.error" && sessionId) {
         const payload = oe.data as Record<string, unknown> | undefined;
         const props = (payload?.properties ?? (payload?.payload && (payload.payload as Record<string, unknown>)?.properties)) as Record<string, unknown> | undefined;
@@ -474,7 +466,7 @@ export function ChatPage() {
           const err = props?.error as Record<string, unknown> | undefined;
           const errData = err?.data as Record<string, unknown> | undefined;
           const message = (errData?.message as string) || (err?.name as string) || "Agent error";
-          setSessionErrors((prev) => [...prev, {
+          setLocalMessages((prev) => [...prev, {
             id: `error-${Date.now()}`,
             role: "assistant",
             parts: [{ type: "error" as const, text: `⚠️ ${message}` }],
@@ -525,9 +517,7 @@ export function ChatPage() {
   // detect the Pending→Active phase transition and auto-create a session.
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
-  // sessionErrors are appended after localMessages so errors always render at
-  // the bottom, after the optimistic user message and after any history.
-  const allMessages = [...(history ?? []), ...localMessages, ...sessionErrors];
+  const allMessages = [...(history ?? []), ...localMessages];
 
   if (!workspaceId) {
     return (
@@ -544,18 +534,15 @@ export function ChatPage() {
   const handleSend = (text: string) => {
     // Resolve current model selection into opencode's PromptInput.model format.
     // currentModel is the flat model ID stored in the DB (e.g. "glm-5.1", never
-    // "provider/model"). The backend resolves the providerID and returns it as
-    // currentModelProviderID. Fall back to a find() on the models array for
-    // older API responses that don't include currentModelProviderID, or when
-    // the backend detected a collision (currentModelProviderID === "").
+    // "provider/model"). Look up the providerID from the models array so we send
+    // the correct {providerID, modelID} pair to the agent. Without this the
+    // agent falls back to the session-level default (often opencode-relay/big-pickle).
     const currentModelRef = (() => {
       const id = modelsData?.currentModel;
       if (!id) return undefined;
-      const providerID =
-        modelsData?.currentModelProviderID ||
-        modelsData?.models?.find((m) => m.id === id)?.providerID;
-      if (!providerID) return undefined;
-      return { providerID, modelID: id };
+      const model = modelsData?.models?.find((m) => m.id === id);
+      if (!model?.providerID) return undefined;
+      return { providerID: model.providerID, modelID: id };
     })();
 
     setSseStreamParts([]);

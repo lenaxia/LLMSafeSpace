@@ -207,26 +207,6 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		currentModel, _ = h.wsUpdater.GetDefaultModel(c.Request.Context(), workspaceID)
 	}
 
-	// Resolve the providerID for the selected model so the frontend can build
-	// the fully-qualified {providerID, modelID} pair without a client-side
-	// find(). If multiple connected providers expose the same model ID
-	// (ambiguous), emit "" so the frontend detects the collision and falls
-	// back to the first-match heuristic (same behavior as before this fix).
-	var currentModelProviderID string
-	if currentModel != "" {
-		for _, m := range annotated {
-			if m.ID == currentModel {
-				if currentModelProviderID == "" {
-					currentModelProviderID = m.ProviderID
-				} else if currentModelProviderID != m.ProviderID {
-					// Collision: more than one connected provider has this model ID.
-					currentModelProviderID = ""
-					break
-				}
-			}
-		}
-	}
-
 	// Mark the selected model in the array.
 	if currentModel != "" {
 		for i := range annotated {
@@ -237,9 +217,8 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"models":                 annotated,
-		"currentModel":           currentModel,
-		"currentModelProviderID": currentModelProviderID,
+		"models":       annotated,
+		"currentModel": currentModel,
 	})
 }
 
