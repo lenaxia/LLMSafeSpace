@@ -528,6 +528,13 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 
 	var result reloadResult
 	_ = json.NewDecoder(resp.Body).Decode(&result)
+
+	// Evict this workspace's model cache so the next ListModels call reflects
+	// any new or removed providers that the credential bind just activated.
+	// Without this, the 5s TTL means users see a stale model list for up to
+	// 5 seconds after a successful bind (Gap6 — worklog 0186).
+	defaultModelCache.Evict(workspaceID)
+
 	return &result, nil
 }
 

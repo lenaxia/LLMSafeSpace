@@ -35,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -43,6 +44,16 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 )
+
+// reloadMu serializes concurrent calls to reloadSecretsHandler. Two
+// simultaneous reloads (from two API replicas or from parallel credential
+// binds) race through Materializer.reset() which calls RemoveAll on
+// SecretsBaseDir and RemoveAll on SSHDir, and both then appendFile to
+// SecretsEnvPath — producing duplicate env var entries. Holding this mutex
+// for the materialize → enrich → flush → re-merge sequence ensures exactly
+// one reload runs at a time per pod. The restart at the end is excluded from
+// the lock to avoid holding it during the ~5s SIGTERM window.
+var reloadMu sync.Mutex
 
 // materializeConfig is the resolved set of filesystem paths used by the
 // materialize subcommand and the reload handler. It maps 1:1 onto
@@ -190,9 +201,16 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 }
 
 // applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
-// applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
 // and merges the default model into the agent config file. This ensures the
 // workspace's model selection survives pod restarts.
+//
+// DefaultModel is stored as a flat catalog ID (e.g. "glm-5.1"). opencode
+// requires the fully-qualified "providerID/modelID" form in agent-config.json.
+// We resolve the providerID by scanning the provider map already written to
+// agent-config.json by FlushProviders (which runs before this function).
+// If no provider claims the model, the flat ID is written as a best-effort
+// fallback (opencode will reject it at startup, but the per-prompt model
+// override in the frontend still routes correctly for interactive sessions).
 func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 	// workspace-config.json lives alongside secrets.json in /sandbox-cfg/
 	dir := filepath.Dir(secretsPath)
@@ -220,7 +238,12 @@ func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 		cfg = map[string]json.RawMessage{}
 	}
 
-	modelJSON, _ := json.Marshal(wsCfg.DefaultModel)
+	// Resolve providerID from the provider map so opencode gets the fully-
+	// qualified "providerID/modelID" form it requires. The provider map is
+	// written by FlushProviders (called just before this function), so all
+	// user-configured providers are already present.
+	model := resolveModelWithProvider(cfg, wsCfg.DefaultModel)
+	modelJSON, _ := json.Marshal(model)
 	cfg["model"] = modelJSON
 
 	if _, ok := cfg["$schema"]; !ok {
@@ -230,6 +253,41 @@ func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 
 	merged, _ := json.MarshalIndent(cfg, "", "  ")
 	_ = os.WriteFile(agentConfigPath, merged, 0o600)
+}
+
+// resolveModelWithProvider scans the "provider" map in the agent config and
+// returns "providerID/modelID" when the flat modelID is found in any provider's
+// models map. Returns the flat modelID unchanged if no provider claims it
+// (e.g. when the provider list hasn't been written yet, or the model was
+// removed from the catalog since it was last selected).
+func resolveModelWithProvider(cfg map[string]json.RawMessage, flatModelID string) string {
+	if flatModelID == "" {
+		return ""
+	}
+	// Already qualified — nothing to do.
+	if strings.Contains(flatModelID, "/") {
+		return flatModelID
+	}
+
+	providerRaw, ok := cfg["provider"]
+	if !ok {
+		return flatModelID
+	}
+
+	// provider map shape: {"providerID": {"models": {"modelID": {...}, ...}, ...}, ...}
+	var providers map[string]struct {
+		Models map[string]json.RawMessage `json:"models"`
+	}
+	if json.Unmarshal(providerRaw, &providers) != nil {
+		return flatModelID
+	}
+
+	for providerID, p := range providers {
+		if _, found := p.Models[flatModelID]; found {
+			return providerID + "/" + flatModelID
+		}
+	}
+	return flatModelID
 }
 
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.
@@ -257,10 +315,20 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 			return
 		}
 
+		// Serialize the materialize → enrich → flush → re-merge sequence.
+		// Concurrent reloads (from two API replicas or parallel credential binds)
+		// race through Materializer.reset() which RemoveAlls SecretsBaseDir and
+		// SSHDir and appendFiles to SecretsEnvPath — producing duplicate env var
+		// entries and interleaved agent-config.json writes. The restart at the
+		// end is excluded from the lock to avoid holding it during the ~5s SIGTERM
+		// window.
+		reloadMu.Lock()
+
 		m := &secrets.Materializer{FS: secrets.RealFS(), Paths: cfg.toPaths()}
 		result, mErr := m.Materialize(batch)
 
 		if mErr != nil && !errors.Is(mErr, secrets.ErrPartialFailure) {
+			reloadMu.Unlock()
 			log.Error("reload-secrets: materialize failed", zap.Error(mErr))
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": mErr.Error()})
@@ -279,6 +347,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		// Flush staged llm-provider secrets to AgentConfigPath.
 		// This MUST succeed before we notify the agent of config changes.
 		if err := m.FlushProviders(opencode.FormatOpenCodeConfig); err != nil {
+			reloadMu.Unlock()
 			log.Error("reload-secrets: flush providers failed", zap.Error(err))
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "flush providers: " + err.Error()})
@@ -312,6 +381,8 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 				}
 			}
 		}
+
+		reloadMu.Unlock()
 
 		mat, skip, fail := result.Counts()
 		log.Info("secrets reloaded",

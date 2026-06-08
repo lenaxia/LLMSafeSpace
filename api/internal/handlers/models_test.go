@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -551,7 +552,7 @@ func TestAnnotateModels_RelayActive_OnlyRemapsOpencode(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), true)
+	result, err := annotateModels([]byte(raw), true, true)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 
@@ -581,7 +582,7 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), false)
+	result, err := annotateModels([]byte(raw), false, false)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
@@ -603,21 +604,21 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 }
 
 func TestAnnotateModels_InvalidJSON(t *testing.T) {
-	_, err := annotateModels([]byte("not json"), false)
+	_, err := annotateModels([]byte("not json"), false, false)
 	require.Error(t, err)
 }
 
 func TestAnnotateModels_EmptyConnected(t *testing.T) {
 	// connected=[] → no models accessible → empty result
 	raw := `{"connected":[],"all":[{"id":"opencode","models":{"free":{"id":"free","cost":{"input":0,"output":0}}}}]}`
-	result, err := annotateModels([]byte(raw), false)
+	result, err := annotateModels([]byte(raw), false, false)
 	require.NoError(t, err)
 	require.Len(t, result, 0)
 }
 
 func TestAnnotateModels_PreservesProviderID(t *testing.T) {
 	raw := `{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude":{"id":"claude","name":"Claude","cost":{"input":3,"output":15}}}}]}`
-	result, err := annotateModels([]byte(raw), false)
+	result, err := annotateModels([]byte(raw), false, false)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	require.Equal(t, "anthropic", result[0].ProviderID)
@@ -689,7 +690,7 @@ func TestAnnotateModels_RelayActive_RemapsProviderID(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), true /* relayActive */)
+	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, true /* relayInjected */)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
@@ -721,12 +722,61 @@ func TestAnnotateModels_RelayInactive_DoesNotRemap(t *testing.T) {
 		"all": [{"id":"opencode","models":{"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}}}]
 	}`
 
-	result, err := annotateModels([]byte(raw), false /* relayActive */)
+	result, err := annotateModels([]byte(raw), false /* relayGloballyEnabled */, false /* relayInjected */)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
 	assert.Equal(t, "opencode", result[0].ProviderID,
 		"providerID must not be remapped when relay is inactive")
+}
+
+// TestAnnotateModels_PersonalKey_NoRemap verifies that when a user has a
+// personal opencode key (relay was skipped, relayInjected=false), free-tier
+// opencode models keep their original providerID="opencode" rather than being
+// remapped to "opencode-relay". This is Bug 3 — before the fix, relayActive
+// was a static global that caused remapping regardless of whether the relay
+// injector ran.
+func TestAnnotateModels_PersonalKey_NoRemap(t *testing.T) {
+	// Personal-key scenario: opencode is connected, opencode-relay is NOT.
+	// relayGloballyEnabled=true (env var is set), but relayInjected=false
+	// (the injector was skipped because shouldSkipRelay returned true).
+	raw := `{
+		"connected": ["opencode"],
+		"all": [{"id":"opencode","models":{
+			"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}
+		}}]
+	}`
+
+	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, false /* relayInjected — skipped */)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	assert.Equal(t, "opencode", result[0].ProviderID,
+		"free-tier model must NOT be remapped to opencode-relay when relay injector was skipped (personal key)")
+	assert.True(t, result[0].FreeTier)
+}
+
+// TestAnnotateModels_Phase1_Remap verifies that in Phase 1 (relay globally
+// configured but injector not yet complete), free models are NOT remapped
+// (relayInjected=false). This means during the ~7s window before injection,
+// free models show providerID="opencode" and will fail at inference — acceptable
+// trade-off vs permanently breaking personal-key users.
+func TestAnnotateModels_Phase1_NotRemapped(t *testing.T) {
+	raw := `{
+		"connected": ["opencode"],
+		"all": [{"id":"opencode","models":{
+			"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}
+		}}]
+	}`
+
+	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, false /* relayInjected — not yet */)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	// Phase 1: relayInjected=false → no remap. providerID stays "opencode".
+	// After T+7s the injector completes and relayInjected becomes true.
+	assert.Equal(t, "opencode", result[0].ProviderID,
+		"Phase 1: free model must keep providerID='opencode' until relay injection completes")
 }
 
 // mockModelReader implements WorkspaceDefaultModelReader for testing.
@@ -961,4 +1011,279 @@ func TestSetModel_LivePush_ResolvesProviderPrefix(t *testing.T) {
 	require.Equal(t, true, resp["applied"], "applied must be true")
 	require.Equal(t, "openai/gpt-5.5", receivedModel,
 		"patchAgentModel must send providerID/modelID, not flat catalog ID")
+}
+
+// TestListModels_CurrentModelProviderID verifies that the currentModelProviderID
+// field is populated with the resolved providerID for the selected model.
+func TestListModels_CurrentModelProviderID(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "providerid-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	models := `{"connected":["thekao"],"all":[{"id":"thekao","models":{
+		"glm-5.1":{"id":"glm-5.1","name":"GLM 5.1","cost":{"input":1,"output":2}},
+		"gpt-5.4":{"id":"gpt-5.4","name":"GPT 5.4","cost":{"input":1,"output":2}}
+	}}]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "glm-5.1", resp.CurrentModel)
+	require.Equal(t, "thekao", resp.CurrentModelProviderID,
+		"currentModelProviderID must be the provider that owns the selected model")
+}
+
+// TestListModels_CurrentModelProviderID_Collision verifies that when two
+// connected providers expose the same model ID, currentModelProviderID is ""
+// (signals ambiguity; client falls back to find()).
+func TestListModels_CurrentModelProviderID_Collision(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "collision-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Two connected providers both expose model ID "shared-model".
+	models := `{"connected":["provider-a","provider-b"],"all":[
+		{"id":"provider-a","models":{"shared-model":{"id":"shared-model","name":"Shared A","cost":{"input":1,"output":2}}}},
+		{"id":"provider-b","models":{"shared-model":{"id":"shared-model","name":"Shared B","cost":{"input":1,"output":2}}}}
+	]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "shared-model"})
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "shared-model", resp.CurrentModel)
+	require.Equal(t, "", resp.CurrentModelProviderID,
+		"collision must produce empty currentModelProviderID")
+}
+
+// TestListModels_CurrentModelProviderID_RelayActive verifies that when
+// relayActive=true AND the relay injector has run (relayInjected=true from
+// statusz), a free-tier opencode model is correctly remapped to "opencode-relay"
+// in currentModelProviderID. This catches regressions if the remap logic or
+// the annotated-model iteration order changes.
+func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "relay-providerid-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Also mock agentd admin port (4098) to serve statusz with RelayInjected=true.
+	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
+	if err != nil {
+		t.Skip("port 4098 not available")
+	}
+
+	// Free-tier opencode model: cost.input==0, providerID=="opencode" →
+	// annotateModels remaps providerID to "opencode-relay" when relayActive=true
+	// AND relayInjected=true (from statusz).
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"glm-5.1-free":{"id":"glm-5.1-free","name":"GLM 5.1 Free","cost":{"input":0,"output":0}}
+	}}]}`
+
+	// opencode server (port 4096) — serves /provider
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	// agentd admin server (port 4098) — serves /v1/statusz with RelayInjected=true
+	statuszBody, _ := json.Marshal(agentd.StatuszResponse{RelayInjected: true})
+	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(statuszBody)
+	}))
+	adminSrv.Listener = adminListener
+	adminSrv.Start()
+	defer adminSrv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1-free"})
+	handler.SetRelayActive(true)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "glm-5.1-free", resp.CurrentModel)
+	require.Equal(t, "opencode-relay", resp.CurrentModelProviderID,
+		"relay remap must be reflected in currentModelProviderID when relayInjected=true")
+}
+
+// TestListModels_RelayActive_PersonalKey_NoRemap verifies that when
+// relayActive=true but the relay injector was skipped (RelayInjected=false in
+// statusz — personal opencode key), free models are NOT remapped to
+// opencode-relay. This is Bug 3.
+func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "personal-key-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
+	if err != nil {
+		t.Skip("port 4098 not available")
+	}
+
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}
+	}}]}`
+
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	// statusz returns RelayInjected=false — relay was skipped (personal key)
+	statuszBody, _ := json.Marshal(agentd.StatuszResponse{RelayInjected: false})
+	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(statuszBody)
+	}))
+	adminSrv.Listener = adminListener
+	adminSrv.Start()
+	defer adminSrv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetRelayActive(true)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models []annotatedModel `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Models, 1)
+	require.Equal(t, "opencode", resp.Models[0].ProviderID,
+		"free model must NOT be remapped to opencode-relay when relay injector was skipped (personal key)")
+}
+
+// TestDoReload_EvictsModelCache verifies that doReload evicts the workspace's
+// model cache so the next ListModels call returns fresh data after a credential
+// bind activates new providers (Gap6 — worklog 0186).
+func TestDoReload_EvictsModelCache(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const workspaceID = "ws-evict-test"
+
+	// Mock agentd on port 4097 — doReload hardcodes this port.
+	agentdListener, err := net.Listen("tcp", "127.0.0.1:4097")
+	if err != nil {
+		t.Skip("port 4097 not available for agentd mock")
+	}
+	agentdSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/reload-secrets" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"reloaded":1,"restarted":false}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	agentdSrv.Listener = agentdListener
+	agentdSrv.Start()
+	defer agentdSrv.Close()
+
+	// Seed the model cache with stale data for this workspace.
+	defaultModelCache.Set(workspaceID, []byte(`[{"id":"stale-model","providerID":"old"}]`))
+	require.NotNil(t, defaultModelCache.Get(workspaceID), "cache must be seeded before test")
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+
+	result, err := handler.doReload(t.Context(), "user-1", workspaceID, []byte(`[]`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Cache must be evicted after a successful reload.
+	require.Nil(t, defaultModelCache.Get(workspaceID),
+		"model cache must be evicted after doReload so the next ListModels fetches fresh data")
 }

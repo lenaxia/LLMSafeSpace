@@ -324,8 +324,9 @@ type RegisterRequest struct {
 
 // LoginRequest is the request body for user login.
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	Email      string `json:"email"      binding:"required,email"`
+	Password   string `json:"password"   binding:"required"`
+	RememberMe bool   `json:"rememberMe"`
 }
 
 // AuthResponse is returned after successful registration or login.
@@ -333,10 +334,17 @@ type LoginRequest struct {
 // RecoveryKey is populated only on registration (one-time display). It is
 // the user's sole opportunity to retrieve it; the API does not store it
 // anywhere recoverable. Login responses omit this field entirely.
+//
+// TokenTTL is the effective JWT lifetime used for this session. It is tagged
+// json:"-" so it never appears in the HTTP response body — clients already
+// receive the exp claim inside the JWT. This field carries the TTL from the
+// auth service to the router handler for cookie Max-Age calculation without
+// requiring an interface change.
 type AuthResponse struct {
-	Token       string `json:"token"`
-	User        User   `json:"user"`
-	RecoveryKey string `json:"recoveryKey,omitempty"`
+	Token       string        `json:"token"`
+	User        User          `json:"user"`
+	RecoveryKey string        `json:"recoveryKey,omitempty"`
+	TokenTTL    time.Duration `json:"-"` // router-internal: not serialized
 }
 
 // CreateAPIKeyRequest is the request body for creating an API key.

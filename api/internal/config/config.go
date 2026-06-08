@@ -67,6 +67,7 @@ type Config struct {
 		TokenDuration       time.Duration `mapstructure:"tokenDuration"`
 		APIKeyPrefix        string        `mapstructure:"apiKeyPrefix"`
 		CookieName          string        `mapstructure:"cookieName"`
+		RememberMeDuration  time.Duration `mapstructure:"rememberMeDuration"`
 		RegistrationEnabled bool          `mapstructure:"registrationEnabled"`
 		LockoutEnabled      bool          `mapstructure:"lockoutEnabled"`
 		LockoutAttempts     int           `mapstructure:"lockoutAttempts"`
@@ -172,6 +173,12 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTDURATION"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			config.Auth.LockoutDuration = d
+		}
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			config.Auth.RememberMeDuration = d
 		}
 	}
 

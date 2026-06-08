@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
 )
+
+// relayURLHost returns only the scheme+host of a relay URL so it can be safely
+// logged without exposing the path-segment secret
+// (e.g. "https://relay.safespaces.dev/<secret>" → "https://relay.safespaces.dev").
+func relayURLHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "[invalid-url]"
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 // activeRelayModels holds the free model list discovered by the relay injector
 // after it successfully completes. It is set once by the injector goroutine and
@@ -428,7 +440,7 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		log.Info("relay injector: wrote relay config",
 			zap.String("path", cfg.AgentConfigPath),
 			zap.Int("models", len(models)),
-			zap.String("relayURL", cfg.RelayURL[:min(len(cfg.RelayURL), 50)]))
+			zap.String("relayHost", relayURLHost(cfg.RelayURL)))
 
 		// Update auth.json with the opencode-relay entry.
 		if err := updateAuthJSONForRelay(cfg.AuthJSONPath); err != nil {

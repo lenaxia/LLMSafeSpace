@@ -36,6 +36,8 @@ auth:
   jwtSecret: ""  # Set via environment variable
   tokenDuration: 24h
   apiKeyPrefix: "lsp_"
+  cookieName: "lsp_session"
+  rememberMeDuration: 720h  # 30 days; 0 disables the feature
 
 logging:
   level: "info"

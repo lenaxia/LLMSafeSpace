@@ -69,6 +69,19 @@ type RouterConfig struct {
 
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
+
+	// CookieName is the name of the session cookie. Defaults to "lsp_session".
+	// Reads from cfg.Auth.CookieName; configurable so operators can rename the
+	// cookie without forking the router.
+	CookieName string
+}
+
+// cookieName returns the session cookie name, falling back to "lsp_session" when empty.
+func (r RouterConfig) cookieName() string {
+	if r.CookieName == "" {
+		return "lsp_session"
+	}
+	return r.CookieName
 }
 
 // DefaultRouterConfig returns the default router configuration
@@ -128,7 +141,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName())
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -342,12 +355,14 @@ func sanitizeBindError(err error) string {
 }
 
 // setSessionCookie sets the HttpOnly session cookie on the response.
-func setSessionCookie(c *gin.Context, token string) {
-	c.SetCookie("lsp_session", token, 86400, "/", "", true, true)
+// maxAge is in seconds and must match the JWT's TTL.
+// cookieName is the cookie name from RouterConfig (defaults to "lsp_session").
+func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName string) {
+	c.SetCookie(cookieName, token, maxAge, "/", "", true, true)
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
@@ -386,7 +401,11 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 			respondWithError(c, err)
 			return
 		}
-		setSessionCookie(c, resp.Token)
+		maxAge := int(resp.TokenTTL.Seconds())
+		if maxAge <= 0 {
+			maxAge = 86400 // safe fallback: matches default tokenDuration
+		}
+		setSessionCookie(c, resp.Token, maxAge, cookieName)
 		c.JSON(http.StatusCreated, resp)
 	})
 
@@ -402,7 +421,11 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
-		setSessionCookie(c, resp.Token)
+		maxAge := int(resp.TokenTTL.Seconds())
+		if maxAge <= 0 {
+			maxAge = 86400 // safe fallback: matches default tokenDuration
+		}
+		setSessionCookie(c, resp.Token, maxAge, cookieName)
 		c.JSON(http.StatusOK, resp)
 	})
 
@@ -433,7 +456,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		token := utilities.ExtractToken(c, utilities.TokenExtractorConfig{
 			HeaderName: "Authorization",
 			TokenType:  "Bearer",
-			CookieName: "lsp_session",
+			CookieName: cookieName,
 		})
 		if token != "" && !utilities.IsAPIKey(token, "lsp_") {
 			if err := authSvc.RevokeToken(token); err != nil {
@@ -441,7 +464,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 					"error", err.Error())
 			}
 		}
-		c.SetCookie("lsp_session", "", -1, "/", "", true, true)
+		c.SetCookie(cookieName, "", -1, "/", "", true, true)
 		c.Status(http.StatusNoContent)
 	})
 

@@ -5,8 +5,11 @@ package app
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +54,15 @@ type App struct {
 
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// validateMasterSecret is the very first check — before any infrastructure
+	// is constructed. This ensures startup fails fast with a clear error rather
+	// than a misleading K8s/DB error, and makes the enforcement unit-testable
+	// without a live cluster (see TestApp_New_FailsWithoutMasterSecret).
+	if err := validateMasterSecret(log); err != nil {
+		cancel()
+		return nil, err
+	}
 
 	k8sClient, err := kubernetes.New(&cfg.Kubernetes, log)
 	if err != nil {
@@ -104,12 +116,20 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
 	{
+		mk := dekMasterKey()
+		if mk == nil {
+			// Unreachable after validateMasterSecret passed — env var is
+			// immutable for the process lifetime. Guards against future
+			// refactors that move validateMasterSecret.
+			cancel()
+			return nil, errors.New("internal: dekMasterKey returned nil after validateMasterSecret passed")
+		}
 		dekCacheClient = redis.NewClient(&redis.Options{
 			Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 			Password: cfg.Redis.Password,
 			DB:       cfg.Redis.DB,
 		})
-		dekCache := secrets.NewRedisDEKCache(dekCacheClient, dekMasterKey())
+		dekCache := secrets.NewRedisDEKCache(dekCacheClient, mk)
 
 		// Create pgxpool for secret stores (same DB, separate pool for pgx native queries).
 		pgxDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
@@ -335,6 +355,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TerminalHandler:                 terminalHandler,
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,
+		CookieName:                      cfg.Auth.CookieName,
 	})
 
 	httpServer := &http.Server{
@@ -490,5 +511,46 @@ func (a *App) Shutdown() error {
 	}
 
 	a.logger.Info("Application shutdown complete")
+	return nil
+}
+
+// validateMasterSecret verifies LLMSAFESPACE_MASTER_SECRET is present and
+// decodes to at least 32 bytes (the AES-256-GCM key size minimum).
+//
+// Returns nil on success. Logs a structured Warn when the secret is present
+// but too short so operators can distinguish "forgot to set it" from "set it
+// to the wrong value." The secret value itself is never logged.
+//
+// This function reads the env var independently of deriveServerKey to keep
+// deriveServerKey a pure, side-effect-free function compatible with the
+// secrets.AdminKeyDeriver type (func(string) []byte).
+func validateMasterSecret(log *logger.Logger) error {
+	masterRaw := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
+	if masterRaw == "" {
+		masterRaw = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
+	}
+	if masterRaw == "" {
+		return errors.New(
+			"LLMSAFESPACE_MASTER_SECRET is required but not set; " +
+				"refusing to start without DEK encryption at rest in Redis. " +
+				"Generate one with: openssl rand -hex 32")
+	}
+
+	var master []byte
+	if decoded, err := hex.DecodeString(masterRaw); err == nil {
+		master = decoded
+	} else {
+		master = []byte(masterRaw)
+	}
+
+	if len(master) < 32 {
+		log.Warn("LLMSAFESPACE_MASTER_SECRET is set but too short for AES-256-GCM",
+			"decoded_bytes", len(master), "required_bytes", 32)
+		// masterRaw is intentionally NOT included in the error message or log.
+		return fmt.Errorf(
+			"LLMSAFESPACE_MASTER_SECRET decodes to %d bytes; minimum is 32 (AES-256-GCM key size). "+
+				"Use at least 32 bytes (e.g. 64 hex chars, or 32+ alphanumeric chars)",
+			len(master))
+	}
 	return nil
 }

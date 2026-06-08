@@ -102,4 +102,10 @@ type StatuszResponse struct {
 	Memory              *MemoryUsage  `json:"memory,omitempty"`
 	CPU                 *CPUUsage     `json:"cpu,omitempty"`
 	Context             *ContextUsage `json:"context,omitempty"`
+	// RelayInjected is true when the relay injector successfully completed
+	// (wrote relay config and restarted opencode). False before the injector
+	// has run, if it was skipped (personal opencode key), or if it failed.
+	// Used by the API server to distinguish Phase 1 (relay pending, remap useful)
+	// from the personal-key case (relay skipped, remap harmful).
+	RelayInjected bool `json:"relay_injected"`
 }

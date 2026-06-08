@@ -720,3 +720,181 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec2.Code,
 		"handler must return 200 even when re-merge path hits non-fatal warn")
 }
+
+// TestResolveModelWithProvider validates providerID resolution from the
+// agent config's provider map.
+func TestResolveModelWithProvider(t *testing.T) {
+	buildCfg := func(providerJSON string) map[string]json.RawMessage {
+		cfg := map[string]json.RawMessage{}
+		cfg["provider"] = json.RawMessage(providerJSON)
+		return cfg
+	}
+
+	t.Run("resolves flat ID when provider owns model", func(t *testing.T) {
+		cfg := buildCfg(`{
+			"thekao": {"models": {"glm-5.1": {}, "gpt-5.4": {}}},
+			"opencode-relay": {"models": {"big-pickle": {}}}
+		}`)
+		got := resolveModelWithProvider(cfg, "glm-5.1")
+		assert.Equal(t, "thekao/glm-5.1", got)
+	})
+
+	t.Run("returns flat ID unchanged when no provider claims it", func(t *testing.T) {
+		cfg := buildCfg(`{"thekao": {"models": {"gpt-5.4": {}}}}`)
+		got := resolveModelWithProvider(cfg, "glm-5.1")
+		assert.Equal(t, "glm-5.1", got, "fallback must not panic or mangle the ID")
+	})
+
+	t.Run("already-qualified IDs are passed through unchanged", func(t *testing.T) {
+		cfg := buildCfg(`{"thekao": {"models": {"glm-5.1": {}}}}`)
+		got := resolveModelWithProvider(cfg, "thekao/glm-5.1")
+		assert.Equal(t, "thekao/glm-5.1", got)
+	})
+
+	t.Run("empty model ID returns empty string", func(t *testing.T) {
+		cfg := buildCfg(`{"thekao": {"models": {"glm-5.1": {}}}}`)
+		got := resolveModelWithProvider(cfg, "")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("no provider key in cfg returns flat ID", func(t *testing.T) {
+		cfg := map[string]json.RawMessage{} // no "provider" key
+		got := resolveModelWithProvider(cfg, "glm-5.1")
+		assert.Equal(t, "glm-5.1", got)
+	})
+
+	t.Run("malformed provider JSON returns flat ID", func(t *testing.T) {
+		cfg := map[string]json.RawMessage{"provider": json.RawMessage(`not-json`)}
+		got := resolveModelWithProvider(cfg, "glm-5.1")
+		assert.Equal(t, "glm-5.1", got)
+	})
+}
+
+// TestApplyWorkspaceConfig verifies that applyWorkspaceConfig writes the
+// fully-qualified "providerID/modelID" form to agent-config.json, not the
+// flat model ID. This is required by opencode 1.15.x which rejects bare IDs.
+func TestApplyWorkspaceConfig(t *testing.T) {
+	dir := t.TempDir()
+	agentCfg := filepath.Join(dir, "agent-config.json")
+	secretsJSON := filepath.Join(dir, "secrets.json")
+
+	// Write a workspace-config.json with a flat default model.
+	wsCfgPath := filepath.Join(dir, "workspace-config.json")
+	require.NoError(t, os.WriteFile(wsCfgPath, []byte(`{"defaultModel":"glm-5.1"}`), 0o600))
+
+	// Write an agent-config.json as FlushProviders would have produced it,
+	// with the provider already present.
+	agentCfgContent := `{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": {
+			"thekao": {
+				"npm": "@ai-sdk/openai-compatible",
+				"options": {"apiKey": "sk-test", "baseURL": "https://ai.thekao.cloud/v1"},
+				"models": {"glm-5.1": {}, "gpt-5.4": {}}
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(agentCfg, []byte(agentCfgContent), 0o600))
+
+	applyWorkspaceConfig(agentCfg, secretsJSON)
+
+	raw, err := os.ReadFile(agentCfg)
+	require.NoError(t, err)
+
+	var out map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &out))
+
+	var model string
+	require.NoError(t, json.Unmarshal(out["model"], &model))
+	assert.Equal(t, "thekao/glm-5.1", model,
+		"model must be written as providerID/modelID, not a flat ID")
+}
+
+// TestApplyWorkspaceConfig_FallsBackToFlatIDWhenProviderAbsent verifies that
+// when the provider map has no entry for the model (e.g. agent-config.json
+// was not yet written by FlushProviders), the flat ID is preserved rather
+// than silently omitting the model field.
+func TestApplyWorkspaceConfig_FallsBackToFlatIDWhenProviderAbsent(t *testing.T) {
+	dir := t.TempDir()
+	agentCfg := filepath.Join(dir, "agent-config.json")
+	secretsJSON := filepath.Join(dir, "secrets.json")
+
+	wsCfgPath := filepath.Join(dir, "workspace-config.json")
+	require.NoError(t, os.WriteFile(wsCfgPath, []byte(`{"defaultModel":"unknown-model"}`), 0o600))
+
+	// agent-config.json has a provider but it does not list "unknown-model".
+	agentCfgContent := `{"provider": {"thekao": {"models": {"gpt-5.4": {}}}}}`
+	require.NoError(t, os.WriteFile(agentCfg, []byte(agentCfgContent), 0o600))
+
+	applyWorkspaceConfig(agentCfg, secretsJSON)
+
+	raw, err := os.ReadFile(agentCfg)
+	require.NoError(t, err)
+	var out map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &out))
+	var model string
+	require.NoError(t, json.Unmarshal(out["model"], &model))
+	assert.Equal(t, "unknown-model", model, "flat fallback must be preserved")
+}
+
+// TestResolveModelWithProvider_Collision documents the behavior when two
+// providers in agent-config.json expose the same model ID. Go map iteration
+// is non-deterministic, so the function may return either "provider-a/shared"
+// or "provider-b/shared". The contract is: the result is always a valid
+// "providerID/modelID" string (never the flat ID, never empty, never a panic).
+// The boot-time path accepts this non-determinism because the per-prompt
+// frontend override routes correctly regardless of the boot default model.
+func TestResolveModelWithProvider_Collision(t *testing.T) {
+	cfg := map[string]json.RawMessage{
+		"provider": json.RawMessage(`{
+			"provider-a": {"models": {"shared": {}}},
+			"provider-b": {"models": {"shared": {}}}
+		}`),
+	}
+	got := resolveModelWithProvider(cfg, "shared")
+
+	// Must be one of the two valid qualified forms — never the flat ID.
+	assert.True(t,
+		got == "provider-a/shared" || got == "provider-b/shared",
+		"collision must produce a valid providerID/modelID form, got %q", got,
+	)
+}
+
+// TestReloadSecretsHandler_ConcurrentCalls_NoRace verifies that concurrent
+// reloadSecretsHandler calls do not race on the filesystem (SecretsEnvPath,
+// AgentConfigPath). The test must be run with -race to catch data races.
+// It also verifies that both calls return 200 — no request is starved.
+func TestReloadSecretsHandler_ConcurrentCalls_NoRace(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		home:             dir,
+		secretsBaseDir:   filepath.Join(dir, ".secrets"),
+		sshDir:           filepath.Join(dir, ".ssh"),
+		agentConfigPath:  filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:   filepath.Join(dir, "secrets-env"),
+		gitCredsPath:     filepath.Join(dir, ".git-credentials"),
+		enricherCacheDir: filepath.Join(dir, "cache"),
+	}
+
+	handler := reloadSecretsHandler(cfg, nil, "")
+	body := `[{"type":"env-secret","name":"FOO","metadata":{"var_name":"FOO"},"plaintext":"bar"}]`
+
+	var wg sync.WaitGroup
+	results := make([]int, 5)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+			results[idx] = rec.Code
+		}()
+	}
+	wg.Wait()
+
+	for i, code := range results {
+		assert.Equal(t, http.StatusOK, code, "handler %d returned non-200", i)
+	}
+}

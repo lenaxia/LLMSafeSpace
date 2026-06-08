@@ -30,6 +30,10 @@ export interface ModelInfo {
 export interface ListModelsResponse {
   models: ModelInfo[];
   currentModel: string;
+  // Resolved providerID for currentModel. Empty string signals an ambiguous
+  // collision (two connected providers expose the same model ID); in that case
+  // the frontend falls back to find() on the models array.
+  currentModelProviderID?: string;
 }
 
 export const workspacesApi = {
