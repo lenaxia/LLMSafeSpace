@@ -31,7 +31,7 @@ export function LoginPage() {
         ) : undefined
       }
     >
-      <LoginForm onSubmit={login} />
+      <LoginForm onSubmit={(username, password, rememberMe) => login(username, password, rememberMe)} />
     </AuthCard>
   );
 }

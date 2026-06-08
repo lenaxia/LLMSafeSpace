@@ -37,6 +37,15 @@ type ReadyzResponse struct {
 	ProvidersConfigured int      `json:"providers_configured"`
 	AgentVersion        string   `json:"agent_version"`
 	AgentType           string   `json:"agent_type"`
+	// RelayInjected is true when the relay injector successfully completed
+	// (wrote relay config and restarted opencode). False before the injector
+	// has run, if it was skipped (personal opencode key), or if it failed.
+	// Included here (readyz) rather than statusz because: relay injection is
+	// a one-time boot event with the same semantics as pod readiness, readyz
+	// is cache-based and lightweight (no synchronous opencode calls), and the
+	// API server needs this flag on every ListModels cache miss — using statusz
+	// (which has no latency upper bound) would be unsafe.
+	RelayInjected bool `json:"relay_injected"`
 }
 
 // SessionTokens describes token usage for a session.
@@ -102,10 +111,4 @@ type StatuszResponse struct {
 	Memory              *MemoryUsage  `json:"memory,omitempty"`
 	CPU                 *CPUUsage     `json:"cpu,omitempty"`
 	Context             *ContextUsage `json:"context,omitempty"`
-	// RelayInjected is true when the relay injector successfully completed
-	// (wrote relay config and restarted opencode). False before the injector
-	// has run, if it was skipped (personal opencode key), or if it failed.
-	// Used by the API server to distinguish Phase 1 (relay pending, remap useful)
-	// from the personal-key case (relay skipped, remap harmful).
-	RelayInjected bool `json:"relay_injected"`
 }

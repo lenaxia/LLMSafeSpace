@@ -59,9 +59,9 @@ type modelCacheEntry struct {
 }
 
 // modelCachePayload is the type stored (as JSON) inside modelCacheEntry.data.
-// Including relayInjected here avoids a separate cache or per-request statusz
-// round-trip: both pieces of data are fetched together on a cache miss and
-// cached for the same 5s TTL.
+// Including relayInjected here avoids a separate per-request readyz round-trip:
+// both pieces of data are fetched together on a cache miss and cached for the
+// same 5s TTL.
 type modelCachePayload struct {
 	Models        []annotatedModel `json:"models"`
 	RelayInjected bool             `json:"relayInjected"`
@@ -191,14 +191,13 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 			return
 		}
 
-		// Fetch relayInjected from agentd statusz. This tells us whether the relay
-		// injector actually ran for this pod (vs. was skipped due to a personal
-		// opencode key). The static h.relayActive flag only tells us whether relay
-		// is globally configured — it cannot distinguish Phase 1 (relay pending,
-		// remap useful) from the personal-key case (relay skipped, remap harmful).
-		// Best-effort: if statusz is unreachable, default false (conservative —
-		// no remap, free models show as "opencode" providerID which will fail at
-		// inference in Phase 1 but is better than the personal-key failure mode).
+		// Fetch relayInjected from the agentd /v1/readyz endpoint. This tells us
+		// whether the relay injector actually ran for this pod (vs. was skipped
+		// due to a personal opencode key). The static h.relayActive flag only
+		// tells us whether relay is globally configured — it cannot distinguish
+		// Phase 1 (relay pending) from the personal-key case (relay skipped).
+		// Best-effort: if readyz is unreachable, default false (conservative —
+		// no remap, free models show as "opencode" providerID).
 		if h.relayActive {
 			relayInjected = h.fetchRelayInjected(c.Request.Context(), podIP, password)
 		}
@@ -292,18 +291,49 @@ type providerListResponse struct {
 	All       []providerInfo `json:"all"`
 }
 
-// fetchRelayInjected reads the RelayInjected field from the agentd /v1/statusz
+// fetchRelayInjected reads the RelayInjected field from the agentd /v1/readyz
 // endpoint. Returns false on any error (conservative: when uncertain, do not
 // remap free models to opencode-relay — better to show them with providerID
 // "opencode" and fail only for Phase-1 users than to break personal-key users).
+//
+// Design choices:
+//   - Uses /v1/readyz (not /v1/statusz) because readyz is lighter than statusz.
+//     readyz reads from the healthz cache (atomic snapshot) and providerCache
+//     (15s TTL). On providerCache hit, zero synchronous opencode calls are made.
+//     On providerCache miss, readyz makes up to 3 live opencode calls under a
+//     mutex — but these are bounded by the 5s modelHTTPClient timeout below,
+//     after which fetchRelayInjected returns false conservatively.
+//     statusz additionally calls IsHealthy (live), reads disk/memory/CPU, and
+//     queries model context limits — significantly more expensive.
+//   - Uses Authorization: Bearer token (not Basic auth) because the agentd
+//     admin port (4098) is protected by requireBearerToken, not Basic auth.
+//     AGENTD_ADMIN_TOKEN == workspace password (both come from the password
+//     Secret), so the same value is used with a different auth scheme.
+//
+// Stale window: relayInjected is cached in modelCachePayload with a 5s TTL.
+// The providerCache inside readyz has a 15s TTL. In the worst case, the
+// relayInjected transition from false to true may take up to 5s + 15s = 20s
+// to be visible in ListModels responses after relay injection completes. This
+// is acceptable: relay injection happens at ~T+7s, and the brief window where
+// free models show providerID="opencode" is harmless (users are unlikely to
+// interact within the first 20s of pod boot).
+//
+// Backwards compatibility: pods running the old image (before RelayInjected was
+// added to ReadyzResponse) return JSON without the relay_injected field.
+// Go's json.Decode sets RelayInjected=false (zero value) — which is the correct
+// behavior: old Phase 2 pods have opencode-relay in connected[] (not opencode),
+// so the remap guard p.ID=="opencode" is never triggered regardless of
+// relayInjected. Old pods are safe with relayInjected=false. (Validated on
+// live cluster 2026-06-08: connected=["opencode-relay"] on Phase 2 old pod.)
 func (h *SecretsHandler) fetchRelayInjected(ctx context.Context, podIP, password string) bool {
-	url := fmt.Sprintf("http://%s:%d/v1/statusz", podIP, agentd.AgentdAdminPort) //nolint:gosec // G107: internal pod
+	url := fmt.Sprintf("http://%s:%d/v1/readyz", podIP, agentd.AgentdAdminPort) //nolint:gosec // G107: internal pod
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false
 	}
+	// AGENTD_ADMIN_TOKEN == workspace password — same value, Bearer scheme.
 	if password != "" {
-		req.SetBasicAuth(agentd.AuthUsername, password)
+		req.Header.Set("Authorization", "Bearer "+password)
 	}
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
@@ -313,11 +343,11 @@ func (h *SecretsHandler) fetchRelayInjected(ctx context.Context, podIP, password
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}
-	var statusz agentd.StatuszResponse
-	if json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&statusz) != nil {
+	var readyz agentd.ReadyzResponse
+	if json.NewDecoder(io.LimitReader(resp.Body, 16*1024)).Decode(&readyz) != nil {
 		return false
 	}
-	return statusz.RelayInjected
+	return readyz.RelayInjected
 }
 
 // providerInfo is a single provider entry in the /provider response.
@@ -357,13 +387,10 @@ const (
 // remapping occurs regardless of other conditions.
 //
 // relayInjected: true when the relay injector for this specific pod successfully
-// completed (fetched free models, wrote relay config, restarted opencode). Read
-// from the pod's /v1/statusz RelayInjected field. This is the discriminator
-// between Phase 1 (relay pending, remap useful) and the personal-key case
-// (relay skipped, remap harmful). When false and relayGloballyEnabled is true,
-// the pod is in Phase 1 — remap is applied so the frontend shows correct
-// providerIDs while the injector finishes. This is a brief (~7s) window where
-// free models are labeled opencode-relay before the injector completes.
+// completed. Read from the pod's /v1/readyz RelayInjected field. When false,
+// no remap occurs — this covers both Phase 1 (~7s window before injection
+// completes, free models briefly show providerID="opencode") and the personal-key
+// case (relay skipped forever). See inline comment for the trade-off rationale.
 //
 // Only models whose providerID is in connected[] are returned as available;
 // all others (from models.dev but without credentials) are omitted.
@@ -392,40 +419,21 @@ func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]ann
 			avail := classifyAvailability(p.ID, m.Cost)
 			providerID := p.ID
 
-			// Remap free-tier opencode models to opencode-relay so the frontend
-			// sends inference to the CF Worker relay rather than the built-in
-			// opencode provider (which is disabled after relay injection).
+			// Remap free-tier opencode models to opencode-relay so inference
+			// routes through the CF Worker rather than the built-in provider.
 			//
-			// Three conditions must ALL be true:
-			//   1. Relay is globally configured (relayGloballyEnabled).
-			//   2. This is a free-tier opencode model from the built-in provider.
-			//   3. The relay injector has not yet completed OR the injector ran
-			//      successfully (relayInjected=true means Phase 2: opencode-relay
-			//      is in connected[], so p.ID=="opencode" is already filtered out
-			//      above — this branch is unreachable in Phase 2).
-			//      When relayInjected=false AND relayGloballyEnabled=true we are in
-			//      Phase 1 (remap useful) OR personal-key (remap harmful). We
-			//      cannot distinguish these without relayInjected; defaulting to
-			//      remap (Phase 1 assumption) is correct for the common case.
-			//      The personal-key case requires relayInjected to be false AND
-			//      the injector to have been skipped — which means
-			//      getActiveRelayModels()==nil, which maps to RelayInjected=false.
-			//      In the personal-key case the injector is skipped immediately
-			//      (shouldSkipRelay=true), so RelayInjected stays false forever.
-			//      Therefore: remap when relayGloballyEnabled && !relayInjected &&
-			//      p.ID=="opencode" — this correctly handles Phase 1 but
-			//      incorrectly handles personal-key.
+			// In practice this branch is never reached in a valid system state:
+			//   - relayInjected=true means the injector completed, which means
+			//     disabled_providers:["opencode"] was written and opencode restarted.
+			//     After restart, opencode is absent from connected[], so
+			//     p.ID=="opencode" is filtered out above — this branch is
+			//     unreachable in Phase 2 (validated on live cluster 2026-06-08).
+			//   - relayInjected=false (Phase 1 or personal key) → condition false.
 			//
-			//      The personal-key fix: do NOT remap when relayInjected=false AND
-			//      the injector was skipped. relayInjected=false covers both cases,
-			//      but we cannot distinguish them from this flag alone in Phase 1.
-			//      The conservative correct behavior: if relayInjected is false,
-			//      do NOT remap — show opencode models with providerID="opencode".
-			//      In Phase 1 (first ~7s), free models briefly show as "opencode"
-			//      providerID. After T+7s relayInjected becomes true, the remap
-			//      fires, and the correct "opencode-relay" providerID appears.
-			//      This is the correct trade-off: a 7s window of wrong providerID
-			//      in Phase 1 is better than permanently broken personal-key users.
+			// The guard is kept as defense-in-depth: if an opencode version ever
+			// keeps the built-in provider in connected[] despite disabled_providers,
+			// this code correctly remaps it rather than silently routing to a
+			// disabled provider.
 			if relayGloballyEnabled && relayInjected && avail == ModelFreeTier && p.ID == "opencode" {
 				providerID = "opencode-relay"
 			}
@@ -535,17 +543,22 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	}
 
 	// Push model selection to running agent (if pod available).
+	// resolved holds the "providerID/modelID" form returned by patchAgentModel,
+	// reused for metricsRecorder to avoid a second catalog + relay-state round-trip.
 	applied := false
+	var resolvedModel string // "providerID/modelID" from the live catalog, or ""
 	if h.podIPResolver != nil {
 		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
 		if err == nil && podIP != "" {
-			// Fetch workspace password once; used for all opencode Basic-auth calls below.
+			// Fetch workspace password once; used for all opencode calls below.
 			password := ""
 			if h.passwordGetter != nil {
 				password, _ = h.passwordGetter(c.Request.Context(), workspaceID)
 			}
 
-			if patchErr := h.patchAgentModel(c.Request.Context(), podIP, password, req.Model); patchErr != nil {
+			var patchErr error
+			resolvedModel, patchErr = h.patchAgentModel(c.Request.Context(), podIP, password, req.Model)
+			if patchErr != nil {
 				h.warn("PATCH model to agent failed", "error", patchErr.Error())
 			} else {
 				applied = true
@@ -554,26 +567,11 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	}
 
 	// Metering: record the model selection for billing dashboards.
+	// Reuse resolvedModel from patchAgentModel — no additional catalog fetch.
 	if h.metricsRecorder != nil {
-		// Determine providerID for the selected model (relay or direct).
-		providerID := "opencode"
-		if h.relayActive {
-			// Use the resolved providerID from the catalog remap logic.
-			// For relay-active free models the resolved path uses opencode-relay.
-			if h.podIPResolver != nil {
-				if podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID); err == nil && podIP != "" {
-					pw, _ := func() (string, error) {
-						if h.passwordGetter != nil {
-							return h.passwordGetter(c.Request.Context(), workspaceID)
-						}
-						return "", nil
-					}()
-					resolved := h.resolveModelIDFromCatalog(c.Request.Context(), podIP, pw, req.Model)
-					if idx := strings.Index(resolved, "/"); idx >= 0 {
-						providerID = resolved[:idx]
-					}
-				}
-			}
+		providerID := "unknown"
+		if idx := strings.Index(resolvedModel, "/"); idx >= 0 {
+			providerID = resolvedModel[:idx]
 		}
 		h.metricsRecorder.RecordModelSelection(req.Model, providerID)
 	}
@@ -699,10 +697,9 @@ func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, p
 			}
 			providerID := p.ID
 			// Remap free-tier opencode models to opencode-relay only when the relay
-			// injector actually ran for this pod. Using h.relayActive alone is
-			// insufficient: it is a static global flag that does not distinguish
-			// Phase 1 (relay pending) from personal-key (relay skipped).
-			// fetchRelayInjected checks the pod's statusz to get the live state.
+			// injector actually ran for this pod. h.relayActive alone does not
+			// distinguish Phase 1 (relay pending) from personal-key (relay skipped).
+			// fetchRelayInjected reads the pod's /v1/readyz to get the live state.
 			if h.relayActive && isZeroCostOpencode(providerID, m.Cost) {
 				if h.fetchRelayInjected(ctx, podIP, password) {
 					providerID = "opencode-relay"
@@ -716,14 +713,16 @@ func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, p
 
 // patchAgentModel sends the model selection to the running opencode agent.
 // It resolves the catalog flat model ID to providerID/modelID format before patching.
-func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) error {
+// Returns the resolved "providerID/modelID" string (for callers to reuse, e.g.
+// metricsRecorder) alongside any error.
+func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) (string, error) {
 	// Resolve to opencode's providerID/modelID format (e.g. "openai/gpt-5.5").
 	resolved := h.resolveModelIDFromCatalog(ctx, podIP, password, model)
 	body := []byte(fmt.Sprintf(`{"model":%q}`, resolved))
 	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if password != "" {
@@ -731,12 +730,12 @@ func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, m
 	}
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
 	}
-	return nil
+	return resolved, nil
 }

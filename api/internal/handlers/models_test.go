@@ -1125,7 +1125,7 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 	if err != nil {
 		t.Skip("port 4096 not available")
 	}
-	// Also mock agentd admin port (4098) to serve statusz with RelayInjected=true.
+	// Also mock agentd admin port (4098) to serve readyz with RelayInjected=true.
 	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
 	if err != nil {
 		t.Skip("port 4098 not available")
@@ -1133,7 +1133,7 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 
 	// Free-tier opencode model: cost.input==0, providerID=="opencode" →
 	// annotateModels remaps providerID to "opencode-relay" when relayActive=true
-	// AND relayInjected=true (from statusz).
+	// AND relayInjected=true (from readyz).
 	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
 		"glm-5.1-free":{"id":"glm-5.1-free","name":"GLM 5.1 Free","cost":{"input":0,"output":0}}
 	}}]}`
@@ -1147,8 +1147,8 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	// agentd admin server (port 4098) — serves /v1/statusz with RelayInjected=true
-	statuszBody, _ := json.Marshal(agentd.StatuszResponse{RelayInjected: true})
+	// agentd admin server (port 4098) — serves /v1/readyz with RelayInjected=true
+	statuszBody, _ := json.Marshal(agentd.ReadyzResponse{RelayInjected: true})
 	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(statuszBody)
@@ -1185,7 +1185,7 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 
 // TestListModels_RelayActive_PersonalKey_NoRemap verifies that when
 // relayActive=true but the relay injector was skipped (RelayInjected=false in
-// statusz — personal opencode key), free models are NOT remapped to
+// readyz — personal opencode key), free models are NOT remapped to
 // opencode-relay. This is Bug 3.
 func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
 	clearModelCache()
@@ -1213,8 +1213,8 @@ func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	// statusz returns RelayInjected=false — relay was skipped (personal key)
-	statuszBody, _ := json.Marshal(agentd.StatuszResponse{RelayInjected: false})
+	// readyz returns RelayInjected=false — relay was skipped (personal key)
+	statuszBody, _ := json.Marshal(agentd.ReadyzResponse{RelayInjected: false})
 	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(statuszBody)

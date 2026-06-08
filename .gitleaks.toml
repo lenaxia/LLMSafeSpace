@@ -54,6 +54,11 @@ paths = [
   # Build artifact (minified JS); generated, never committed by hand.
   # Already in .gitignore but kept here as defense in depth.
   '''frontend/dist/.*''',
+  # Epic-34 master-key test file: uses LLMSAFESPACE_MASTER_SECRET env var
+  # with synthetic test values (high-entropy but not real secrets — test fixture
+  # for the master-key encryption round-trip. No real key material; verified
+  # by inspection 2026-06-08).
+  '''api/internal/app/app_master_key_test\.go''',
   # SecretsTab generates SSH keypairs client-side using WebCrypto.
   # The PEM header/footer strings ("-----BEGIN OPENSSH PRIVATE KEY-----")
   # are format templates, not actual secrets. No real key material is

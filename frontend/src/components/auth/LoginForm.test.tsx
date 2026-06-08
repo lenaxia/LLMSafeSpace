@@ -16,7 +16,7 @@ describe("LoginForm", () => {
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("calls onSubmit with username and password", async () => {
+  it("calls onSubmit with username, password, and rememberMe=false by default", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(<LoginForm onSubmit={onSubmit} />);
@@ -25,7 +25,27 @@ describe("LoginForm", () => {
     await user.type(screen.getByPlaceholderText("Password"), "secret123");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(onSubmit).toHaveBeenCalledWith("alice@test.com", "secret123");
+    expect(onSubmit).toHaveBeenCalledWith("alice@test.com", "secret123", false);
+  });
+
+  it("calls onSubmit with rememberMe=true when checkbox is checked", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<LoginForm onSubmit={onSubmit} />);
+
+    await user.type(screen.getByPlaceholderText("Email"), "alice@test.com");
+    await user.type(screen.getByPlaceholderText("Password"), "secret123");
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("alice@test.com", "secret123", true);
+  });
+
+  it("renders remember me checkbox unchecked by default", () => {
+    render(<LoginForm onSubmit={vi.fn()} />);
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
   });
 
   it("shows loading state during submission", async () => {
