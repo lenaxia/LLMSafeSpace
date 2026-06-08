@@ -56,6 +56,13 @@ type materializeConfig struct {
 	agentConfigPath string
 	secretsEnvPath  string
 	gitCredsPath    string
+	// enricherCacheDir is the directory used by the model enricher to cache
+	// provider model lists between credential reloads. It must NOT be inside
+	// secretsBaseDir because reset() deletes that directory on every Materialize
+	// call, which would destroy the cache before it could be used.
+	// Default: $HOME/.local/state/llmsafespace (on the sandbox-home emptyDir,
+	// outside SecretsBaseDir and SSHDir, never cleaned by reset()).
+	enricherCacheDir string
 }
 
 func (c materializeConfig) toPaths() secrets.Paths {
@@ -75,12 +82,13 @@ func (c materializeConfig) toPaths() secrets.Paths {
 func loadMaterializeConfig() materializeConfig {
 	home := envOrDefault("HOME", "/home/sandbox")
 	return materializeConfig{
-		home:            home,
-		secretsBaseDir:  envOrDefault("LLMSAFESPACE_SECRETS_BASE_DIR", agentd.SecretsBasePath),
-		sshDir:          envOrDefault("LLMSAFESPACE_SSH_DIR", home+"/.ssh"),
-		agentConfigPath: envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
-		secretsEnvPath:  envOrDefault("LLMSAFESPACE_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
-		gitCredsPath:    envOrDefault("LLMSAFESPACE_GIT_CREDS_PATH", home+"/.git-credentials"),
+		home:             home,
+		secretsBaseDir:   envOrDefault("LLMSAFESPACE_SECRETS_BASE_DIR", agentd.SecretsBasePath),
+		sshDir:           envOrDefault("LLMSAFESPACE_SSH_DIR", home+"/.ssh"),
+		agentConfigPath:  envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+		secretsEnvPath:   envOrDefault("LLMSAFESPACE_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
+		gitCredsPath:     envOrDefault("LLMSAFESPACE_GIT_CREDS_PATH", home+"/.git-credentials"),
+		enricherCacheDir: envOrDefault("LLMSAFESPACE_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespace"),
 	}
 }
 
@@ -141,7 +149,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	// instead of its internal hardcoded list. Results are cached to cacheDir
 	// for providerModelCacheTTL so pod restarts don't re-fetch unnecessarily.
 	httpClient := &http.Client{Timeout: 15 * time.Second}
-	m.EnrichProviders(enrichProviderModels(context.Background(), cfg.secretsBaseDir, httpClient))
+	m.EnrichProviders(enrichProviderModels(context.Background(), cfg.enricherCacheDir, httpClient))
 
 	// Flush staged llm-provider secrets to AgentConfigPath so opencode
 	// reads them at startup. Without this, the config file is empty and
@@ -266,7 +274,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		// the boot-time materialize path). On reload, any cached model list is
 		// reused so this is typically instant.
 		reloadHTTPClient := &http.Client{Timeout: 15 * time.Second}
-		m.EnrichProviders(enrichProviderModels(r.Context(), cfg.secretsBaseDir, reloadHTTPClient))
+		m.EnrichProviders(enrichProviderModels(r.Context(), cfg.enricherCacheDir, reloadHTTPClient))
 
 		// Flush staged llm-provider secrets to AgentConfigPath.
 		// This MUST succeed before we notify the agent of config changes.
@@ -275,6 +283,31 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "flush providers: " + err.Error()})
 			return
+		}
+
+		// Re-merge relay config into the freshly-written agent-config.json.
+		// FlushProviders writes only credential-sourced providers and has no
+		// knowledge of the relay injector's disabled_providers + opencode-relay
+		// block. Without this step, every credential bind permanently removes
+		// the relay config until the next pod restart.
+		//
+		// nil models means: relay injector has not yet run, was skipped (personal
+		// key), or failed. In all three cases we correctly skip re-injection:
+		//   - Not yet run: relay injector fires at T+16s and writes its own config.
+		//   - Skipped: user routes directly; injecting relay would break them.
+		//   - Failed: nothing to inject.
+		if relayURL := os.Getenv("INFERENCE_RELAY_BASEURL"); relayURL != "" {
+			if models := getActiveRelayModels(); models != nil {
+				if cfgBytes, buildErr := buildRelayConfig(cfg.agentConfigPath, relayURL, models); buildErr != nil {
+					log.Warn("reload-secrets: failed to re-merge relay config after flush",
+						zap.Error(buildErr))
+				} else if writeErr := os.WriteFile(cfg.agentConfigPath, cfgBytes, 0o600); writeErr != nil {
+					log.Warn("reload-secrets: failed to write re-merged relay config",
+						zap.Error(writeErr))
+				} else {
+					log.Info("reload-secrets: re-merged relay config after credential flush")
+				}
+			}
 		}
 
 		mat, skip, fail := result.Counts()

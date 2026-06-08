@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -499,12 +500,13 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, "env")
 	cfg := materializeConfig{
-		secretsBaseDir:  filepath.Join(dir, "secrets"),
-		sshDir:          filepath.Join(dir, ".ssh"),
-		agentConfigPath: filepath.Join(dir, "agent-config.json"),
-		secretsEnvPath:  envPath,
-		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
-		home:            dir,
+		secretsBaseDir:   filepath.Join(dir, "secrets"),
+		sshDir:           filepath.Join(dir, ".ssh"),
+		agentConfigPath:  filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:   envPath,
+		gitCredsPath:     filepath.Join(dir, ".git-credentials"),
+		enricherCacheDir: filepath.Join(dir, "enricher-cache"),
+		home:             dir,
 	}
 
 	body := `[{"type":"env-secret","name":"x","metadata":{"var_name":"X"},"plaintext":"v"}]`
@@ -527,4 +529,121 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	require.False(t, resp.ConfigReloaded)
 	// proc is nil so restart didn't fire, but it WOULD have
 	require.False(t, resp.Restarted)
+}
+
+// TestReloadSecretsHandler_RemergesRelayAfterFlush verifies that when
+// activeRelayModels is set (relay injector ran), the handler re-merges
+// the relay config into agent-config.json after FlushProviders writes it.
+// This is the direct regression test for the confirmed production bug:
+// credential bind clobbering the relay config.
+func TestReloadSecretsHandler_RemergesRelayAfterFlush(t *testing.T) {
+	// Pre-set the relay model list as if the injector already ran.
+	origModels := activeRelayModels.Load()
+	defer activeRelayModels.Store(origModels)
+	setActiveRelayModels([]relayModel{
+		{ID: "big-pickle", Name: "Big Pickle", ContextLimit: 131072, OutputLimit: 16384},
+	})
+
+	// Set relay URL env var so the re-merge code path activates.
+	t.Setenv("INFERENCE_RELAY_BASEURL", "https://relay.safespaces.dev/testsecret")
+
+	dir := t.TempDir()
+	agentCfg := filepath.Join(dir, "agent-config.json")
+	cfg := materializeConfig{
+		secretsBaseDir:   filepath.Join(dir, "secrets"),
+		sshDir:           filepath.Join(dir, ".ssh"),
+		agentConfigPath:  agentCfg,
+		secretsEnvPath:   filepath.Join(dir, "env"),
+		gitCredsPath:     filepath.Join(dir, ".git-credentials"),
+		enricherCacheDir: filepath.Join(dir, "enricher-cache"),
+		home:             dir,
+	}
+
+	// Simulate a credential bind: llm-provider (thekao) in the batch.
+	body := `[{"type":"llm-provider","name":"thekao","plaintext":"{\"provider\":\"thekao\",\"apiKey\":\"sk-test\",\"baseURL\":\"https://ai.thekao.cloud/v1\"}"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	prevLog := log
+	log = zap.NewNop()
+	defer func() { log = prevLog }()
+
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// agent-config.json must contain both the credential provider (thekao)
+	// AND the relay provider block with disabled_providers.
+	cfgData, err := os.ReadFile(agentCfg)
+	require.NoError(t, err)
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfgData, &parsed), "agent-config.json must be valid JSON")
+
+	// disabled_providers must be present (relay re-merged)
+	disabledRaw, ok := parsed["disabled_providers"]
+	require.True(t, ok, "disabled_providers must be present after relay re-merge")
+	var disabled []string
+	require.NoError(t, json.Unmarshal(disabledRaw, &disabled))
+	assert.Contains(t, disabled, "opencode")
+
+	// provider map must contain both thekao (from FlushProviders) and opencode-relay
+	var providers map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(parsed["provider"], &providers))
+	_, hasThekao := providers["thekao"]
+	assert.True(t, hasThekao, "thekao provider from FlushProviders must survive relay re-merge")
+	_, hasRelay := providers["opencode-relay"]
+	assert.True(t, hasRelay, "opencode-relay provider must be present after re-merge")
+}
+
+// TestReloadSecretsHandler_SkipsRelayMergeWhenModelsNil verifies that when
+// activeRelayModels is nil (relay not yet run or was skipped), the handler
+// does NOT inject relay config. This covers the personal-key user case.
+func TestReloadSecretsHandler_SkipsRelayMergeWhenModelsNil(t *testing.T) {
+	origModels := activeRelayModels.Load()
+	defer activeRelayModels.Store(origModels)
+	activeRelayModels.Store(nil) // relay not yet run
+
+	t.Setenv("INFERENCE_RELAY_BASEURL", "https://relay.safespaces.dev/testsecret")
+
+	dir := t.TempDir()
+	agentCfg := filepath.Join(dir, "agent-config.json")
+	cfg := materializeConfig{
+		secretsBaseDir:   filepath.Join(dir, "secrets"),
+		sshDir:           filepath.Join(dir, ".ssh"),
+		agentConfigPath:  agentCfg,
+		secretsEnvPath:   filepath.Join(dir, "env"),
+		gitCredsPath:     filepath.Join(dir, ".git-credentials"),
+		enricherCacheDir: filepath.Join(dir, "enricher-cache"),
+		home:             dir,
+	}
+
+	body := `[{"type":"llm-provider","name":"openai","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-personal\"}"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	prevLog := log
+	log = zap.NewNop()
+	defer func() { log = prevLog }()
+
+	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	cfgData, err := os.ReadFile(agentCfg)
+	require.NoError(t, err)
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cfgData, &parsed))
+
+	// disabled_providers must NOT be present (relay was not injected)
+	_, hasDisabled := parsed["disabled_providers"]
+	assert.False(t, hasDisabled,
+		"disabled_providers must be absent when relay models are nil (relay not yet run or skipped)")
+
+	// opencode-relay must NOT be present
+	if provRaw, ok := parsed["provider"]; ok {
+		var providers map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(provRaw, &providers))
+		_, hasRelay := providers["opencode-relay"]
+		assert.False(t, hasRelay, "opencode-relay must be absent when relay models are nil")
+	}
 }

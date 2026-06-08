@@ -328,6 +328,10 @@ func TestStartRelayInjector_SkipsWhenPersonalKey(t *testing.T) {
 }
 
 func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
+	orig := activeRelayModels.Load()
+	defer activeRelayModels.Store(orig)
+	activeRelayModels.Store(nil)
+
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "agent-config.json")
 	authPath := filepath.Join(dir, "auth.json")
@@ -360,6 +364,8 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 
 	select {
 	case <-killed:
+		// Give the goroutine time to finish the log.Info after KillOpenCode returns.
+		time.Sleep(10 * time.Millisecond)
 	case <-time.After(2 * time.Second):
 		t.Fatal("KillOpenCode was not called within 2s")
 	}
@@ -454,4 +460,117 @@ func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
 
 	// Both calls were made (retry happened)
 	assert.Equal(t, 2, callCount, "expected exactly 2 /provider calls (initial + retry)")
+}
+
+// --- activeRelayModels atomic store/load tests ---
+
+// TestActiveRelayModels_NilBeforeInjection verifies the zero value is nil
+// (relay not yet run), so reload handlers skip re-injection correctly.
+func TestActiveRelayModels_NilBeforeInjection(t *testing.T) {
+	// Reset state: swap in nil for this test.
+	activeRelayModels.Store(nil)
+	assert.Nil(t, getActiveRelayModels(), "must be nil before relay injector runs")
+}
+
+// TestActiveRelayModels_SetAndGet verifies the atomic store/load round-trips
+// the model list correctly.
+func TestActiveRelayModels_SetAndGet(t *testing.T) {
+	orig := activeRelayModels.Load()
+	defer activeRelayModels.Store(orig) // restore after test
+
+	models := []relayModel{
+		{ID: "big-pickle", Name: "Big Pickle", ContextLimit: 131072, OutputLimit: 16384},
+		{ID: "deepseek-v4-flash-free", Name: "DeepSeek V4 Flash Free"},
+	}
+	setActiveRelayModels(models)
+
+	got := getActiveRelayModels()
+	require.NotNil(t, got)
+	require.Len(t, got, 2)
+	assert.Equal(t, "big-pickle", got[0].ID)
+	assert.Equal(t, "deepseek-v4-flash-free", got[1].ID)
+}
+
+// TestStartRelayInjector_SetsActiveRelayModels verifies that a successful
+// relay injection stores the model list so reloadSecretsHandler can use it.
+func TestStartRelayInjector_SetsActiveRelayModels(t *testing.T) {
+	orig := activeRelayModels.Load()
+	defer activeRelayModels.Store(orig) // restore after test
+	activeRelayModels.Store(nil)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath,
+		[]byte(`{"opencode":{"type":"api","key":"public"}}`), 0o600))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": []string{"opencode"},
+			"all": []map[string]interface{}{
+				{"id": "opencode", "models": map[string]interface{}{
+					"big-pickle": map[string]interface{}{
+						"id": "big-pickle", "name": "Big Pickle",
+						"cost":  map[string]float64{"input": 0, "output": 0},
+						"limit": map[string]int{"context": 131072, "output": 16384},
+					},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	killed := make(chan struct{}, 1)
+	startRelayInjector(relayInjectorConfig{
+		RelayURL:         "https://relay.safespaces.dev/secret",
+		OpenCodeBaseURL:  srv.URL,
+		OpenCodePassword: "pw",
+		AgentConfigPath:  cfgPath,
+		AuthJSONPath:     authPath,
+		HealthCheck:      func() bool { return true },
+		KillOpenCode:     func() { close(killed) },
+	})
+
+	select {
+	case <-killed:
+		// Give the goroutine time to finish after KillOpenCode (setActiveRelayModels
+		// is called before close(killed), so the write is already done — this sleep
+		// guards against the final log.Info racing with defer restore in the caller).
+		time.Sleep(10 * time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay injector did not complete within 2s")
+	}
+
+	got := getActiveRelayModels()
+	require.NotNil(t, got, "activeRelayModels must be set after successful injection")
+	require.Len(t, got, 1)
+	assert.Equal(t, "big-pickle", got[0].ID)
+}
+
+// TestStartRelayInjector_DoesNotSetModelsWhenSkipped verifies that when relay
+// injection is skipped (personal key), activeRelayModels remains nil so the
+// reload handler does not incorrectly re-inject relay for personal-key users.
+func TestStartRelayInjector_DoesNotSetModelsWhenSkipped(t *testing.T) {
+	orig := activeRelayModels.Load()
+	defer activeRelayModels.Store(orig)
+	activeRelayModels.Store(nil)
+
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authPath,
+		[]byte(`{"opencode":{"type":"api","key":"sk-personal-key"}}`), 0o600))
+
+	killed := false
+	startRelayInjector(relayInjectorConfig{
+		RelayURL:     "https://relay.safespaces.dev/secret",
+		AuthJSONPath: authPath,
+		HealthCheck:  func() bool { return true },
+		KillOpenCode: func() { killed = true },
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	assert.False(t, killed)
+	assert.Nil(t, getActiveRelayModels(),
+		"activeRelayModels must remain nil when relay is skipped for personal key")
 }

@@ -90,6 +90,17 @@ func fetchOrCacheModels(ctx context.Context, provider, baseURL, apiKey, cacheDir
 		}
 		return '_'
 	}, provider)
+
+	// Ensure the cache directory exists. It may not on first boot or after a
+	// node recycle. MkdirAll is a no-op when the directory already exists.
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		// Non-fatal: proceed without caching.
+		log.Warn("model enricher: failed to create cache dir; will skip cache",
+			zap.String("cacheDir", cacheDir), zap.Error(err))
+		models, fetchErr := fetchModels(ctx, baseURL, apiKey, client)
+		return models, fetchErr
+	}
+
 	cacheFile := filepath.Join(cacheDir, "provider-models-cache-"+safeName+".json")
 
 	// Use cache if it exists and is within TTL.
