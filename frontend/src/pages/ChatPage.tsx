@@ -46,6 +46,9 @@ export function ChatPage() {
     sseHasDrivenBusy.current = false;
     setPendingQuestions([]);
     setPendingPermissions([]);
+    setPendingQueue([]);
+    setQueuedUserMessages([]);
+    flushFailedRef.current = false;
   }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
@@ -142,6 +145,17 @@ export function ChatPage() {
   const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
 
+  // Queue for messages sent while streaming — flushed on idle
+  const [pendingQueue, setPendingQueue] = useState<{ id: string; text: string }[]>([]);
+  const [queuedUserMessages, setQueuedUserMessages] = useState<Message[]>([]);
+
+  // Mutable ref to the do-send-immediately function so the flush effect
+  // can call it without being re-created on every render.
+  const doSendNowRef = useRef<(text: string) => void>(() => {});
+  // Guards against flushing the remaining queue after a send failure.
+  const flushFailedRef = useRef(false);
+
+
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
   useEffect(() => {
@@ -153,6 +167,22 @@ export function ChatPage() {
 
   const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
+
+  // Stop auto-flushing on send failure; resume on next idle.
+  useEffect(() => {
+    if (chatError) flushFailedRef.current = true;
+  }, [chatError]);
+
+  // Flush queue when streaming ends
+  useEffect(() => {
+    if (!streaming && pendingQueue.length > 0 && activeWorkspaceId && sessionId && !flushFailedRef.current) {
+      const next = pendingQueue[0];
+      const rest = pendingQueue.slice(1);
+      setPendingQueue(rest);
+      setQueuedUserMessages((prev) => prev.filter((m) => m.id !== next!.id));
+      doSendNowRef.current(next!.text);
+    }
+  }, [streaming, pendingQueue, activeWorkspaceId, sessionId]);
 
   // US-15.3: Compute historyPartIds from fetched history for boundary detection
   const historyPartIds = useRef<Set<string>>(new Set());
@@ -439,6 +469,7 @@ export function ChatPage() {
           sseHasDrivenBusy.current = true;
           notifySessionIdle(event.session_id);
           setServerBusy(false);
+          flushFailedRef.current = false;
           reconcileOnIdle();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
@@ -525,9 +556,7 @@ export function ChatPage() {
   // detect the Pending→Active phase transition and auto-create a session.
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
-  // sessionErrors are appended after localMessages so errors always render at
-  // the bottom, after the optimistic user message and after any history.
-  const allMessages = [...(history ?? []), ...localMessages, ...sessionErrors];
+  const allMessages = [...(history ?? []), ...localMessages, ...queuedUserMessages, ...sessionErrors];
 
   if (!workspaceId) {
     return (
@@ -541,7 +570,7 @@ export function ChatPage() {
   const isTransitioning = !status?.phase || status?.phase === "Pending" || status?.phase === "Creating" || status?.phase === "Resuming" || status?.phase === "Suspending";
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
-  const handleSend = (text: string) => {
+  const doSendNow = (text: string) => {
     // Resolve current model selection into opencode's PromptInput.model format.
     // currentModel is the flat model ID stored in the DB (e.g. "glm-5.1", never
     // "provider/model"). The backend resolves the providerID and returns it as
@@ -589,6 +618,23 @@ export function ChatPage() {
       // been refetched. Force it now so the response shows without a full page reload.
       reconcileOnIdle();
     }, currentModelRef);
+  };
+  // Sync ref after every render so the flush effect always has the latest closure.
+  useEffect(() => { doSendNowRef.current = doSendNow; });
+
+  const handleSend = (text: string) => {
+    // If streaming, queue the message instead of sending immediately
+    if (streaming) {
+      const id = `queued-${Date.now()}`;
+      setPendingQueue((prev) => [...prev, { id, text }]);
+      setQueuedUserMessages((prev) => [...prev, {
+        id,
+        role: "user" as const,
+        parts: [{ type: "text", text }],
+      }]);
+      return;
+    }
+    doSendNow(text);
   };
 
   const sessionDisplayName = sessionTitle || "New chat";
@@ -734,6 +780,7 @@ export function ChatPage() {
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}
             loadingOlder={isFetchingNextPage}
+            queuedCount={pendingQueue.length}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
                 <>

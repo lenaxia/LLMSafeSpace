@@ -11,19 +11,16 @@ interface Props {
   disabled?: boolean;
   streaming?: boolean;
   placeholder?: string;
+  queuedCount?: number;
 }
 
-export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "Type a message..." }: Props) {
+export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "Type a message...", queuedCount = 0 }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendOnEnter = useUserSetting("sendOnEnter", true);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (streaming && onAbort) {
-      onAbort();
-      return;
-    }
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
@@ -32,7 +29,6 @@ export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (streaming) return;
     if (sendOnEnter) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -53,8 +49,15 @@ export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   };
 
+  const canSend = text.trim().length > 0 && !disabled;
+
   return (
     <form onSubmit={handleSubmit} className="border-t border-border p-4">
+      {queuedCount > 0 && (
+        <div className="mb-2 text-xs text-muted-foreground">
+          {queuedCount} message{queuedCount !== 1 ? "s" : ""} queued
+        </div>
+      )}
       <div className="flex items-end gap-2">
         <textarea
           ref={textareaRef}
@@ -62,26 +65,26 @@ export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
-          placeholder={streaming ? "Generating..." : placeholder}
-          disabled={disabled || streaming}
+          placeholder={placeholder}
+          disabled={disabled}
           rows={1}
           className={cn(
             "min-h-[44px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
           )}
         />
-        {streaming ? (
+        <Button type="submit" size="icon" disabled={!canSend} className="min-h-[44px] min-w-[44px]">
+          <Send className="h-4 w-4" />
+        </Button>
+        {streaming && onAbort && (
           <Button
-            type="submit"
+            type="button"
             size="icon"
             variant="destructive"
             className="min-h-[44px] min-w-[44px]"
             aria-label="Stop generating"
+            onClick={(e) => { e.preventDefault(); onAbort(); }}
           >
             <Square className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button type="submit" size="icon" disabled={disabled || !text.trim()} className="min-h-[44px] min-w-[44px]">
-            <Send className="h-4 w-4" />
           </Button>
         )}
       </div>
