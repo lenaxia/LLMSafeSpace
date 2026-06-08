@@ -306,3 +306,47 @@ func TestEnrichProviderModels_MultipleProviders(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestEnrichProviderModels_CacheWrittenToEnricherCacheDir verifies that the
+// enricher cache file lands in the configured enricherCacheDir and NOT in
+// secretsBaseDir. This is the regression test for Bug 2: the cache was
+// previously written to SecretsBasePath which reset() deletes on every reload.
+//
+// If someone changes enrichProviderModels callers back to cfg.secretsBaseDir,
+// this test will catch it: secretsBaseDir is separate from enricherCacheDir
+// in the test and we assert the cache is absent from secretsBaseDir.
+func TestEnrichProviderModels_CacheWrittenToEnricherCacheDir(t *testing.T) {
+	srv := fakeModelsServer(t, []string{"glm-5.1", "deepseek-v4-flash"})
+	defer srv.Close()
+
+	dir := t.TempDir()
+	secretsBaseDir := filepath.Join(dir, "secrets-base")     // simulates /home/sandbox/.secrets
+	enricherCacheDir := filepath.Join(dir, "enricher-cache") // simulates /home/sandbox/.local/state/llmsafespace
+	require.NoError(t, os.MkdirAll(secretsBaseDir, 0o700))
+	// enricherCacheDir intentionally NOT pre-created — MkdirAll inside fetchOrCacheModels must create it.
+
+	providers := []sec.LLMProviderData{
+		{Provider: "thekao", APIKey: "test-key", BaseURL: srv.URL},
+	}
+
+	fn := enrichProviderModels(context.Background(), enricherCacheDir, srv.Client())
+	out := fn(providers)
+
+	require.Len(t, out[0].Models, 2, "enricher must populate model list from endpoint")
+	assert.Equal(t, "glm-5.1", out[0].Models[0].ID)
+
+	// Cache file must exist in enricherCacheDir.
+	entries, err := os.ReadDir(enricherCacheDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "exactly one cache file must be written to enricherCacheDir")
+	assert.Contains(t, entries[0].Name(), "provider-models-cache-thekao")
+
+	// Cache file must NOT exist in secretsBaseDir.
+	// If this fails, enricherCacheDir was not used — the fix regressed.
+	secretsEntries, err := os.ReadDir(secretsBaseDir)
+	require.NoError(t, err)
+	for _, e := range secretsEntries {
+		assert.NotContains(t, e.Name(), "provider-models-cache",
+			"cache file must not be written to secretsBaseDir (reset() deletes it on every reload)")
+	}
+}

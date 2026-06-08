@@ -38,12 +38,42 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
 )
+
+// activeRelayModels holds the free model list discovered by the relay injector
+// after it successfully completes. It is set once by the injector goroutine and
+// read by reloadSecretsHandler to re-merge relay config after FlushProviders
+// overwrites agent-config.json on credential bind.
+//
+// nil means the injector has not yet run OR was skipped (personal key / no free
+// models). reloadSecretsHandler treats nil as "do not inject relay" — which is
+// correct in all three cases:
+//   - Not yet run: relay injector fires at ~T+7s (opencode health check passes
+//     at T+5s; model fetch + config write adds ~2s). Writes its own config.
+//   - Skipped (personal key): user routes directly, relay must not be injected.
+//   - Failed (no free models): relay has nothing to offer.
+var activeRelayModels atomic.Pointer[[]relayModel]
+
+// setActiveRelayModels stores the relay model list after successful injection.
+// Called exactly once by startRelayInjector on success.
+func setActiveRelayModels(models []relayModel) {
+	activeRelayModels.Store(&models)
+}
+
+// getActiveRelayModels returns the injected relay model list, or nil if the
+// relay injector has not successfully completed.
+func getActiveRelayModels() []relayModel {
+	if p := activeRelayModels.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
 
 var relayInjectorOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "llmsafespace_relay_injector_total",
@@ -407,6 +437,12 @@ func startRelayInjector(cfg relayInjectorConfig) {
 			return
 		}
 		log.Info("relay injector: updated auth.json with opencode-relay entry")
+
+		// Store the model list so reloadSecretsHandler can re-merge relay config
+		// after any subsequent FlushProviders call (credential bind) overwrites
+		// agent-config.json. Must be set before KillOpenCode so it is visible to
+		// any reload that races with the restart.
+		setActiveRelayModels(models)
 
 		// Kill opencode — the supervisor restarts it and reads the new config.
 		cfg.KillOpenCode()
