@@ -728,6 +728,10 @@ func main() {
 			Memory:              getMemoryUsage(),
 			CPU:                 getCPUUsage(),
 			Context:             contextUsage,
+			// RelayInjected: true when the relay injector successfully wrote the
+			// relay config and restarted opencode. Used by the API server to
+			// distinguish Phase 1 (relay pending) from personal-key (relay skipped).
+			RelayInjected: getActiveRelayModels() != nil,
 		})
 	})
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
