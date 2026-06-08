@@ -3,13 +3,14 @@
 # traefik ingress, no cluster-internal DNS named redis-master, etc.)
 
 # Pin all components to the same commit so they reconcile against
-# matching CRD schema and protocol expectations. ts-1780904613 includes:
-#   - fix: optimistic model selector UX + seed workspace-secrets on CreateWorkspace
-#     (model selector closes dropdown immediately on click; OpenAI platform
-#     credentials now injected into new workspace pods on first boot)
+# matching CRD schema and protocol expectations. ts-1780939435 includes:
+#   - fix: relay config survives credential bind (PUT /bindings no longer
+#     clobbers disabled_providers + opencode-relay block in agent-config.json)
+#   - fix: model enricher cache survives credential reload (moved out of
+#     SecretsBasePath which reset() deletes on every Materialize call)
 api:
   image:
-    tag: ts-1780904613
+    tag: ts-1780939435
     pullPolicy: IfNotPresent
   ingress:
     # API is exposed via the frontend ingress at /api; no separate
@@ -18,7 +19,7 @@ api:
 
 controller:
   image:
-    tag: ts-1780904613
+    tag: ts-1780939435
     pullPolicy: IfNotPresent
 
 # inferenceRelayURL is the Cloudflare Worker base URL for free-tier inference.
@@ -40,7 +41,7 @@ mcp:
 frontend:
   enabled: true
   image:
-    tag: ts-1780904613
+    tag: ts-1780939435
     pullPolicy: IfNotPresent
   ingress:
     enabled: true
@@ -58,7 +59,7 @@ frontend:
 runtimeEnvironments:
   base:
     image:
-      tag: ts-1780904613
+      tag: ts-1780939435
 
 # Webhook image-registry allow-list — required so the controller's
 # RuntimeEnvironment validating webhook accepts ghcr.io images.
