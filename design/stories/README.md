@@ -59,6 +59,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 28 | Unified Event Stream | 🔶 Partial | Backend complete and integrated. **S28.5**: `StreamEvents` still uses legacy `WorkspaceEventBroker.Subscribe()` — `SubscribeWorkspace()` never called; session stream is stable in practice but the migration was not completed. **S28.8**: 10 tests present; missing: goroutine leak test, write deadline expiry test, k8s list failure test. |
 | 29 | Handler Decomposition & Agent Client Abstraction | ❌ Not Started | Defer until after Epic 30 — Epic 30 directly rewrites `secrets.go` and `models.go` targets. US-29.4 (WorkspaceEnvHandler) and US-29.7 (Basic auth contract test) are safe to pull forward. |
 | 30 | Unified Credential Model | ❌ Not Started | **Next priority.** Design complete (PR #37, 7 adversarial review rounds). Admin credential system (`credential_sets`) has zero runtime effect. `workspace_service.go:214` auto-provision is a comment stub. Unblocks: Epic 27b utility, Epic 9 US-13.15, user LLM provider UI, free-tier key operational management. Gate before US-30.4: verify `ConfigProviderPlugin` `apiKey:"public"` produces same free-tier catalog as `AccountPlugin`. |
+| 34 | Session Security — remember-me (30-day JWT + cookie), enforce `LLMSAFESPACE_MASTER_SECRET` at startup | ❌ Not Started | None |
 
 ---
 
@@ -109,7 +110,8 @@ Fix now (small, independent, live bugs):
   ├─ Epic 27a drain injection gap             ← 3-line fix; drain is silent no-op
   ├─ Epic 06 US-6.7 (local/test.sh)          ← 2-line fix; e2e test hard-fails
   ├─ Epic 16 US-16.6 (MCP question tools)    ← small; MCP question flow is broken
-  └─ Epic 13 US-13.3 (MaxActiveSessions CRD) ← 2-line fix; proxy ignores admin setting
+  ├─ Epic 13 US-13.3 (MaxActiveSessions CRD) ← 2-line fix; proxy ignores admin setting
+  └─ Epic 34 (session security)              ← ~6h; independent; closes plaintext-DEK risk
 
 After Epic 30:
   ├─ Epic 27b completions (bulk parallelism, enrichment wiring)

@@ -125,3 +125,124 @@ func TestLoadConfigError(t *testing.T) {
 		t.Error("Expected error when loading non-existent file, got nil")
 	}
 }
+
+// ---- Epic 34 US-34.1: RememberMeDuration and CookieName config tests ----
+
+func writeMinimalConfig(t *testing.T, authExtra string) string {
+	t.Helper()
+	content := `
+server:
+  host: "127.0.0.1"
+  port: 8080
+  shutdownTimeout: 30s
+kubernetes:
+  configPath: "/path/to/kubeconfig"
+  inCluster: false
+  namespace: "test-namespace"
+  podName: "test-pod"
+  leaderElection:
+    enabled: true
+    leaseDuration: 15s
+    renewDeadline: 10s
+    retryPeriod: 2s
+database:
+  host: "localhost"
+  port: 5432
+  user: "testuser"
+  password: "testpass"
+  database: "testdb"
+  sslMode: "disable"
+  maxOpenConns: 10
+  maxIdleConns: 5
+  connMaxLifetime: 5m
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+  poolSize: 10
+auth:
+  jwtSecret: "test-secret"
+  tokenDuration: 24h
+  apiKeyPrefix: "lsp_"
+` + authExtra + `
+logging:
+  level: "debug"
+  development: true
+  encoding: "console"
+rateLimiting:
+  enabled: true
+  limits:
+    default:
+      requests: 100
+      window: 1h
+`
+	f, err := os.CreateTemp("", "config-epic34-*.yaml")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+	return f.Name()
+}
+
+func TestConfig_RememberMeDuration_DefaultFromYAML(t *testing.T) {
+	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n  cookieName: lsp_session\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RememberMeDuration != 720*time.Hour {
+		t.Errorf("expected RememberMeDuration=720h, got %v", cfg.Auth.RememberMeDuration)
+	}
+}
+
+func TestConfig_CookieName_DefaultFromYAML(t *testing.T) {
+	path := writeMinimalConfig(t, "  cookieName: lsp_session\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.CookieName != "lsp_session" {
+		t.Errorf("expected CookieName=lsp_session, got %q", cfg.Auth.CookieName)
+	}
+}
+
+func TestConfig_RememberMeDuration_EnvOverride(t *testing.T) {
+	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "168h")
+	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RememberMeDuration != 168*time.Hour {
+		t.Errorf("expected RememberMeDuration=168h from env, got %v", cfg.Auth.RememberMeDuration)
+	}
+}
+
+func TestConfig_RememberMeDuration_InvalidEnvIgnored(t *testing.T) {
+	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "not-a-duration")
+	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RememberMeDuration != 720*time.Hour {
+		t.Errorf("invalid env value should be ignored; expected 720h from YAML, got %v", cfg.Auth.RememberMeDuration)
+	}
+}
+
+func TestConfig_RememberMeDuration_ZeroEnvIgnored(t *testing.T) {
+	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "0")
+	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RememberMeDuration != 720*time.Hour {
+		t.Errorf("zero env value should be ignored (d > 0 guard); expected 720h from YAML, got %v", cfg.Auth.RememberMeDuration)
+	}
+}

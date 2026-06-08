@@ -419,22 +419,43 @@ func dekMasterKey() []byte {
 	return deriveServerKey("dek-cache")
 }
 
-// deriveServerKey derives a 32-byte key from LLMSAFESPACE_MASTER_SECRET using HKDF.
-// Each purpose string produces an independent key. Returns nil if master secret is unset.
+// deriveServerKey derives a 32-byte purpose-scoped key from LLMSAFESPACE_MASTER_SECRET
+// using HKDF-SHA256. Each purpose string produces an independent key.
+//
+// Accepted input formats (auto-detected):
+//   - Valid hex string (even-length, [0-9a-fA-F]): decoded to raw bytes.
+//     Minimum: 64 hex chars = 32 decoded bytes.
+//   - Any other string (e.g. alphanumeric from Helm randAlphaNum 64):
+//     used as raw bytes directly. Minimum: 32 bytes.
+//
+// Returns nil if:
+//   - The env var is absent or empty.
+//   - The decoded/raw key is shorter than 32 bytes (AES-256-GCM minimum).
+//
+// This function is intentionally side-effect-free (no logging). It is passed
+// by reference as secrets.AdminKeyDeriver; callers that need diagnostics must
+// inspect the env var independently (see validateMasterSecret in app.go).
 func deriveServerKey(purpose string) []byte {
-	masterHex := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
-	if masterHex == "" {
+	masterRaw := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
+	if masterRaw == "" {
 		// Fallback: check legacy env var
-		masterHex = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
+		masterRaw = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
 	}
-	if len(masterHex) < 32 {
+	if masterRaw == "" {
 		return nil
 	}
-	master, err := hex.DecodeString(masterHex)
-	if err != nil || len(master) < 16 {
-		// If not valid hex, use raw bytes
-		master = []byte(masterHex)
+
+	var master []byte
+	if decoded, err := hex.DecodeString(masterRaw); err == nil {
+		master = decoded // valid hex path
+	} else {
+		master = []byte(masterRaw) // raw bytes path (Helm alphanumeric, base64, etc.)
 	}
+
+	if len(master) < 32 { // AES-256-GCM requires 32 bytes minimum
+		return nil
+	}
+
 	key, err := secrets.DeriveKEK(master, []byte("llmsafespace-server"), purpose)
 	if err != nil {
 		return nil

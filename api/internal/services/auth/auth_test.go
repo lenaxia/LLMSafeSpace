@@ -1167,3 +1167,261 @@ func TestF175_NewTokensSignedWithCurrentKeyOnly(t *testing.T) {
 	})
 	require.Error(t, errOld, "newly-issued token must NOT verify against rotated-out secret")
 }
+
+// ---- Epic 34 US-34.1: Remember Me tests ----
+
+// newTestServiceWithRememberMe creates a Service with RememberMeDuration configured.
+func newTestServiceWithRememberMe(t *testing.T, rememberDur time.Duration) (*Service, *mocks.MockDatabaseService, *mocks.MockCacheService) {
+	t.Helper()
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret-1234567890"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.RememberMeDuration = rememberDur
+	cfg.Auth.APIKeyPrefix = "lsp_"
+	mockDb := new(mocks.MockDatabaseService)
+	mockCache := new(mocks.MockCacheService)
+	svc, err := New(cfg, log, mockDb, mockCache)
+	require.NoError(t, err)
+	return svc, mockDb, mockCache
+}
+
+func TestGenerateTokenWithDuration_CorrectExpiry(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	dur := 720 * time.Hour
+	token, err := svc.GenerateTokenWithDuration("user-1", dur)
+	require.NoError(t, err)
+	parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	require.NoError(t, err)
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	require.True(t, ok)
+	exp := time.Unix(int64(claims["exp"].(float64)), 0)
+	diff := exp.Sub(time.Now().Add(dur))
+	if diff < -2*time.Second || diff > 2*time.Second {
+		t.Errorf("exp should be ~now+%v, diff=%v", dur, diff)
+	}
+}
+
+func TestGenerateToken_DelegatesWithTokenDuration(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	t1, err1 := svc.GenerateToken("u1")
+	t2, err2 := svc.GenerateTokenWithDuration("u1", 24*time.Hour)
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	// Both tokens should have exp ~now+24h
+	parse := func(tok string) float64 {
+		p, _, _ := new(jwt.Parser).ParseUnverified(tok, jwt.MapClaims{})
+		return p.Claims.(jwt.MapClaims)["exp"].(float64)
+	}
+	diff := parse(t1) - parse(t2)
+	if diff < -2 || diff > 2 {
+		t.Errorf("GenerateToken and GenerateTokenWithDuration(24h) should produce same-TTL tokens, exp diff=%v", diff)
+	}
+}
+
+// setupLoginUser wires a mock db to return a valid bcrypt-hashed user for login.
+func setupLoginUser(t *testing.T, mockDb *mocks.MockDatabaseService, userID, email, password string) {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	user := &types.User{ID: userID, Email: email, PasswordHash: string(hash), Active: true, Role: "user"}
+	mockDb.On("GetUserByEmail", mock.Anything, email).Return(user, nil)
+}
+
+func TestLogin_RememberMe_True_Generates30dJWT(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: true})
+	require.NoError(t, err)
+
+	parsed, _, err := new(jwt.Parser).ParseUnverified(resp.Token, jwt.MapClaims{})
+	require.NoError(t, err)
+	exp := time.Unix(int64(parsed.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
+	diff := exp.Sub(time.Now().Add(720 * time.Hour))
+	if diff < -2*time.Second || diff > 2*time.Second {
+		t.Errorf("RememberMe=true: exp should be ~now+720h, diff=%v", diff)
+	}
+}
+
+func TestLogin_RememberMe_False_Generates24hJWT(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: false})
+	require.NoError(t, err)
+
+	parsed, _, _ := new(jwt.Parser).ParseUnverified(resp.Token, jwt.MapClaims{})
+	exp := time.Unix(int64(parsed.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
+	diff := exp.Sub(time.Now().Add(24 * time.Hour))
+	if diff < -2*time.Second || diff > 2*time.Second {
+		t.Errorf("RememberMe=false: exp should be ~now+24h, diff=%v", diff)
+	}
+}
+
+func TestLogin_RememberMe_Absent_DefaultsFalse(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Zero-value LoginRequest (RememberMe defaults to false)
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123"})
+	require.NoError(t, err)
+
+	parsed, _, _ := new(jwt.Parser).ParseUnverified(resp.Token, jwt.MapClaims{})
+	exp := time.Unix(int64(parsed.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
+	diff := exp.Sub(time.Now().Add(24 * time.Hour))
+	if diff < -2*time.Second || diff > 2*time.Second {
+		t.Errorf("RememberMe absent: exp should be ~now+24h (same as false), diff=%v", diff)
+	}
+}
+
+func TestLogin_RememberMeDurationZero_FallsBackToTokenDuration(t *testing.T) {
+	// RememberMeDuration=0 means feature disabled; RememberMe:true falls back to tokenDuration
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 0)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: true})
+	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, resp.TokenTTL, "RememberMeDuration=0: TokenTTL should fall back to tokenDuration")
+}
+
+func TestLogin_TokenTTLPopulated(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: false})
+	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, resp.TokenTTL, "TokenTTL should equal tokenDuration when RememberMe=false")
+}
+
+func TestLogin_TokenTTLPopulated_RememberMe(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: true})
+	require.NoError(t, err)
+	assert.Equal(t, 720*time.Hour, resp.TokenTTL, "TokenTTL should equal rememberMeDuration when RememberMe=true")
+}
+
+func TestLogin_RememberMe_DEKTTLIs30d(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ks := &fakeKeyService{}
+	svc.keyService = ks
+
+	_, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: true})
+	require.NoError(t, err)
+	require.Len(t, ks.unlockCalls, 1, "UnlockDEK must be called once")
+	assert.Equal(t, 720*time.Hour, ks.unlockCalls[0].TTL, "DEK TTL should equal rememberMeDuration")
+}
+
+func TestLogin_NoRememberMe_DEKTTLIsStandard(t *testing.T) {
+	svc, mockDb, mockCache := newTestServiceWithRememberMe(t, 720*time.Hour)
+	ctx := context.Background()
+	setupLoginUser(t, mockDb, "u1", "alice@test.com", "password123")
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ks := &fakeKeyService{}
+	svc.keyService = ks
+
+	_, err := svc.Login(ctx, types.LoginRequest{Email: "alice@test.com", Password: "password123", RememberMe: false})
+	require.NoError(t, err)
+	require.Len(t, ks.unlockCalls, 1, "UnlockDEK must be called once")
+	assert.Equal(t, 24*time.Hour, ks.unlockCalls[0].TTL, "DEK TTL should equal tokenDuration")
+}
+
+func TestRegister_TokenTTLPopulated(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+	mockDb.On("GetUserByEmail", ctx, "new@example.com").Return(nil, nil)
+	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
+		return u.Email == "new@example.com"
+	})).Return(nil)
+	mockDb.On("GetUser", ctx, mock.AnythingOfType("string")).Return(&types.User{
+		ID: "u-new", Email: "new@example.com", Username: "newuser",
+		PasswordHash: "$2a$10$dummy", Active: true, Role: "user",
+	}, nil)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "newuser", Email: "new@example.com", Password: "securepassword123",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, resp.TokenTTL, "Register should set TokenTTL = tokenDuration")
+}
+
+// ---- Epic 34 US-34.1: auth.New warn tests ----
+
+func TestNew_RememberMeShorterThanToken_LogsWarning(t *testing.T) {
+	log, logs := logger.NewObserved()
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret-1234567890"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.RememberMeDuration = 1 * time.Minute // shorter than tokenDuration
+	cfg.Auth.APIKeyPrefix = "lsp_"
+	mockDb := new(mocks.MockDatabaseService)
+	mockCache := new(mocks.MockCacheService)
+	_, err := New(cfg, log, mockDb, mockCache)
+	require.NoError(t, err)
+	if logs.Len() == 0 {
+		t.Fatal("expected Warn when rememberMeDuration < tokenDuration")
+	}
+	entry := logs.All()[0]
+	if !strings.Contains(entry.Message, "rememberMeDuration") {
+		t.Errorf("Warn message should mention rememberMeDuration, got: %q", entry.Message)
+	}
+}
+
+func TestNew_RememberMeZero_NoWarning(t *testing.T) {
+	log, logs := logger.NewObserved()
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret-1234567890"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.RememberMeDuration = 0 // disabled
+	cfg.Auth.APIKeyPrefix = "lsp_"
+	mockDb := new(mocks.MockDatabaseService)
+	mockCache := new(mocks.MockCacheService)
+	_, err := New(cfg, log, mockDb, mockCache)
+	require.NoError(t, err)
+	if logs.Len() != 0 {
+		t.Errorf("expected no Warn when rememberMeDuration=0 (disabled), got %d entries", logs.Len())
+	}
+}
+
+func TestNew_RememberMeLongerThanToken_NoWarning(t *testing.T) {
+	log, logs := logger.NewObserved()
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret-1234567890"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.RememberMeDuration = 720 * time.Hour // 30 days — correct
+	cfg.Auth.APIKeyPrefix = "lsp_"
+	mockDb := new(mocks.MockDatabaseService)
+	mockCache := new(mocks.MockCacheService)
+	_, err := New(cfg, log, mockDb, mockCache)
+	require.NoError(t, err)
+	if logs.Len() != 0 {
+		t.Errorf("expected no Warn for normal config, got %d entries", logs.Len())
+	}
+}

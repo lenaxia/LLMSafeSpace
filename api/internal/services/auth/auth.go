@@ -164,6 +164,17 @@ func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseSe
 		return nil, errors.New("JWT secret is required")
 	}
 
+	// Warn when rememberMeDuration is set but shorter than tokenDuration —
+	// this means remember-me sessions would expire sooner than standard sessions,
+	// almost certainly a misconfiguration. We allow it (could be intentional
+	// during incident response) but make it visible at startup.
+	if cfg.Auth.RememberMeDuration > 0 && cfg.Auth.RememberMeDuration < cfg.Auth.TokenDuration {
+		log.Warn("auth: rememberMeDuration is shorter than tokenDuration; "+
+			"remember-me sessions will expire sooner than standard sessions — check your configuration",
+			"rememberMeDuration", cfg.Auth.RememberMeDuration,
+			"tokenDuration", cfg.Auth.TokenDuration)
+	}
+
 	prev := make([][]byte, 0, len(cfg.Auth.JWTPreviousSecrets))
 	for _, p := range cfg.Auth.JWTPreviousSecrets {
 		if p != "" {
@@ -291,12 +302,21 @@ func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action s
 	return hasPermission
 }
 
-// GenerateToken generates a JWT token for a user
+// GenerateToken generates a JWT token for a user using the configured tokenDuration.
+// It delegates to GenerateTokenWithDuration, which is the canonical implementation.
 func (s *Service) GenerateToken(userID string) (string, error) {
+	return s.GenerateTokenWithDuration(userID, s.tokenDuration)
+}
+
+// GenerateTokenWithDuration generates a JWT token for a user with an explicit TTL.
+// This is the canonical token-generation implementation; GenerateToken delegates here.
+// Not exposed on the AuthService interface — callers outside the auth package use
+// GenerateToken, which always uses the configured tokenDuration.
+func (s *Service) GenerateTokenWithDuration(userID string, duration time.Duration) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": userID,
 		"jti": uuid.New().String(),
-		"exp": time.Now().Add(s.tokenDuration).Unix(),
+		"exp": time.Now().Add(duration).Unix(),
 		"iat": time.Now().Unix(),
 	})
 
@@ -511,7 +531,7 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 	}
 
 	user.PasswordHash = ""
-	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey}, nil
+	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey, TokenTTL: s.tokenDuration}, nil
 }
 
 // dummyBcryptHash is a real, well-formed bcrypt hash (cost 12) of an
@@ -598,7 +618,14 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 
 	s.clearFailedAttempts(ctx, email)
 
-	token, err := s.GenerateToken(user.ID)
+	// Determine effective token TTL: use rememberMeDuration when the user
+	// opts in and the feature is configured, otherwise use tokenDuration.
+	tokenDur := s.tokenDuration
+	if req.RememberMe && s.config.Auth.RememberMeDuration > 0 {
+		tokenDur = s.config.Auth.RememberMeDuration
+	}
+
+	token, err := s.GenerateTokenWithDuration(user.ID, tokenDur)
 	if err != nil {
 		return nil, errors.New("login failed")
 	}
@@ -614,14 +641,14 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 					s.logger.Warn("Login: failed to auto-init keys", "user_id", user.ID, "error", err.Error())
 				}
 			}
-			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, s.tokenDuration); err != nil {
+			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, tokenDur); err != nil {
 				s.logger.Warn("Login: failed to unlock DEK", "user_id", user.ID, "error", err.Error())
 			}
 		}
 	}
 
 	user.PasswordHash = ""
-	return &types.AuthResponse{Token: token, User: *user}, nil
+	return &types.AuthResponse{Token: token, User: *user, TokenTTL: tokenDur}, nil
 }
 
 func (s *Service) recordFailedAttempt(ctx context.Context, email string) {
@@ -709,12 +736,18 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 	return s.dbService.DeleteAPIKey(ctx, userID, keyID)
 }
 
-// extractToken extracts the token from the Authorization header or cookie
-func extractToken(c *gin.Context) string {
+// extractToken extracts the JWT or API-key token from the Authorization header
+// or the configured session cookie. The cookie name is read from the service
+// config (cfg.Auth.CookieName) with a fallback to "lsp_session".
+func (s *Service) extractToken(c *gin.Context) string {
+	name := s.config.Auth.CookieName
+	if name == "" {
+		name = "lsp_session"
+	}
 	return utilities.ExtractToken(c, utilities.TokenExtractorConfig{
 		HeaderName: "Authorization",
 		TokenType:  "Bearer",
-		CookieName: "lsp_session",
+		CookieName: name,
 	})
 }
 
@@ -722,7 +755,7 @@ func extractToken(c *gin.Context) string {
 func (s *Service) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract token from request
-		tokenString := extractToken(c)
+		tokenString := s.extractToken(c)
 		if tokenString == "" {
 			c.JSON(401, gin.H{"error": "Authorization token required"})
 			c.Abort()
@@ -762,7 +795,7 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // the userID themselves and handle the unauthenticated case.
 func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString := extractToken(c)
+		tokenString := s.extractToken(c)
 		if tokenString != "" {
 			userID, err := s.ValidateToken(tokenString)
 			if err == nil && userID != "" {

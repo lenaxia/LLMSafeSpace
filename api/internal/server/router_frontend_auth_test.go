@@ -10,11 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -50,9 +54,11 @@ func TestAuthConfig_NoAuthRequired(t *testing.T) {
 func TestLogin_SetsCookie(t *testing.T) {
 	router, svc := newAuthFixture(t)
 
+	// Explicit TokenTTL=24h so we test the configured-TTL path, not the zero-guard fallback.
 	svc.auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
-		Token: "jwt-token-123",
-		User:  types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		Token:    "jwt-token-123",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
 	}, nil)
 
 	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass123"})
@@ -77,7 +83,7 @@ func TestLogin_SetsCookie(t *testing.T) {
 	assert.True(t, sessionCookie.HttpOnly)
 	assert.True(t, sessionCookie.Secure)
 	assert.Equal(t, "/", sessionCookie.Path)
-	assert.Equal(t, 86400, sessionCookie.MaxAge)
+	assert.Equal(t, 86400, sessionCookie.MaxAge) // 24h = 86400s from explicit TokenTTL
 }
 
 func TestLogin_Failure_NoCookie(t *testing.T) {
@@ -104,9 +110,11 @@ func TestLogin_Failure_NoCookie(t *testing.T) {
 func TestRegister_SetsCookie(t *testing.T) {
 	router, svc := newAuthFixture(t)
 
+	// Explicit TokenTTL=24h so we test the configured-TTL path, not the zero-guard fallback.
 	svc.auth.On("Register", mock.Anything, mock.Anything).Return(&types.AuthResponse{
-		Token: "new-jwt-456",
-		User:  types.User{ID: "u2", Username: "bob", Email: "bob@test.com", Role: "user", Active: true},
+		Token:    "new-jwt-456",
+		User:     types.User{ID: "u2", Username: "bob", Email: "bob@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
 	}, nil)
 
 	body, _ := json.Marshal(types.RegisterRequest{Username: "bob", Email: "bob@test.com", Password: "pass1234"})
@@ -323,4 +331,185 @@ func TestG18Logout_RevokeFailureStillClearsCookie(t *testing.T) {
 	}
 	require.NotNil(t, sessionCookie)
 	assert.True(t, sessionCookie.MaxAge < 0, "cookie must be cleared even when revoke fails")
+}
+
+// ---- Epic 34 US-34.1: new cookie and remember-me tests ----
+
+func TestLogin_RememberMe_CookieMaxAge30Days(t *testing.T) {
+	router, svc := newAuthFixture(t)
+	svc.auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-30d",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 720 * time.Hour, // 30 days
+	}, nil)
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass", RememberMe: true})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			cookie = c
+			break
+		}
+	}
+	require.NotNil(t, cookie, "lsp_session cookie should be set")
+	assert.Equal(t, 2592000, cookie.MaxAge, "Max-Age should be 30 days (720h = 2592000s)")
+}
+
+func TestLogin_ZeroTokenTTL_FallbackMaxAge(t *testing.T) {
+	// When mock returns TokenTTL=0, the zero-guard should produce MaxAge=86400.
+	// This documents the fallback path explicitly.
+	router, svc := newAuthFixture(t)
+	svc.auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token: "jwt-zero",
+		User:  types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		// TokenTTL intentionally omitted (zero value) — tests the fallback guard
+	}, nil)
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			cookie = c
+			break
+		}
+	}
+	require.NotNil(t, cookie, "lsp_session cookie should be set even with zero TokenTTL")
+	assert.Equal(t, 86400, cookie.MaxAge, "zero-guard should produce Max-Age=86400")
+}
+
+func TestLogin_TokenTTLNotInResponseBody(t *testing.T) {
+	router, svc := newAuthFixture(t)
+	svc.auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-tok",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &m))
+	if _, ok := m["tokenTTL"]; ok {
+		t.Error("tokenTTL must not appear in the JSON response body (json:\"-\" tag)")
+	}
+	if _, ok := m["token_ttl"]; ok {
+		t.Error("token_ttl must not appear in the JSON response body")
+	}
+}
+
+func TestCookieName_FromRouterConfig(t *testing.T) {
+	// Router with custom CookieName should use that name for the session cookie.
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-custom",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{Debug: false, CookieName: "my_session"})
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "my_session" {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "custom cookie name 'my_session' should be used")
+	assert.Equal(t, "jwt-custom", found.Value)
+}
+
+func TestCookieName_DefaultsToLspSession(t *testing.T) {
+	// Router with empty CookieName falls back to "lsp_session".
+	router, svc := newAuthFixture(t) // newAuthFixture uses RouterConfig{Debug: false} → CookieName=""
+	svc.auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-default",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "default cookie name 'lsp_session' should be used when CookieName is empty")
+}
+
+func TestLogout_ClearsCorrectCookie(t *testing.T) {
+	// When a custom cookie name is configured, logout should clear that name.
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("RevokeToken", mock.Anything).Return(nil).Maybe()
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{Debug: false, CookieName: "my_session"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	var cleared *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "my_session" {
+			cleared = c
+			break
+		}
+	}
+	require.NotNil(t, cleared, "custom cookie 'my_session' should be cleared on logout")
+	assert.True(t, cleared.MaxAge < 0, "MaxAge should be negative to delete cookie")
 }
