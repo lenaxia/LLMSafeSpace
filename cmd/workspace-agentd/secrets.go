@@ -293,7 +293,10 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		//
 		// nil models means: relay injector has not yet run, was skipped (personal
 		// key), or failed. In all three cases we correctly skip re-injection:
-		//   - Not yet run: relay injector fires at T+16s and writes its own config.
+		//   - Not yet run: relay injector fires at ~T+7s (opencode health check
+		//     passes at T+5s, model fetch + config write adds ~2s) and writes its
+		//     own config. Any reload in the T+0..T+7s window leaves the config
+		//     without relay temporarily; the injector corrects it on completion.
 		//   - Skipped: user routes directly; injecting relay would break them.
 		//   - Failed: nothing to inject.
 		if relayURL := os.Getenv("INFERENCE_RELAY_BASEURL"); relayURL != "" {
