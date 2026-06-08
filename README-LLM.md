@@ -761,26 +761,21 @@ None of these write paths are atomic with each other. The design relies on:
 
 **Fix implemented:** `enricherCacheDir` defaults to `$HOME/.local/state/llmsafespace` (`cmd/workspace-agentd/secrets.go:91`), which is on the `sandbox-home` emptyDir and is never deleted by `reset()`. 24-hour TTL is now actually exercised.
 
-#### Bug 3 — Personal opencode key → broken free model routing — ⚠️ Open
+#### Bug 3 — Personal opencode key → broken free model routing — ✅ Fixed (PR #67 follow-up)
 
-**Root cause:** `SecretsHandler.relayActive` is a static boolean set at API startup from `LLMSAFESPACE_INFERENCE_RELAY_URL` (`api/internal/app/app.go:158`). It is applied identically to all workspaces. A workspace where the relay injector was skipped (personal opencode key) has no `opencode-relay` provider, but `annotateModels(relayActive=true)` still remaps all zero-cost opencode models to `providerID="opencode-relay"`. The frontend shows these models as selectable. Inference fails.
+**Root cause:** `relayActive` is a static boolean set at API startup (`api/internal/app/app.go:158`) from `LLMSAFESPACE_INFERENCE_RELAY_URL`. It is applied identically to all workspaces. A workspace where the relay injector was skipped (personal opencode key) has no `opencode-relay` provider, but `annotateModels(relayActive=true)` was still remapping all zero-cost opencode models to `providerID="opencode-relay"`. The frontend shows these models as selectable. Inference fails.
 
-**Currently not triggered:** No users have personal opencode keys.
+**Fix implemented:**
 
-**Correct fix (not yet implemented):** Derive the remap decision from the live pod's `connected[]` response:
+The discriminating signal — whether the relay injector actually ran for a specific pod — is exposed as `RelayInjected bool` in `agentd.ReadyzResponse` (`pkg/agentd/types.go`), populated from `getActiveRelayModels() != nil` in the readyz handler (`cmd/workspace-agentd/main.go`).
 
-```go
-// Remap only in Phase 1: opencode connected but opencode-relay not yet injected.
-// After relay injection (Phase 2): opencode-relay is in connected[], no remap needed.
-// Personal key (relay skipped): opencode connected, opencode-relay absent —
-//   relayGloballyEnabled=false distinguishes this from Phase 1.
-phase1Window := connectedSet["opencode"] && !connectedSet["opencode-relay"] && relayGloballyEnabled
-if phase1Window && avail == ModelFreeTier && p.ID == "opencode" {
-    providerID = "opencode-relay"
-}
-```
+`annotateModels` now takes `(raw, relayGloballyEnabled, relayInjected bool)`. Remap only fires when both flags are true. `relayInjected=false` covers both Phase 1 (~7s window before injection completes, acceptable brief window of wrong providerID) and personal-key (relay skipped, remap must never fire).
 
-`relayGloballyEnabled` must come from the pod's `/v1/statusz` response (a new `relayInjected bool` field in `StatuszResponse`), set after the relay injector runs. This requires two changes: `cmd/workspace-agentd/main.go` (add `relayInjected` to statusz) and `api/internal/handlers/models.go` (read it from statusz instead of the static flag).
+`ListModels` calls `fetchRelayInjected` on cache miss. `fetchRelayInjected` calls `/v1/readyz` (not `/v1/statusz`) with `Authorization: Bearer <password>` (not Basic auth). Using readyz is critical because statusz has no latency upper bound — it makes multiple synchronous HTTP calls to opencode under a mutex. Readyz is cache-based and fast.
+
+`SetModel` → `patchAgentModel` → `resolveModelIDFromCatalog` uses the same `fetchRelayInjected` guard. `patchAgentModel` now returns `(resolved string, error)` so `SetModel` can pass the resolved `providerID/modelID` to `metricsRecorder` without a second catalog + statusz fetch (previously: 3× GET /provider + 2× GET /v1/statusz per SetModel call on a relay model).
+
+**Previously not triggered:** No users have personal opencode keys.
 
 #### Bug 4 — Cascade: clobbered relay → silent inference failure — ✅ Fixed (Bug 1 fix eliminates it)
 
@@ -804,17 +799,6 @@ if phase1Window && avail == ModelFreeTier && p.ID == "opencode" {
 
 ---
 
-### Remaining architectural weakness (Bug 3)
-
-The `relayActive` static flag is the only unfixed architectural issue. Until Bug 3 is fixed:
-- All workspaces are treated as relay-active by the API server
-- A workspace with a personal opencode key will show free-tier relay models as selectable but fail at inference
-- No user has been affected yet because personal opencode keys have not been used
-
-**Implementation priority:** Medium (no current users affected, clear fix path exists).
-
----
-
 ### Known design fragilities (documented, not bugs)
 
 1. **Multiple writers of agent-config.json.** The four-writer design is correct given the current boot sequence and `reloadMu` serialisation, but it is fragile. A future change that reorders the boot sequence or adds a new write path could reintroduce relay clobbering. The single-writer `WriteAgentConfig` design (described in previous versions of this section) would eliminate this fragility but requires a non-trivial refactor of `FormatOpenCodeConfig`, the reload handler, and the relay injector. Tracked as a future cleanup item.
@@ -833,7 +817,7 @@ The `relayActive` static flag is the only unfixed architectural issue. Until Bug
 |---|---|---|
 | Bug 1 — relay clobbered | ✅ Fixed (re-merge approach) | `cmd/workspace-agentd/secrets.go:349` |
 | Bug 2 — enricher cache cold | ✅ Fixed | `cmd/workspace-agentd/secrets.go:91` |
-| Bug 3 — relayActive static flag | ⚠️ Open | `api/internal/handlers/models.go:331` |
+| Bug 3 — relayActive static flag | ✅ Fixed (relayInjected from readyz) | `api/internal/handlers/models.go:fetchRelayInjected` |
 | Bug 4 — cascade silent failure | ✅ Fixed (via Bug 1) | — |
 | Gap 5 — concurrent reload race | ✅ Fixed | `cmd/workspace-agentd/secrets.go:reloadMu` |
 | Gap 6 — cache not evicted after bind | ✅ Fixed | `api/internal/handlers/secrets.go:530` |

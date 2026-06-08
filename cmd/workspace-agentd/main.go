@@ -650,6 +650,10 @@ func main() {
 			ProvidersConfigured: configured,
 			AgentVersion:        snap.Version,
 			AgentType:           "opencode",
+			// RelayInjected: true once the relay injector successfully completed.
+			// Included in readyz (not statusz) because readyz is cache-based and
+			// lightweight, making it safe to call on every ListModels cache miss.
+			RelayInjected: getActiveRelayModels() != nil,
 		})
 
 		// S18.10: Record readyz_first_200 gate on first 200 response.
@@ -728,10 +732,6 @@ func main() {
 			Memory:              getMemoryUsage(),
 			CPU:                 getCPUUsage(),
 			Context:             contextUsage,
-			// RelayInjected: true when the relay injector successfully wrote the
-			// relay config and restarted opencode. Used by the API server to
-			// distinguish Phase 1 (relay pending) from personal-key (relay skipped).
-			RelayInjected: getActiveRelayModels() != nil,
 		})
 	})
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
