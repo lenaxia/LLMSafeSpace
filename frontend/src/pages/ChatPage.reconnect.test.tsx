@@ -654,3 +654,217 @@ describe("US-15.6: Full Flow Integration", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Auto-abort stuck question/permission sessions on reconnect
+// ---------------------------------------------------------------------------
+describe("ChatPage auto-abort stuck input sessions", () => {
+  beforeEach(() => {
+    capturedSSEHandler = null;
+    capturedOnReconnect = null;
+    vi.clearAllMocks();
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [], pagination: { limit: 20, offset: 0, total: 0 },
+    });
+  });
+
+  it("auto-aborts and shows interrupted banner when reconnecting to session stuck on question tool", async () => {
+    // History has a question tool in "running" state — opencode restarted and
+    // lost the question from its queue. On reconnect we should auto-abort and
+    // show the interrupted banner without requiring user action.
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "msg-user", role: "user", parts: [{ type: "text", text: "push to github" }] },
+      {
+        id: "msg-asst",
+        role: "assistant",
+        parts: [
+          { type: "tool_use", text: "question: GitHub auth required", toolState: "running" },
+        ],
+      },
+    ]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        { id: "msg-user", role: "user", parts: [{ type: "text", text: "push to github" }] },
+        {
+          id: "msg-asst",
+          role: "assistant",
+          parts: [{ type: "tool_use", text: "question: GitHub auth required", toolState: "running" }],
+        },
+      ],
+      nextCursor: undefined,
+    });
+    (workspacesApi as Record<string, unknown>).abortSession = vi.fn().mockResolvedValue(undefined);
+
+    const qc = makeQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/chat/ws-1/sess-stuck"]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+    // Drive serverBusy=true (session was busy when we loaded)
+    act(() => {
+      capturedSSEHandler!({ type: "session.status", session_id: "sess-stuck", status: "busy" });
+    });
+
+    // After history loads with the stuck question tool, abort should be called
+    await waitFor(
+      () => expect((workspacesApi as Record<string, unknown>).abortSession)
+        .toHaveBeenCalledWith("ws-1", "sess-stuck"),
+      { timeout: 3000 },
+    );
+
+    // Interrupted banner should be visible
+    await waitFor(() =>
+      expect(screen.getByText(/session was interrupted/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("auto-aborts when last tool is permission (not just question)", async () => {
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "msg-user", role: "user", parts: [{ type: "text", text: "run deploy.sh" }] },
+      {
+        id: "msg-asst",
+        role: "assistant",
+        parts: [{ type: "tool_use", text: "permission: shell", toolState: "running" }],
+      },
+    ]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        { id: "msg-user", role: "user", parts: [{ type: "text", text: "run deploy.sh" }] },
+        { id: "msg-asst", role: "assistant", parts: [{ type: "tool_use", text: "permission: shell", toolState: "running" }] },
+      ],
+      nextCursor: undefined,
+    });
+    (workspacesApi as Record<string, unknown>).abortSession = vi.fn().mockResolvedValue(undefined);
+
+    const qc = makeQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/chat/ws-1/sess-perm"]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+    act(() => {
+      capturedSSEHandler!({ type: "session.status", session_id: "sess-perm", status: "busy" });
+    });
+
+    await waitFor(
+      () => expect((workspacesApi as Record<string, unknown>).abortSession)
+        .toHaveBeenCalledWith("ws-1", "sess-perm"),
+      { timeout: 3000 },
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/session was interrupted/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("abort failure still shows interrupted banner and reconciles history", async () => {
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "msg-user", role: "user", parts: [{ type: "text", text: "push code" }] },
+      {
+        id: "msg-asst",
+        role: "assistant",
+        parts: [{ type: "tool_use", text: "question: GitHub auth required", toolState: "running" }],
+      },
+    ]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        { id: "msg-user", role: "user", parts: [{ type: "text", text: "push code" }] },
+        { id: "msg-asst", role: "assistant", parts: [{ type: "tool_use", text: "question: GitHub auth required", toolState: "running" }] },
+      ],
+      nextCursor: undefined,
+    });
+    // Abort fails (e.g. network error)
+    (workspacesApi as Record<string, unknown>).abortSession = vi.fn().mockRejectedValue(new Error("network error"));
+
+    const qc = makeQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/chat/ws-1/sess-abort-fail"]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+    act(() => {
+      capturedSSEHandler!({ type: "session.status", session_id: "sess-abort-fail", status: "busy" });
+    });
+
+    // Even when abort fails, banner must still appear
+    await waitFor(() =>
+      expect(screen.getByText(/session was interrupted/i)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+  });
+
+  it("does NOT auto-abort when the question is still in the SSE queue (re-emitted on reconnect)", async () => {
+    // If the agent.question SSE event arrives (emitPendingInputRequests replayed it),
+    // the question is still live — don't abort, let the user answer.
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "msg-user", role: "user", parts: [{ type: "text", text: "push to github" }] },
+      {
+        id: "msg-asst",
+        role: "assistant",
+        parts: [{ type: "tool_use", text: "question: GitHub auth required", toolState: "running" }],
+      },
+    ]);
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        { id: "msg-user", role: "user", parts: [{ type: "text", text: "push to github" }] },
+        { id: "msg-asst", role: "assistant", parts: [{ type: "tool_use", text: "question: GitHub auth required", toolState: "running" }] },
+      ],
+      nextCursor: undefined,
+    });
+    (workspacesApi as Record<string, unknown>).abortSession = vi.fn().mockResolvedValue(undefined);
+
+    const qc = makeQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/chat/ws-1/sess-live-q"]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+    act(() => {
+      // Session is busy
+      capturedSSEHandler!({ type: "session.status", session_id: "sess-live-q", status: "busy" });
+      // Agent question was replayed via emitPendingInputRequests
+      capturedSSEHandler!({
+        type: "agent.question",
+        data: {
+          id: "que_123",
+          session_id: "sess-live-q",
+          root_session_id: "sess-live-q",
+          questions: [{ question: "How to proceed?", header: "GitHub auth", options: [], multiple: false, custom: true }],
+        },
+      });
+    });
+
+    // Give time for any auto-abort to fire (it should not)
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect((workspacesApi as Record<string, unknown>).abortSession).not.toHaveBeenCalled();
+    expect(screen.queryByText(/session was interrupted/i)).toBeNull();
+  });
+});

@@ -173,10 +173,15 @@ export function ChatPage() {
     }
   }, [serverBusy, localStreaming]);
 
+  const [sessionWasInterrupted, setSessionWasInterrupted] = useState(false);
+  const hasAutoAbortedRef = useRef(false);
+
   // Reset reconnect state on session change
   useEffect(() => {
     isReconnectMode.current = false;
+    hasAutoAbortedRef.current = false;
     knownLivePartIds.current.clear();
+    setSessionWasInterrupted(false);
   }, [sessionId]);
 
   // US-15.5: Reconcile on idle — fetch authoritative history and clear streaming state
@@ -210,7 +215,38 @@ export function ChatPage() {
     }
   }, [workspaceId, sessionId, queryClient]);
 
-  // Auto-rename workspace from first session title if name is still auto-generated
+  // Auto-abort sessions that are stuck on a question/permission tool that opencode
+  // lost from its queue (e.g. due to opencode restarting while a question was pending).
+  //
+  // Trigger: reconnect mode (busy on page load) + history has loaded + last assistant
+  // message ends with a question or permission tool in "running" state + no pending
+  // questions/permissions arrived via SSE (meaning opencode's queue is empty).
+  //
+  // After abort we reconcile history and surface an "interrupted" banner.
+  useEffect(() => {
+    if (!isReconnectMode.current) return;
+    if (!workspaceId || !sessionId) return;
+    if (!history || history.length === 0) return;
+    if (hasAutoAbortedRef.current) return;
+    // If SSE already delivered the question/permission, don't abort — let the user answer.
+    if (pendingQuestions.length > 0 || pendingPermissions.length > 0) return;
+
+    const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant) return;
+
+    const stuckTool = lastAssistant.parts.find(
+      (p) =>
+        p.type === "tool_use" &&
+        p.toolState === "running" &&
+        (p.text?.startsWith("question") || p.text?.startsWith("permission")),
+    );
+    if (!stuckTool) return;
+
+    hasAutoAbortedRef.current = true;
+    workspacesApi.abortSession(workspaceId, sessionId)
+      .then(() => { setSessionWasInterrupted(true); reconcileOnIdle(); })
+      .catch(() => { setSessionWasInterrupted(true); reconcileOnIdle(); });
+  }, [workspaceId, sessionId, history, pendingQuestions, pendingPermissions, reconcileOnIdle]);
   const hasAutoRenamedRef = useRef(false);
   useEffect(() => {
     if (!sessionTitle || !workspaceName || !workspaceId || hasAutoRenamedRef.current) return;
@@ -624,6 +660,18 @@ export function ChatPage() {
           credentialState={status?.credentialState}
           agentHealth={status?.agentHealth}
         />
+      )}
+
+      {isReady && sessionWasInterrupted && (
+        <div className="flex items-center gap-2 border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-xs text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+          <span>⚠ Session was interrupted while waiting for your input. You can continue in this session or start a new one.</span>
+          <button
+            className="ml-auto shrink-0 underline hover:no-underline"
+            onClick={() => setSessionWasInterrupted(false)}
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       {isReady && (
