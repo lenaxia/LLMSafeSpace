@@ -1095,8 +1095,13 @@ func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspace
 	}
 	sessionID, _ := ctx.Value(sessionIDContextKey).(string)
 	if sessionID == "" {
-		s.logger.Warn("refreshEphemeralSecrets skipped: no sessionID in context",
+		// No user session (e.g. API-key auth, background reconcile). We cannot
+		// decrypt user-owned credentials but we CAN inject admin platform
+		// credentials (server-side KEK, no session required). Fall through to
+		// seedEphemeralSecrets which uses sessionID="" — correct for admin creds.
+		s.logger.Warn("refreshEphemeralSecrets: no sessionID — falling back to admin-only credential injection",
 			"workspaceID", workspaceID)
+		s.seedEphemeralSecrets(ctx, userID, workspaceID)
 		return
 	}
 	secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
