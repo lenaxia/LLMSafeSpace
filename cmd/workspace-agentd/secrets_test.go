@@ -836,3 +836,26 @@ func TestApplyWorkspaceConfig_FallsBackToFlatIDWhenProviderAbsent(t *testing.T) 
 	require.NoError(t, json.Unmarshal(out["model"], &model))
 	assert.Equal(t, "unknown-model", model, "flat fallback must be preserved")
 }
+
+// TestResolveModelWithProvider_Collision documents the behavior when two
+// providers in agent-config.json expose the same model ID. Go map iteration
+// is non-deterministic, so the function may return either "provider-a/shared"
+// or "provider-b/shared". The contract is: the result is always a valid
+// "providerID/modelID" string (never the flat ID, never empty, never a panic).
+// The boot-time path accepts this non-determinism because the per-prompt
+// frontend override routes correctly regardless of the boot default model.
+func TestResolveModelWithProvider_Collision(t *testing.T) {
+	cfg := map[string]json.RawMessage{
+		"provider": json.RawMessage(`{
+			"provider-a": {"models": {"shared": {}}},
+			"provider-b": {"models": {"shared": {}}}
+		}`),
+	}
+	got := resolveModelWithProvider(cfg, "shared")
+
+	// Must be one of the two valid qualified forms — never the flat ID.
+	assert.True(t,
+		got == "provider-a/shared" || got == "provider-b/shared",
+		"collision must produce a valid providerID/modelID form, got %q", got,
+	)
+}

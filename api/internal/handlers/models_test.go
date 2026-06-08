@@ -1060,3 +1060,56 @@ func TestListModels_CurrentModelProviderID_Collision(t *testing.T) {
 	require.Equal(t, "", resp.CurrentModelProviderID,
 		"collision must produce empty currentModelProviderID")
 }
+
+// TestListModels_CurrentModelProviderID_RelayActive verifies that when
+// relayActive=true, a free-tier opencode model that has been remapped to
+// "opencode-relay" by annotateModels is correctly reflected in
+// currentModelProviderID. This catches regressions if the remap logic or
+// the annotated-model iteration order changes.
+func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "relay-providerid-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	// Free-tier opencode model: cost.input==0, providerID=="opencode" →
+	// annotateModels remaps providerID to "opencode-relay" when relayActive=true.
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"glm-5.1-free":{"id":"glm-5.1-free","name":"GLM 5.1 Free","cost":{"input":0,"output":0}}
+	}}]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	handler := NewSecretsHandler(nil)
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1-free"})
+	handler.SetRelayActive(true)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "glm-5.1-free", resp.CurrentModel)
+	require.Equal(t, "opencode-relay", resp.CurrentModelProviderID,
+		"relay remap must be reflected in currentModelProviderID")
+}
