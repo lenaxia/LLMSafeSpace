@@ -242,4 +242,90 @@ describe("ChatPage message queue", () => {
     // Abort session should be called
     expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
   });
+
+  it("flush halts on send failure — remaining queue preserved", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "second");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network fail"));
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("1 message queued")).toBeInTheDocument();
+    });
+  });
+
+  it("flushes second queued message after first completes", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "second");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
+        parts: [{ type: "text", text: "first" }],
+      });
+    });
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
+        parts: [{ type: "text", text: "second" }],
+      });
+    });
+  });
+
+  it("abort during flush preserves remaining queue", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "second");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByLabelText("Stop generating"));
+    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
+
+    expect(screen.getByText("1 message queued")).toBeInTheDocument();
+  });
 });

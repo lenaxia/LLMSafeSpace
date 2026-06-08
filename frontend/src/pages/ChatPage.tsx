@@ -155,7 +155,6 @@ export function ChatPage() {
   // Guards against flushing the remaining queue after a send failure.
   const flushFailedRef = useRef(false);
 
-
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
   useEffect(() => {
