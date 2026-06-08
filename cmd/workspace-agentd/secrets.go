@@ -35,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -43,6 +44,16 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 )
+
+// reloadMu serializes concurrent calls to reloadSecretsHandler. Two
+// simultaneous reloads (from two API replicas or from parallel credential
+// binds) race through Materializer.reset() which calls RemoveAll on
+// SecretsBaseDir and RemoveAll on SSHDir, and both then appendFile to
+// SecretsEnvPath — producing duplicate env var entries. Holding this mutex
+// for the materialize → enrich → flush → re-merge sequence ensures exactly
+// one reload runs at a time per pod. The restart at the end is excluded from
+// the lock to avoid holding it during the ~5s SIGTERM window.
+var reloadMu sync.Mutex
 
 // materializeConfig is the resolved set of filesystem paths used by the
 // materialize subcommand and the reload handler. It maps 1:1 onto
@@ -304,10 +315,20 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 			return
 		}
 
+		// Serialize the materialize → enrich → flush → re-merge sequence.
+		// Concurrent reloads (from two API replicas or parallel credential binds)
+		// race through Materializer.reset() which RemoveAlls SecretsBaseDir and
+		// SSHDir and appendFiles to SecretsEnvPath — producing duplicate env var
+		// entries and interleaved agent-config.json writes. The restart at the
+		// end is excluded from the lock to avoid holding it during the ~5s SIGTERM
+		// window.
+		reloadMu.Lock()
+
 		m := &secrets.Materializer{FS: secrets.RealFS(), Paths: cfg.toPaths()}
 		result, mErr := m.Materialize(batch)
 
 		if mErr != nil && !errors.Is(mErr, secrets.ErrPartialFailure) {
+			reloadMu.Unlock()
 			log.Error("reload-secrets: materialize failed", zap.Error(mErr))
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": mErr.Error()})
@@ -326,6 +347,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		// Flush staged llm-provider secrets to AgentConfigPath.
 		// This MUST succeed before we notify the agent of config changes.
 		if err := m.FlushProviders(opencode.FormatOpenCodeConfig); err != nil {
+			reloadMu.Unlock()
 			log.Error("reload-secrets: flush providers failed", zap.Error(err))
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "flush providers: " + err.Error()})
@@ -359,6 +381,8 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 				}
 			}
 		}
+
+		reloadMu.Unlock()
 
 		mat, skip, fail := result.Counts()
 		log.Info("secrets reloaded",

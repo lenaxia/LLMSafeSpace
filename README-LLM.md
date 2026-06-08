@@ -694,7 +694,7 @@ Shutdown reverses this order.
 
 ### Overview
 
-The relay config subsystem manages how `agent-config.json` — the file opencode reads for provider credentials — is built and kept correct across the pod lifetime. Two independent processes write to this file without coordination, which is the source of multiple confirmed production bugs.
+The relay config subsystem manages how `agent-config.json` — the file opencode reads for provider credentials — is built and kept correct across the pod lifetime. Multiple processes write to this file, which has been the source of several confirmed production bugs.
 
 **Volume layout on every workspace pod:**
 
@@ -703,7 +703,7 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 | `/workspace` | Longhorn PVC | Yes | User workspace data, opencode.db, auth.json |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
 | `/tmp` | emptyDir (memory) | No | agent-config.json, secrets-env |
-| `/home/sandbox` | emptyDir (disk, 1Gi) | No — deleted on pod termination | SSH keys, secrets base dir, relay state, enricher cache |
+| `/home/sandbox` | emptyDir (disk, 1Gi) | No — deleted on pod termination | SSH keys, secrets base dir, enricher cache |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
@@ -720,9 +720,124 @@ opencode merges config files via recursive deep-merge, last writer wins:
 2. Project config: `findUp(["opencode.json","opencode.jsonc"], cwd, {rootFirst:true})`
 3. `OPENCODE_CONFIG` env var path — **always appended last, always wins**
 
-`OPENCODE_CONFIG=/tmp/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets.
+`OPENCODE_CONFIG=/tmp/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
 
 **auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — on the PVC, persistent across pod restarts.
+
+---
+
+### Writers of agent-config.json (as of 2026-06-08)
+
+There are **four** distinct write paths to `agent-config.json`:
+
+| Writer | File | When | Produces |
+|---|---|---|---|
+| `FlushProviders` | `pkg/agentd/secrets/secrets.go:623` | Boot materialize + every `/v1/reload-secrets` | Provider credentials only — no relay config |
+| `applyWorkspaceConfig` | `cmd/workspace-agentd/secrets.go:203` | Boot materialize only (after FlushProviders) | Adds `model` key with `providerID/modelID` form |
+| `startRelayInjector` goroutine | `cmd/workspace-agentd/relay_injector.go:423` | Once per pod lifetime at ~T+7s | Merges `disabled_providers` + `opencode-relay` block |
+| `reloadSecretsHandler` re-merge | `cmd/workspace-agentd/secrets.go:362` | After every FlushProviders in reload handler | Restores relay config after FlushProviders clobbered it |
+
+None of these write paths are atomic with each other. The design relies on:
+1. Boot sequence being strictly ordered (FlushProviders → applyWorkspaceConfig → relay injector fires later)
+2. `reloadMu` mutex in `reloadSecretsHandler` serialising concurrent reload calls
+3. opencode not hot-reloading the config file (so TOCTOU between FlushProviders and re-merge is benign)
+4. `atomic.Pointer[[]relayModel]` in `relay_injector.go` coordinating between the injector goroutine and the reload handler
+
+---
+
+### Bug Status (as of 2026-06-08)
+
+#### Bug 1 — Relay config clobbered by credential bind — ✅ Fixed (PR #65)
+
+**Root cause:** `FlushProviders` wrote only credential-sourced providers, clobbering the relay injector's `disabled_providers` + `opencode-relay` block on every credential bind.
+
+**Fix implemented:** `reloadSecretsHandler` stores the relay model list in `activeRelayModels` (`atomic.Pointer`) after successful injection. On every credential reload, after `FlushProviders`, `reloadSecretsHandler` calls `buildRelayConfig` to re-merge the relay block (`cmd/workspace-agentd/secrets.go:349-372`). This is a different approach than the `relay-state.json` / `WriteAgentConfig` single-writer design described earlier in this document — **that design is not implemented**. The current implementation is correct but has more coupling between the injector and the reload handler.
+
+**Verified on cluster:** `workspace 1aa87aec`, 2026-06-08. After fix: credential bind no longer removes relay config.
+
+#### Bug 2 — Model enricher cache always cold — ✅ Fixed (PR #65)
+
+**Root cause:** Enricher wrote cache to `/home/sandbox/.secrets` which `reset()` deletes on every reload.
+
+**Fix implemented:** `enricherCacheDir` defaults to `$HOME/.local/state/llmsafespace` (`cmd/workspace-agentd/secrets.go:91`), which is on the `sandbox-home` emptyDir and is never deleted by `reset()`. 24-hour TTL is now actually exercised.
+
+#### Bug 3 — Personal opencode key → broken free model routing — ⚠️ Open
+
+**Root cause:** `SecretsHandler.relayActive` is a static boolean set at API startup from `LLMSAFESPACE_INFERENCE_RELAY_URL` (`api/internal/app/app.go:158`). It is applied identically to all workspaces. A workspace where the relay injector was skipped (personal opencode key) has no `opencode-relay` provider, but `annotateModels(relayActive=true)` still remaps all zero-cost opencode models to `providerID="opencode-relay"`. The frontend shows these models as selectable. Inference fails.
+
+**Currently not triggered:** No users have personal opencode keys.
+
+**Correct fix (not yet implemented):** Derive the remap decision from the live pod's `connected[]` response:
+
+```go
+// Remap only in Phase 1: opencode connected but opencode-relay not yet injected.
+// After relay injection (Phase 2): opencode-relay is in connected[], no remap needed.
+// Personal key (relay skipped): opencode connected, opencode-relay absent —
+//   relayGloballyEnabled=false distinguishes this from Phase 1.
+phase1Window := connectedSet["opencode"] && !connectedSet["opencode-relay"] && relayGloballyEnabled
+if phase1Window && avail == ModelFreeTier && p.ID == "opencode" {
+    providerID = "opencode-relay"
+}
+```
+
+`relayGloballyEnabled` must come from the pod's `/v1/statusz` response (a new `relayInjected bool` field in `StatuszResponse`), set after the relay injector runs. This requires two changes: `cmd/workspace-agentd/main.go` (add `relayInjected` to statusz) and `api/internal/handlers/models.go` (read it from statusz instead of the static flag).
+
+#### Bug 4 — Cascade: clobbered relay → silent inference failure — ✅ Fixed (Bug 1 fix eliminates it)
+
+#### Gap 5 — Concurrent /v1/reload-secrets calls — ✅ Fixed (PR #67 follow-up)
+
+**Root cause:** Two simultaneous reloads raced through `Materializer.reset()` → `RemoveAll(SecretsBaseDir)` + `RemoveAll(SSHDir)`, then both `appendFile`'d to `SecretsEnvPath` — producing duplicate env var entries.
+
+**Fix implemented:** `reloadMu sync.Mutex` in `cmd/workspace-agentd/secrets.go` wraps the `Materialize` → `EnrichProviders` → `FlushProviders` → relay re-merge block. The `proc.restart()` call is excluded from the lock to avoid holding it during the ~5s SIGTERM window.
+
+#### Gap 6 — Model cache not evicted after credential bind — ✅ Fixed (PR #67 follow-up)
+
+**Root cause:** `defaultModelCache.Evict(workspaceID)` was only called in `SetModel`, not after `doReload`. After a credential bind changed the provider list, the 5s TTL caused stale model lists.
+
+**Fix implemented:** `defaultModelCache.Evict(workspaceID)` called at the end of `doReload` after a successful agentd response (`api/internal/handlers/secrets.go:530`).
+
+#### Gap 7 — Relay URL secret partially logged — ✅ Fixed (PR #67 follow-up)
+
+**Root cause:** `relay_injector.go` logged `cfg.RelayURL[:min(len,50)]`. The relay URL has the form `https://relay.safespaces.dev/<secret>` — the host is 30 chars, leaving 20 chars of the secret visible in pod logs accessible via `kubectl logs`.
+
+**Fix implemented:** `relayURLHost()` helper extracts only the scheme+host for logging (`cmd/workspace-agentd/relay_injector.go:53-59`). Log field renamed from `relayURL` to `relayHost`.
+
+---
+
+### Remaining architectural weakness (Bug 3)
+
+The `relayActive` static flag is the only unfixed architectural issue. Until Bug 3 is fixed:
+- All workspaces are treated as relay-active by the API server
+- A workspace with a personal opencode key will show free-tier relay models as selectable but fail at inference
+- No user has been affected yet because personal opencode keys have not been used
+
+**Implementation priority:** Medium (no current users affected, clear fix path exists).
+
+---
+
+### Known design fragilities (documented, not bugs)
+
+1. **Multiple writers of agent-config.json.** The four-writer design is correct given the current boot sequence and `reloadMu` serialisation, but it is fragile. A future change that reorders the boot sequence or adds a new write path could reintroduce relay clobbering. The single-writer `WriteAgentConfig` design (described in previous versions of this section) would eliminate this fragility but requires a non-trivial refactor of `FormatOpenCodeConfig`, the reload handler, and the relay injector. Tracked as a future cleanup item.
+
+2. **One-shot relay injector.** The injector goroutine runs once per pod lifetime. If the opencode credential changes after the injector has run (personal key → public key), the relay is not re-evaluated. The user must restart the pod. A re-triggerable injector (channel-based state machine) would handle this automatically.
+
+3. **In-memory model cache is per-API-replica.** `SetModel` evicts on the replica that handled the request; other replicas serve stale data for up to 5 seconds. Future: Redis-backed cache for cross-replica consistency (US-30.11).
+
+4. **`resolveModelWithProvider` non-determinism on collision.** When two providers in `agent-config.json` share a model ID, Go map iteration is non-deterministic — `resolveModelWithProvider` returns whichever provider the runtime visits first. In practice, provider model IDs are namespaced and do not collide, but this is not enforced.
+
+---
+
+### Implementation status summary
+
+| Item | Status | File |
+|---|---|---|
+| Bug 1 — relay clobbered | ✅ Fixed (re-merge approach) | `cmd/workspace-agentd/secrets.go:349` |
+| Bug 2 — enricher cache cold | ✅ Fixed | `cmd/workspace-agentd/secrets.go:91` |
+| Bug 3 — relayActive static flag | ⚠️ Open | `api/internal/handlers/models.go:331` |
+| Bug 4 — cascade silent failure | ✅ Fixed (via Bug 1) | — |
+| Gap 5 — concurrent reload race | ✅ Fixed | `cmd/workspace-agentd/secrets.go:reloadMu` |
+| Gap 6 — cache not evicted after bind | ✅ Fixed | `api/internal/handlers/secrets.go:530` |
+| Gap 7 — relay URL in logs | ✅ Fixed | `cmd/workspace-agentd/relay_injector.go:431` |
 
 ---
 

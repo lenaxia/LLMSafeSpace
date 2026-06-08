@@ -859,3 +859,42 @@ func TestResolveModelWithProvider_Collision(t *testing.T) {
 		"collision must produce a valid providerID/modelID form, got %q", got,
 	)
 }
+
+// TestReloadSecretsHandler_ConcurrentCalls_NoRace verifies that concurrent
+// reloadSecretsHandler calls do not race on the filesystem (SecretsEnvPath,
+// AgentConfigPath). The test must be run with -race to catch data races.
+// It also verifies that both calls return 200 — no request is starved.
+func TestReloadSecretsHandler_ConcurrentCalls_NoRace(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		home:             dir,
+		secretsBaseDir:   filepath.Join(dir, ".secrets"),
+		sshDir:           filepath.Join(dir, ".ssh"),
+		agentConfigPath:  filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:   filepath.Join(dir, "secrets-env"),
+		gitCredsPath:     filepath.Join(dir, ".git-credentials"),
+		enricherCacheDir: filepath.Join(dir, "cache"),
+	}
+
+	handler := reloadSecretsHandler(cfg, nil, "")
+	body := `[{"type":"env-secret","name":"FOO","metadata":{"var_name":"FOO"},"plaintext":"bar"}]`
+
+	var wg sync.WaitGroup
+	results := make([]int, 5)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+			results[idx] = rec.Code
+		}()
+	}
+	wg.Wait()
+
+	for i, code := range results {
+		assert.Equal(t, http.StatusOK, code, "handler %d returned non-200", i)
+	}
+}

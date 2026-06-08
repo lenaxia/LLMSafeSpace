@@ -574,3 +574,28 @@ func TestStartRelayInjector_DoesNotSetModelsWhenSkipped(t *testing.T) {
 	assert.Nil(t, getActiveRelayModels(),
 		"activeRelayModels must remain nil when relay is skipped for personal key")
 }
+
+// TestRelayURLHost verifies that relayURLHost strips the path-segment secret
+// so relay URLs are safe to include in structured logs.
+func TestRelayURLHost(t *testing.T) {
+	tests := []struct {
+		rawURL string
+		want   string
+	}{
+		{"https://relay.safespaces.dev/supersecrettoken", "https://relay.safespaces.dev"},
+		{"https://relay.safespaces.dev/a/b/c", "https://relay.safespaces.dev"},
+		{"https://relay.safespaces.dev", "https://relay.safespaces.dev"},
+		{"http://localhost:8080/secret", "http://localhost:8080"},
+		{"not-a-url", "://"},
+		{"", "://"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rawURL, func(t *testing.T) {
+			got := relayURLHost(tt.rawURL)
+			assert.Equal(t, tt.want, got)
+			// The secret path segment must never appear in the output.
+			assert.NotContains(t, got, "supersecrettoken")
+			assert.NotContains(t, got, "/secret")
+		})
+	}
+}
