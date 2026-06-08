@@ -11,8 +11,6 @@ vi.mock("../api/workspaces", () => ({
     getStatus: vi.fn(),
     activate: vi.fn(),
     list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
-    listModels: vi.fn().mockResolvedValue({ models: [], currentModel: "" }),
-    setModel: vi.fn().mockResolvedValue({ model: "", applied: false }),
     renameWorkspace: vi.fn().mockResolvedValue({}),
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
@@ -234,55 +232,5 @@ describe("ChatPage", () => {
     await waitFor(() => expect(screen.getByText("boom")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByText("boom")).not.toBeInTheDocument());
-  });
-
-  it("injects providerID/modelID from models list when currentModel has no slash", async () => {
-    // Regression: currentModel is stored as a flat ID (e.g. "glm-5.1") with no
-    // slash. The old code did indexOf("/") === -1 and returned undefined, so no
-    // model was sent in the prompt body — opencode fell back to the session-level
-    // default (opencode-relay/big-pickle) and returned 403.
-    const user = userEvent.setup();
-    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({
-      models: [
-        { id: "glm-5.1", providerID: "thekao", name: "GLM 5.1", tier: "paid", freeTier: false, selected: true, enabled: true },
-      ],
-      currentModel: "glm-5.1",
-    });
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    renderChatPage("/chat/ws-1/sess-1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    await user.click(document.querySelector("textarea")!);
-    await user.type(document.querySelector("textarea")!, "hello");
-    await user.keyboard("{Enter}");
-
-    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledWith(
-      "ws-1",
-      "sess-1",
-      expect.objectContaining({ model: { providerID: "thekao", modelID: "glm-5.1" } }),
-    ));
-  });
-
-  it("does not inject model when currentModel is empty", async () => {
-    // No model selected: sendAsync must be called without a model field.
-    const user = userEvent.setup();
-    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
-    (workspacesApi.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({ models: [], currentModel: "" });
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    renderChatPage("/chat/ws-1/sess-1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    await user.click(document.querySelector("textarea")!);
-    await user.type(document.querySelector("textarea")!, "hello");
-    await user.keyboard("{Enter}");
-
-    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledWith(
-      "ws-1",
-      "sess-1",
-      expect.not.objectContaining({ model: expect.anything() }),
-    ));
   });
 });
