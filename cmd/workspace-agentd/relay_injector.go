@@ -54,7 +54,8 @@ import (
 // nil means the injector has not yet run OR was skipped (personal key / no free
 // models). reloadSecretsHandler treats nil as "do not inject relay" — which is
 // correct in all three cases:
-//   - Not yet run: relay injector will fire at T+16s and write its own config.
+//   - Not yet run: relay injector fires at ~T+7s (opencode health check passes
+//     at T+5s; model fetch + config write adds ~2s). Writes its own config.
 //   - Skipped (personal key): user routes directly, relay must not be injected.
 //   - Failed (no free models): relay has nothing to offer.
 var activeRelayModels atomic.Pointer[[]relayModel]
