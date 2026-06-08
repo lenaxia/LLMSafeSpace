@@ -238,9 +238,9 @@ describe("ChatPage", () => {
 
   it("injects providerID/modelID from models list when currentModel has no slash", async () => {
     // Regression: currentModel is stored as a flat ID (e.g. "glm-5.1") with no
-    // slash. The old code did indexOf("/") === -1 and returned undefined, so no
-    // model was sent in the prompt body — opencode fell back to the session-level
-    // default (opencode-relay/big-pickle) and returned 403.
+    // slash. The old code did indexOf('/') === -1 and silently dropped the model
+    // from the prompt body, causing opencode to fall back to the session-level
+    // default (opencode-relay/big-pickle) which returned 403 from the relay.
     const user = userEvent.setup();
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
     (workspacesApi.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -248,6 +248,35 @@ describe("ChatPage", () => {
         { id: "glm-5.1", providerID: "thekao", name: "GLM 5.1", tier: "paid", freeTier: false, selected: true, enabled: true },
       ],
       currentModel: "glm-5.1",
+      currentModelProviderID: "thekao",
+    });
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    await user.click(document.querySelector("textarea")!);
+    await user.type(document.querySelector("textarea")!, "hello");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledWith(
+      "ws-1",
+      "sess-1",
+      expect.objectContaining({ model: { providerID: "thekao", modelID: "glm-5.1" } }),
+    ));
+  });
+
+  it("falls back to find() when currentModelProviderID is absent (older API)", async () => {
+    // Older API responses may omit currentModelProviderID. The find() fallback
+    // must still resolve the correct providerID from the models array.
+    const user = userEvent.setup();
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (workspacesApi.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+      models: [
+        { id: "glm-5.1", providerID: "thekao", name: "GLM 5.1", tier: "paid", freeTier: false, selected: true, enabled: true },
+      ],
+      currentModel: "glm-5.1",
+      // no currentModelProviderID field
     });
     (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 

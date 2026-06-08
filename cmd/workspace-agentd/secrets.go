@@ -190,9 +190,16 @@ func reportResult(w io.Writer, r *secrets.MaterializeResult) {
 }
 
 // applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
-// applyWorkspaceConfig reads workspace-config.json (sibling to secrets.json)
 // and merges the default model into the agent config file. This ensures the
 // workspace's model selection survives pod restarts.
+//
+// DefaultModel is stored as a flat catalog ID (e.g. "glm-5.1"). opencode
+// requires the fully-qualified "providerID/modelID" form in agent-config.json.
+// We resolve the providerID by scanning the provider map already written to
+// agent-config.json by FlushProviders (which runs before this function).
+// If no provider claims the model, the flat ID is written as a best-effort
+// fallback (opencode will reject it at startup, but the per-prompt model
+// override in the frontend still routes correctly for interactive sessions).
 func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 	// workspace-config.json lives alongside secrets.json in /sandbox-cfg/
 	dir := filepath.Dir(secretsPath)
@@ -220,7 +227,12 @@ func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 		cfg = map[string]json.RawMessage{}
 	}
 
-	modelJSON, _ := json.Marshal(wsCfg.DefaultModel)
+	// Resolve providerID from the provider map so opencode gets the fully-
+	// qualified "providerID/modelID" form it requires. The provider map is
+	// written by FlushProviders (called just before this function), so all
+	// user-configured providers are already present.
+	model := resolveModelWithProvider(cfg, wsCfg.DefaultModel)
+	modelJSON, _ := json.Marshal(model)
 	cfg["model"] = modelJSON
 
 	if _, ok := cfg["$schema"]; !ok {
@@ -230,6 +242,41 @@ func applyWorkspaceConfig(agentConfigPath, secretsPath string) {
 
 	merged, _ := json.MarshalIndent(cfg, "", "  ")
 	_ = os.WriteFile(agentConfigPath, merged, 0o600)
+}
+
+// resolveModelWithProvider scans the "provider" map in the agent config and
+// returns "providerID/modelID" when the flat modelID is found in any provider's
+// models map. Returns the flat modelID unchanged if no provider claims it
+// (e.g. when the provider list hasn't been written yet, or the model was
+// removed from the catalog since it was last selected).
+func resolveModelWithProvider(cfg map[string]json.RawMessage, flatModelID string) string {
+	if flatModelID == "" {
+		return ""
+	}
+	// Already qualified — nothing to do.
+	if strings.Contains(flatModelID, "/") {
+		return flatModelID
+	}
+
+	providerRaw, ok := cfg["provider"]
+	if !ok {
+		return flatModelID
+	}
+
+	// provider map shape: {"providerID": {"models": {"modelID": {...}, ...}, ...}, ...}
+	var providers map[string]struct {
+		Models map[string]json.RawMessage `json:"models"`
+	}
+	if json.Unmarshal(providerRaw, &providers) != nil {
+		return flatModelID
+	}
+
+	for providerID, p := range providers {
+		if _, found := p.Models[flatModelID]; found {
+			return providerID + "/" + flatModelID
+		}
+	}
+	return flatModelID
 }
 
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.
