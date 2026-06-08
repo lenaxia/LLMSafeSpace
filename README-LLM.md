@@ -751,7 +751,7 @@ None of these write paths are atomic with each other. The design relies on:
 
 **Root cause:** `FlushProviders` wrote only credential-sourced providers, clobbering the relay injector's `disabled_providers` + `opencode-relay` block on every credential bind.
 
-**Fix implemented:** `reloadSecretsHandler` stores the relay model list in `activeRelayModels` (`atomic.Pointer`) after successful injection. On every credential reload, after `FlushProviders`, `reloadSecretsHandler` calls `buildRelayConfig` to re-merge the relay block (`cmd/workspace-agentd/secrets.go:349-372`). This is a different approach than the `relay-state.json` / `WriteAgentConfig` single-writer design described earlier in this document — **that design is not implemented**. The current implementation is correct but has more coupling between the injector and the reload handler.
+**Fix implemented:** `reloadSecretsHandler` stores the relay model list in `activeRelayModels` (`atomic.Pointer`) after successful injection. On every credential reload, after `FlushProviders`, `reloadSecretsHandler` calls `buildRelayConfig` to re-merge the relay block (`cmd/workspace-agentd/secrets.go:349-372`). The current implementation uses re-merge with atomic coordination rather than a single-writer design. See "How the relay config subsystem works (as-built)" below for the full write sequence.
 
 **Verified on cluster:** `workspace 1aa87aec`, 2026-06-08. After fix: credential bind no longer removes relay config.
 
@@ -857,209 +857,90 @@ The discriminating signal — whether the relay injector actually ran for a spec
 
 ---
 
-### Design: Relay Config Coordination
+### How the relay config subsystem works (as-built)
 
-The fundamental problem is two independent writers of `agent-config.json` with no shared contract:
+The relay config subsystem has four writers of `agent-config.json`. All coordination is via:
+1. `reloadMu sync.Mutex` in `reloadSecretsHandler` — serialises concurrent reload calls
+2. `atomic.Pointer[[]relayModel]` in `relay_injector.go` — the relay injector sets this on success; reloadSecretsHandler reads it to decide whether to re-merge relay after FlushProviders
+3. opencode reads `agent-config.json` once at startup — not hot-reloaded
 
-| Writer | Inputs | When |
-|---|---|---|
-| `FlushProviders` (via `FormatOpenCodeConfig`) | Staged LLM providers from secrets batch | Boot materialize + every `/v1/reload-secrets` with llm-provider secrets |
-| `buildRelayConfig` (relay injector) | Free model list from live opencode `/provider` | Once per pod lifetime at T+7s |
-| `applyWorkspaceConfig` | `defaultModel` from `/sandbox-cfg/workspace-config.json` | Boot materialize only |
+#### Agent-config.json write sequence (boot)
 
-None of these know about each other. The relay injector reads and merges the existing file; all subsequent `FlushProviders` calls overwrite it from scratch.
+```
+materialize command:
+  Materializer.reset()      → deletes agent-config.json
+  FlushProviders()          → writes provider credentials (thekao, etc.)
+  applyWorkspaceConfig()    → reads workspace-config.json, adds model key with providerID/modelID
 
-#### Relay state file
-
-A `relay-state.json` file at `/home/sandbox/.local/state/llmsafespace/relay-state.json` acts as the coordination artifact:
-
-```go
-type RelayState struct {
-    Active                bool        `json:"active"`
-    ProviderID            string      `json:"providerID"`    // "opencode-relay"
-    RelayURL              string      `json:"relayURL"`
-    Models                []RelayModel `json:"models"`
-    DecidedAt             time.Time   `json:"decidedAt"`
-    CredentialFingerprint string      `json:"credentialFingerprint"` // apiKey of opencode credential at decision time
-}
+~T+7s (goroutine, after opencode is healthy):
+  startRelayInjector()      → fetchFreeModels → buildRelayConfig (merge) → WriteFile
+                            → setActiveRelayModels(models)   ← coordination artifact
+                            → proc.restart()                 ← opencode reboots with relay config
 ```
 
-**Why `/home/sandbox/.local/state/`:** On the `sandbox-home` emptyDir volume. Not under `SecretsBasePath` (never deleted by `reset()`). Survives opencode restarts and credential reloads within the same pod lifetime. Deleted on pod termination, which is correct — the relay injector re-evaluates on every pod boot.
+#### Agent-config.json write sequence (credential reload)
 
-**Missing file semantics:** Treated as "relay not yet evaluated" — not "relay inactive." `WriteAgentConfig` called before the injector fires produces a config without relay, which is correct. The injector writes state and triggers a second `WriteAgentConfig` at T+7s.
-
-#### Single writer: WriteAgentConfig
-
-`WriteAgentConfig` is the only function that writes `agent-config.json`. Called from all paths: boot materialize, reload handler, relay injector.
-
-```go
-// WriteAgentConfig assembles all inputs and writes agent-config.json atomically.
-// Called from boot path, reload handler, and relay injector.
-// Missing relay-state.json = relay not yet evaluated (not inactive).
-func WriteAgentConfig(paths Paths, providers []LLMProviderData, formatter LLMProviderFormatter) error {
-    relay, _ := readRelayState(paths.RelayStatePath) // nil on missing/unreadable
-    defaultModel, _ := readDefaultModel(paths.WorkspaceConfigPath)
-    cfg := BuildAgentConfig(providers, relay, defaultModel)
-    data, err := formatter(cfg)
-    if err != nil {
-        return err
-    }
-    return atomicWrite(paths.AgentConfigPath, data, 0o600)
-}
+```
+reloadSecretsHandler:
+  reloadMu.Lock()
+  Materializer.reset()      → deletes agent-config.json
+  FlushProviders()          → rewrites provider credentials
+  if getActiveRelayModels() != nil:
+    buildRelayConfig()      → re-merges relay config
+    os.WriteFile()          → restores relay block
+  reloadMu.Unlock()
+  proc.restart()            → opencode reboots
 ```
 
-`BuildAgentConfig` is a pure function (no filesystem, no HTTP):
+#### RelayInjected signal flow
 
-```go
-func BuildAgentConfig(providers []LLMProviderData, relay *RelayState, defaultModel string) AgentConfig {
-    cfg := AgentConfig{Providers: providers}
-    if relay != nil && relay.Active {
-        cfg.DisabledProviders = []string{"opencode"}
-        cfg.RelayProvider = &RelayProviderData{...relay fields...}
-    }
-    cfg.DefaultModel = resolveDefaultModel(defaultModel, providers, relay)
-    return cfg
-}
+The API server needs to know whether the relay injector ran for a specific pod
+so it can correctly annotate the model catalog. The signal flows:
+
+```
+relay_injector.go:
+  setActiveRelayModels() → atomic.Pointer[[]relayModel] (non-nil after success)
+
+agentd /v1/readyz:
+  getActiveRelayModels() != nil → ReadyzResponse.RelayInjected = true
+
+API server (ListModels cache miss):
+  fetchRelayInjected() → GET /v1/readyz (Bearer token, port 4098)
+                       → ReadyzResponse.RelayInjected
+  → cached in modelCachePayload with 5s TTL alongside model list
 ```
 
-`FormatOpenCodeConfig` is extended to accept `AgentConfig` instead of `[]LLMProviderData`, writing `disabled_providers` and the relay provider block when present. The existing `agent.Agent` interface (`FormatProviderConfig`) is updated to match.
+#### Why the annotateModels remap is effectively dead code (but kept)
 
-#### Re-triggerable relay injector
+The remap guard `relayGloballyEnabled && relayInjected && p.ID=="opencode"` can never
+be true simultaneously:
+- `relayInjected=true` means `setActiveRelayModels()` was called, which means
+  `disabled_providers:["opencode"]` was written to `agent-config.json` and opencode restarted.
+- After restart, `opencode` is absent from `connected[]` in `/provider`.
+- The `connectedSet` filter above the remap removes `p.ID=="opencode"` from the loop.
+- The remap condition is unreachable in Phase 2.
 
-Replaces the one-shot goroutine with a channel-based state machine:
+In Phase 1 (`relayInjected=false`), the remap is suppressed — correctly, because:
+- Personal key: relay was skipped, `opencode-relay` provider doesn't exist on this pod.
+- Phase 1 window: free models briefly show `providerID="opencode"`. After T+7s the
+  cache expires and the next `ListModels` returns the correct Phase 2 state.
 
-```go
-type RelayInjector struct {
-    evalCh chan struct{} // buffered size 1 — coalesces concurrent triggers
-    paths  Paths
-    // ...
-}
+The remap code is kept as defense-in-depth: if a future opencode version keeps `opencode`
+in `connected[]` despite `disabled_providers`, the guard correctly remaps rather than
+silently routing to a disabled provider.
 
-func (r *RelayInjector) TriggerEvaluation() {
-    select {
-    case r.evalCh <- struct{}{}:
-    default: // already pending, no-op
-    }
-}
+#### Backwards compatibility
 
-func (r *RelayInjector) Run(ctx context.Context) {
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-r.evalCh:
-            r.evaluate(ctx) // blocks until evaluation complete
-        }
-    }
-}
-```
+Pods running the old image (before `RelayInjected` was added to `ReadyzResponse`) return
+`/v1/readyz` JSON without the `relay_injected` field. Go's `json.Decode` sets
+`RelayInjected=false` (zero value). This is safe:
+- Old Phase 2 pods already have `opencode-relay` in `connected[]` (not `opencode`).
+- The remap guard `p.ID=="opencode"` is never triggered for old Phase 2 pods.
+- Old pods are fully correct with `relayInjected=false`.
 
-`evaluate` writes `relay-state.json` then calls `WriteAgentConfig`. It never writes `agent-config.json` directly.
+Validated on live cluster 2026-06-08: `connected=["opencode-relay"]` on old Phase 2 pod
+(image `ts-1780939444`).
 
-#### Credential fingerprint for relay re-evaluation
-
-When `reloadSecretsHandler` processes a batch containing an `llm-provider` for `provider="opencode"`, it compares the incoming `apiKey` against `relay-state.json`'s `CredentialFingerprint`. The fingerprint is derived from `stagedProviders` (the decoded batch), not from `auth.json`, to avoid the timing dependency where `auth.json` is only written after `StageCredentials` (step 4 of the reload sequence, after `FlushProviders` at step 3).
-
-```go
-func opencodeKeyFromBatch(providers []LLMProviderData) string {
-    for _, p := range providers {
-        if p.Provider == "opencode" {
-            return p.APIKey
-        }
-    }
-    return ""
-}
-```
-
-If the key changed: invalidate relay state (delete `relay-state.json`), call `WriteAgentConfig` without relay (conservative: treats relay as inactive), then trigger relay re-evaluation. The relay injector waits for opencode to be healthy, re-runs `shouldSkipRelay`, and either activates or permanently deactivates relay for this pod lifetime.
-
-**Deactivation path** (key was public, now personal): `shouldSkipRelay=true` → write `RelayState{Active: false}` → `WriteAgentConfig` produces config without relay, with the personal key → done. No second restart needed.
-
-**Activation path** (key was personal, now public): write `RelayState{Active: false}` initially → call `WriteAgentConfig` → trigger injector → injector waits for healthy opencode → fetches free models → writes `RelayState{Active: true}` → calls `WriteAgentConfig` again with relay. Window where relay is inactive: ~7-10 seconds.
-
-#### defaultModel resolution
-
-`applyWorkspaceConfig` is removed. `WriteAgentConfig` handles model key via `resolveDefaultModel`, which produces the `providerID/modelID` format opencode requires (e.g. `"thekao/glm-5.1"` not `"glm-5.1"`):
-
-```go
-func resolveDefaultModel(defaultModel string, providers []LLMProviderData, relay *RelayState) string {
-    if defaultModel == "" { return "" }
-    if relay != nil && relay.Active {
-        for _, m := range relay.Models {
-            if m.ID == defaultModel { return relay.ProviderID + "/" + defaultModel }
-        }
-    }
-    for _, p := range providers {
-        for _, m := range p.Models {
-            if m.ID == defaultModel { return p.Provider + "/" + defaultModel }
-        }
-    }
-    return "" // unresolvable — omit key, let opencode use its own default
-}
-```
-
-If enrichment failed (empty Models slice), `resolveDefaultModel` returns `""` and the `model` key is omitted. Degraded but not broken — existing sessions use `opencode.db`, only new sessions default to opencode's built-in.
-
----
-
-### Fix: relayActive static flag (Bug 3)
-
-`annotateModels` must not remap based on a static API-server flag. The remap decision must come from the live pod state.
-
-**Current (broken):**
-```go
-func annotateModels(raw []byte, relayActive bool) { ... }
-// relayActive set from LLMSAFESPACE_INFERENCE_RELAY_URL at API startup — global, static
-```
-
-**Fix:** Derive relay state from `connected[]` in the response itself:
-
-```go
-// Remap only in Phase 1: opencode connected but opencode-relay not yet injected.
-// After relay injection (Phase 2): opencode-relay is in connected[], opencode is absent
-//   (disabled_providers:["opencode"]) — models already have correct providerID, no remap needed.
-// Personal key (relay skipped): opencode connected, opencode-relay absent, same as Phase 1.
-//   BUT: relayGloballyEnabled=false for this pod (surfaced in statusz). Remap suppressed.
-phase1Window := connectedSet["opencode"] && !connectedSet["opencode-relay"] && relayGloballyEnabled
-if phase1Window && avail == ModelFreeTier && p.ID == "opencode" {
-    providerID = "opencode-relay"
-}
-```
-
-`relayGloballyEnabled` is a per-pod boolean exposed by agentd in `/v1/statusz` as `relayInjected bool` — set to `true` after the relay injector runs (regardless of outcome), `false` before it has run. This distinguishes the Phase 1 window (relay pending, remap useful) from the personal-key case (relay skipped, remap harmful). The API server reads this from the pod's `/v1/statusz` response cached by the workspace service.
-
----
-
-### Gap 5 — Concurrent /v1/reload-secrets calls
-
-Two simultaneous reloads (from two API replicas) race through `Materializer.reset()` which calls `RemoveAll(SecretsBaseDir)` and `RemoveAll(SSHDir)`. Both then `appendFile` to `SecretsEnvPath` — producing duplicate env var entries. Both call `WriteAgentConfig` — last write wins, which is correct since batches are identical.
-
-**Fix:** `sync.Mutex` in `reloadSecretsHandler` closure, wrapping `Materialize` → `EnrichProviders` → `WriteAgentConfig`. Excludes `proc.restart()` to avoid holding the lock during the 5-second SIGTERM window.
-
----
-
-### Gap 6 — Model cache not evicted after credential bind
-
-`defaultModelCache.Evict(workspaceID)` is called only inside `SetModel`. It is never called after `SetBindings`, which triggers `pushSecretsToAgent`. After a credential bind that changes the model list, the stale cache persists for up to 5 seconds (TTL).
-
-**Fix:** Call `defaultModelCache.Evict(workspaceID)` at the end of `doReload` after a successful agentd response.
-
----
-
-### Implementation checklist
-
-| # | File | Change | Priority |
-|---|---|---|---|
-| Bug 1 | `cmd/workspace-agentd/secrets.go` | `WriteAgentConfig` reads relay state; replaces `FlushProviders + applyWorkspaceConfig` | Critical |
-| Bug 1 | `cmd/workspace-agentd/relay_injector.go` | Injector writes `relay-state.json`; re-triggerable via buffered channel; never writes `agent-config.json` directly | Critical |
-| Bug 1 | `pkg/agent/opencode/format.go` | `FormatOpenCodeConfig` accepts `AgentConfig`; writes `disabled_providers` and relay provider block | Critical |
-| Bug 2 | `cmd/workspace-agentd/model_enricher.go` | Move `cacheDir` to `/home/sandbox/.local/state/llmsafespace/` | High |
-| Bug 3 | `api/internal/handlers/models.go` | Remove static `relayActive` flag; derive remap decision from live `connected[]` + `relayGloballyEnabled` from statusz | High |
-| Bug 3 | `cmd/workspace-agentd/main.go` | Add `relayInjected bool` to `StatuszResponse`; set after injector runs | High |
-| Gap 5 | `cmd/workspace-agentd/secrets.go` | `sync.Mutex` in `reloadSecretsHandler` around materialize-enrich-write | Medium |
-| Gap 6 | `api/internal/handlers/secrets.go` | `defaultModelCache.Evict(workspaceID)` in `doReload` after success | Low |
-
----
 
 ## Technology Stack
 
