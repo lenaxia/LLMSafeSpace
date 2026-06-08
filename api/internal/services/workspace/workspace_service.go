@@ -1057,20 +1057,19 @@ func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID 
 // guarantees the lifecycle invariant "if a pod is about to be
 // (re)built, its secrets are refreshed first" is enforced uniformly.
 //
-// REQUIREMENTS
+// SESSION HANDLING
 //
-//   - secretInjector must be wired (SetSecretInjector called at app
-//     startup). If nil, the helper is a no-op — production always
-//     wires it; tests opt in only when relevant.
-//   - sessionID must be present in ctx (set by ContextWithSessionID).
-//     The per-session DEK is needed to decrypt user secrets;
-//     PrepareSecretsForInjection cannot run without it. Internal
-//     restarts that lack a session (background reconciliation,
-//     admin scripts, controller-initiated restart) skip the refresh
-//     and log Warn — the existing K8s Secret is preserved untouched
-//     so the pod still mounts whatever was there last. This is
-//     deliberate: refusing to refresh is safer than re-emitting an
-//     empty manifest under an admin context with no DEK.
+//   - When sessionID is present in ctx (set by ContextWithSessionID),
+//     both user credentials (per-session DEK) and admin platform
+//     credentials (server-side KEK) are injected.
+//   - When sessionID is absent (API-key auth, background reconcile,
+//     controller-initiated restart), the function falls back to
+//     seedEphemeralSecrets, which injects only admin platform
+//     credentials (server-side KEK, no session required). User
+//     credentials are not available without a session and are skipped.
+//     The resulting K8s Secret will contain only admin credentials;
+//     if the same workspace is later activated with a full JWT session,
+//     refreshEphemeralSecrets will overwrite it with the full set.
 //
 // # FAILURE MODES
 //
@@ -1125,11 +1124,18 @@ func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspace
 	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
 }
 
-// seedEphemeralSecrets is the CreateWorkspace-only variant of refreshEphemeralSecrets.
-// It passes sessionID="" because only admin platform credentials (server-side KEK,
-// no session required) are bound at workspace creation time. User session-encrypted
-// credentials are not available yet and will be injected later by refreshEphemeralSecrets
-// when the user first opens the workspace with an active session.
+// seedEphemeralSecrets injects admin platform credentials (server-side KEK,
+// no user session required) into the workspace-secrets-<id> K8s Secret.
+//
+// Called from two paths:
+//   - CreateWorkspace: only admin credentials are bound at creation time;
+//     user session-encrypted credentials are not yet available.
+//   - refreshEphemeralSecrets fallback: when no sessionID is in context
+//     (API-key auth, controller reconcile), this is called instead of
+//     skipping entirely, ensuring platform credentials are always injected.
+//
+// User credentials (requiring a per-session DEK) are injected by
+// refreshEphemeralSecrets when the user opens the workspace with a JWT session.
 func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
 	if s.secretInjector == nil {
 		return
