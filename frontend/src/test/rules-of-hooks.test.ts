@@ -91,7 +91,7 @@ function analyzeFile(filePath: string): Violation[] {
   const FN_START_RE = /(?:function\s+\w|=>\s*\{|function\s*\()/;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line: string = lines[i] ?? "";
     const lineNum = i + 1;
 
     if (SKIP_LINE_RE.test(line)) continue;
@@ -114,12 +114,13 @@ function analyzeFile(filePath: string): Violation[] {
     }
 
     // Pop function contexts that have been closed
-    while (fnStack.length > 0 && depth < fnStack[fnStack.length - 1].depth) {
+    while (fnStack.length > 0 && depth < (fnStack[fnStack.length - 1]?.depth ?? 0)) {
       fnStack.pop();
     }
 
     if (fnStack.length === 0) continue;
-    const ctx = fnStack[fnStack.length - 1];
+    const ctx: FnCtx | undefined = fnStack[fnStack.length - 1];
+    if (!ctx) continue;
 
     // Check for early return (at the function's own depth level)
     if (
@@ -133,7 +134,7 @@ function analyzeFile(filePath: string): Violation[] {
     // Check for hook call
     const hookMatch = line.match(BUILTIN_HOOK_RE);
     if (hookMatch) {
-      const hookName = hookMatch[1];
+      const hookName: string = hookMatch[1] ?? "";
 
       // Violation: hook after early return at the same function depth
       if (ctx.firstReturnLine !== null && depth === ctx.depth) {
