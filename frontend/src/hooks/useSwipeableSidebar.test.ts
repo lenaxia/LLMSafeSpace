@@ -287,5 +287,19 @@ describe("useSwipeableSidebar", () => {
 
       expect(setIsOpen).not.toHaveBeenCalled();
     });
+
+    it("listeners persist after first swipe — gesture works more than once", () => {
+      const { setIsOpen, dom } = setupHook(false);
+
+      dispatchTouch(dom.container, "touchstart", [{ clientX: 10, clientY: 200 }]);
+      dispatchTouch(dom.container, "touchmove", [{ clientX: 130, clientY: 200 }]);
+      dispatchTouch(dom.container, "touchend", [], [{ clientX: 130, clientY: 200 }]);
+      expect(setIsOpen).toHaveBeenCalledWith(true);
+
+      dispatchTouch(dom.container, "touchstart", [{ clientX: 10, clientY: 200 }]);
+      dispatchTouch(dom.container, "touchmove", [{ clientX: 130, clientY: 200 }]);
+      dispatchTouch(dom.container, "touchend", [], [{ clientX: 130, clientY: 200 }]);
+      expect(setIsOpen).toHaveBeenCalledTimes(2);
+    });
   });
 });

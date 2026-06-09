@@ -28,7 +28,6 @@ export function useSwipeableSidebar({
   const isSwiping = useRef(false);
   const swipeOffset = useRef(0);
   const isOpenRef = useRef(isOpen);
-  const pendingCleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     isOpenRef.current = isOpen;
@@ -91,11 +90,6 @@ export function useSwipeableSidebar({
     };
 
     const onEnd = (e: TouchEvent) => {
-      if (pendingCleanup.current) {
-        pendingCleanup.current();
-        pendingCleanup.current = null;
-      }
-
       const side = sidebarRef.current;
       const over = overlayRef.current;
 
@@ -141,14 +135,10 @@ export function useSwipeableSidebar({
     el.addEventListener("touchmove", onMove, { passive: false });
     el.addEventListener("touchend", onEnd, { passive: true });
 
-    const cleanup = () => {
+    return () => {
       el.removeEventListener("touchstart", onStart);
       el.removeEventListener("touchmove", onMove);
       el.removeEventListener("touchend", onEnd);
     };
-
-    pendingCleanup.current = cleanup;
-
-    return cleanup;
   }, [enabled, sidebarWidth, sidebarRef, overlayRef, setIsOpen, containerRef]);
 }
