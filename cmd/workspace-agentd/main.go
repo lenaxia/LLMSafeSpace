@@ -690,6 +690,8 @@ func main() {
 
 		// Context usage: sum token usage across all sessions and
 		// use the active model's context window limit as the total.
+		// TotalTokens=0 means the limit is unknown (provider did not report it);
+		// the frontend treats 0 as "Unknown" and disables auto-compaction warnings.
 		var contextUsage *agentd.ContextUsage
 		{
 			var totalTokens int64
@@ -702,12 +704,8 @@ func main() {
 					modelID = s.Model
 				}
 			}
-			// Try to get context limit from active model's config
+			// Use context limit from active model's config; 0 means unknown.
 			contextLimit := client.ModelContextLimit(r.Context(), modelID, providerID)
-			if contextLimit == 0 {
-				// Fallback: 128K per session
-				contextLimit = int64(max(len(sessions), 1)) * 128000
-			}
 			if totalTokens > 0 || len(sessions) > 0 {
 				contextUsage = &agentd.ContextUsage{
 					UsedTokens:  totalTokens,

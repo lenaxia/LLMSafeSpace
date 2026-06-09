@@ -13,6 +13,7 @@ import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
 import { AtCapBanner } from "../components/chat/AtCapBanner";
 import { HealthBanner } from "../components/chat/HealthBanner";
+import { SessionRetryBanner, type RetryStatus } from "../components/chat/SessionRetryBanner";
 import { AgentReloadBanner } from "../components/workspace/AgentReloadBanner";
 import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
 import { ModelSelector } from "../components/chat/ModelSelector";
@@ -43,6 +44,7 @@ export function ChatPage() {
     setSessionErrors([]);
     setSseStreamParts([]);
     setServerBusy(false);
+    setRetryStatus(null);
     sseHasDrivenBusy.current = false;
     setPendingQuestions([]);
     setPendingPermissions([]);
@@ -167,7 +169,8 @@ export function ChatPage() {
   }, [sessionStatus]);
 
 
-  const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
+  const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
+  const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
 
   // NOTE: This effect MUST be defined BEFORE the flush effect below.
@@ -473,6 +476,8 @@ export function ChatPage() {
           sseHasDrivenBusy.current = true;
           notifySessionIdle(event.session_id);
           setServerBusy(false);
+          setRetryStatus(null);
+          clearStreamTimedOut();
           flushFailedRef.current = false;
           flushInProgressRef.current = false;
           setFlushTick((t) => t + 1);
@@ -483,7 +488,12 @@ export function ChatPage() {
         } else if (event.status === "busy") {
           sseHasDrivenBusy.current = true;
           setServerBusy(true);
+          setRetryStatus(null);
         }
+        // Note: session.status=retry is NOT handled here. The synthesized
+        // session.status event from the proxy only carries string "busy" for
+        // retry events. The full retry payload (attempt, message, next, action)
+        // travels inside an opencode.event wrapper and is handled below.
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
@@ -500,6 +510,26 @@ export function ChatPage() {
           });
         }
       }
+      // Handle session.status inside opencode.event — this is where the full
+      // retry payload lives. The proxy also synthesizes a string "busy" event
+      // on the session.status channel for retry, but the rich retry fields
+      // (attempt, message, next, action) only travel through this path.
+      if (oe.event_type === "session.status" && sessionId) {
+        const payload = oe.data as Record<string, unknown> | undefined;
+        const props = (payload?.properties ?? (payload?.payload && (payload.payload as Record<string, unknown>)?.properties)) as Record<string, unknown> | undefined;
+        const sid = (props?.sessionID as string) || (props?.id as string);
+        if (sid === sessionId) {
+          const statusObj = props?.status as Record<string, unknown> | undefined;
+          if (statusObj?.type === "retry") {
+            setRetryStatus({
+              attempt: (statusObj.attempt as number) ?? 1,
+              message: (statusObj.message as string) ?? "",
+              next: (statusObj.next as number) ?? Date.now(),
+              action: statusObj.action as RetryStatus["action"],
+            });
+          }
+        }
+      }
       // Handle session.error — surface LLM/provider errors as a message bubble.
       // Written to sessionErrors (not localMessages) so reconcileOnIdle's
       // setLocalMessages([]) cannot wipe the error before the user sees it.
@@ -510,11 +540,28 @@ export function ChatPage() {
         if (sid === sessionId) {
           const err = props?.error as Record<string, unknown> | undefined;
           const errData = err?.data as Record<string, unknown> | undefined;
-          const message = (errData?.message as string) || (err?.name as string) || "Agent error";
+          const errName = err?.name as string | undefined;
+          const rawMessage = errData?.message as string | undefined;
+
+          // Map known error names to actionable user-facing messages.
+          let text: string;
+          if (errName === "ContextOverflowError") {
+            text = "Context limit reached — type /compact to summarize the conversation and continue";
+          } else if (errName === "MessageOutputLengthError") {
+            text = "Response was too long for this model's output limit";
+          } else if (errName === "ProviderAuthError") {
+            const provider = errData?.providerID as string | undefined;
+            text = provider
+              ? `Authentication failed for ${provider} — check your credentials`
+              : (rawMessage ?? "Authentication failed — check your credentials");
+          } else {
+            text = rawMessage ?? errName ?? "Agent error";
+          }
+
           setSessionErrors((prev) => [...prev, {
             id: `error-${++idCounterRef.current}`,
             role: "assistant",
-            parts: [{ type: "error" as const, text: `⚠️ ${message}` }],
+            parts: [{ type: "error" as const, text: `⚠️ ${text}` }],
           }]);
           // US-16.12: Clear stale prompts on session error
           setPendingQuestions([]);
@@ -758,6 +805,17 @@ export function ChatPage() {
 
       {atCapRetryAfter !== null && (
         <AtCapBanner retryAfter={atCapRetryAfter} onRetry={clearAtCap} />
+      )}
+
+      {retryStatus && (
+        <SessionRetryBanner status={retryStatus} />
+      )}
+
+      {streamTimedOut && (
+        <div className="flex items-center justify-between gap-2 border-b border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <span>Response interrupted — the connection timed out</span>
+          <button onClick={clearStreamTimedOut} className="underline hover:no-underline">Dismiss</button>
+        </div>
       )}
 
       {chatError && (
