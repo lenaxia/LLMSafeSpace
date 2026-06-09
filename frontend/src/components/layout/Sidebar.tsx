@@ -190,12 +190,21 @@ export function Sidebar({ onNavigate }: Props) {
               onSuspend={() => suspendMutation.mutate(ws.id)}
               onResume={() => activateMutation.mutate(ws.id)}
               onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
-              onDeleteSession={(sessionId) => {
+              onDeleteSession={(sid) => {
                 if (window.confirm("Delete this session?")) {
-                  queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
-                  workspacesApi.renameSession(ws.id, sessionId, "").then(() => {
-                    queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
-                  });
+                  workspacesApi.deleteSession(ws.id, sid)
+                    .catch((err) => {
+                      if (err?.status !== 404) throw err;
+                    })
+                    .then(() => {
+                      queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
+                      if (sid === sessionId) {
+                        navigate(`/chat/${ws.id}`);
+                      }
+                    })
+                    .catch(() => {
+                      window.alert("Failed to delete session.");
+                    });
                 }
               }}
               renamingSession={renamingSession?.wsId === ws.id ? renamingSession : null}

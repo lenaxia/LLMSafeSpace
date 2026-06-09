@@ -136,6 +136,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 		proxy.GET("/sessions/:sessionId/message", handler.GetHistory)
 		proxy.GET("/sessions/:sessionId", handler.GetSession)
 		proxy.POST("/sessions/:sessionId/abort", handler.AbortSession)
+		proxy.DELETE("/sessions/:sessionId", handler.DeleteSession)
 		proxy.GET("/events", handler.StreamEvents)
 	}
 
@@ -587,6 +588,7 @@ func TestProxy_EndpointMapping(t *testing.T) {
 		{"get history", "GET", "/api/v1/workspaces/ws-1/sessions/s1/message", "/session/s1/message"},
 		{"get session", "GET", "/api/v1/workspaces/ws-1/sessions/s1", "/session/s1"},
 		{"abort", "POST", "/api/v1/workspaces/ws-1/sessions/s1/abort", "/session/s1/abort"},
+		{"delete session", "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", "/session/s1"},
 		// NOTE: "events" is intentionally omitted — StreamEvents is broker-based
 		// and does not proxy to the pod; it is covered by stream_events_test.go.
 	}
@@ -636,6 +638,11 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		case "/session/sess-1/abort":
 			w.WriteHeader(http.StatusAccepted)
+		case "/session/sess-1":
+			if r.Method == "DELETE" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+			}
 			// NOTE: /event is intentionally omitted — StreamEvents no longer proxies to the pod.
 		}
 	})
@@ -666,6 +673,10 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/abort", nil)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	w = env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/sess-1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
 	expected := []string{
 		"POST /session",
 		"GET /session",
@@ -673,6 +684,7 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 		"POST /session/sess-1/prompt_async",
 		"GET /session/sess-1/message",
 		"POST /session/sess-1/abort",
+		"DELETE /session/sess-1",
 	}
 	assert.Equal(t, expected, requests)
 }
@@ -1480,4 +1492,73 @@ func makeWorkspaceCRDWithStatus(name, podIP, phase, _ string) *v1.Workspace {
 			PodIP: podIP,
 		},
 	}
+}
+
+func TestProxy_DeleteSession_ProxiesDELETE(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestProxy_DeleteSession_EndpointMapping(t *testing.T) {
+	var capturedPath string
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "/session/s1", capturedPath)
+}
+
+func TestProxy_DeleteSession_InvalidSessionID(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/bad..id", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestProxy_DeleteSession_WorkspaceNotActive(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseSuspended), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestProxy_DeleteSession_BypassesActiveLimit(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 0)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code, "delete should bypass active session limit")
+}
+
+func TestProxy_DeleteSession_OpencodeNotFound(t *testing.T) {
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "session not found"})
+	})
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

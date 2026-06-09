@@ -125,7 +125,7 @@ export function KebabMenu({ items, align = "right", footer }: Props) {
               }}
               className={cn(
                 "flex w-full items-center px-3 py-1.5 text-left text-xs transition-colors",
-                "text-destructive hover:bg-destructive/10",
+                "text-destructive hover:bg-red-500/10 dark:hover:bg-red-500/20",
                 item.disabled && "opacity-50 cursor-not-allowed",
               )}
             >

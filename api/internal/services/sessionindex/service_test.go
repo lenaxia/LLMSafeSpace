@@ -93,3 +93,24 @@ func TestUpsertTitle_DelegatesToDB(t *testing.T) {
 	assert.NoError(t, err)
 	db.AssertCalled(t, "UpsertSessionTitle", mock.Anything, "ws-1", "s1", "New Title")
 }
+
+func TestDeleteSession_DelegatesToDB(t *testing.T) {
+	db := &mocks.MockDatabaseService{}
+	db.On("DeleteSessionTree", mock.Anything, "ws-1", "sess-1").Return(nil)
+
+	svc := &Service{db: db}
+	err := svc.DeleteSession(context.Background(), "ws-1", "sess-1")
+
+	assert.NoError(t, err)
+	db.AssertCalled(t, "DeleteSessionTree", mock.Anything, "ws-1", "sess-1")
+}
+
+func TestDeleteSession_DBError(t *testing.T) {
+	db := &mocks.MockDatabaseService{}
+	db.On("DeleteSessionTree", mock.Anything, "ws-1", "sess-1").Return(assert.AnError)
+
+	svc := &Service{db: db}
+	err := svc.DeleteSession(context.Background(), "ws-1", "sess-1")
+
+	assert.Error(t, err)
+}

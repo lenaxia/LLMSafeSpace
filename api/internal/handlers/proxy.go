@@ -281,6 +281,40 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
 }
 
+func (h *ProxyHandler) DeleteSession(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	workspaceID := c.Param("id")
+	h.proxyToWorkspace(c, "/session/"+sid, false, sid)
+
+	if c.Writer.Status() >= 400 {
+		return
+	}
+
+	if h.sessionIndex != nil {
+		if err := h.sessionIndex.DeleteSession(context.Background(), workspaceID, sid); err != nil {
+			h.logger.Error("failed to delete session from index", err, "workspaceID", workspaceID, "sessionID", sid)
+		}
+	}
+
+	go func() {
+		h.removeActiveSession(workspaceID, sid)
+		if h.sessionParents != nil {
+			h.sessionParents.invalidate(workspaceID)
+		}
+		if h.broker != nil {
+			h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+				Type:      "session.status",
+				SessionID: sid,
+				Status:    "deleted",
+			})
+		}
+	}()
+}
+
 // StreamEvents opens a persistent SSE connection for the given workspace.
 // Events are sourced from the WorkspaceEventBroker: workspace phase changes
 // (from WorkspaceWatcher) and session status events (from SSETracker) are

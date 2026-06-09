@@ -1179,3 +1179,50 @@ func TestListAPIKeysWithDecrypt(t *testing.T) {
 	assert.False(t, keys[1].DekSynced)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestDeleteSessionTree(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec(`WITH RECURSIVE descendants`).
+			WithArgs("ws-1", "sess-parent").
+			WillReturnResult(sqlmock.NewResult(0, 3))
+
+		err := service.DeleteSessionTree(ctx, "ws-1", "sess-parent")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("not_found_is_ok", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec(`WITH RECURSIVE descendants`).
+			WithArgs("ws-1", "nonexistent").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err := service.DeleteSessionTree(ctx, "ws-1", "nonexistent")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		mock.ExpectExec(`WITH RECURSIVE descendants`).
+			WithArgs("ws-1", "sess-err").
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.DeleteSessionTree(ctx, "ws-1", "sess-err")
+		assert.Error(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}

@@ -83,6 +83,7 @@ func (m *mockSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types
 	return nil, nil
 }
 func (m *mockSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error  { return nil }
+func (m *mockSessionIndex) DeleteSession(_ context.Context, _, _ string) error   { return nil }
 func (m *mockSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
 func (m *mockSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error { return nil }
 func (m *mockSessionIndex) Start() error                                         { return nil }

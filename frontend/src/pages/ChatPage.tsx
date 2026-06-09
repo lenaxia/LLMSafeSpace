@@ -676,8 +676,17 @@ export function ChatPage() {
       label: "Delete session",
       onClick: () => {
         if (window.confirm("Delete this session?") && workspaceId && sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-          navigate(`/chat/${workspaceId}`);
+          workspacesApi.deleteSession(workspaceId, sessionId)
+            .catch((err) => {
+              if (err?.status !== 404) throw err;
+            })
+            .then(() => {
+              queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+              navigate(`/chat/${workspaceId}`);
+            })
+            .catch(() => {
+              window.alert("Failed to delete session.");
+            });
         }
       },
       destructive: true,

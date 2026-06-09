@@ -819,6 +819,20 @@ func (s *Service) DeleteSessionIndex(ctx context.Context, workspaceID string) er
 	return err
 }
 
+func (s *Service) DeleteSessionTree(ctx context.Context, workspaceID, sessionID string) error {
+	_, err := s.DB.ExecContext(ctx, `
+		WITH RECURSIVE descendants AS (
+			SELECT session_id FROM session_index
+			WHERE workspace_id = $1 AND session_id = $2
+			UNION ALL
+			SELECT si.session_id FROM session_index si
+			INNER JOIN descendants d ON si.parent_session_id = d.session_id AND si.workspace_id = $1
+		)
+		DELETE FROM session_index
+		WHERE workspace_id = $1 AND session_id IN (SELECT session_id FROM descendants)`, workspaceID, sessionID)
+	return err
+}
+
 func (s *Service) UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error {
 	_, err := s.DB.ExecContext(ctx,
 		`INSERT INTO session_index (workspace_id, session_id, last_message_at, message_count, updated_at)

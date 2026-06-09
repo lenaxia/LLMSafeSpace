@@ -162,6 +162,10 @@ func (s *SessionsService) SendPromptAsync(ctx context.Context, workspaceID, sess
 	return s.c.do(ctx, "POST", fmt.Sprintf("/workspaces/%s/sessions/%s/prompt", workspaceID, sessionID), body, nil)
 }
 
+func (s *SessionsService) Delete(ctx context.Context, workspaceID, sessionID string) error {
+	return s.c.do(ctx, "DELETE", fmt.Sprintf("/workspaces/%s/sessions/%s", workspaceID, sessionID), nil, nil)
+}
+
 // AuthService handles authentication operations.
 type AuthService struct{ c *Client }
 
