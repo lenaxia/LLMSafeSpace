@@ -174,7 +174,7 @@ helm-deploy:
 	    echo "causes missing migrations and broken deployments."; \
 	    exit 1; \
 	  fi
-	$(if $(LOCAL_VALUES_FLAG),@echo "== helm-deploy: using local overrides $(LOCAL_VALUES_FILE) ==")
+	$(if $(LOCAL_VALUES_FLAG),@echo "== helm-deploy: using local overrides $(LOCAL_VALUES_FILE) ==",@echo "WARNING: $(LOCAL_VALUES_FILE) not found — deploying with chart defaults only. Create this file to persist cluster-specific overrides (redis host, ingress, rbac scope, etc.)")
 	@echo "== helm-deploy: applying CRDs =="
 	kubectl apply -f $(CHART_DIR)/crds/
 	@echo "== helm-deploy: linting chart =="
