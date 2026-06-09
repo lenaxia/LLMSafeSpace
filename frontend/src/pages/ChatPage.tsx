@@ -562,20 +562,12 @@ export function ChatPage() {
   // detect the Pending→Active phase transition and auto-create a session.
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
-  const allMessages = [...(history ?? []), ...localMessages, ...queuedUserMessages, ...sessionErrors];
-
-  if (!workspaceId) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        <p>Select a workspace to start chatting</p>
-      </div>
-    );
-  }
-
-  const isSuspended = status?.phase === "Suspended";
-  const isTransitioning = !status?.phase || status?.phase === "Pending" || status?.phase === "Creating" || status?.phase === "Resuming" || status?.phase === "Suspending";
-  const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
-
+  // doSendNow MUST be defined before the early return below, and the
+  // useEffect ref-sync that follows it MUST also precede the early return.
+  // Placing any useEffect after an early return violates the rules of hooks:
+  // on a render that takes the early return the hook is never called, but on
+  // a render that does not the hook count is higher — React throws error #310
+  // ("Rendered more hooks than during the previous render").
   const doSendNow = (text: string) => {
     // Resolve current model selection into opencode's PromptInput.model format.
     // currentModel is the flat model ID stored in the DB (e.g. "glm-5.1", never
@@ -621,7 +613,22 @@ export function ChatPage() {
     }, currentModelRef);
   };
   // Sync ref after every render so the flush effect always has the latest closure.
+  // This useEffect MUST stay above the early return that follows — see comment above.
   useEffect(() => { doSendNowRef.current = doSendNow; });
+
+  const allMessages = [...(history ?? []), ...localMessages, ...queuedUserMessages, ...sessionErrors];
+
+  if (!workspaceId) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        <p>Select a workspace to start chatting</p>
+      </div>
+    );
+  }
+
+  const isSuspended = status?.phase === "Suspended";
+  const isTransitioning = !status?.phase || status?.phase === "Pending" || status?.phase === "Creating" || status?.phase === "Resuming" || status?.phase === "Suspending";
+  const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
     // If streaming, queue the message instead of sending immediately
