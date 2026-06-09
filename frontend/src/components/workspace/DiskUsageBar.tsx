@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 interface MetricProps {
   label: string;
@@ -45,6 +45,57 @@ function MetricItem({ label, used, total, formatValue, warningThreshold = 85 }: 
   );
 }
 
+// ContextUnknownItem renders when context limit is unknown (contextTotal=0).
+// Shows used tokens with "Unknown" total and a tooltip explaining the impact.
+function ContextUnknownItem({ used, formatValue }: { used: number; formatValue?: (v: number) => string }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const fmt = formatValue ?? ((v: number) => `${v}`);
+
+  // Close tooltip on outside click
+  useEffect(() => {
+    if (!tooltipVisible) return;
+    const handler = (e: MouseEvent) => {
+      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) {
+        setTooltipVisible(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [tooltipVisible]);
+
+  return (
+    <div className="flex items-center gap-1.5 min-w-0 relative" ref={tooltipRef}>
+      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Context</span>
+      {/* No progress bar — limit is unknown */}
+      <span className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
+        {fmt(used)}
+        <span className="text-muted-foreground/50"> / </span>
+      </span>
+      {/* "Unknown" badge — hover or click reveals tooltip */}
+      <button
+        className="text-[10px] font-medium text-yellow-500 hover:text-yellow-400 underline decoration-dotted cursor-help"
+        onMouseEnter={() => setTooltipVisible(true)}
+        onMouseLeave={() => setTooltipVisible(false)}
+        onClick={() => setTooltipVisible((v) => !v)}
+        aria-label="Context limit unknown — click for details"
+      >
+        Unknown
+      </button>
+      {tooltipVisible && (
+        <div className="absolute bottom-full left-0 mb-1.5 z-50 w-64 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+          <p className="font-semibold mb-1">Context limit not reported by provider</p>
+          <p className="text-muted-foreground">
+            The model did not return a context window size. Auto-compaction is disabled —
+            the session may stall when the context fills up without warning.
+            Set <code className="font-mono">max_input_tokens</code> in the LiteLLM model config to fix this.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   diskUsedBytes?: number;
   diskTotalBytes?: number;
@@ -54,7 +105,7 @@ interface Props {
   contextTotal?: number;
 }
 
-type MetricId = "context" | "disk" | "memory";
+type MetricId = "context" | "context-unknown" | "disk" | "memory";
 
 interface MetricDef {
   id: MetricId;
@@ -63,6 +114,7 @@ interface MetricDef {
   total: number;
   formatValue?: (v: number) => string;
   warningThreshold?: number;
+  unknown?: boolean;
 }
 
 export function DiskUsageBar(props: Props) {
@@ -70,9 +122,17 @@ export function DiskUsageBar(props: Props) {
 
   // Build ordered metric list (context always first)
   const allMetrics: MetricDef[] = [];
-  if (contextUsed != null && contextTotal != null && contextTotal > 0) {
-    allMetrics.push({ id: "context", label: "Context", used: contextUsed, total: contextTotal, formatValue: formatTokens, warningThreshold: 80 });
+
+  if (contextUsed != null) {
+    if (contextTotal != null && contextTotal > 0) {
+      // Known limit — show normal progress bar
+      allMetrics.push({ id: "context", label: "Context", used: contextUsed, total: contextTotal, formatValue: formatTokens, warningThreshold: 80 });
+    } else {
+      // Unknown limit (contextTotal=0 or missing) — show "Unknown" with tooltip
+      allMetrics.push({ id: "context-unknown", label: "Context", used: contextUsed, total: 0, formatValue: formatTokens, unknown: true });
+    }
   }
+
   if (diskUsedBytes != null && diskTotalBytes != null && diskTotalBytes > 0) {
     allMetrics.push({ id: "disk", label: "Disk", used: diskUsedBytes, total: diskTotalBytes, formatValue: formatBytes, warningThreshold: 85 });
   }
@@ -87,8 +147,9 @@ export function DiskUsageBar(props: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileAutoOpened, setMobileAutoOpened] = useState(false);
 
-  // Track which critical metrics are above threshold
+  // Track which critical metrics are above threshold (unknown metrics never count as critical)
   const criticalMetrics = allMetrics.filter((m) => {
+    if (m.unknown || m.total === 0) return false;
     const pct = Math.round((m.used / m.total) * 100);
     return pct > (m.warningThreshold ?? 85);
   });
@@ -111,13 +172,18 @@ export function DiskUsageBar(props: Props) {
 
   const metricsInDrawer = allMetrics.slice(1); // context always shown in compact row
 
+  const renderMetric = (m: MetricDef) => {
+    if (m.unknown) {
+      return <ContextUnknownItem key={m.id} used={m.used} formatValue={m.formatValue} />;
+    }
+    return <MetricItem key={m.id} {...m} />;
+  };
+
   return (
     <>
       {/* Desktop: show all metrics inline */}
       <div className="hidden sm:flex items-center gap-3 px-4 py-1 text-xs text-muted-foreground flex-wrap">
-        {allMetrics.map((m) => (
-          <MetricItem key={m.id} {...m} />
-        ))}
+        {allMetrics.map(renderMetric)}
       </div>
 
       {/* Mobile: context always visible in compact row + sticky drawer */}
@@ -125,7 +191,7 @@ export function DiskUsageBar(props: Props) {
         <div className="flex items-center justify-between px-4 py-1">
           <div className="flex items-center gap-2 min-w-0 overflow-hidden">
             {/* Always show context */}
-            {allMetrics[0] && <MetricItem {...allMetrics[0]} />}
+            {allMetrics[0] && renderMetric(allMetrics[0])}
             {/* Show critical metrics inline when drawer is closed */}
             {!mobileOpen && criticalMetrics.length > 0 && (
               <span className="text-[10px] font-medium text-orange-500 shrink-0">
@@ -150,9 +216,7 @@ export function DiskUsageBar(props: Props) {
           }`}
         >
           <div className="flex flex-col gap-1.5 px-4 pb-1.5 pt-0.5">
-            {metricsInDrawer.map((m) => (
-              <MetricItem key={m.id} {...m} />
-            ))}
+            {metricsInDrawer.map(renderMetric)}
           </div>
         </div>
       </div>
