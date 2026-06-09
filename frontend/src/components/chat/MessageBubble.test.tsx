@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, extractMessageText } from "./MessageBubble";
 import type { Message } from "../../api/types";
 
 describe("MessageBubble", () => {
@@ -70,6 +71,165 @@ describe("MessageBubble", () => {
       const bubble = container.querySelector("div[class*='max-w-\\[90\\%\\]']");
       expect(bubble).not.toBeNull();
       expect(bubble?.className).toContain("sm:max-w-[80%]");
+    });
+  });
+
+  describe("copy button", () => {
+    beforeEach(() => {
+      // @ts-expect-error jsdom doesn't implement clipboard
+      navigator.clipboard = { writeText: () => Promise.resolve() };
+    });
+
+    afterEach(() => {
+      // @ts-expect-error
+      delete navigator.clipboard;
+    });
+
+    it("renders a copy button with accessible label", () => {
+      const msg: Message = { id: "c1", role: "assistant", parts: [{ type: "text", text: "Copy me" }] };
+      render(<MessageBubble message={msg} />);
+      expect(screen.getByRole("button", { name: /copy message/i })).toBeInTheDocument();
+    });
+
+    it("shows check icon after successful copy", async () => {
+      const user = userEvent.setup();
+      const msg: Message = { id: "c3", role: "assistant", parts: [{ type: "text", text: "Check test" }] };
+      render(<MessageBubble message={msg} />);
+      await user.click(screen.getByRole("button", { name: /copy message/i }));
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument();
+      });
+    });
+
+    it("reverts to copy icon after timeout", async () => {
+      vi.useFakeTimers();
+      const msg: Message = { id: "c4", role: "assistant", parts: [{ type: "text", text: "Timeout test" }] };
+      render(<MessageBubble message={msg} />);
+      const btn = screen.getByRole("button", { name: /copy message/i });
+      await act(async () => { btn.click(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(2100); });
+      expect(screen.getByRole("button", { name: /copy message/i })).toBeInTheDocument();
+      vi.useRealTimers();
+    });
+
+    it("does not show check icon when clipboard write fails", async () => {
+      // @ts-expect-error
+      navigator.clipboard = { writeText: () => Promise.reject(new Error("denied")) };
+      const msg: Message = { id: "c5", role: "assistant", parts: [{ type: "text", text: "Fail test" }] };
+      render(<MessageBubble message={msg} />);
+      const btn = screen.getByRole("button", { name: /copy message/i });
+      await act(async () => { btn.click(); });
+      expect(screen.getByRole("button", { name: /copy message/i })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /copied/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("extractMessageText", () => {
+    it("extracts text from text parts", () => {
+      expect(extractMessageText([{ type: "text", text: "hello" }])).toBe("hello");
+    });
+
+    it("joins multiple parts with double newline", () => {
+      expect(extractMessageText([
+        { type: "text", text: "a" },
+        { type: "text", text: "b" },
+      ])).toBe("a\n\nb");
+    });
+
+    it("prefixes thinking parts", () => {
+      expect(extractMessageText([{ type: "thinking", text: "hmm" }])).toBe("[Thinking]\nhmm");
+    });
+
+    it("formats tool parts with output", () => {
+      expect(extractMessageText([{
+        type: "tool_use",
+        text: "bash",
+        toolOutput: "result",
+      }])).toBe("[Tool: bash]\nOutput: result");
+    });
+
+    it("formats tool parts without output", () => {
+      expect(extractMessageText([{ type: "tool_use", text: "read" }])).toBe("[Tool: read]");
+    });
+
+    it("skips empty parts", () => {
+      expect(extractMessageText([
+        { type: "text", text: "keep" },
+        { type: "text" },
+      ])).toBe("keep");
+    });
+  });
+
+  describe("timestamp", () => {
+    it("displays relative time for recent messages", () => {
+      const now = new Date();
+      const msg: Message = {
+        id: "t1",
+        role: "user",
+        parts: [{ type: "text", text: "Timestamped" }],
+        createdAt: now.toISOString(),
+      };
+      render(<MessageBubble message={msg} />);
+      expect(screen.getByText(/just now/i)).toBeInTheDocument();
+    });
+
+    it("does not render timestamp when createdAt is absent", () => {
+      const msg: Message = { id: "t2", role: "user", parts: [{ type: "text", text: "No time" }] };
+      const { container } = render(<MessageBubble message={msg} />);
+      const timeEls = container.querySelectorAll("[data-testid='message-timestamp']");
+      expect(timeEls).toHaveLength(0);
+    });
+
+    it("displays clock time for older messages from the same day", () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const msg: Message = {
+        id: "t3",
+        role: "assistant",
+        parts: [{ type: "text", text: "Older" }],
+        createdAt: twoHoursAgo.toISOString(),
+      };
+      render(<MessageBubble message={msg} />);
+      expect(screen.getByTestId("message-timestamp")).toBeInTheDocument();
+      expect(screen.getByTestId("message-timestamp").textContent).toMatch(/\d{1,2}:\d{2}/);
+    });
+  });
+
+  describe("model name", () => {
+    it("displays model name for assistant messages when provided", () => {
+      const now = new Date();
+      const msg: Message = {
+        id: "m1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Response" }],
+        createdAt: now.toISOString(),
+        modelID: "gpt-4o",
+      };
+      render(<MessageBubble message={msg} modelName="GPT-4o" />);
+      expect(screen.getByText(/gpt-4o/i)).toBeInTheDocument();
+    });
+
+    it("does not display model name when modelName prop is undefined", () => {
+      const msg: Message = {
+        id: "m2",
+        role: "assistant",
+        parts: [{ type: "text", text: "No model" }],
+      };
+      const { container } = render(<MessageBubble message={msg} />);
+      const modelEls = container.querySelectorAll("[data-testid='message-model']");
+      expect(modelEls).toHaveLength(0);
+    });
+
+    it("does not display model name for user messages", () => {
+      const msg: Message = {
+        id: "m3",
+        role: "user",
+        parts: [{ type: "text", text: "User msg" }],
+      };
+      const { container } = render(<MessageBubble message={msg} modelName="GPT-4o" />);
+      const modelEls = container.querySelectorAll("[data-testid='message-model']");
+      expect(modelEls).toHaveLength(0);
     });
   });
 });

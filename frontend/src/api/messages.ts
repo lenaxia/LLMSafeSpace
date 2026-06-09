@@ -5,6 +5,9 @@ interface OpenCodeMessage {
   info?: {
     role?: string;
     id?: string;
+    time?: { created?: number; completed?: number };
+    modelID?: string;
+    providerID?: string;
   };
   id?: string;
   role?: string;
@@ -14,7 +17,7 @@ interface OpenCodeMessage {
   }>;
 }
 
-function transformHistory(raw: OpenCodeMessage[]): Message[] {
+export function transformHistory(raw: OpenCodeMessage[]): Message[] {
   return raw
     .filter((m) => {
       const role = m.info?.role ?? m.role;
@@ -29,7 +32,6 @@ function transformHistory(raw: OpenCodeMessage[]): Message[] {
         return p.type === "text" || p.type === "thinking" || p.type === "reasoning";
       }).map((p) => {
         if (p.type === "tool") {
-          // Map opencode tool part fields to our MessagePart shape
           const part = p as Record<string, unknown>;
           const state = part.state as Record<string, unknown> | undefined;
           const toolName = (part.tool as string) || "";
@@ -45,6 +47,10 @@ function transformHistory(raw: OpenCodeMessage[]): Message[] {
         }
         return p;
       }),
+      createdAt: m.info?.time?.created
+        ? new Date(m.info.time.created).toISOString()
+        : undefined,
+      modelID: m.info?.modelID ?? undefined,
     }))
     .filter((m) => m.parts.length > 0);
 }

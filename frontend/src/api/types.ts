@@ -150,11 +150,13 @@ export interface Message {
   role: "user" | "assistant";
   parts: MessagePart[];
   createdAt?: string;
+  modelID?: string;
 }
 
 export interface SendMessageRequest {
   parts: MessagePart[];
   model?: { providerID: string; modelID: string };
+  messageID?: string;
 }
 
 export interface ApiKey {
