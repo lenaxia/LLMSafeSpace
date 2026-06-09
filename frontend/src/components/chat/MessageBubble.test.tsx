@@ -81,7 +81,7 @@ describe("MessageBubble", () => {
     });
 
     afterEach(() => {
-      // @ts-expect-error
+      // @ts-expect-error — resetting test spy on read-only property
       delete navigator.clipboard;
     });
 
@@ -115,7 +115,7 @@ describe("MessageBubble", () => {
     });
 
     it("does not show check icon when clipboard write fails", async () => {
-      // @ts-expect-error
+      // @ts-expect-error — overriding read-only clipboard for test
       navigator.clipboard = { writeText: () => Promise.reject(new Error("denied")) };
       const msg: Message = { id: "c5", role: "assistant", parts: [{ type: "text", text: "Fail test" }] };
       render(<MessageBubble message={msg} />);
