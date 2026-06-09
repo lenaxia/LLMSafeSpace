@@ -1041,4 +1041,217 @@ describe("ChatPage SSE event handler", () => {
       });
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // session.error name mapping
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("session.error name mapping", () => {
+    function makeSessionError(name: string, data?: Record<string, unknown>): WorkspaceStreamEvent {
+      return {
+        type: "opencode.event",
+        event_type: "session.error",
+        data: {
+          type: "session.error",
+          properties: {
+            sessionID: "sess-1",
+            error: { name, data: data ?? {} },
+          },
+        },
+      } as unknown as WorkspaceStreamEvent;
+    }
+
+    function getErrorText(): string | undefined {
+      const view = screen.getByTestId("chat-view");
+      const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
+      return msgs.flatMap((m) => m.parts).find((p) => p.type === "error")?.text;
+    }
+
+    beforeEach(() => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    });
+
+    it("ContextOverflowError shows /compact instruction", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("ContextOverflowError"));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("/compact");
+        expect(text).toContain("Context limit reached");
+      });
+    });
+
+    it("MessageOutputLengthError shows human-readable output limit message", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("MessageOutputLengthError"));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("too long");
+        expect(text).not.toContain("MessageOutputLengthError");
+      });
+    });
+
+    it("ProviderAuthError with providerID surfaces provider name", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("ProviderAuthError", { providerID: "anthropic", message: "Unauthorized" }));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("anthropic");
+        expect(text).toContain("Authentication failed");
+      });
+    });
+
+    it("ProviderAuthError without providerID falls back to raw message", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("ProviderAuthError", { message: "invalid api key" }));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("invalid api key");
+      });
+    });
+
+    it("unknown error name falls back to data.message", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("SomeUnknownError", { message: "something went wrong" }));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("something went wrong");
+      });
+    });
+
+    it("unknown error with no message falls back to error name", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionError("WeirdNamedError"));
+
+      await waitFor(() => {
+        const text = getErrorText();
+        expect(text).toBeDefined();
+        expect(text).toContain("WeirdNamedError");
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // session.status=retry via opencode.event
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("session.status=retry via opencode.event", () => {
+    function makeRetryEvent(sessionID: string, attempt: number, message: string, nextOffsetMs = 5000): WorkspaceStreamEvent {
+      return {
+        type: "opencode.event",
+        event_type: "session.status",
+        data: {
+          type: "session.status",
+          properties: {
+            sessionID,
+            status: {
+              type: "retry",
+              attempt,
+              message,
+              next: Date.now() + nextOffsetMs,
+            },
+          },
+        },
+      } as unknown as WorkspaceStreamEvent;
+    }
+
+    beforeEach(() => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    });
+
+    it("shows retry banner when retry event fires for current session", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeRetryEvent("sess-1", 1, "Rate limited"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/rate limited/i)).toBeInTheDocument();
+      });
+    });
+
+    it("shows attempt count when attempt > 1", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeRetryEvent("sess-1", 3, "Rate limited"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/attempt 3/i)).toBeInTheDocument();
+      });
+    });
+
+    it("ignores retry event for a different session", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeRetryEvent("sess-OTHER", 1, "Rate limited"));
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByText(/rate limited/i)).not.toBeInTheDocument();
+    });
+
+    it("clears retry banner when session.status=idle fires", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeRetryEvent("sess-1", 1, "Rate limited"));
+      await waitFor(() => expect(screen.getByText(/rate limited/i)).toBeInTheDocument());
+
+      sendSSEEvent({ type: "session.status", session_id: "sess-1", status: "idle" } as WorkspaceStreamEvent);
+
+      await waitFor(() => {
+        expect(screen.queryByText(/rate limited/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it("clears retry banner when session.status=busy fires (next attempt started)", async () => {
+      const qc = makeQueryClient();
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeRetryEvent("sess-1", 1, "Rate limited"));
+      await waitFor(() => expect(screen.getByText(/rate limited/i)).toBeInTheDocument());
+
+      sendSSEEvent({ type: "session.status", session_id: "sess-1", status: "busy" } as WorkspaceStreamEvent);
+
+      await waitFor(() => {
+        expect(screen.queryByText(/rate limited/i)).not.toBeInTheDocument();
+      });
+    });
+  });
 });
