@@ -24,9 +24,10 @@ interface Props {
   onLoadEarlier?: () => void;
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
+  queuedCount?: number;
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0 }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -60,7 +61,7 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
 
       {prompts && <div className="px-4">{prompts}</div>}
 
-      <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} />
+      <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} queuedCount={queuedCount} />
     </div>
   );
 }

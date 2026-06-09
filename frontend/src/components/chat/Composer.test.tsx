@@ -79,4 +79,66 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button"));
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  // ── Streaming / Queue behavior ─────────────────────────────
+
+  it("textarea is NOT disabled when streaming is true", () => {
+    render(<Composer onSend={vi.fn()} streaming />);
+    expect(screen.getByPlaceholderText("Type a message...")).not.toBeDisabled();
+  });
+
+  it("shows send button (not stop) during streaming", () => {
+    render(<Composer onSend={vi.fn()} streaming />);
+    expect(screen.getByRole("button", { name: "" })).toBeInTheDocument();
+  });
+
+  it("shows stop button during streaming when onAbort is provided", () => {
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} streaming />);
+    expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
+  });
+
+  it("clicking send during streaming calls onSend (queues the message)", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} onAbort={vi.fn()} streaming />);
+    await user.type(screen.getByPlaceholderText("Type a message..."), "queued msg");
+    await user.click(screen.getByRole("button", { name: "" }));
+    expect(onSend).toHaveBeenCalledWith("queued msg");
+  });
+
+  it("clicking stop during streaming calls onAbort", async () => {
+    const user = userEvent.setup();
+    const onAbort = vi.fn();
+    render(<Composer onSend={vi.fn()} onAbort={onAbort} streaming />);
+    await user.click(screen.getByLabelText("Stop generating"));
+    expect(onAbort).toHaveBeenCalled();
+  });
+
+  it("Enter key works during streaming (does not early-return)", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} onAbort={vi.fn()} streaming />);
+    await user.type(screen.getByPlaceholderText("Type a message..."), "hello{Enter}");
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+
+  it("shows queued count indicator when > 0", () => {
+    render(<Composer onSend={vi.fn()} queuedCount={3} />);
+    expect(screen.getByText("3 messages queued")).toBeInTheDocument();
+  });
+
+  it("shows singular queued count for 1 message", () => {
+    render(<Composer onSend={vi.fn()} queuedCount={1} />);
+    expect(screen.getByText("1 message queued")).toBeInTheDocument();
+  });
+
+  it("does not show queued indicator when count is 0", () => {
+    render(<Composer onSend={vi.fn()} queuedCount={0} />);
+    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+  });
+
+  it("does not show queued indicator by default", () => {
+    render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+  });
 });
