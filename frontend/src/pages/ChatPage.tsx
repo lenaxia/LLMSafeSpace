@@ -643,6 +643,7 @@ export function ChatPage() {
       id: `local-${++idCounterRef.current}`,
       role: "user",
       parts: [{ type: "text", text }],
+      createdAt: new Date().toISOString(),
     };
     setLocalMessages((prev) => [...prev, userMsg]);
     // Note: we deliberately do NOT add the assistant response to
@@ -686,6 +687,7 @@ export function ChatPage() {
         id,
         role: "user" as const,
         parts: [{ type: "text", text }],
+        createdAt: new Date().toISOString(),
       }]);
       return;
     }
@@ -847,6 +849,7 @@ export function ChatPage() {
             hasOlderMessages={hasNextPage}
             loadingOlder={isFetchingNextPage}
             queuedCount={pendingQueue.length}
+            models={modelsData?.models}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
                 <>

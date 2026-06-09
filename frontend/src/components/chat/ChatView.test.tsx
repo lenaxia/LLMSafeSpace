@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
 import { ChatView } from "./ChatView";
 import type { Message } from "../../api/types";
+import type { ModelInfo } from "../../api/workspaces";
 
 describe("ChatView", () => {
   const defaultProps = {
@@ -80,5 +81,16 @@ describe("ChatView", () => {
   it("does not show streaming bubble when no parts", () => {
     render(<ChatView {...defaultProps} streaming={true} streamParts={[]} />);
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+  });
+
+  it("passes models to MessageList for model name resolution", () => {
+    const models: ModelInfo[] = [
+      { id: "gpt-4o", providerID: "openai", name: "GPT-4o", tier: "pro", freeTier: false, selected: false, enabled: true },
+    ];
+    const messages: Message[] = [
+      { id: "1", role: "assistant", parts: [{ type: "text", text: "Response" }], modelID: "gpt-4o" },
+    ];
+    render(<ChatView {...defaultProps} messages={messages} models={models} />);
+    expect(screen.getByText(/gpt-4o/i)).toBeInTheDocument();
   });
 });

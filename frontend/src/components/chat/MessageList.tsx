@@ -1,6 +1,7 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Message } from "../../api/types";
+import type { ModelInfo } from "../../api/workspaces";
 import { MessageBubble } from "./MessageBubble";
 import { ArrowDown, Loader2 } from "lucide-react";
 
@@ -11,13 +12,15 @@ interface Props {
   onLoadEarlier?: () => void;
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
+  models?: ModelInfo[];
 }
 
 const SCROLL_THRESHOLD = 60;
 
 const MemoizedBubble = memo(MessageBubble);
 
-export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder }: Props) {
+export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder, models }: Props) {
+  const modelMap = useMemo(() => new Map(models?.map(m => [m.id, m.name])), [models]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showJumpButton, setShowJumpButton] = useState(false);
@@ -56,7 +59,6 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     setShowJumpButton(false);
   }, []);
 
-  // Snap to bottom synchronously before paint when message count changes (if sticky)
   useLayoutEffect(() => {
     if (stickToBottom.current) {
       const el = scrollRef.current;
@@ -64,16 +66,12 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     }
   }, [messages.length]);
 
-  // Auto-scroll when streaming starts
   useEffect(() => {
     if (streaming) {
       scrollToBottom();
     }
   }, [streaming, scrollToBottom]);
 
-  // Keep pinned to bottom during streaming content growth
-  // Throttled via rAF to avoid layout thrashing — MutationObserver fires on
-  // every character change, but we only need one scrollTop write per frame.
   useEffect(() => {
     if (!streaming || !stickToBottom.current) return;
     const el = scrollRef.current;
@@ -129,7 +127,11 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
           )}
 
           {messages.map((msg) => (
-            <MemoizedBubble key={msg.id} message={msg} />
+            <MemoizedBubble
+              key={msg.id}
+              message={msg}
+              modelName={msg.modelID ? (modelMap.get(msg.modelID) || msg.modelID.split("/").pop()) : undefined}
+            />
           ))}
 
           {streamingBubble && streamingBubble}

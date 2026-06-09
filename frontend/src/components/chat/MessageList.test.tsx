@@ -3,6 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { render } from "../../test/utils";
 import { MessageList } from "./MessageList";
 import type { Message } from "../../api/types";
+import type { ModelInfo } from "../../api/workspaces";
 
 const messages: Message[] = [
   { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -94,5 +95,36 @@ describe("MessageList", () => {
     render(<MessageList messages={messages} hasOlderMessages={true} loadingOlder={true} />);
     expect(screen.queryByText("Load earlier messages")).not.toBeInTheDocument();
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
+  });
+
+  describe("model name resolution", () => {
+    const models: ModelInfo[] = [
+      { id: "gpt-4o", providerID: "openai", name: "GPT-4o", tier: "pro", freeTier: false, selected: false, enabled: true },
+      { id: "claude-3.5-sonnet", providerID: "anthropic", name: "Claude 3.5 Sonnet", tier: "pro", freeTier: false, selected: false, enabled: true },
+    ];
+
+    const messagesWithModels: Message[] = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      { id: "2", role: "assistant", parts: [{ type: "text", text: "Hi!" }], modelID: "gpt-4o" },
+    ];
+
+    it("resolves model name from models prop for assistant messages", () => {
+      render(<MessageList messages={messagesWithModels} models={models} />);
+      expect(screen.getByText(/gpt-4o/i)).toBeInTheDocument();
+    });
+
+    it("uses raw modelID as fallback when model not found in models list", () => {
+      const msgWithUnknown: Message[] = [
+        { id: "1", role: "assistant", parts: [{ type: "text", text: "Response" }], modelID: "unknown-model" },
+      ];
+      render(<MessageList messages={msgWithUnknown} models={models} />);
+      expect(screen.getByTestId("message-model").textContent).toContain("unknown-model");
+    });
+
+    it("does not show model name for user messages even with models prop", () => {
+      render(<MessageList messages={messagesWithModels} models={models} />);
+      const helloBubble = screen.getByText("Hello").closest("[class*='group']");
+      expect(helloBubble?.querySelector("[data-testid='message-model']")).toBeNull();
+    });
   });
 });

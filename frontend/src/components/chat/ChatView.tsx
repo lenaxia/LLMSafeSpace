@@ -1,4 +1,5 @@
 import type { Message, MessagePart } from "../../api/types";
+import type { ModelInfo } from "../../api/workspaces";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
@@ -25,9 +26,10 @@ interface Props {
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
   queuedCount?: number;
+  models?: ModelInfo[];
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0 }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0, models }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -44,6 +46,7 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
         <MessageList
           messages={messages}
           streaming={streaming}
+          models={models}
           streamingBubble={
             streaming && hasStreamedContent ? (
               <MessageBubble
