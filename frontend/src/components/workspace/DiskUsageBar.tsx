@@ -80,9 +80,10 @@ export function DiskUsageBar(props: Props) {
     allMetrics.push({ id: "memory", label: "Memory", used: memoryUsedBytes, total: memoryTotalBytes, formatValue: formatBytes, warningThreshold: 80 });
   }
 
-  if (allMetrics.length === 0) return null;
-
   // ---- Mobile drawer state (sticky: stays open until explicit close) ----
+  // These hooks MUST be declared before the early return below — hook calls
+  // must be unconditional (Rules of Hooks). See ChatPage.tsx for the same
+  // pattern and the explanation of React error #310.
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileAutoOpened, setMobileAutoOpened] = useState(false);
 
@@ -105,6 +106,8 @@ export function DiskUsageBar(props: Props) {
     setMobileOpen((prev) => !prev);
     setMobileAutoOpened(false);
   }, []);
+
+  if (allMetrics.length === 0) return null;
 
   const metricsInDrawer = allMetrics.slice(1); // context always shown in compact row
 
