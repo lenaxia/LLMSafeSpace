@@ -33,6 +33,9 @@ func (m *mockSessionIndex) ListByWorkspace(ctx context.Context, workspaceID stri
 func (m *mockSessionIndex) DeleteByWorkspace(ctx context.Context, workspaceID string) error {
 	return m.Called(ctx, workspaceID).Error(0)
 }
+func (m *mockSessionIndex) DeleteSession(ctx context.Context, workspaceID, sessionID string) error {
+	return m.Called(ctx, workspaceID, sessionID).Error(0)
+}
 func (m *mockSessionIndex) UpsertTitle(ctx context.Context, workspaceID, sessionID, title string) error {
 	return m.Called(ctx, workspaceID, sessionID, title).Error(0)
 }
