@@ -154,6 +154,9 @@ export function ChatPage() {
   const doSendNowRef = useRef<(text: string) => void>(() => {});
   // Guards against flushing the remaining queue after a send failure.
   const flushFailedRef = useRef(false);
+  const flushInProgressRef = useRef(false);
+  const idCounterRef = useRef(0);
+  const [flushTick, setFlushTick] = useState(0);
 
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
@@ -167,9 +170,15 @@ export function ChatPage() {
   const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
 
-  // Stop auto-flushing on send failure; resume on next idle.
+  // NOTE: This effect MUST be defined BEFORE the flush effect below.
+  // React runs effects in definition order. When a send fails and both
+  // chatError and streaming change in the same render, this effect sets
+  // flushFailedRef before the flush effect checks it.
   useEffect(() => {
-    if (chatError) flushFailedRef.current = true;
+    if (chatError) {
+      flushFailedRef.current = true;
+      flushInProgressRef.current = false;
+    }
   }, [chatError]);
 
   // Flush queue when streaming ends
@@ -179,9 +188,10 @@ export function ChatPage() {
       const rest = pendingQueue.slice(1);
       setPendingQueue(rest);
       setQueuedUserMessages((prev) => prev.filter((m) => m.id !== next!.id));
+      flushInProgressRef.current = true;
       doSendNowRef.current(next!.text);
     }
-  }, [streaming, pendingQueue, activeWorkspaceId, sessionId]);
+  }, [streaming, pendingQueue, activeWorkspaceId, sessionId, flushTick]);
 
   // US-15.3: Compute historyPartIds from fetched history for boundary detection
   const historyPartIds = useRef<Set<string>>(new Set());
@@ -223,8 +233,6 @@ export function ChatPage() {
   const reconcileOnIdle = useCallback(async () => {
     if (!workspaceId || !sessionId) return;
     try {
-      // Keep only the first page (avoids loading flash), drop older cached pages,
-      // then refetch the first page for authoritative state after the turn.
       queryClient.setQueryData(["messages", workspaceId, sessionId], (old: unknown) => {
         if (!old) return old;
         const inf = old as { pages: unknown[]; pageParams: unknown[] };
@@ -232,12 +240,9 @@ export function ChatPage() {
       });
       await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
-      // History is now authoritative for this session — clear localMessages
-      // so the merged view (history + localMessages) does not double-render
-      // every completed turn. localMessages is only useful as optimistic UI
-      // during an in-flight send; once idle reconcile lands, history has
-      // the canonical record.
-      setLocalMessages([]);
+      if (!flushInProgressRef.current) {
+        setLocalMessages([]);
+      }
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
@@ -245,8 +250,6 @@ export function ChatPage() {
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
     } catch {
-      // History fetch failed — keep streaming parts AND localMessages visible
-      // so the user doesn't lose context.
     }
   }, [workspaceId, sessionId, queryClient]);
 
@@ -468,7 +471,9 @@ export function ChatPage() {
           sseHasDrivenBusy.current = true;
           notifySessionIdle(event.session_id);
           setServerBusy(false);
-          flushFailedRef.current = false;
+    flushFailedRef.current = false;
+    flushInProgressRef.current = false;
+          setFlushTick((t) => t + 1);
           reconcileOnIdle();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
@@ -505,7 +510,7 @@ export function ChatPage() {
           const errData = err?.data as Record<string, unknown> | undefined;
           const message = (errData?.message as string) || (err?.name as string) || "Agent error";
           setSessionErrors((prev) => [...prev, {
-            id: `error-${Date.now()}`,
+            id: `error-${++idCounterRef.current}`,
             role: "assistant",
             parts: [{ type: "error" as const, text: `⚠️ ${message}` }],
           }]);
@@ -594,7 +599,7 @@ export function ChatPage() {
     isReconnectMode.current = false;
     knownLivePartIds.current.clear();
     const userMsg: Message = {
-      id: `local-${Date.now()}`,
+      id: `local-${++idCounterRef.current}`,
       role: "user",
       parts: [{ type: "text", text }],
     };
@@ -609,12 +614,7 @@ export function ChatPage() {
     // The user message stays in localMessages until reconcileOnIdle clears
     // it (after history catches up), preserving optimistic UX.
     send(text, () => {
-      // onComplete is called by useChatStream after either:
-      //   a) session.status=idle SSE fired (normal path — reconcileOnIdle already ran), or
-      //   b) the 60-second timeout fired (SSE was never connected or dropped).
-      //
-      // In case (b), reconcileOnIdle was never triggered, so the history hasn't
-      // been refetched. Force it now so the response shows without a full page reload.
+      flushInProgressRef.current = false;
       reconcileOnIdle();
     }, currentModelRef);
   };
@@ -624,7 +624,7 @@ export function ChatPage() {
   const handleSend = (text: string) => {
     // If streaming, queue the message instead of sending immediately
     if (streaming) {
-      const id = `queued-${Date.now()}`;
+      const id = `queued-${++idCounterRef.current}`;
       setPendingQueue((prev) => [...prev, { id, text }]);
       setQueuedUserMessages((prev) => [...prev, {
         id,

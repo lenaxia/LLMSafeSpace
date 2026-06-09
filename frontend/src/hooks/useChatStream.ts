@@ -13,6 +13,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const idleResolverRef = useRef<((sid: string) => void) | null>(null);
+  const currentSessionRef = useRef(sessionId);
 
   // Reset UI state when session changes — the in-flight send uses
   // capturedSessionId internally and handles its own scoping, so we don't
@@ -21,6 +22,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   useEffect(() => {
     if (prevSessionRef.current !== sessionId) {
       prevSessionRef.current = sessionId;
+      currentSessionRef.current = sessionId;
       setLocalStreaming(false);
       setError(null);
       setAtCapRetryAfter(null);
@@ -34,18 +36,13 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const send = useCallback(
     async (text: string, onComplete: (msg: Message) => void, model?: { providerID: string; modelID: string }) => {
       if (!workspaceId || !sessionId) return;
+      const capturedSessionId = sessionId;
       setLocalStreaming(true);
       setError(null);
       setAtCapRetryAfter(null);
       abortRef.current = new AbortController();
 
       try {
-        // Arm the idle observer BEFORE issuing prompt_async so that an
-        // idle SSE arriving during the HTTP roundtrip is not lost. opencode
-        // can finish very fast for cached/trivial prompts; without this the
-        // resolver wouldn't be installed in time and the wait would fall
-        // through to the 60s timeout.
-        const capturedSessionId = sessionId;
         let idleAlreadyFired = false;
         idleResolverRef.current = (idleSessionId: string) => {
           if (idleSessionId === capturedSessionId) {
@@ -99,7 +96,9 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           setError(message);
         }
       } finally {
-        setLocalStreaming(false);
+        if (currentSessionRef.current === capturedSessionId) {
+          setLocalStreaming(false);
+        }
         idleResolverRef.current = null;
         abortRef.current = null;
       }

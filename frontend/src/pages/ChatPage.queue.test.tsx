@@ -328,4 +328,79 @@ describe("ChatPage message queue", () => {
 
     expect(screen.getByText("1 message queued")).toBeInTheDocument();
   });
+
+  it("flush recovers after failure when SSE idle resets flushFailedRef", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "second");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network fail"));
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("1 message queued")).toBeInTheDocument();
+    });
+
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+      expect(messagesApi.sendAsync).toHaveBeenLastCalledWith("ws-1", "ses_1", {
+        parts: [{ type: "text", text: "second" }],
+      });
+    });
+
+    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+  });
+
+  it("two identical queued messages produce separate optimistic bubbles and flush separately", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "hello");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "hello");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+    expect(screen.getAllByText("hello").length).toBeGreaterThanOrEqual(2);
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
+        parts: [{ type: "text", text: "hello" }],
+      });
+    });
+
+    expect(screen.getByText("1 message queued")).toBeInTheDocument();
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+  });
 });
