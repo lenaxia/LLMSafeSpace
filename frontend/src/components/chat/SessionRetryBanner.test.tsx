@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { screen, act } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
 import { SessionRetryBanner } from "./SessionRetryBanner";
 import type { RetryStatus } from "./SessionRetryBanner";

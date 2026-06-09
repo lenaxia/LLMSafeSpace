@@ -55,14 +55,14 @@ describe("DiskUsageBar — context unknown (contextTotal=0)", () => {
 
   it("shows tooltip on hover of Unknown badge explaining auto-compaction is disabled", () => {
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
-    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0];
+    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
     fireEvent.mouseEnter(badge);
     expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
   });
 
   it("hides tooltip when mouse leaves Unknown badge", () => {
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
-    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0];
+    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
     fireEvent.mouseEnter(badge);
     expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
     fireEvent.mouseLeave(badge);
@@ -71,7 +71,7 @@ describe("DiskUsageBar — context unknown (contextTotal=0)", () => {
 
   it("toggles tooltip on click of Unknown badge", () => {
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
-    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0];
+    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
     fireEvent.click(badge);
     expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
     fireEvent.click(badge);
@@ -80,7 +80,7 @@ describe("DiskUsageBar — context unknown (contextTotal=0)", () => {
 
   it("tooltip mentions max_input_tokens as the fix", () => {
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
-    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0];
+    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
     fireEvent.mouseEnter(badge);
     expect(screen.getByText(/max_input_tokens/i)).toBeInTheDocument();
   });

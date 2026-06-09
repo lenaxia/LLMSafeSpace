@@ -97,7 +97,7 @@ The `session.error` SSE handler previously collapsed all error names to a raw st
 
 ---
 
-## Validation Findings (not yet fixed — known gaps)
+## Validation Findings (known gaps)
 
 ### Path A overflow is still silent
 
@@ -109,13 +109,9 @@ The glm-5.1 halt (Path A variant with `reason=length` + silent empty follow-up) 
 
 `agentd`'s `fetchModels` populates `LLMModelConfig{ID: m.ID}` only. Even with `max_input_tokens` now in LiteLLM, agentd never reads it from the `/models` response. `ModelContextLimit()` will still return 0 for LiteLLM-proxied models until `model_enricher.go` is updated to parse and store the context window.
 
-### `SessionRetryBanner` has no tests
+### ~~`SessionRetryBanner` has no tests~~ ✓ resolved in commit `10a3f60d`
 
-`AtCapBanner` and `SuspendedBanner` both have test files. `SessionRetryBanner` does not.
-
-### Error name mapping is untested inline code
-
-The `session.error` name → text mapping lives inline in `handleSSEEvent` with no unit tests.
+### ~~Error name mapping is untested inline code~~ ✓ resolved in commit `10a3f60d`
 
 ---
 
