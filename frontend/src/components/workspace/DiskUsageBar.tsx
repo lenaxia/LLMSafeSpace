@@ -22,7 +22,7 @@ function formatTokens(tokens: number): string {
 }
 
 function MetricItem({ label, used, total, formatValue, warningThreshold = 85 }: MetricProps) {
-  const pct = Math.min(100, Math.round((used / total) * 100));
+  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
   const isHigh = pct > warningThreshold;
   const fmt = formatValue ?? ((v: number) => `${v}`);
 

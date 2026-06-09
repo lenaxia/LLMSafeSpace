@@ -522,9 +522,9 @@ export function ChatPage() {
           const statusObj = props?.status as Record<string, unknown> | undefined;
           if (statusObj?.type === "retry") {
             setRetryStatus({
-              attempt: (statusObj.attempt as number) ?? 1,
-              message: (statusObj.message as string) ?? "",
-              next: (statusObj.next as number) ?? Date.now(),
+              attempt: typeof statusObj.attempt === "number" ? statusObj.attempt : 1,
+              message: typeof statusObj.message === "string" ? statusObj.message : "",
+              next: typeof statusObj.next === "number" ? statusObj.next : Date.now(),
               action: statusObj.action as RetryStatus["action"],
             });
           }
