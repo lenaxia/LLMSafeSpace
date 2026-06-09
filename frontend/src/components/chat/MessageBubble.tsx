@@ -91,8 +91,8 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
         )}>
           <span
             className={cn(
-              "text-[10px] leading-none truncate",
-              isUser ? "text-primary-foreground/40" : "text-muted-foreground/40",
+              "text-xs leading-none truncate",
+              isUser ? "text-primary-foreground/70" : "text-muted-foreground/70",
             )}
           >
             {showTimestamp && (
@@ -115,11 +115,11 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
               copied
                 ? "text-green-500"
                 : isUser
-                  ? "text-primary-foreground/40 hover:text-primary-foreground/70"
-                  : "text-muted-foreground/40 hover:text-muted-foreground/70",
+                  ? "text-primary-foreground/70 hover:text-primary-foreground"
+                  : "text-muted-foreground/70 hover:text-muted-foreground",
             )}
           >
-            <CopyIcon className="h-3 w-3" />
+            <CopyIcon className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
