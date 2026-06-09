@@ -430,4 +430,113 @@ describe("useChatStream", () => {
 
     vi.useRealTimers();
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // streamTimedOut flag
+  // ─────────────────────────────────────────────────────────────────────
+
+  it("streamTimedOut starts as false", () => {
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+    expect(result.current.streamTimedOut).toBe(false);
+  });
+
+  it("sets streamTimedOut=true when timeout fires and server is not busy", async () => {
+    vi.useFakeTimers();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // serverBusy=false: server is not actively busy — interrupted connection
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1", false));
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", vi.fn()); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await act(async () => { await sendPromise; });
+
+    expect(result.current.streamTimedOut).toBe(true);
+
+    vi.useRealTimers();
+  });
+
+  it("does NOT set streamTimedOut when server is still busy at timeout (slow response)", async () => {
+    vi.useFakeTimers();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // serverBusy=true: agent is legitimately still running — not an interrupted connection
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1", true));
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", vi.fn()); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await act(async () => { await sendPromise; });
+
+    expect(result.current.streamTimedOut).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("does NOT set streamTimedOut when idle SSE arrives before timeout", async () => {
+    vi.useFakeTimers();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1", false));
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", vi.fn()); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+
+    // Idle arrives before timeout
+    act(() => { result.current.notifySessionIdle("sess-1"); });
+    await act(async () => { await sendPromise; });
+
+    expect(result.current.streamTimedOut).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("clearStreamTimedOut resets streamTimedOut to false", async () => {
+    vi.useFakeTimers();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const { result } = renderHook(() => useChatStream("sb-1", "sess-1", false));
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", vi.fn()); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await act(async () => { await sendPromise; });
+
+    expect(result.current.streamTimedOut).toBe(true);
+    act(() => { result.current.clearStreamTimedOut(); });
+    expect(result.current.streamTimedOut).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("streamTimedOut is reset to false on session change", async () => {
+    vi.useFakeTimers();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string }) => useChatStream("sb-1", sid, false),
+      { initialProps: { sid: "sess-1" } },
+    );
+
+    let sendPromise!: Promise<void>;
+    act(() => { sendPromise = result.current.send("hi", vi.fn()); });
+    await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalled());
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await act(async () => { await sendPromise; });
+    expect(result.current.streamTimedOut).toBe(true);
+
+    // Navigate to a different session
+    rerender({ sid: "sess-2" });
+    expect(result.current.streamTimedOut).toBe(false);
+
+    vi.useRealTimers();
+  });
 });
