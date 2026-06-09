@@ -250,6 +250,8 @@ export function ChatPage() {
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
     } catch {
+      // History fetch failed — keep streaming parts AND localMessages visible
+      // so the user doesn't lose context.
     }
   }, [workspaceId, sessionId, queryClient]);
 
@@ -471,8 +473,8 @@ export function ChatPage() {
           sseHasDrivenBusy.current = true;
           notifySessionIdle(event.session_id);
           setServerBusy(false);
-    flushFailedRef.current = false;
-    flushInProgressRef.current = false;
+          flushFailedRef.current = false;
+          flushInProgressRef.current = false;
           setFlushTick((t) => t + 1);
           reconcileOnIdle();
           // US-16.12: Clear stale prompts on session idle
