@@ -192,9 +192,6 @@ export interface WorkspacePhaseEvent {
 export interface SessionStatusEvent {
   type: "session.status";
   session_id: string;
-  // The proxy synthesizes string "idle" | "busy" for this field.
-  // The full retry shape (attempt, message, next, action) is NOT carried here —
-  // it travels inside an opencode.event wrapper with event_type="session.status".
   status: "idle" | "busy";
 }
 
