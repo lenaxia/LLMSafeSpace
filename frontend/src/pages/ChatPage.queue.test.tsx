@@ -1,6 +1,10 @@
 /**
- * Tests for ChatPage message queue behavior.
- * Messages sent while streaming are queued and flushed on idle.
+ * Integration tests for ChatPage message queue (v2).
+ *
+ * v2 design: when streaming, queue.enqueue(text) fires prompt_async immediately
+ * (fire-and-forget). The server serializes behind the current turn. Pills are
+ * shown in QueueSection and removed when reconcile() sees the message in history.
+ * Abort calls queue.clear() — server drains its own queue.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor, act } from "@testing-library/react";
@@ -64,7 +68,7 @@ function sendSSE(event: Record<string, unknown>) {
   act(() => { capturedSSEHandler?.(event); });
 }
 
-describe("ChatPage message queue", () => {
+describe("ChatPage message queue (v2)", () => {
   beforeEach(() => {
     capturedSSEHandler = null;
     vi.clearAllMocks();
@@ -90,317 +94,165 @@ describe("ChatPage message queue", () => {
     });
   });
 
-  it("queues message when streaming is true (server busy)", async () => {
+  it("textarea stays enabled during streaming", async () => {
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    expect(document.querySelector("textarea")).not.toBeDisabled();
+  });
+
+  it("queues and fires prompt_async immediately when streaming", async () => {
     const user = userEvent.setup();
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
-    // Set server to busy via SSE
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    // Send a message — should be queued, not sent
     await user.type(document.querySelector("textarea")!, "queued msg");
     await user.keyboard("{Enter}");
 
-    // sendAsync should NOT have been called (message is queued)
-    expect(messagesApi.sendAsync).not.toHaveBeenCalled();
+    // v2: sendAsync fires immediately (prompt_async, server serializes)
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", expect.objectContaining({
+        parts: [{ type: "text", text: "queued msg" }],
+      }));
+    });
 
-    // Queue indicator should show 1
+    // pill displayed
+    expect(screen.getByText("queued msg")).toBeInTheDocument();
     expect(screen.getByText("1 message queued")).toBeInTheDocument();
   });
 
-  it("queued message shows as optimistic user message", async () => {
+  it("multiple queued messages each fire prompt_async immediately", async () => {
     const user = userEvent.setup();
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
-    // Set server to busy via SSE
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    // Send a message
-    await user.type(document.querySelector("textarea")!, "queued msg");
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "second");
+    await user.keyboard("{Enter}");
+    await user.type(document.querySelector("textarea")!, "third");
     await user.keyboard("{Enter}");
 
-    // Optimistic message should appear
-    expect(screen.getByText("queued msg")).toBeInTheDocument();
+    // All three fire immediately — server serializes via ensureRunning
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(3);
+    });
+
+    expect(screen.getByText("3 messages queued")).toBeInTheDocument();
   });
 
-  it("flushes queue when session returns to idle", async () => {
+  it("pills are removed after reconcile sees them in history", async () => {
     const user = userEvent.setup();
     const qc = makeQueryClient();
     renderChat(qc, "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
-    // Set server to busy
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    // Queue two messages
+    await user.type(document.querySelector("textarea")!, "first");
+    await user.keyboard("{Enter}");
+
+    let sentId: string | undefined;
+    await waitFor(() => {
+      const calls = (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      const call = calls[0]!;
+      sentId = (call[2] as { messageID?: string }).messageID;
+      expect(sentId).toMatch(/^msg_/);
+    });
+
+    expect(screen.getByText("1 message queued")).toBeInTheDocument();
+
+    // Simulate server processing: history now contains our message, SSE fires idle
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [{ id: sentId, role: "user", parts: [{ type: "text", text: "first" }] }],
+      nextCursor: undefined,
+    });
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    // After reconcile, pill should be gone
+    await waitFor(() => {
+      expect(screen.queryByText("1 message queued")).not.toBeInTheDocument();
+    });
+  });
+
+  it("abort clears all queue pills", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
     await user.type(document.querySelector("textarea")!, "first");
     await user.keyboard("{Enter}");
     await user.type(document.querySelector("textarea")!, "second");
     await user.keyboard("{Enter}");
 
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-
-    // Flush queue by sending idle
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    // First queued message should be sent
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
-        parts: [{ type: "text", text: "first" }],
-      });
+      expect(screen.getByText("2 messages queued")).toBeInTheDocument();
     });
-  });
 
-  it("clears queue on session change", async () => {
-    const user = userEvent.setup();
-    const qc = makeQueryClient();
-    const { unmount } = renderChat(qc, "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+    await user.click(screen.getByLabelText("Stop generating"));
 
-    // Set server to busy
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    // Queue a message
-    await user.type(document.querySelector("textarea")!, "queued msg");
-    await user.keyboard("{Enter}");
-    expect(screen.getByText("1 message queued")).toBeInTheDocument();
-
-    // Navigate to different session
-    unmount();
-    const qc2 = makeQueryClient();
-    qc2.setQueryData(["workspace-status", "ws-1"], { phase: "Active", sessions: [{ id: "ses_2", status: "idle" }] });
-    qc2.setQueryData(["messages", "ws-1", "ses_2"], { pages: [{ messages: [], nextCursor: undefined }], pageParams: [undefined] });
-    render(
-      <QueryClientProvider client={qc2}>
-        <MemoryRouter initialEntries={["/chat/ws-1/ses_2"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
-  });
-
-  it("textarea stays enabled during streaming", async () => {
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    // Set server to busy
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    // Textarea should still be enabled
-    expect(document.querySelector("textarea")).not.toBeDisabled();
-  });
-
-  it("multiple messages can be queued", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "msg1");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "msg2");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "msg3");
-    await user.keyboard("{Enter}");
-
-    expect(screen.getByText("3 messages queued")).toBeInTheDocument();
+    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
+    // queue.clear() removes all pills
+    await waitFor(() => {
+      expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+    });
   });
 
   it("stop button is shown during streaming", async () => {
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
-    // Set server to busy
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    // Stop button should be visible
     expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
   });
 
-  it("stop button calls abortSession", async () => {
+  it("failed send shows error pill with retry/dismiss", async () => {
     const user = userEvent.setup();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network fail"));
+
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    await user.type(document.querySelector("textarea")!, "queued msg");
-    await user.keyboard("{Enter}");
-    expect(screen.getByText("1 message queued")).toBeInTheDocument();
-
-    // Click stop
-    await user.click(screen.getByLabelText("Stop generating"));
-
-    // Abort session should be called
-    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
-  });
-
-  it("flush halts on send failure — remaining queue preserved", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "first");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "second");
+    await user.type(document.querySelector("textarea")!, "failing msg");
     await user.keyboard("{Enter}");
 
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network fail"));
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
+    // Error pill with retry and dismiss buttons
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText("1 message queued")).toBeInTheDocument();
+      expect(screen.getByLabelText("Retry")).toBeInTheDocument();
+      expect(screen.getByLabelText("Dismiss")).toBeInTheDocument();
     });
   });
 
-  it("flushes second queued message after first completes", async () => {
+  it("dismiss removes error pill", async () => {
     const user = userEvent.setup();
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("fail"));
+
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    await user.type(document.querySelector("textarea")!, "first");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "second");
+    await user.type(document.querySelector("textarea")!, "msg");
     await user.keyboard("{Enter}");
 
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
-        parts: [{ type: "text", text: "first" }],
-      });
-    });
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+    await waitFor(() => expect(screen.getByLabelText("Dismiss")).toBeInTheDocument());
+    await user.click(screen.getByLabelText("Dismiss"));
 
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
-      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
-        parts: [{ type: "text", text: "second" }],
-      });
+      expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
     });
-  });
-
-  it("abort during flush preserves remaining queue", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "first");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "second");
-    await user.keyboard("{Enter}");
-
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-    });
-
-    await user.click(screen.getByLabelText("Stop generating"));
-    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
-
-    expect(screen.getByText("1 message queued")).toBeInTheDocument();
-  });
-
-  it("flush recovers after failure when SSE idle resets flushFailedRef", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "first");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "second");
-    await user.keyboard("{Enter}");
-
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network fail"));
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText("1 message queued")).toBeInTheDocument();
-    });
-
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
-      expect(messagesApi.sendAsync).toHaveBeenLastCalledWith("ws-1", "ses_1", {
-        parts: [{ type: "text", text: "second" }],
-      });
-    });
-
-    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
-  });
-
-  it("two identical queued messages produce separate optimistic bubbles and flush separately", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "hello");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "hello");
-    await user.keyboard("{Enter}");
-
-    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
-    expect(screen.getAllByText("hello").length).toBeGreaterThanOrEqual(2);
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
-      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", {
-        parts: [{ type: "text", text: "hello" }],
-      });
-    });
-
-    expect(screen.getByText("1 message queued")).toBeInTheDocument();
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
-    });
-
-    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
   });
 });

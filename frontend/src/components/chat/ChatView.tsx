@@ -4,6 +4,8 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { MessageBubble } from "./MessageBubble";
+import { QueueSection } from "./QueueSection";
+import type { QueuedMessage } from "../../hooks/useMessageQueue";
 
 interface StreamingPart {
   type: "thinking" | "text" | "tool";
@@ -26,10 +28,13 @@ interface Props {
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
   queuedCount?: number;
+  queuedMessages?: QueuedMessage[];
+  onQueueRetry?: (id: string) => void;
+  onQueueDismiss?: (id: string) => void;
   models?: ModelInfo[];
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0, models }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0, queuedMessages = [], onQueueRetry, onQueueDismiss, models }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -63,6 +68,14 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
       </div>
 
       {prompts && <div className="px-4">{prompts}</div>}
+
+      {queuedMessages.length > 0 && onQueueRetry && onQueueDismiss && (
+        <QueueSection
+          messages={queuedMessages}
+          onRetry={onQueueRetry}
+          onDismiss={onQueueDismiss}
+        />
+      )}
 
       <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} queuedCount={queuedCount} />
     </div>

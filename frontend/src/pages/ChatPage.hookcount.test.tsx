@@ -87,10 +87,13 @@ vi.mock("../hooks/useChatStream", () => ({
 }));
 
 // ── stateful wrapper ───────────────────────────────────────────────────────
-let bumpTick!: () => void;
+const bumpTickRef: { current: (() => void) | null } = { current: null };
 function Wrapper({ qc }: { qc: QueryClient }) {
   const [tick, setTick] = useState(0);
-  bumpTick = () => setTick((t) => t + 1);
+  const bump = () => setTick((t) => t + 1);
+  // store in ref so tests can trigger re-renders without render-phase assignment
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  bumpTickRef.current = bump;
   void tick;
   return (
     <QueryClientProvider client={qc}>
@@ -98,6 +101,7 @@ function Wrapper({ qc }: { qc: QueryClient }) {
     </QueryClientProvider>
   );
 }
+function bumpTick() { bumpTickRef.current?.(); }
 
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });

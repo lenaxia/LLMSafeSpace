@@ -8,6 +8,7 @@ import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
 import { useEventStream } from "../hooks/useEventStream";
 import { useSessionTitle } from "../hooks/useSessionTitle";
+import { useMessageQueue } from "../hooks/useMessageQueue";
 import { wsLog } from "../lib/wsLog";
 import { ChatView } from "../components/chat/ChatView";
 import { SuspendedBanner } from "../components/chat/SuspendedBanner";
@@ -48,9 +49,6 @@ export function ChatPage() {
     sseHasDrivenBusy.current = false;
     setPendingQuestions([]);
     setPendingPermissions([]);
-    setPendingQueue([]);
-    setQueuedUserMessages([]);
-    flushFailedRef.current = false;
   }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
@@ -147,18 +145,11 @@ export function ChatPage() {
   const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
 
-  // Queue for messages sent while streaming — flushed on idle
-  const [pendingQueue, setPendingQueue] = useState<{ id: string; text: string }[]>([]);
-  const [queuedUserMessages, setQueuedUserMessages] = useState<Message[]>([]);
+  const queue = useMessageQueue(activeWorkspaceId, sessionId);
 
-  // Mutable ref to the do-send-immediately function so the flush effect
-  // can call it without being re-created on every render.
-  const doSendNowRef = useRef<(text: string) => void>(() => {});
-  // Guards against flushing the remaining queue after a send failure.
-  const flushFailedRef = useRef(false);
-  const flushInProgressRef = useRef(false);
   const idCounterRef = useRef(0);
-  const [flushTick, setFlushTick] = useState(0);
+  // Guards reconcileOnIdle from clearing localMessages while a doSendNow send is in flight.
+  const flushInProgressRef = useRef(false);
 
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
@@ -179,22 +170,9 @@ export function ChatPage() {
   // flushFailedRef before the flush effect checks it.
   useEffect(() => {
     if (chatError) {
-      flushFailedRef.current = true;
       flushInProgressRef.current = false;
     }
   }, [chatError]);
-
-  // Flush queue when streaming ends
-  useEffect(() => {
-    if (!streaming && pendingQueue.length > 0 && activeWorkspaceId && sessionId && !flushFailedRef.current) {
-      const next = pendingQueue[0];
-      const rest = pendingQueue.slice(1);
-      setPendingQueue(rest);
-      setQueuedUserMessages((prev) => prev.filter((m) => m.id !== next!.id));
-      flushInProgressRef.current = true;
-      doSendNowRef.current(next!.text);
-    }
-  }, [streaming, pendingQueue, activeWorkspaceId, sessionId, flushTick]);
 
   // US-15.3: Compute historyPartIds from fetched history for boundary detection
   const historyPartIds = useRef<Set<string>>(new Set());
@@ -252,11 +230,20 @@ export function ChatPage() {
       activePartTypeRef.current = null;
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
+      // Reconcile queue against fresh history — removes pills for messages
+      // that have been committed to the server (matched by messageID).
+      const freshHistory = queryClient.getQueryData<{ pages: Array<{ messages: Message[] }> }>(
+        ["messages", workspaceId, sessionId],
+      );
+      if (freshHistory) {
+        const msgs = freshHistory.pages.flatMap((p) => p.messages);
+        queue.reconcile(msgs);
+      }
     } catch {
       // History fetch failed — keep streaming parts AND localMessages visible
       // so the user doesn't lose context.
     }
-  }, [workspaceId, sessionId, queryClient]);
+  }, [workspaceId, sessionId, queryClient, queue]);
 
   // Auto-abort sessions that are stuck on a question/permission tool that opencode
   // lost from its queue (e.g. due to opencode restarting while a question was pending).
@@ -469,6 +456,10 @@ export function ChatPage() {
     const event = data as WorkspaceStreamEvent;
     if (!event?.type) return;
 
+    if (event.type === "workspace.phase") {
+      queue.onPhaseChange(event.phase);
+    }
+
     if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
       if (event.session_id === sessionId) {
@@ -478,9 +469,6 @@ export function ChatPage() {
           setServerBusy(false);
           setRetryStatus(null);
           clearStreamTimedOut();
-          flushFailedRef.current = false;
-          flushInProgressRef.current = false;
-          setFlushTick((t) => t + 1);
           reconcileOnIdle();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
@@ -595,7 +583,7 @@ export function ChatPage() {
       const { request_id } = event.data as { request_id: string };
       setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue]);
 
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {
@@ -609,8 +597,7 @@ export function ChatPage() {
   // detect the Pending→Active phase transition and auto-create a session.
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
-  // doSendNow MUST be defined before the early return below, and the
-  // useEffect ref-sync that follows it MUST also precede the early return.
+  // doSendNow MUST be defined before the early return below.
   // Placing any useEffect after an early return violates the rules of hooks:
   // on a render that takes the early return the hook is never called, but on
   // a render that does not the hook count is higher — React throws error #310
@@ -660,11 +647,8 @@ export function ChatPage() {
       reconcileOnIdle();
     }, currentModelRef);
   };
-  // Sync ref after every render so the flush effect always has the latest closure.
-  // This useEffect MUST stay above the early return that follows — see comment above.
-  useEffect(() => { doSendNowRef.current = doSendNow; });
 
-  const allMessages = [...(history ?? []), ...localMessages, ...queuedUserMessages, ...sessionErrors];
+  const allMessages = [...(history ?? []), ...localMessages, ...sessionErrors];
 
   if (!workspaceId) {
     return (
@@ -679,16 +663,9 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
-    // If streaming, queue the message instead of sending immediately
+    // If streaming, enqueue — prompt_async fires immediately, server serializes
     if (streaming) {
-      const id = `queued-${++idCounterRef.current}`;
-      setPendingQueue((prev) => [...prev, { id, text }]);
-      setQueuedUserMessages((prev) => [...prev, {
-        id,
-        role: "user" as const,
-        parts: [{ type: "text", text }],
-        createdAt: new Date().toISOString(),
-      }]);
+      queue.enqueue(text);
       return;
     }
     doSendNow(text);
@@ -844,11 +821,15 @@ export function ChatPage() {
                 workspacesApi.abortSession(workspaceId, sessionId);
               }
               abort();
+              queue.clear();
             }}
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}
             loadingOlder={isFetchingNextPage}
-            queuedCount={pendingQueue.length}
+            queuedCount={queue.queuedMessages.length}
+            queuedMessages={queue.queuedMessages}
+            onQueueRetry={queue.retry}
+            onQueueDismiss={queue.dismiss}
             models={modelsData?.models}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
