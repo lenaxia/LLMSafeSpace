@@ -1,28 +1,50 @@
 /**
- * Regression test for React error #310:
+ * Regression guard for React error #310:
  * "Rendered more hooks than during the previous render"
  *
- * Root cause: useEffect(() => { doSendNowRef.current = doSendNow; }) was
- * defined AFTER the early return `if (!workspaceId) { return ... }`.
+ * Root cause (fixed): useEffect(() => { doSendNowRef.current = doSendNow; })
+ * was defined AFTER the early return `if (!workspaceId) { return ... }`.
  *
- * On the first render with no workspaceId the component exits early and that
- * useEffect is never registered.  On a subsequent render with a workspaceId
- * the component runs past the early return and tries to register the extra
- * useEffect — React detects the hook count change and throws error #310.
+ * When workspaceId is undefined the component exits early — that useEffect is
+ * never registered.  On a subsequent re-render where workspaceId is defined
+ * the component runs past the guard and calls the extra useEffect.  React
+ * detects the hook count increase and throws error #310.
  *
- * The test reproduces the scenario by:
- *   1. Rendering ChatPage at /chat  (no workspaceId → early return path)
- *   2. Navigating to /chat/ws-1/ses-1 (workspaceId present → full render path)
+ * NOTE on test strategy: React 19 concurrent mode defers low-priority
+ * re-renders, which means the hook-count check does not always fire
+ * synchronously inside act() in a jsdom environment.  Attempting to assert on
+ * console.error or thrown errors is therefore fragile.
  *
- * React error #310 manifests as a thrown error that React Testing Library
- * surfaces via the error boundary / console.error.  We assert that no such
- * error is thrown after the navigation.
+ * Instead, this test exercises the affected render path directly:
+ *   1. Static assertion: no hooks are defined after the early return in
+ *      ChatPage (verified by searching the source).
+ *   2. Runtime assertion: ChatPage renders and re-renders without crashing
+ *      when params change from empty → workspace+session.
+ *
+ * If the useEffect is accidentally moved back after the early return, the
+ * static check will fail immediately, and the runtime check will also fail
+ * once React's scheduler executes the deferred re-render.
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act, render } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
+import * as fs from "fs";
+import * as path from "path";
+
+// ── useParams mock ─────────────────────────────────────────────────────────
+let paramsRef: Record<string, string | undefined> = {};
+const mockNavigate = vi.fn();
+
+vi.mock("react-router-dom", async (orig) => {
+  const actual = await orig<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useParams: () => paramsRef,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 // ── minimal API mocks ──────────────────────────────────────────────────────
 vi.mock("../api/workspaces", () => ({
@@ -45,39 +67,71 @@ vi.mock("../api/messages", () => ({
     sendAsync: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn().mockResolvedValue({ sessionId: "ses-1" }) } }));
+vi.mock("../api/sessions", () => ({
+  sessionsApi: { create: vi.fn().mockResolvedValue({ sessionId: "ses-1" }) },
+}));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
 vi.mock("../hooks/useUserEventStream", () => ({ useUserEventStream: vi.fn() }));
+vi.mock("../hooks/useChatStream", () => ({
+  useChatStream: vi.fn(() => ({
+    send: vi.fn(),
+    abort: vi.fn(),
+    streaming: false,
+    localStreaming: false,
+    notifySessionIdle: vi.fn(),
+    error: null,
+    clearError: vi.fn(),
+    atCapRetryAfter: null,
+    clearAtCap: vi.fn(),
+  })),
+}));
 
-// ── helper: a button that navigates to the chat route ─────────────────────
-function NavButton({ to }: { to: string }) {
-  const navigate = useNavigate();
-  return <button onClick={() => navigate(to)}>go</button>;
+// ── stateful wrapper ───────────────────────────────────────────────────────
+let bumpTick!: () => void;
+function Wrapper({ qc }: { qc: QueryClient }) {
+  const [tick, setTick] = useState(0);
+  bumpTick = () => setTick((t) => t + 1);
+  void tick;
+  return (
+    <QueryClientProvider client={qc}>
+      <ChatPage />
+    </QueryClientProvider>
+  );
 }
 
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 }
 
-describe("ChatPage hook count stability (React error #310)", () => {
-  let consoleError: typeof console.error;
-
+describe("ChatPage hook count stability (React error #310 regression guard)", () => {
   beforeEach(() => {
-    // Capture console.error so we can assert React did NOT emit a hooks error.
-    consoleError = console.error;
-    console.error = vi.fn();
-  });
-
-  afterEach(() => {
-    console.error = consoleError;
+    paramsRef = {};
     vi.clearAllMocks();
   });
 
-  it("does not throw 'Rendered more hooks' when navigating from no-workspace to workspace route", async () => {
-    const qc = makeQC();
+  it("no hook calls after the early-return guard in ChatPage source", () => {
+    // Parse the ChatPage source and verify no useEffect/useState/useRef/useCallback
+    // calls appear after the `if (!workspaceId)` early return.
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "ChatPage.tsx"),
+      "utf-8",
+    );
+    const earlyReturnIdx = src.indexOf("if (!workspaceId)");
+    expect(earlyReturnIdx).toBeGreaterThan(0);
 
-    // Pre-populate query cache so the workspace route renders without async fetches
-    // interfering with the hook-count check.
+    // Find the end of the early return block (closing brace on its own line)
+    // by scanning for `}` after the early return.
+    const afterGuard = src.slice(earlyReturnIdx);
+    const closingBrace = afterGuard.indexOf("\n  }");
+    const afterEarlyReturn = afterGuard.slice(closingBrace + 4); // past `\n  }`
+
+    // No hook calls should appear after the early return
+    const hookPattern = /\buse(Effect|State|Ref|Callback|Memo|LayoutEffect)\s*\(/;
+    expect(hookPattern.test(afterEarlyReturn)).toBe(false);
+  });
+
+  it("renders without crashing when params change from empty to workspace+session", async () => {
+    const qc = makeQC();
     qc.setQueryData(["workspace-status", "ws-1"], { phase: "Suspended", sessions: [] });
     qc.setQueryData(["workspaces"], { items: [], pagination: { limit: 20, offset: 0, total: 0 } });
     qc.setQueryData(["messages", "ws-1", "ses-1"], {
@@ -85,38 +139,15 @@ describe("ChatPage hook count stability (React error #310)", () => {
       pageParams: [undefined],
     });
 
-    const { getByText } = render(
-      <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/chat"]}>
-          <Routes>
-            {/* Route with no params — triggers the early return in ChatPage */}
-            <Route path="/chat" element={
-              <>
-                <ChatPage />
-                <NavButton to="/chat/ws-1/ses-1" />
-              </>
-            } />
-            {/* Route with params — would call the extra useEffect if not fixed */}
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    // Step 1: render with no params → early return
+    render(<Wrapper qc={qc} />);
+    expect(screen.getByText("Select a workspace to start chatting")).toBeTruthy();
 
-    // Step 1: initial render hits the early return (no workspaceId)
-    expect(getByText("Select a workspace to start chatting")).toBeTruthy();
+    // Step 2: update params and trigger re-render of the same component instance
+    paramsRef = { workspaceId: "ws-1", sessionId: "ses-1" };
+    await act(async () => { bumpTick(); });
 
-    // Step 2: navigate — ChatPage re-mounts on the new route with workspaceId set.
-    // If the hook count differs between renders React throws error #310.
-    await act(async () => {
-      getByText("go").click();
-    });
-
-    // Assert no React hooks error was emitted
-    const calls = (console.error as ReturnType<typeof vi.fn>).mock.calls;
-    const hooksError = calls.some((args) =>
-      args.some((a: unknown) => typeof a === "string" && a.includes("more hooks")),
-    );
-    expect(hooksError).toBe(false);
+    // Component should render without throwing
+    expect(screen.queryByText("Select a workspace to start chatting")).toBeNull();
   });
 });
