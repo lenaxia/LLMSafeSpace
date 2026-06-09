@@ -1,26 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useMatches } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
 import { useUserEventStream } from "../../hooks/useUserEventStream";
+import { useSwipeableSidebar } from "../../hooks/useSwipeableSidebar";
 
-const EDGE_ZONE = 30;
-const SWIPE_THRESHOLD = 60;
+const SIDEBAR_WIDTH_PX = 256;
 
 export function AppShell() {
   const mainRef = useRef<HTMLElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sidebarWrapperRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const touchStartX = useRef(0);
-  const touchStartY = useRef(0);
-  const isEdgeSwipe = useRef(false);
   const matches = useMatches();
   const isInitialMount = useRef(true);
 
-  // Epic 28: user-scoped SSE for cross-workspace phase visibility
   useUserEventStream();
+
+  useSwipeableSidebar({
+    containerRef,
+    sidebarRef: sidebarWrapperRef,
+    overlayRef,
+    isOpen: sidebarOpen,
+    setIsOpen: setSidebarOpen,
+    enabled: isMobile,
+    sidebarWidth: SIDEBAR_WIDTH_PX,
+  });
 
   useEffect(() => {
     if (isInitialMount.current) {
@@ -35,56 +44,11 @@ export function AppShell() {
     mainRef.current?.focus();
   }, [location.pathname]);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    if (!touch) return;
-    touchStartX.current = touch.clientX;
-    touchStartY.current = touch.clientY;
-    isEdgeSwipe.current = touch.clientX < EDGE_ZONE;
-  }, []);
-
-  const handleTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      if (!isMobile) return;
-      const touch = e.touches[0];
-      if (!touch) return;
-      const dx = touch.clientX - touchStartX.current;
-      const dy = Math.abs(touch.clientY - touchStartY.current);
-
-      // If primarily vertical, let it scroll normally
-      if (dy > Math.abs(dx)) return;
-
-      // Prevent browser back/forward navigation on horizontal swipes
-      e.preventDefault();
-    },
-    [isMobile],
-  );
-
-  const handleTouchEnd = useCallback(
-    (e: React.TouchEvent) => {
-      if (!isMobile) return;
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-      const dx = touch.clientX - touchStartX.current;
-      const dy = Math.abs(touch.clientY - touchStartY.current);
-      if (dy > Math.abs(dx)) return;
-      if (touchStartX.current < EDGE_ZONE && dx > SWIPE_THRESHOLD) {
-        setSidebarOpen(true);
-      } else if (sidebarOpen && dx < -SWIPE_THRESHOLD) {
-        setSidebarOpen(false);
-      }
-      isEdgeSwipe.current = false;
-    },
-    [isMobile, sidebarOpen],
-  );
-
   return (
     <div
+      ref={containerRef}
       className="flex h-screen overflow-hidden overscroll-none"
       style={{ touchAction: "pan-y" }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
     >
       <a
         href="#main-content"
@@ -93,18 +57,24 @@ export function AppShell() {
         Skip to content
       </a>
 
-      {isMobile && sidebarOpen && (
+      {isMobile && (
         <div
-          className="fixed inset-0 z-30 bg-black/50"
+          ref={overlayRef}
+          className={`fixed inset-0 z-30 bg-black/50 transition-opacity duration-200 ${
+            sidebarOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          }`}
           onClick={() => setSidebarOpen(false)}
           aria-hidden="true"
         />
       )}
 
       <div
+        ref={sidebarWrapperRef}
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+            ? `fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 ${
+                sidebarOpen ? "translate-x-0" : "-translate-x-full"
+              }`
             : "relative"
         }
       >
