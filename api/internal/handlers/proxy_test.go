@@ -27,6 +27,7 @@ import (
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type testLogger struct{}
@@ -1562,3 +1563,79 @@ func TestProxy_DeleteSession_OpencodeNotFound(t *testing.T) {
 	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestProxy_DeleteSession_CleansUpSessionIndex(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, si.called, "sessionIndex.DeleteSession should have been called")
+	assert.Equal(t, "ws-1", si.workspaceID)
+	assert.Equal(t, "s1", si.sessionID)
+}
+
+func TestProxy_DeleteSession_IndexErrorStillReturns200(t *testing.T) {
+	si := &failingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code, "should still return 200 even if index delete fails")
+}
+
+type recordingDeleteSessionIndex struct {
+	called      bool
+	workspaceID string
+	sessionID   string
+}
+
+func (r *recordingDeleteSessionIndex) RecordMessage(_, _, _ string, _ time.Time) {}
+func (r *recordingDeleteSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types.SessionListItem, error) {
+	return nil, nil
+}
+func (r *recordingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error {
+	return nil
+}
+func (r *recordingDeleteSessionIndex) DeleteSession(_ context.Context, workspaceID, sessionID string) error {
+	r.called = true
+	r.workspaceID = workspaceID
+	r.sessionID = sessionID
+	return nil
+}
+func (r *recordingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (r *recordingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (r *recordingDeleteSessionIndex) Start() error { return nil }
+func (r *recordingDeleteSessionIndex) Stop() error  { return nil }
+
+type failingDeleteSessionIndex struct{}
+
+func (f *failingDeleteSessionIndex) RecordMessage(_, _, _ string, _ time.Time) {}
+func (f *failingDeleteSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types.SessionListItem, error) {
+	return nil, nil
+}
+func (f *failingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error { return nil }
+func (f *failingDeleteSessionIndex) DeleteSession(_ context.Context, _, _ string) error {
+	return fmt.Errorf("db connection lost")
+}
+func (f *failingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error  { return nil }
+func (f *failingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
+func (f *failingDeleteSessionIndex) Start() error                                         { return nil }
+func (f *failingDeleteSessionIndex) Stop() error                                          { return nil }
