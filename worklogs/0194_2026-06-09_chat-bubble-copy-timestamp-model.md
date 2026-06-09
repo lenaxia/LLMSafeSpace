@@ -1,64 +1,84 @@
-# Worklog 0194 — Chat bubble copy button, timestamps, and model name
+# 0194 — Chat bubble copy button, timestamps, and model name
 
 **Date:** 2026-06-09
-**PR:** #75
-**Branch:** feat/chat-bubble-copy-timestamp-model
+**Session:** Add copy button, message timestamps, and model name to chat bubble UI
+**Status:** Complete
 
-## Context
+---
+
+## Objective
 
 Three UX improvements to the chat screen message bubbles:
-1. Copy button on each bubble to copy entire message text to clipboard
-2. Timestamp display showing when the message was sent/received
-3. Model name shown next to timestamp for assistant messages
 
-## Investigation
+1. **Copy button** — each bubble has a copy icon that copies the entire message text to clipboard, with a Copy → Check icon swap on success (2s revert)
+2. **Timestamps** — each bubble shows when the message was created (relative for recent, clock time for same-day, date+time for older)
+3. **Model name** — assistant messages show the model that produced them, next to the timestamp
 
-### API response shape
-The Go proxy calls `/session/:id/message` (V1 opencode endpoint). Response is `Array<{ info: { id, role, time: { created, completed? }, modelID?, providerID? }, parts }>`. Timestamps are at `info.time.created` (epoch millis, always present). `modelID` is present on assistant messages only.
+---
 
-The frontend's `OpenCodeMessage` type and `transformHistory` function previously dropped both `time` and `modelID` — these were extracted from the response but never passed through.
+## Work Completed
 
-### Model name resolution
-The workspace models list (`workspacesApi.listModels`) is already fetched in `ChatPage`. Resolved via `Map<modelID, modelName>` built in `MessageList` with `useMemo`.
+### Investigation
 
-## Design decisions
+The opencode V1 API (`GET /session/:id/message`) returns `Array<{ info: { id, role, time: { created }, modelID?, providerID? }, parts }>`. Timestamps at `info.time.created` (epoch millis) are always present on both user and assistant messages. `modelID` is present on assistant messages only. Both fields were being dropped by `transformHistory` — the `OpenCodeMessage.info` type had neither.
 
-- **Copy feedback**: Icon-only (Copy → Check swap on clipboard success, 2s revert). No toast.
-- **Model name**: Threaded via props (ChatPage → ChatView → MessageList → MemoizedBubble). `modelName` is a string prop preserving React.memo effectiveness.
-- **Timestamps**: `formatTimestamp` helper — relative for recent ("just now", "3m ago"), clock time for same-day, date+time for older.
-- **Keyboard accessibility**: Copy button has `focus:opacity-100` in addition to `group-hover:opacity-100`.
-- **Timer safety**: `clearTimeout` before setting new timeout prevents premature revert on rapid double-click.
-- **Footer spacing**: Conditional margin — only added when timestamp or model name is present.
+The workspace models list is already fetched in `ChatPage` via `useQuery(["models", workspaceId])`. Model name resolution uses a `Map<id, name>` built with `useMemo` in `MessageList`.
 
-## Files changed
+### Data layer (`frontend/src/api/`)
 
-| File | Change |
+- `types.ts`: Added `modelID?: string` to `Message`
+- `messages.ts`: Extended `OpenCodeMessage.info` with `time`, `modelID`, `providerID`. Exported `transformHistory`. Extract `createdAt` (as ISO string) and `modelID` in the map step.
+
+### UI (`frontend/src/components/chat/`)
+
+- `MessageBubble.tsx`: Rewritten to add footer row with timestamp, model name, and copy button. Exported `extractMessageText` (pure function for testability). Copy button uses `group-hover:opacity-100 focus:opacity-100` for hover and keyboard visibility. `clearTimeout` before setting new timeout prevents premature icon revert on rapid double-click.
+- `MessageList.tsx`: Added `models?: ModelInfo[]` prop. Builds `modelMap` via `useMemo`. Resolves `modelName` string per message and passes to `MemoizedBubble`. String prop preserves React.memo effectiveness.
+- `ChatView.tsx`: Added `models?: ModelInfo[]` prop passthrough to `MessageList`.
+
+### ChatPage (`frontend/src/pages/`)
+
+- Passes `modelsData?.models` to `ChatView`
+- Added `createdAt: new Date().toISOString()` to local and queued user messages at creation time
+
+### Adversarial review
+
+Three real findings identified and fixed before commit:
+
+| Finding | Fix |
 |---|---|
-| `frontend/src/api/types.ts` | Added `modelID?: string` to `Message` |
-| `frontend/src/api/messages.ts` | Extended `OpenCodeMessage.info` with `time`/`modelID`/`providerID`. Exported `transformHistory`. Extract `createdAt`/`modelID`. |
-| `frontend/src/components/chat/MessageBubble.tsx` | Copy button + timestamp + model name in footer. Exported `extractMessageText`. |
-| `frontend/src/components/chat/MessageList.tsx` | Added `models` prop, `modelMap` via `useMemo`, passes `modelName` to `MemoizedBubble`. |
-| `frontend/src/components/chat/ChatView.tsx` | Added `models` prop, passes to `MessageList`. |
-| `frontend/src/pages/ChatPage.tsx` | Passes `modelsData?.models` to `ChatView`. Added `createdAt` to local and queued user messages. |
+| Timer leak on rapid double-click | `clearTimeout(timerRef.current)` before setting new timeout |
+| Copy button invisible on keyboard focus | Added `focus:opacity-100` |
+| Footer spacing added to all bubbles | Conditional margin — only when timestamp or model name present |
 
-## Tests
+### Tests
 
-44 new tests across 4 test files:
-- `messages.test.ts`: 7 tests for `transformHistory` (createdAt, modelID extraction)
-- `MessageBubble.test.tsx`: 25 tests (copy button success/failure/timeout, `extractMessageText` unit tests, timestamp, model name)
-- `MessageList.test.tsx`: 3 tests (model name resolution from models prop)
-- `ChatView.test.tsx`: 1 test (models prop threading)
+44 new tests, TDD (tests written first, verified failing, then implementation):
 
-All 759 tests pass, TypeScript clean.
+| File | Tests | Coverage |
+|---|---|---|
+| `messages.test.ts` | 7 | `transformHistory` createdAt + modelID extraction |
+| `MessageBubble.test.tsx` | 25 | Copy success/failure/timeout, `extractMessageText` (6), timestamp (3), model name (3) |
+| `MessageList.test.tsx` | 3 | Model name resolution from models prop |
+| `ChatView.test.tsx` | 1 | Models prop threading end-to-end |
 
-## Adversarial review findings
+All 759 tests pass, TypeScript clean, coverage +0.1%.
 
-| # | Finding | Severity | Resolution |
-|---|---|---|---|
-| 1 | Timer leak on rapid double-click | Medium | Fixed: `clearTimeout` before new timeout |
-| 2 | Copy button invisible on keyboard focus | Medium | Fixed: `focus:opacity-100` |
-| 3 | Footer spacing on all bubbles | Low | Fixed: conditional margin |
+### CI / PR review
 
-## PR Review feedback
+- PR #75, all checks green: CI (15 jobs), PR Review (AI reviewer, 0 inline comments), Security scan, Secrets Integration
+- AI reviewer flagged `messageID` on `SendMessageRequest` as unrelated dead code — identified as pre-existing change from another agent, not touched
+- Merged via squash into main as `fcb1df6c6c89`
 
-AI reviewer approved with no inline comments. Noted `messageID` on `SendMessageRequest` — identified as pre-existing change from another agent, not part of this PR. Left untouched.
+---
+
+## Blockers
+
+None.
+
+---
+
+## Next Steps
+
+None — feature is complete. Potential future improvements (not required):
+- Auto-refresh relative timestamps (e.g. every 60s) so "3m ago" stays accurate without re-render
+- Per-message token count or cost display alongside model name (data is available in `info.tokens` / `info.cost` from the API)
