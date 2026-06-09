@@ -67,3 +67,7 @@ sdks/canary/go/d-*
 # Local credentials and binaries
 .cf
 mcp
+
+# Cluster-specific helm overrides (redis host, disabled components, etc.)
+# Create charts/llmsafespace/values.local.yaml to persist local deploy config.
+charts/llmsafespace/values.local.yaml

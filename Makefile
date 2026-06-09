@@ -156,8 +156,14 @@ helm-chart-test:
 #   make helm-deploy                                          # defaults
 #   make helm-deploy RELEASE_NS=default IMAGE_TAG=sha-abc1234 # override
 #   make helm-deploy HELM_FLAGS="--set frontend.enabled=true"  # extra flags
+#
+# Local overrides (gitignored): create charts/llmsafespace/values.local.yaml
+# to persist cluster-specific values (e.g. redis.host, mcp.enabled=false).
+# The file is automatically included on every helm-deploy when present.
 IMAGE_TAG?=
 HELM_FLAGS?=
+LOCAL_VALUES_FILE := $(CHART_DIR)/values.local.yaml
+LOCAL_VALUES_FLAG := $(if $(wildcard $(LOCAL_VALUES_FILE)),-f $(LOCAL_VALUES_FILE))
 helm-deploy:
 	@echo "== helm-deploy: checking git sync =="
 	@git fetch origin main --quiet
@@ -168,12 +174,14 @@ helm-deploy:
 	    echo "causes missing migrations and broken deployments."; \
 	    exit 1; \
 	  fi
+	$(if $(LOCAL_VALUES_FLAG),@echo "== helm-deploy: using local overrides $(LOCAL_VALUES_FILE) ==")
 	@echo "== helm-deploy: applying CRDs =="
 	kubectl apply -f $(CHART_DIR)/crds/
 	@echo "== helm-deploy: linting chart =="
-	$(HELM) lint $(CHART_DIR)
+	$(HELM) lint $(CHART_DIR) $(LOCAL_VALUES_FLAG)
 	@echo "== helm-deploy: upgrading release $(RELEASE_NAME) in $(RELEASE_NS) =="
 	$(HELM) upgrade $(RELEASE_NAME) $(CHART_DIR) -n $(RELEASE_NS) \
+	  $(LOCAL_VALUES_FLAG) \
 	  $(if $(IMAGE_TAG),--set api.image.tag=$(IMAGE_TAG) \
 	                      --set controller.image.tag=$(IMAGE_TAG) \
 	                      --set frontend.image.tag=$(IMAGE_TAG) \
