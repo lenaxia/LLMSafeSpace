@@ -256,13 +256,33 @@ describe("useMessageQueue", () => {
   });
 
   it("stuck detector does not affect pills <90s", async () => {
-    // This tests the interval callback logic directly
-    const { result } = render();
-    await act(async () => { result.current.enqueue("hello"); });
+    vi.useFakeTimers();
+    try {
+      const { result } = render();
+      await act(async () => { result.current.enqueue("hello"); });
 
-    // sentAt is Date.now(), so after advancing <90s it should still be pending
-    // We test the interval exists via the "registers a 15s interval" test
-    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+      // Advance 89 seconds — pill should still be pending
+      await act(async () => { vi.advanceTimersByTime(89_000); });
+      expect(result.current.queuedMessages[0]!.status).toBe("pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stuck detector marks pill as error after 90s", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = render();
+      await act(async () => { result.current.enqueue("hello"); });
+
+      // Advance past the 90s timeout (the interval fires every 15s)
+      await act(async () => { vi.advanceTimersByTime(105_000); });
+
+      expect(result.current.queuedMessages[0]!.status).toBe("error");
+      expect(result.current.queuedMessages[0]!.error).toBe("Timed out");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("multiple enqueues generate unique IDs", async () => {
@@ -272,6 +292,31 @@ describe("useMessageQueue", () => {
 
     const ids = result.current.queuedMessages.map((m) => m.id);
     expect(new Set(ids).size).toBe(2);
+  });
+
+  it("retry on double-failure returns pill to error state with new message", async () => {
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("fail"));
+
+    const { result } = render();
+    await act(async () => { result.current.enqueue("hello"); });
+    await act(async () => {});
+
+    expect(result.current.queuedMessages[0]!.status).toBe("error");
+    expect(result.current.queuedMessages[0]!.error).toBe("fail");
+
+    const id = result.current.queuedMessages[0]!.id;
+
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    // Second sendAsync call also rejects
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("retry fail"));
+
+    await act(async () => { await result.current.retry(id); });
+    // After retry fires, wait for the rejection to propagate
+    await act(async () => {});
+
+    expect(result.current.queuedMessages).toHaveLength(1);
+    expect(result.current.queuedMessages[0]!.status).toBe("error");
+    expect(result.current.queuedMessages[0]!.error).toBe("retry fail");
   });
 
   it("messageID starts with msg_ prefix", async () => {

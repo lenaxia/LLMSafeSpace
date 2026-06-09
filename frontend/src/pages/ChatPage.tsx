@@ -148,8 +148,6 @@ export function ChatPage() {
   const queue = useMessageQueue(activeWorkspaceId, sessionId);
 
   const idCounterRef = useRef(0);
-  // Guards reconcileOnIdle from clearing localMessages while a doSendNow send is in flight.
-  const flushInProgressRef = useRef(false);
 
   // Sync serverBusy from status poll (on mount / after invalidation)
   // Only applies when SSE hasn't already driven the state
@@ -163,16 +161,6 @@ export function ChatPage() {
   const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
-
-  // NOTE: This effect MUST be defined BEFORE the flush effect below.
-  // React runs effects in definition order. When a send fails and both
-  // chatError and streaming change in the same render, this effect sets
-  // flushFailedRef before the flush effect checks it.
-  useEffect(() => {
-    if (chatError) {
-      flushInProgressRef.current = false;
-    }
-  }, [chatError]);
 
   // US-15.3: Compute historyPartIds from fetched history for boundary detection
   const historyPartIds = useRef<Set<string>>(new Set());
@@ -221,9 +209,7 @@ export function ChatPage() {
       });
       await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
-      if (!flushInProgressRef.current) {
-        setLocalMessages([]);
-      }
+      setLocalMessages([]);
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
@@ -598,10 +584,8 @@ export function ChatPage() {
   useEventStream(sseWorkspaceId, handleSSEEvent, { onReconnect: handleSSEReconnect });
 
   // doSendNow MUST be defined before the early return below.
-  // Placing any useEffect after an early return violates the rules of hooks:
-  // on a render that takes the early return the hook is never called, but on
-  // a render that does not the hook count is higher — React throws error #310
-  // ("Rendered more hooks than during the previous render").
+  // Placing any hook after an early return violates the Rules of Hooks — React
+  // throws error #310 ("Rendered more hooks than during the previous render").
   const doSendNow = (text: string) => {
     // Resolve current model selection into opencode's PromptInput.model format.
     // currentModel is the flat model ID stored in the DB (e.g. "glm-5.1", never
@@ -642,8 +626,7 @@ export function ChatPage() {
     // twice (once from history, once from localMessages).
     // The user message stays in localMessages until reconcileOnIdle clears
     // it (after history catches up), preserving optimistic UX.
-    send(text, () => {
-      flushInProgressRef.current = false;
+    send(text, (_msg: Message) => {
       reconcileOnIdle();
     }, currentModelRef);
   };
