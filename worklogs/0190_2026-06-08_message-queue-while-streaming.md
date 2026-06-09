@@ -1,4 +1,4 @@
-# 0184 — Message queue while streaming
+# 0190 — Message queue while streaming
 
 **Date:** 2026-06-08
 **Session:** Implement message queuing so the chat textarea stays enabled during LLM streaming
