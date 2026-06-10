@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1598,6 +1599,7 @@ func TestProxy_DeleteSession_IndexErrorStillReturns200(t *testing.T) {
 }
 
 type recordingDeleteSessionIndex struct {
+	mu          sync.Mutex
 	called      bool
 	workspaceID string
 	sessionID   string
@@ -1611,9 +1613,11 @@ func (r *recordingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ str
 	return nil
 }
 func (r *recordingDeleteSessionIndex) DeleteSession(_ context.Context, workspaceID, sessionID string) error {
+	r.mu.Lock()
 	r.called = true
 	r.workspaceID = workspaceID
 	r.sessionID = sessionID
+	r.mu.Unlock()
 	return nil
 }
 func (r *recordingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error {
