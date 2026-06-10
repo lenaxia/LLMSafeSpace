@@ -1641,7 +1641,10 @@ func (f *failingDeleteSessionIndex) ListByWorkspace(_ context.Context, _ string)
 }
 func (f *failingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error { return nil }
 func (f *failingDeleteSessionIndex) DeleteSession(_ context.Context, _, _ string) error {
-	return fmt.Errorf("db connection lost")
+	return errors.New("session index unavailable")
+}
+func (f *failingDeleteSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error {
+	return nil
 }
 func (f *failingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error  { return nil }
 func (f *failingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
