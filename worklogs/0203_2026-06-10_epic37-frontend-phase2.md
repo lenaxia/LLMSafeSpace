@@ -1,14 +1,14 @@
-# Worklog: Epic 37 — Session Activity & Unread State UX (Frontend Phase 2 In Progress)
+# Worklog 0203: Epic 37 — Session Activity & Unread State UX (Frontend Phase 2)
 
 **Date:** 2026-06-10
-**Session:** Frontend implementation — US-37.4 (SessionActivityProvider), US-37.5 (spinner), US-37.6 (pulsation), US-37.7 (divider), US-37.8 (mark-seen) — partial, in progress
-**Status:** In Progress
+**Session:** Frontend implementation — US-37.4 through US-37.8 + tests (US-37.9 partial)
+**Status:** Complete
 
 ---
 
 ## Objective
 
-Implement Epic 37 Phase 2 frontend stories: real-time session activity context, spinner, unread pulsation, new-messages divider, mark-seen on navigate.
+Implement Epic 37 Phase 2 frontend stories: real-time session activity context, spinner, unread pulsation, new-messages divider, mark-seen on navigate. Write comprehensive tests.
 
 ---
 
@@ -34,42 +34,72 @@ Implement Epic 37 Phase 2 frontend stories: real-time session activity context, 
 **AppShell modified:**
 - Removed standalone `useUserEventStream()` call (now managed by SessionActivityProvider)
 - Added `<SessionActivityProvider>` wrapper around content
-- Added import for SessionActivityProvider
 
 ### US-37.5: Activity Spinner
 
 **File modified:** `frontend/src/components/layout/Sidebar.tsx`
 
-- `SessionTreeRow` now calls `useIsSessionBusy(s.id)` and `useIsSessionUnread(s.id)`
-- Dead blue dot (`s.status === "active" && <span ...>`) replaced with `{isBusy && <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />}`
-- `WorkspaceGroup` now calls `useWorkspaceBusyCount(workspace.id)`
+- `SessionTreeRow` calls `useIsSessionBusy(s.id)` and `useIsSessionUnread(s.id)`
+- Dead blue dot replaced with `{isBusy && <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />}`
+- `WorkspaceGroup` calls `useWorkspaceBusyCount(workspace.id)`
 - Collapsed workspace shows spinner when `!expanded && busyCount > 0`
 
 ### US-37.6: Unread Pulsation
 
 **File modified:** `frontend/src/styles/index.css`
 
-Added:
 ```css
 @keyframes unread-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .animate-unread-pulse { animation: unread-pulse 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .animate-unread-pulse { animation: none; } }
 ```
 
-**Sidebar:** `showPulse = isUnread && !isSelected && !isBusy` — applied to `MessageSquare` icon and title `<span>` via `cn(..., showPulse && "animate-unread-pulse")`
+**Sidebar:** `showPulse = isUnread && !isSelected && !isBusy` — applied to icon and title via `cn(...)`
 
 ### US-37.7: New Messages Divider
 
 **File modified:** `frontend/src/components/chat/MessageList.tsx`
 
 - Added `lastSeenAt?: string` prop
-- Added `CLOCK_SKEW_BUFFER_MS = 1000` constant
-- `dividerIndex` computed via `useMemo`: finds first message where `createdAt > lastSeenAt - 1s`; returns -1 when `lastSeenAt` is null/undefined
-- Render loop changed to use `<Fragment key={msg.id}>` — divider rendered before the first unseen message as `role="separator"` with "New messages" label
+- `dividerIndex` via `useMemo`: finds first message where `createdAt > lastSeenAt - 1s`; returns -1 when null
+- Render uses `<Fragment key={msg.id}>` with `role="separator"` divider before first unseen message
 
-### US-37.8: Mark-seen on Navigate (in progress)
+**`ChatView` modified:** Added `lastSeenAt?: string` prop, passed through to `MessageList`.
 
-- `ChatPage.tsx` modifications to add `markSessionSeen` calls not yet applied — interrupted to write worklog
+**`ChatPage` modified:** Looks up `currentSession?.lastSeenAt` from query cache, passes to `ChatView`.
+
+### US-37.8: Mark-seen on Navigate
+
+**File modified:** `frontend/src/pages/ChatPage.tsx`
+
+- **Navigate-to (immediate):** `useEffect` on `[sessionId, workspaceId, isReady]` calls `clearPendingUnread(sessionId)`, `workspacesApi.markSessionSeen(...)`, and invalidates sessions query. Gated on `isReady` — no call when workspace is not Active.
+- **Navigate-away (debounced):** Second `useEffect` on `[sessionId, workspaceId]` tracks `prevSessionRef`, fires debounced `markSessionSeen` (1s) for the previous session. Cleanup clears timeout.
+- Both calls are fire-and-forget (`catch(() => {})`).
+
+### US-37.9: Tests (continued — this session)
+
+**New test files:**
+- `frontend/src/tests/integration/session-activity.test.tsx` — 6 integration tests: SSE busy→idle→unread (#36), cross-workspace isolation (#36b), REST busy (#38), REST unread (#39), navigate unread (#37), workspace.phase cleanup
+- (Contract test #35 was already present in `contract.test.ts:36` — `lastSeenAt` and `hasUnread` assertions)
+
+**Additional tests added:**
+- `frontend/src/components/layout/Sidebar.test.tsx` — collapsed workspace spinner (#34)
+- `frontend/src/components/chat/MessageList.test.tsx` — no-crash without createdAt (#28), pagination+divider regression (#51)
+
+**Bug fixed during integration testing:**
+- `SessionActivityProvider.tsx`: `pendingUnread` changed from `Set<string>` to `Map<string, string>` — workspace.phase handler now correctly clears unread sessions even after busy→idle transition removed them from `busySessions`.
+
+### US-37.9: Tests (partial)
+
+**New test files:**
+- `frontend/src/providers/SessionActivityProvider.test.tsx` — 8 tests: onEvent registration, busy tracking, idle→unread, current-session unread suppression, workspace.phase cleanup, busy count, clearPendingUnread, cache update
+- `frontend/src/pages/ChatPage.navigate.test.tsx` — 5 tests: immediate mark-seen, debounced navigate-away, no-call-when-not-active, silent failure, session invalidation
+
+**Modified test files:**
+- `frontend/src/components/chat/MessageList.test.tsx` — 4 new divider tests: renders divider, no divider when undefined, no divider when all seen, clock skew buffer
+- `frontend/src/components/layout/Sidebar.test.tsx` — 2 new tests: spinner for busy session, pulse class for unread session. Added mutable mock variables for SessionActivityProvider hooks.
+
+**8 ChatPage test files updated** to add `markSessionSeen` and `getSessions` to workspacesApi mock, plus `SessionActivityProvider` mock — all existing tests continue to pass.
 
 ---
 
@@ -77,68 +107,97 @@ Added:
 
 | # | Assumption | Evidence |
 |---|-----------|----------|
-| A13 | `useSyncExternalStore` not used in codebase | grep confirmed — plain `useState` Map/Set is fine at ~100 sessions max |
-| A14 | `AppShell` mounts inside router, has access to `useParams` | `router.tsx:37`, `AppShell.tsx:22` |
-| A2 (Sidebar) | Blue dot at `Sidebar.tsx:696-698` — dead because `database.go:803` hardcodes "idle" | Confirmed — now replaced |
+| A1 | `markSessionSeen` API exists and returns 204 | `router.go:809` — PUT endpoint confirmed |
+| A2 | `SessionListItem` has `lastSeenAt` and `hasUnread` fields | `types.ts:72-73` |
+| A3 | Session query key is `["sessions", workspaceId]` | `workspaces.ts:57` |
+| A4 | `useClearPendingUnread` exported from provider | `SessionActivityProvider.tsx:164` |
+| A5 | `clearPendingUnread` is referentially stable (`useCallback([], [])`) | `SessionActivityProvider.tsx:128` |
+| A6 | `useParams` in provider needs Route definitions to work in tests | Confirmed — MemoryRouter + Route required |
+| A13 | `useSyncExternalStore` not used in codebase | grep confirmed |
+| A14 | `AppShell` mounts inside router | `router.tsx:37` |
 
 ---
 
-## Adversarial Pre-Review Notes
+## Adversarial Self-Review (Rule 11)
 
-- **D7 guard**: `queryClient.getQueryData(sessionsKey)` checked before `setQueryData` — no orphan cache entries for collapsed workspaces ✅
-- **D8**: `workspace.phase` non-Active events clear both `busySessions` and `pendingUnread` for the workspace ✅
-- **Stable ref for onEvent**: Uses `useRef` updated in `useEffect` — avoids re-creating the SSE connection on every render ✅
-- **SessionActivityProvider uses `useParams`** — must be inside router. Mounted in AppShell which is inside router at `router.tsx:37` ✅
-- **Divider clock skew**: 1-second buffer handles intra-cluster NTP drift ✅
-- **`Fragment` key**: `key={msg.id}` on Fragment preserves React reconciliation ✅
+### Phase 1 Findings
+
+1. Duplicate mark-seen on status flaps — benign (idempotent API)
+2. Stale debounce closure on unmount — `.catch(() => {})`, no state mutation
+3. Mutable mock variables in Sidebar test — Vitest runs files in separate workers
+4. Missing deps in useEffect — stable references, eslint-disable present and justified
+5. `lastSeenAt` synchronous cache read — cheap O(n), self-correcting
+
+### Phase 2 Validation
+
+All findings are false alarms or benign. Zero real bugs or design flaws.
+
+### Bug Found During Integration Testing
+
+**`pendingUnread` workspace tracking bug:** `workspace.phase` handler tried to look up workspace ID from `busySessions.get(sid)`, but sessions that had already transitioned busy→idle were removed from `busySessions`. The lookup failed and unread sessions were not cleared on workspace suspend.
+
+**Fix:** Changed `pendingUnread` from `Set<string>` to `Map<string, string>` (sessionId → workspaceId). Both the idle handler and workspace.phase handler now correctly track workspace ownership independently.
 
 ---
 
-## Outstanding
+## Key Decisions
 
-1. US-37.8: Complete `ChatPage.tsx` mark-seen on navigate implementation
-2. Pass `lastSeenAt` through `ChatView` → `MessageList`
-3. Write frontend tests (US-37.9)
-4. Run `npm test` and verify all existing tests still pass
-5. Adversarial self-review
-6. Commit and push
+- **Double mark-seen (navigate-to + navigate-away):** Navigate-to clears unread immediately. Navigate-away captures messages that arrived while viewing. Design from US-37.8 story spec.
+- **`queryClient.getQueryData` for `lastSeenAt`** instead of a new `useQuery`: Avoids extra re-renders; data is already cached from sidebar session list fetch.
+- **Mutable module-level variables for Sidebar hook mocks:** Only viable pattern for `vi.mock` with dynamic return values in Vitest. File-scoped, no cross-test leakage.
 
 ---
 
 ## Blockers
 
-None — build environment stable with `GOCACHE=/workspace/.gocache`.
+None.
 
 ---
 
 ## Tests Run
 
-Backend (all pass, committed at `ad8e53e6`):
-- `go test -timeout 120s ./... -count=1` — zero failures
+**Frontend:** 92 test files, 867 tests — all passing.
 
-Frontend: not yet run — pending US-37.8 completion.
+**Backend** (key packages, with `GOCACHE=/workspace/.gocache`):
+- `api/internal/handlers` — PASS
+- `api/internal/services/database` — PASS
+- `api/internal/server` — PASS
 
 ---
 
 ## Next Steps
 
-1. Complete `ChatPage.tsx` mark-seen effects (navigate-to immediate + navigate-away debounced)
-2. Pass `lastSeenAt` from session query data through `ChatView` to `MessageList`
-3. Write all frontend Vitest unit tests for US-37.4–37.8
-4. Run `npm test` — fix any regressions
-5. Adversarial self-review (Rule 11)
-6. Commit everything
+1. Deploy to cluster and validate spinner/pulsation UX visually
+2. Playwright E2E tests for full session activity flow (tests #40-46) — requires running dev server
+3. Follow-up: `SessionStatusEvent` TypeScript type missing `"deleted"` variant (cosmetic, from PR #74 review)
 
 ---
 
-## Files Modified Since Last Commit (`ad8e53e6`)
+## Files Modified
 
 ### New Files
 - `frontend/src/providers/SessionActivityProvider.tsx` — US-37.4
+- `frontend/src/providers/SessionActivityProvider.test.tsx` — 8 tests
+- `frontend/src/pages/ChatPage.navigate.test.tsx` — 5 tests
+- `frontend/src/tests/integration/session-activity.test.tsx` — 6 integration tests
 
 ### Modified Files
 - `frontend/src/hooks/useUserEventStream.ts` — onEvent callback
 - `frontend/src/components/layout/AppShell.tsx` — SessionActivityProvider mount
 - `frontend/src/components/layout/Sidebar.tsx` — spinner + pulsation
+- `frontend/src/components/layout/Sidebar.test.tsx` — 3 new tests + mock setup
 - `frontend/src/styles/index.css` — unread-pulse keyframes
 - `frontend/src/components/chat/MessageList.tsx` — lastSeenAt prop + divider
+- `frontend/src/components/chat/MessageList.test.tsx` — 6 new tests (divider + regression)
+- `frontend/src/components/chat/ChatView.tsx` — lastSeenAt passthrough
+- `frontend/src/pages/ChatPage.tsx` — mark-seen effects + lastSeenAt lookup
+- `frontend/src/providers/SessionActivityProvider.tsx` — bug fix: pendingUnread Set→Map
+- `frontend/src/pages/ChatPage.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.activate.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.autorename.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.hookcount.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.queue.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.sse.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.reconnect.test.tsx` — mock updates
+- `frontend/src/pages/ChatPage.input.test.tsx` — mock updates
+- `design/stories/epic-37-session-activity-unread-state/` — story files (from previous session)

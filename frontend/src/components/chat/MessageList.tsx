@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, Fragment } from "react";
 import type { ReactNode } from "react";
 import type { Message } from "../../api/types";
 import type { ModelInfo } from "../../api/workspaces";
@@ -13,18 +13,28 @@ interface Props {
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
   models?: ModelInfo[];
+  lastSeenAt?: string;
 }
 
 const SCROLL_THRESHOLD = 60;
+const CLOCK_SKEW_BUFFER_MS = 1000;
 
 const MemoizedBubble = memo(MessageBubble);
 
-export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder, models }: Props) {
+export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder, models, lastSeenAt }: Props) {
   const modelMap = useMemo(() => new Map(models?.map(m => [m.id, m.name])), [models]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showJumpButton, setShowJumpButton] = useState(false);
   const stickToBottom = useRef(true);
+
+  const dividerIndex = useMemo(() => {
+    if (!lastSeenAt) return -1;
+    const threshold = new Date(lastSeenAt).getTime() - CLOCK_SKEW_BUFFER_MS;
+    return messages.findIndex(
+      (msg) => msg.createdAt && new Date(msg.createdAt).getTime() > threshold
+    );
+  }, [messages, lastSeenAt]);
 
   const rafId = useRef(0);
   const checkIfAtBottom = useCallback(() => {
@@ -126,12 +136,20 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
             </div>
           )}
 
-          {messages.map((msg) => (
-            <MemoizedBubble
-              key={msg.id}
-              message={msg}
-              modelName={msg.modelID ? (modelMap.get(msg.modelID) || msg.modelID.split("/").pop()) : undefined}
-            />
+          {messages.map((msg, i) => (
+            <Fragment key={msg.id}>
+              {i === dividerIndex && (
+                <div role="separator" aria-label="New messages" className="flex items-center gap-2 py-2 my-1">
+                  <div className="flex-1 border-t border-border" />
+                  <span className="text-xs text-muted-foreground font-medium whitespace-nowrap px-2">New messages</span>
+                  <div className="flex-1 border-t border-border" />
+                </div>
+              )}
+              <MemoizedBubble
+                message={msg}
+                modelName={msg.modelID ? (modelMap.get(msg.modelID) || msg.modelID.split("/").pop()) : undefined}
+              />
+            </Fragment>
           ))}
 
           {streamingBubble && streamingBubble}

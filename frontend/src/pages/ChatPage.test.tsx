@@ -17,7 +17,16 @@ vi.mock("../api/workspaces", () => ({
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    markSessionSeen: vi.fn().mockResolvedValue(undefined),
+    getSessions: vi.fn().mockResolvedValue([]),
   },
+}));
+vi.mock("../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {
   const gh = vi.fn().mockResolvedValue([]);

@@ -18,7 +18,16 @@ vi.mock("../api/workspaces", () => ({
     list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
+    markSessionSeen: vi.fn().mockResolvedValue(undefined),
+    getSessions: vi.fn().mockResolvedValue([]),
   },
+}));
+vi.mock("../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {
   const gh = vi.fn().mockResolvedValue([]);

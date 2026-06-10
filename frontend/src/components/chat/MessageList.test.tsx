@@ -97,6 +97,75 @@ describe("MessageList", () => {
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
+  describe("new messages divider (US-37.7)", () => {
+    const messagesWithTimestamps: Message[] = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Old message" }], createdAt: "2026-06-10T10:00:00Z" },
+      { id: "2", role: "assistant", parts: [{ type: "text", text: "Old reply" }], createdAt: "2026-06-10T10:00:05Z" },
+      { id: "3", role: "user", parts: [{ type: "text", text: "New message" }], createdAt: "2026-06-10T11:00:00Z" },
+      { id: "4", role: "assistant", parts: [{ type: "text", text: "New reply" }], createdAt: "2026-06-10T11:00:05Z" },
+    ];
+
+    it("renders divider before first message after lastSeenAt", () => {
+      render(<MessageList messages={messagesWithTimestamps} lastSeenAt="2026-06-10T10:30:00Z" />);
+      const separator = screen.getByRole("separator");
+      expect(separator).toBeInTheDocument();
+      expect(separator).toHaveAttribute("aria-label", "New messages");
+      expect(screen.getByText("New messages")).toBeInTheDocument();
+    });
+
+    it("does not render divider when lastSeenAt is undefined", () => {
+      render(<MessageList messages={messagesWithTimestamps} />);
+      expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    });
+
+    it("does not render divider when all messages are before lastSeenAt", () => {
+      render(<MessageList messages={messagesWithTimestamps} lastSeenAt="2026-06-10T12:00:00Z" />);
+      expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    });
+
+    it("applies 1-second clock skew buffer — message at exact threshold excluded", () => {
+      const edgeMessages: Message[] = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Boundary" }], createdAt: "2026-06-10T10:00:00.000Z" },
+        { id: "2", role: "user", parts: [{ type: "text", text: "After" }], createdAt: "2026-06-10T10:00:01.500Z" },
+      ];
+      render(<MessageList messages={edgeMessages} lastSeenAt="2026-06-10T10:00:01.000Z" />);
+      const separators = screen.queryAllByRole("separator");
+      expect(separators.length).toBe(1);
+    });
+
+    it("does not crash when messages lack createdAt (#28)", () => {
+      const noTimestamps: Message[] = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "No timestamp" }] },
+        { id: "2", role: "assistant", parts: [{ type: "text", text: "Also none" }] },
+      ];
+      const { container } = render(<MessageList messages={noTimestamps} lastSeenAt="2026-06-10T10:00:00Z" />);
+      expect(container.querySelector("[role='log']")).toBeInTheDocument();
+      expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("pagination with divider regression (#51)", () => {
+    const paginatedMessages: Message[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `msg-${i}`,
+      role: i % 2 === 0 ? "user" as const : "assistant" as const,
+      parts: [{ type: "text" as const, text: `Message ${i}` }],
+      createdAt: new Date(2026, 5, 10, 10, 0, i * 60).toISOString(),
+    }));
+
+    it("divider renders correctly alongside load earlier button", () => {
+      render(
+        <MessageList
+          messages={paginatedMessages}
+          lastSeenAt={paginatedMessages[10]!.createdAt}
+          hasOlderMessages={true}
+        />,
+      );
+      expect(screen.getByText("Load earlier messages")).toBeInTheDocument();
+      expect(screen.getByRole("separator")).toBeInTheDocument();
+      expect(screen.getByText("New messages")).toBeInTheDocument();
+    });
+  });
+
   describe("model name resolution", () => {
     const models: ModelInfo[] = [
       { id: "gpt-4o", providerID: "openai", name: "GPT-4o", tier: "pro", freeTier: false, selected: false, enabled: true },

@@ -32,9 +32,10 @@ interface Props {
   onQueueRetry?: (id: string) => void;
   onQueueDismiss?: (id: string) => void;
   models?: ModelInfo[];
+  lastSeenAt?: string;
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0, queuedMessages = [], onQueueRetry, onQueueDismiss, models }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedCount = 0, queuedMessages = [], onQueueRetry, onQueueDismiss, models, lastSeenAt }: Props) {
   const hasStreamedContent = streamParts.length > 0;
 
   const streamedMessageParts: MessagePart[] = streamParts.map((p) => ({
@@ -63,6 +64,7 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
           onLoadEarlier={onLoadEarlier}
           hasOlderMessages={hasOlderMessages}
           loadingOlder={loadingOlder}
+          lastSeenAt={lastSeenAt}
         />
         {streaming && <StreamingIndicator />}
       </div>

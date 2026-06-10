@@ -15,6 +15,7 @@ vi.mock("../api/workspaces", () => ({
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
     getSessions: vi.fn().mockResolvedValue([]),
+    markSessionSeen: vi.fn().mockResolvedValue(undefined),
     ensureSession: vi.fn(),
     renameSession: vi.fn().mockResolvedValue(undefined),
   },
@@ -25,6 +26,13 @@ vi.mock("../api/messages", () => {
 });
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
+vi.mock("../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
+}));
 
 import { workspacesApi } from "../api/workspaces";
 

@@ -58,7 +58,16 @@ vi.mock("../api/workspaces", () => ({
     renameSession: vi.fn().mockResolvedValue({}),
     abortSession: vi.fn().mockResolvedValue({}),
     getSession: vi.fn().mockResolvedValue({ title: "" }),
+    markSessionSeen: vi.fn().mockResolvedValue(undefined),
+    getSessions: vi.fn().mockResolvedValue([]),
   },
+}));
+vi.mock("../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => ({
   messagesApi: {

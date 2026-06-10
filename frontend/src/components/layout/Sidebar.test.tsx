@@ -12,6 +12,18 @@ vi.mock("../../api/auth", () => ({
   },
 }));
 
+let mockIsSessionBusy = (_sid: string) => false;
+let mockIsSessionUnread = (_sid: string) => false;
+let mockWorkspaceBusyCount = (_wsid: string) => 0;
+
+vi.mock("../../providers/SessionActivityProvider", () => ({
+  useIsSessionBusy: (sid: string) => mockIsSessionBusy(sid),
+  useIsSessionUnread: (sid: string) => mockIsSessionUnread(sid),
+  useWorkspaceBusyCount: (wsid: string) => mockWorkspaceBusyCount(wsid),
+  useClearPendingUnread: () => () => {},
+  SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("../../api/workspaces", () => ({
   workspacesApi: {
     list: vi.fn().mockResolvedValue({
@@ -180,5 +192,76 @@ describe("Sidebar — session delete", () => {
     deleteBtn.click();
 
     expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+});
+
+describe("Sidebar — activity spinner and unread pulsation (US-37.5/37.6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSessionBusy = (_sid: string) => false;
+    mockIsSessionUnread = (_sid: string) => false;
+    mockWorkspaceBusyCount = (_wsid: string) => 0;
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [
+        { id: "ws-1", name: "alpha", phase: "Active", userId: "u1", runtime: "python", storageSize: "5Gi", createdAt: "", updatedAt: "" },
+      ],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-1", title: "Busy session", messageCount: 1, status: "idle" },
+      { id: "sess-2", title: "Idle session", messageCount: 2, status: "idle" },
+    ]);
+  });
+
+  it("shows spinner for busy session", async () => {
+    mockIsSessionBusy = (sid: string) => sid === "sess-1";
+    mockWorkspaceBusyCount = (_wsid: string) => 1;
+
+    const { qc } = renderSidebar();
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Busy session", messageCount: 1, status: "idle" },
+      { id: "sess-2", title: "Idle session", messageCount: 2, status: "idle" },
+    ]);
+
+    await screen.findByText("Busy session");
+    const spinners = document.querySelectorAll(".animate-spin");
+    expect(spinners.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("applies unread pulse class to unread session", async () => {
+    mockIsSessionUnread = (sid: string) => sid === "sess-2";
+
+    const { qc } = renderSidebar();
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Selected", messageCount: 1, status: "idle" },
+      { id: "sess-2", title: "Unread session", messageCount: 2, status: "idle" },
+    ]);
+
+    await screen.findByText("Unread session");
+    const pulsing = document.querySelectorAll(".animate-unread-pulse");
+    expect(pulsing.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows spinner on collapsed workspace when sessions are busy (#34)", async () => {
+    mockWorkspaceBusyCount = (wsid: string) => wsid === "ws-1" ? 2 : 0;
+
+    const { qc } = renderSidebar();
+
+    await screen.findByText("alpha");
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Busy session", messageCount: 1, status: "idle" },
+    ]);
+
+    await screen.findByText("Busy session");
+
+    const collapseButton = screen.getByText("alpha").closest("button")!;
+    await collapseButton.click();
+
+    const workspaceButton = screen.getByText("alpha").closest("button")!;
+    const blueSpinners = workspaceButton.querySelectorAll(".animate-spin.text-blue-500");
+    expect(blueSpinners.length).toBe(1);
   });
 });

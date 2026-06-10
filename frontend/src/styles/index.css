@@ -106,3 +106,18 @@ html {
 [data-compact="true"] .px-4 { padding-left: 0.75rem; padding-right: 0.75rem; }
 [data-compact="true"] .space-y-4 > * + * { margin-top: 0.75rem; }
 [data-compact="true"] .space-y-6 > * + * { margin-top: 1rem; }
+
+@keyframes unread-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.animate-unread-pulse {
+  animation: unread-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-unread-pulse {
+    animation: none;
+  }
+}
