@@ -118,9 +118,9 @@ func runSSEEvents(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	run.Assert(phaseEventReceived, "sse: workspace.phase event received on suspend",
 		"no workspace.phase event within 30s")
 
-	// P4: Resume — wait for Active phase event
-	err = c.Workspaces.Resume(ctx, wsID)
-	run.AssertNoError(err, "resume: no error")
+	// P4: Activate — wait for Active phase event
+	_, err = c.Workspaces.Activate(ctx, wsID)
+	run.AssertNoError(err, "activate: no error")
 
 	resumeEventReceived := waitForEvent(events, func(e sseEvent) bool {
 		return e.Type == "workspace.phase"

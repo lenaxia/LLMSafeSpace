@@ -53,13 +53,13 @@ export function registerResumeCommand(api: ApiService, tree: WorkspaceTreeProvid
   return vscode.commands.registerCommand("llmsafespace.resumeWorkspace", async (item: WorkspaceTreeItem) => {
     if (!item?.workspace) return;
     await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Resuming "${item.workspace.name}"...` },
+      { location: vscode.ProgressLocation.Notification, title: `Activating "${item.workspace.name}"...` },
       async () => {
         try {
-          await api.resumeWorkspace(item.workspace.id);
+          await api.activateWorkspace(item.workspace.id);
           tree.refresh();
         } catch (e: any) {
-          vscode.window.showErrorMessage(`Failed to resume: ${e.message}`);
+          vscode.window.showErrorMessage(`Failed to activate: ${e.message}`);
         }
       },
     );

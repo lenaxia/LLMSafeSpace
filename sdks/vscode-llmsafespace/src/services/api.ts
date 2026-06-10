@@ -71,11 +71,6 @@ export class ApiService {
     await this.client!.workspaces.suspend(id);
   }
 
-  async resumeWorkspace(id: string): Promise<void> {
-    this.ensureClient();
-    await this.client!.workspaces.resume(id);
-  }
-
   async activateWorkspace(id: string): Promise<void> {
     this.ensureClient();
     await this.client!.workspaces.activate(id);

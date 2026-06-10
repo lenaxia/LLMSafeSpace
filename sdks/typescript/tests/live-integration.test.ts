@@ -216,11 +216,11 @@ async function main() {
   const suspPhase = await waitPhase(wsId, 'Suspended');
   assert(suspPhase === 'Suspended', `phase → Suspended (got: ${suspPhase})`);
 
-  await client.workspaces.resume(wsId);
-  assert(true, 'workspaces.resume() → no error (202)');
+  await client.workspaces.activate(wsId);
+  assert(true, 'workspaces.activate() → no error');
 
   const resumeHealth = await waitHealthy(wsId);
-  assert(resumeHealth === 'Healthy', `resume → Healthy (got: ${resumeHealth})`);
+  assert(resumeHealth === 'Healthy', `activate → Healthy (got: ${resumeHealth})`);
 
   // Verify session works after resume (retry — opencode may not be ready immediately)
   let postResume: any;

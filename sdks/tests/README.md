@@ -18,7 +18,7 @@ hurl --variable base_url=http://localhost:4010 contract/errors.hurl
 | File | Coverage |
 |------|----------|
 | `auth.hurl` | Register, login, API key CRUD, auth header format |
-| `workspaces.hurl` | Create, list, get, rename, suspend, resume, delete |
+| `workspaces.hurl` | Create, list, get, rename, suspend, activate, delete |
 | `errors.hurl` | 400, 401, 404 error format consistency |
 
 ## Contract Guarantees

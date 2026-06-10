@@ -669,18 +669,9 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.Status(http.StatusAccepted)
 	})
 
-	rg.POST("/:id/resume", func(c *gin.Context) {
-		userID := authSvc.GetUserID(c)
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-			return
-		}
-		if err := wsSvc.ResumeWorkspace(c.Request.Context(), userID, c.Param("id")); err != nil {
-			respondWithError(c, err)
-			return
-		}
-		c.Status(http.StatusAccepted)
-	})
+	// POST /:id/resume was removed — use POST /:id/activate instead.
+	// activate enforces credential injection before transitioning to Resuming,
+	// which resume did not. Keeping resume would create pods without credentials.
 
 	// Epic 21 Change A — declarative recovery from Failed (and force-restart
 	// from Active). Bumps spec.restartGeneration; controller observes and

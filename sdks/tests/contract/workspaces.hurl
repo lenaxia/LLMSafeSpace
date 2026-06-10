@@ -48,15 +48,14 @@ HTTP 200
 [Asserts]
 jsonpath "$.phase" isString
 
-# Suspend workspace
+# Suspend then re-activate workspace
 POST {{base_url}}/api/v1/workspaces/{{workspace_id}}/suspend
 Authorization: Bearer {{token}}
 HTTP 202
 
-# Resume workspace
-POST {{base_url}}/api/v1/workspaces/{{workspace_id}}/resume
+POST {{base_url}}/api/v1/workspaces/{{workspace_id}}/activate
 Authorization: Bearer {{token}}
-HTTP 202
+HTTP 200
 
 # Delete workspace
 DELETE {{base_url}}/api/v1/workspaces/{{workspace_id}}

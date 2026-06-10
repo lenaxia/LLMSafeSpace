@@ -78,7 +78,6 @@ var workspaceRoutes = []struct {
 	{http.MethodGet, "/api/v1/workspaces/ws-1"},
 	{http.MethodDelete, "/api/v1/workspaces/ws-1"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/suspend"},
-	{http.MethodPost, "/api/v1/workspaces/ws-1/resume"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/restart"},
 	{http.MethodGet, "/api/v1/workspaces/ws-1/status"},
 	{http.MethodPut, "/api/v1/workspaces/ws-1"},
@@ -102,8 +101,6 @@ func TestWorkspaceRoutes_Exist(t *testing.T) {
 			svc.workspace.On("DeleteWorkspace", mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
 			svc.workspace.On("SuspendWorkspace", mock.Anything, mock.Anything, mock.Anything).
-				Return(assert.AnError).Maybe()
-			svc.workspace.On("ResumeWorkspace", mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
 			svc.workspace.On("GetWorkspaceStatus", mock.Anything, mock.Anything, mock.Anything).
 				Return(nil, assert.AnError).Maybe()

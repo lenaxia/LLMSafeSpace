@@ -66,14 +66,14 @@ def run(r: Runner, cfg: Config) -> None:
             lambda: c.workspaces.suspend(ws_id), "double-suspend: 409 Conflict"
         )
 
-        # Resume
-        r.assert_no_error(lambda: c.workspaces.resume(ws_id), "resume: no error")
+        # Activate
+        r.assert_no_error(lambda: c.workspaces.activate(ws_id), "activate: no error")
         rp = wait_active(c, ws_id, 120)
-        r.assert_(rp == "Active", "resume: phase=Active", f"got {rp!r}")
+        r.assert_(rp == "Active", "activate: phase=Active", f"got {rp!r}")
 
-        # Resume already-Active → idempotent
+        # Activate already-Active → idempotent
         r.assert_no_error(
-            lambda: c.workspaces.resume(ws_id), "resume-already-active: no error"
+            lambda: c.workspaces.activate(ws_id), "activate-already-active: no error"
         )
 
         # Restart

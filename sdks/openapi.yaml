@@ -316,20 +316,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /workspaces/{id}/resume:
-    post:
-      tags: [workspaces]
-      summary: Resume a suspended workspace
-      operationId: resumeWorkspace
-      parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-      responses:
-        "202":
-          description: Resume initiated
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
   # --- Sessions ---
   /workspaces/{id}/sessions:
     get:

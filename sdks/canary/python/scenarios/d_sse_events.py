@@ -101,8 +101,8 @@ def run(r: Runner, cfg: Config) -> None:
             phase_event_received, "sse: workspace.phase event received on suspend"
         )
 
-        # P4: Resume triggers another phase event
-        r.assert_no_error(lambda: c.workspaces.resume(ws_id), "resume: no error")
+        # P4: Activate triggers another phase event
+        r.assert_no_error(lambda: c.workspaces.activate(ws_id), "activate: no error")
         prev_count = len([e for e in events if e.get("type") == "workspace.phase"])
         deadline2 = time.time() + 60
         resume_event_received = False

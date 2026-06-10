@@ -38,10 +38,6 @@ func (s *WorkspacesService) Suspend(ctx context.Context, id string) error {
 	return s.c.do(ctx, "POST", "/workspaces/"+id+"/suspend", nil, nil)
 }
 
-func (s *WorkspacesService) Resume(ctx context.Context, id string) error {
-	return s.c.do(ctx, "POST", "/workspaces/"+id+"/resume", nil, nil)
-}
-
 func (s *WorkspacesService) Restart(ctx context.Context, id string) error {
 	return s.c.do(ctx, "POST", "/workspaces/"+id+"/restart", nil, nil)
 }

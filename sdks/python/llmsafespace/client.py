@@ -160,9 +160,6 @@ class _WorkspacesAPI:
     def suspend(self, workspace_id: str) -> None:
         self._c._request("POST", f"/workspaces/{workspace_id}/suspend")
 
-    def resume(self, workspace_id: str) -> None:
-        self._c._request("POST", f"/workspaces/{workspace_id}/resume")
-
     def activate(self, workspace_id: str) -> dict[str, str]:
         return self._c._request("POST", f"/workspaces/{workspace_id}/activate")
 

@@ -451,52 +451,6 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 	return nil
 }
 
-// ResumeWorkspace transitions a workspace to Resuming phase.
-func (s *Service) ResumeWorkspace(ctx context.Context, userID, workspaceID string) error {
-	start := time.Now()
-	defer func() {
-		if s.metricsService != nil {
-			s.metricsService.RecordRequest("ResumeWorkspace", "", 0, time.Since(start), 0)
-		}
-	}()
-
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
-		return err
-	}
-
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
-	if err != nil {
-		return apierrors.NewInternalError("workspace_get_failed", err)
-	}
-
-	if isActivePhase(crd.Status.Phase) {
-		return nil
-	}
-
-	if crd.Status.Phase != v1.WorkspacePhaseSuspended {
-		return apierrors.NewConflictError(
-			"workspace",
-			workspaceID,
-			fmt.Errorf("cannot resume workspace in phase %q (must be Suspended)", crd.Status.Phase),
-		)
-	}
-
-	crd.Status.Phase = v1.WorkspacePhaseResuming
-	// Reset idle clock so the controller's handleActive does not immediately
-	// re-suspend the workspace using a stale pre-suspension activity time.
-	// The controller's handleResuming also resets this; mirroring it here is
-	// belt-and-suspenders against unfavorable reconcile orderings.
-	now := metav1.Now()
-	crd.Status.LastActivityAt = &now
-	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
-		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
-		return apierrors.NewInternalError("workspace_resume_failed", err)
-	}
-
-	s.logger.Info("Workspace resume initiated", "workspaceID", workspaceID, "userID", userID)
-	return nil
-}
-
 // RestartWorkspace bumps spec.restartGeneration so the controller's
 // handleFailed (Epic 21 Change A) or handleActive recovery paths walk
 // the workspace back through Pending and rebuild the pod from scratch.
@@ -805,7 +759,8 @@ func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string)
 	resumed := false
 	switch crd.Status.Phase {
 	case v1.WorkspacePhaseSuspended:
-		if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
+		// ActivateWorkspace injects credentials then transitions to Resuming.
+		if _, err := s.ActivateWorkspace(ctx, userID, workspaceID); err != nil {
 			return nil, err
 		}
 		resumed = true
@@ -912,7 +867,9 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		return nil, err
 	}
 
-	// Inject secrets into ephemeral K8s Secret (Epic 10).
+	// Inject credentials into ephemeral K8s Secret before transitioning to
+	// Resuming so the pod's credential-setup init container finds secrets.json
+	// on boot. This is the critical step missing from the removed resume path.
 	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
 
 	// Enforce max active workspaces — may suspend the stalest workspace
@@ -921,11 +878,37 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		return nil, err
 	}
 
-	// Resume the target workspace
-	if err := s.ResumeWorkspace(ctx, userID, workspaceID); err != nil {
-		return nil, err
+	// Fetch current CRD state and transition to Resuming.
+	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return nil, apierrors.NewInternalError("workspace_get_failed", err)
 	}
 
+	if isActivePhase(crd.Status.Phase) {
+		// Already active — nothing to do (idempotent).
+		return &types.ActivateWorkspaceResponse{
+			Resumed:   workspaceID,
+			Suspended: suspended,
+		}, nil
+	}
+
+	if crd.Status.Phase != v1.WorkspacePhaseSuspended {
+		return nil, apierrors.NewConflictError(
+			"workspace",
+			workspaceID,
+			fmt.Errorf("cannot activate workspace in phase %q (must be Suspended or Active)", crd.Status.Phase),
+		)
+	}
+
+	crd.Status.Phase = v1.WorkspacePhaseResuming
+	now := metav1.Now()
+	crd.Status.LastActivityAt = &now
+	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
+		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
+		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
+	}
+
+	s.logger.Info("Workspace activated", "workspaceID", workspaceID, "userID", userID)
 	return &types.ActivateWorkspaceResponse{
 		Resumed:   workspaceID,
 		Suspended: suspended,

@@ -36,9 +36,9 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     const sp = await waitPhase(c, wsId, 'Suspended', 60000);
     r.assert(sp === 'Suspended', 'suspend: phase=Suspended', `got "${sp}"`);
 
-    await r.assertNoError(() => c.workspaces.resume(wsId!), 'resume: no error');
+    await r.assertNoError(() => c.workspaces.activate(wsId!), 'activate: no error');
     const rp = await waitActive(c, wsId);
-    r.assert(rp === 'Active', 'resume: phase=Active', `got "${rp}"`);
+    r.assert(rp === 'Active', 'activate: phase=Active', `got "${rp}"`);
 
     const sess2 = await ensureSessionWithRetry(c, wsId, 8);
     r.ok('ensure-session-post-resume: no error');

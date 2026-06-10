@@ -82,10 +82,10 @@ def run(run: Runner, cfg: Config) -> None:
         )
 
         # P5: Resume
-        run.assert_no_error(lambda: c.workspaces.resume(ws_id), "resume: no error")
+        run.assert_no_error(lambda: c.workspaces.activate(ws_id), "activate: no error")
         resume_phase = wait_active(c, ws_id, 120)
         run.assert_(
-            resume_phase == "Active", "resume: phase=Active", f"got {resume_phase!r}"
+            resume_phase == "Active", "activate: phase=Active", f"got {resume_phase!r}"
         )
 
         # P6: Ensure session post-resume

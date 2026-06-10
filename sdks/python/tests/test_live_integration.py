@@ -206,8 +206,8 @@ ok(True, "workspaces.suspend() → no error")
 phase = wait_phase(ws_id, "Suspended")
 ok(phase == "Suspended", f"phase → Suspended (got: {phase})")
 
-client.workspaces.resume(ws_id)
-ok(True, "workspaces.resume() → no error")
+client.workspaces.activate(ws_id)
+ok(True, "workspaces.activate() → no error")
 
 rh = wait_healthy(ws_id)
 ok(rh == "Healthy", f"resume → Healthy (got: {rh})")
