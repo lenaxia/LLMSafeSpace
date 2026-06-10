@@ -1641,7 +1641,7 @@ func (f *failingDeleteSessionIndex) ListByWorkspace(_ context.Context, _ string)
 }
 func (f *failingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error { return nil }
 func (f *failingDeleteSessionIndex) DeleteSession(_ context.Context, _, _ string) error {
-	return errors.New("session index unavailable")
+	return fmt.Errorf("db connection lost")
 }
 func (f *failingDeleteSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error {
 	return nil
