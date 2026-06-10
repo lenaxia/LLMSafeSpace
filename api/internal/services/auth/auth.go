@@ -448,6 +448,16 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 		if cachedUserID == "revoked" {
 			return "", errors.New("token has been revoked")
 		}
+		if clientIP != "" && s.rootKeyProvider != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
+			h := sha256.Sum256([]byte(apiKey))
+			keyHash := hex.EncodeToString(h[:])
+			keyRec, dbErr := s.dbService.GetAPIKeyRecordByHash(ctx, keyHash)
+			if dbErr == nil && keyRec != nil && len(keyRec.AllowedCIDRs) > 0 {
+				if !ipInAnyCIDR(clientIP, keyRec.AllowedCIDRs) {
+					return "", errors.New("request source IP not in allowed ranges for this key")
+				}
+			}
+		}
 		return cachedUserID, nil
 	}
 

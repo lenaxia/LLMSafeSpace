@@ -111,5 +111,9 @@ func unsealKey(passphrase, sealedData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypting sealed key: %w", err)
 	}
 
+	if len(rootKey) != 32 {
+		return nil, fmt.Errorf("unsealed key must be 32 bytes, got %d", len(rootKey))
+	}
+
 	return rootKey, nil
 }

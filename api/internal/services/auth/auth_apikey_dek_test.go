@@ -556,3 +556,66 @@ func TestValidateAPIKey_CIDREnforcement(t *testing.T) {
 	assert.Contains(t, err.Error(), "not in allowed ranges")
 	assert.Equal(t, "", userID)
 }
+
+func TestValidateAPIKey_CIDRCacheBypass_Blocked(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_cache_bypass_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-cache",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+		AllowedCIDRs:  []string{"10.0.0.0/8"},
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "192.168.1.5")
+	assert.Error(t, err, "CIDR must be enforced even on cache hit")
+	assert.Contains(t, err.Error(), "not in allowed ranges")
+	assert.Equal(t, "", userID)
+}
+
+func TestValidateAPIKey_CIDRCacheHit_AllowedIP(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_cache_allowed_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-cache2",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+		AllowedCIDRs:  []string{"10.0.0.0/8"},
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
+	assert.NoError(t, err, "CIDR check should pass for allowed IP on cache hit")
+	assert.Equal(t, "u1", userID)
+}
