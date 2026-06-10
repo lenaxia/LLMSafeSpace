@@ -182,6 +182,24 @@ All 7 packages pass with zero failures.
 
 ## Known Limitations / Deferred
 
+### Part 2 (implemented this session)
+
 1. **`dek_synced=false` 403 enforcement** — design specifies that stale keys should return `"API key DEK re-sync in progress. Retry shortly."` at auth time. Currently `validateAPIKey` still authenticates and simply has no DEK cached. Enforcement deferred pending operator feedback on UX.
 2. **Background retry job for `dek_synced=false` keys** — design item 9 (background retry every 5 minutes). Not implemented; the `rewrapAPIKeyDEKs` call at rotation time covers the immediate case.
 3. **`rewrapAPIKeyDEKs` final DB write failure** — if `UpdateAPIKeyDEK(ctx, key.ID, wrappedDEK, key.KekSalt, true)` fails, the key retains old `wrapped_dek` with `dek_synced=true`. Next `validateAPIKey` unwraps the stale DEK. Low probability (requires DB outage concurrent with rotation). Documented as known limitation; not blocking.
+
+### Part 1 (not started — entire section outstanding)
+
+The US-10.13 design has two parts. Only Part 2 (DEK wrapping) was implemented. Part 1 (API key at-rest encryption via `RootKeyProvider`) was explicitly deferred and remains entirely unimplemented. The following items from the design spec are open:
+
+4. **`RootKeyProvider` interface** (`StaticKeyProvider`, `SealedKeyProvider`, `KMSProvider`, `VaultTransitProvider`) — design tasks 1 & 2. Not implemented. The `key_ciphertext` column added in migration 000019 uses `LLMSAFESPACE_MASTER_SECRET` via `dekMasterKey()` as a stand-in, which is a `StaticKeyProvider`-equivalent from an env var. This satisfies rotation re-wrap but does not meet the full production KMS/Vault requirement.
+
+5. **Backfill script** — design task 4. The legacy plaintext `api_keys.key` column was already hashed in migration 000017 (SHA-256 hash stored in `key` column). However, there is no `key_ciphertext` backfill for existing rows — rows created before migration 000019 have `key_ciphertext = NULL`. These keys cannot be re-wrapped after rotation (`rewrapAPIKeyDEKs` skips rows with `len(key.KeyCiphertext) == 0`). A backfill script is required to populate `key_ciphertext` for all existing API keys.
+
+6. **`allowed_cidrs` IP allowlisting** — design tasks 5 & 6. The `allowed_cidrs TEXT[]` column is not in migration 000019 and is not enforced at auth time. Not implemented.
+
+7. **`seal-key` CLI subcommand** — design task 10. Not implemented.
+
+8. **Drop legacy `key` column** — design task 12. The `api_keys.key` column currently stores the SHA-256 hash (since migration 000017). The design calls for eventually dropping it in favour of `key_hash` (a dedicated indexed column). Not done — `key` column is still the lookup column used by `GetUserByAPIKey` and `GetAPIKeyRecordByHash`. The design's `key_hash` column (with `CREATE UNIQUE INDEX`) was never added; `key` is being used as the hash column instead.
+
+9. **Constant-time comparison in `validateAPIKey`** — design step 5 (`constant_time_compare(stored_raw, raw_key_from_request)`). Not implemented. The current flow does not decrypt `key_ciphertext` and verify against the incoming token — it trusts the hash lookup alone. This is acceptable only because SHA-256 on 32 random bytes is not brute-forceable, but it diverges from the design spec.

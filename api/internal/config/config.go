@@ -78,6 +78,9 @@ type Config struct {
 	Security struct {
 		AllowedOrigins   []string `mapstructure:"allowedOrigins"`
 		AllowCredentials bool     `mapstructure:"allowCredentials"`
+		RootKeyProvider  string   `mapstructure:"rootKeyProvider"`
+		SealedKeyPath    string   `mapstructure:"sealedKeyPath"`
+		PassphrasePath   string   `mapstructure:"passphrasePath"`
 	} `mapstructure:"security"`
 
 	Logging struct {
@@ -188,6 +191,15 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LLMSAFESPACE_SECURITY_ALLOWCREDENTIALS"); v == "true" {
 		config.Security.AllowCredentials = true
+	}
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ROOTKEYPROVIDER"); v != "" {
+		config.Security.RootKeyProvider = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_SEALEDKEYPATH"); v != "" {
+		config.Security.SealedKeyPath = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_PASSPHRASEPATH"); v != "" {
+		config.Security.PassphrasePath = v
 	}
 
 	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_ENABLED"); v == "true" {
