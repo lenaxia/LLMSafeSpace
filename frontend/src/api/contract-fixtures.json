@@ -89,7 +89,7 @@
     "name": "alpha",
     "userId": "u-123",
     "runtime": "python:3.11",
-    "storageSize": "5Gi",
+    "storageSize": "10Gi",
     "phase": "Active",
     "maxActiveSessions": 5,
     "createdAt": "2026-05-24T12:00:00Z",

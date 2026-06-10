@@ -71,7 +71,7 @@ type materializeConfig struct {
 	// provider model lists between credential reloads. It must NOT be inside
 	// secretsBaseDir because reset() deletes that directory on every Materialize
 	// call, which would destroy the cache before it could be used.
-	// Default: $HOME/.local/state/llmsafespace (on the sandbox-home emptyDir,
+	// Default: $HOME/.local/state/llmsafespace (on the workspace PVC subPath:home,
 	// outside SecretsBaseDir and SSHDir, never cleaned by reset()).
 	enricherCacheDir string
 }

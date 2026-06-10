@@ -55,7 +55,7 @@ func InstanceSettings() []SettingDef {
 
 		// Workspace
 		{Key: "workspace.defaultImage", Tier: 2, Type: TypeString, Default: "ghcr.io/lenaxia/llmsafespace/base:latest", Category: "Workspace", Label: "Default Image", Description: "Image for new workspaces"},
-		{Key: "workspace.defaultStorageSize", Tier: 2, Type: TypeString, Default: "5Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Default Storage", Description: "Default PVC size"},
+		{Key: "workspace.defaultStorageSize", Tier: 2, Type: TypeString, Default: "10Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Default Storage", Description: "Default PVC size"},
 		{Key: "workspace.maxStorageSize", Tier: 2, Type: TypeString, Default: "10Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Max Storage", Description: "Max PVC size"},
 		{Key: "workspace.defaultStorageClass", Tier: 2, Type: TypeString, Default: "", Category: "Workspace", Label: "Storage Class", Description: "K8s StorageClass (empty = cluster default)"},
 		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 3, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},

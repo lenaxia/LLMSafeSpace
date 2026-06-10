@@ -609,7 +609,7 @@ llmsafespace/
 │   │  │  │ main: opencode serve --hostname 0.0.0.0 --port 4096       │ │   │
 │   │  │  │ security: readOnlyRoot, runAsNonRoot, drop ALL caps        │ │   │
 │   │  │  └──────────────────────────────────────────────────────────┘  │ │   │
-│   │  │  Volumes: PVC at /workspace + emptyDirs (/tmp, /sandbox-cfg)  │ │   │
+│   │  │  Volumes: PVC at /workspace + /home/sandbox (subPath:home) + emptyDirs (/tmp, /sandbox-cfg)  │ │   │
 │   │  └───────────────────────────────────────────────────────────────┘ │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
@@ -700,10 +700,10 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 
 | Mount | Type | Persists across pod restart? | Owner |
 |---|---|---|---|
-| `/workspace` | Longhorn PVC | Yes | User workspace data, opencode.db, auth.json |
+| `/workspace` | Longhorn PVC (root, no subPath) | Yes | User workspace data, opencode.db, auth.json |
+| `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
 | `/tmp` | emptyDir (memory) | No | agent-config.json, secrets-env |
-| `/home/sandbox` | emptyDir (disk, 1Gi) | No — deleted on pod termination | SSH keys, secrets base dir, enricher cache |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
@@ -759,7 +759,7 @@ None of these write paths are atomic with each other. The design relies on:
 
 **Root cause:** Enricher wrote cache to `/home/sandbox/.secrets` which `reset()` deletes on every reload.
 
-**Fix implemented:** `enricherCacheDir` defaults to `$HOME/.local/state/llmsafespace` (`cmd/workspace-agentd/secrets.go:91`), which is on the `sandbox-home` emptyDir and is never deleted by `reset()`. 24-hour TTL is now actually exercised.
+**Fix implemented:** `enricherCacheDir` defaults to `$HOME/.local/state/llmsafespace` (`cmd/workspace-agentd/secrets.go:91`), which is on the workspace PVC (`subPath: home`) and is never deleted by `reset()`. 24-hour TTL is now actually exercised.
 
 #### Bug 3 — Personal opencode key → broken free model routing — ✅ Fixed (PR #67 follow-up)
 

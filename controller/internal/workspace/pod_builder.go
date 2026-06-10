@@ -114,7 +114,14 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			{Name: "workspace", MountPath: "/workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
 			{Name: "tmp", MountPath: "/tmp"},
-			{Name: "sandbox-home", MountPath: "/home/sandbox"},
+			// /home/sandbox is a subPath on the same PVC as /workspace so that
+			// tool caches (Go build, npm, mise), SSH keys, and enricher state
+			// survive pod restarts and suspend/resume cycles. Previously this
+			// was a 1Gi emptyDir which caused eviction loops when caches grew.
+			// The /workspace mount intentionally uses no subPath (PVC root) so
+			// existing workspaces are not affected — their data lives at PVC
+			// root and would be invisible if a subPath were added.
+			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
 		Resources: resourceRequirementsFor(workspace),
 	}
@@ -125,9 +132,10 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		}},
 		// G15 (Epic 17): sandbox-cfg and tmp are tmpfs-backed to
 		// prevent plaintext secrets / session keys from touching
-		// node disk. sandbox-home is intentionally disk-backed so
-		// tool caches (npm, pip, etc.) have sufficient space for
-		// package downloads across sessions.
+		// node disk. /home/sandbox is now a subPath on the workspace
+		// PVC (see SubPath: "home" mount above) so tool caches and
+		// home-dir state persist across pod restarts without consuming
+		// node ephemeral storage or triggering emptyDir evictions.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptrQuantity("4Mi"),
@@ -135,9 +143,6 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptrQuantity("64Mi"),
-		}}},
-		{Name: "sandbox-home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			SizeLimit: ptrQuantity("1Gi"),
 		}}},
 	}
 
