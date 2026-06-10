@@ -59,11 +59,12 @@ type SessionTokens struct {
 
 // SessionInfo describes a single opencode session.
 type SessionInfo struct {
-	ID     string         `json:"id"`
-	Title  string         `json:"title,omitempty"`
-	Status string         `json:"status"` // "idle" | "busy"
-	Tokens *SessionTokens `json:"tokens,omitempty"`
-	Model  string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
+	ID          string         `json:"id"`
+	Title       string         `json:"title,omitempty"`
+	Status      string         `json:"status"` // "idle" | "busy"
+	Tokens      *SessionTokens `json:"tokens,omitempty"`
+	Model       string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
+	ContextUsed int64          `json:"contextUsed,omitempty"`
 }
 
 // CPUUsage reports cumulative CPU consumption from cgroup v2 cpu.stat.

@@ -639,10 +639,24 @@ mcp:
 # Stable CNAME that rotates to fresh Worker deployments.
 inferenceRelayURL: "https://relay.safespaces.dev"
 
-# Epic 26: Relay auth secret. Embedded as the first path segment of
-# inferenceRelayURL so workspace pods send:
-#   https://relay.safespaces.dev/<secret>/responses
-# The CF Worker strips and validates this segment before forwarding upstream.
-# Set via --set inferenceRelaySecret=<value> or in a values override file.
-# Must match the RELAY_SECRET CF Worker secret set via `wrangler secret put`.
+# Epic 26: Relay auth secret.
+# Leave empty ("") to have the chart auto-generate a cryptographically
+# random 64-hex-char secret on first install and preserve it across upgrades.
+# The generated value is stored in the llmsafespace-credentials K8s Secret
+# and pushed to the CF Worker automatically if cloudflare credentials are set.
+# Only set this manually if you need to force a specific value.
 inferenceRelaySecret: ""
+
+# Cloudflare credentials for automated relay secret management.
+# When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to
+# the CF Worker automatically, keeping the cluster and CF Worker in sync.
+# Provide these via --set or a sealed-secrets/external-secrets override —
+# never commit the apiToken to source control.
+cloudflare:
+  # API token with Workers:Edit permission (Account scope).
+  # Obtain from https://dash.cloudflare.com/profile/api-tokens
+  apiToken: ""
+  # Cloudflare account ID (visible in Workers dashboard URL).
+  accountId: ""
+  # Name of the CF Worker script to push the secret to.
+  workerName: "llmsafespace-inference-relay"

@@ -113,6 +113,7 @@ export interface AgentSessionInfo {
   id: string;
   title?: string;
   status: string; // "idle" | "busy"
+  contextUsed?: number;
 }
 
 export interface CredentialState {

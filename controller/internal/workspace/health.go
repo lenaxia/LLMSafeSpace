@@ -247,7 +247,7 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
 		for i, s := range status.Sessions {
-			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status}
+			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed}
 		}
 		ws.Status.Sessions = sessions
 	} else {

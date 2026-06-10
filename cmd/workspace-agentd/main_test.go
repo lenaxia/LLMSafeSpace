@@ -221,6 +221,443 @@ func TestStatuszEndpoint_IncludesSessionsAndDisk(t *testing.T) {
 	assert.Equal(t, int64(1000), resp.Disk.TotalBytes)
 }
 
+// === statusz context usage integration (S36.3) ===
+
+func TestStatuszEndpoint_ContextUsage_PerSessionContextUsed(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "1.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"providers": []map[string]interface{}{
+					{
+						"id": "opencode",
+						"models": map[string]interface{}{
+							"claude-sonnet-4-20250514": map[string]interface{}{
+								"id": "claude-sonnet-4-20250514",
+								"limit": map[string]interface{}{
+									"context": 200000,
+								},
+							},
+						},
+					},
+				},
+			})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID    string `json:"id"`
+				Model *struct {
+					ID string `json:"id"`
+				} `json:"model"`
+			}{
+				{ID: "ses_1", Model: &struct {
+					ID string `json:"id"`
+				}{ID: "claude-sonnet-4-20250514"}},
+				{ID: "ses_2"},
+			})
+		case "/session/ses_1", "/session/ses_2":
+			json.NewEncoder(w).Encode(map[string]string{"title": ""})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+	tracker.setPromptTokens("ses_1", 15000)
+	tracker.setPromptTokens("ses_2", 80000)
+	startedAt := time.Now()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		healthy, version, _ := client.IsHealthy(r.Context())
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
+		ready := healthy && len(connected) > 0
+
+		activeCnt := 0
+		for _, s := range sessions {
+			if s.Status == "busy" {
+				activeCnt++
+			}
+		}
+
+		var modelID string
+		for i, s := range sessions {
+			if pt := tracker.getPromptTokens(s.ID); pt > 0 {
+				sessions[i].ContextUsed = pt
+			}
+			if modelID == "" && s.Model != "" {
+				modelID = s.Model
+			}
+		}
+		contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
+		var contextUsage *agentd.ContextUsage
+		if len(sessions) > 0 {
+			contextUsage = &agentd.ContextUsage{UsedTokens: 0, TotalTokens: contextLimit}
+		}
+
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{
+			Healthy: healthy, Ready: ready, Connected: connected,
+			ProvidersConfigured: configured, Sessions: sessions, SessionsActive: activeCnt,
+			AgentType: "opencode", AgentVersion: version,
+			UptimeSeconds: int(time.Since(startedAt).Seconds()),
+			Context:       contextUsage,
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp.Sessions, 2)
+	assert.Equal(t, int64(15000), resp.Sessions[0].ContextUsed)
+	assert.Equal(t, int64(80000), resp.Sessions[1].ContextUsed)
+	assert.NotNil(t, resp.Context)
+	assert.Equal(t, int64(0), resp.Context.UsedTokens, "top-level UsedTokens should be 0")
+	assert.Equal(t, int64(200000), resp.Context.TotalTokens, "TotalTokens should be model context limit")
+}
+
+func TestStatuszEndpoint_ContextUsage_EmptySessions(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "1.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct{}{})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+	startedAt := time.Now()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		healthy, version, _ := client.IsHealthy(r.Context())
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
+		ready := healthy && len(connected) > 0
+
+		var contextUsage *agentd.ContextUsage
+		if len(sessions) > 0 {
+			contextUsage = &agentd.ContextUsage{UsedTokens: 0, TotalTokens: 0}
+		}
+
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{
+			Healthy: healthy, Ready: ready, Connected: connected,
+			ProvidersConfigured: configured, Sessions: sessions,
+			AgentType: "opencode", AgentVersion: version,
+			UptimeSeconds: int(time.Since(startedAt).Seconds()),
+			Context:       contextUsage,
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.Sessions)
+	assert.Nil(t, resp.Context, "no context field when no sessions")
+}
+
+func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "1.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID    string `json:"id"`
+				Model *struct {
+					ID string `json:"id"`
+				} `json:"model"`
+			}{
+				{ID: "ses_1", Model: &struct {
+					ID string `json:"id"`
+				}{ID: "glm-5.1"}},
+			})
+		case "/session/ses_1":
+			json.NewEncoder(w).Encode(map[string]string{"title": ""})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+	startedAt := time.Now()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		healthy, version, _ := client.IsHealthy(r.Context())
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
+		ready := healthy && len(connected) > 0
+
+		var modelID string
+		for i, s := range sessions {
+			if pt := tracker.getPromptTokens(s.ID); pt > 0 {
+				sessions[i].ContextUsed = pt
+			}
+			if modelID == "" && s.Model != "" {
+				modelID = s.Model
+			}
+		}
+		contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
+		var contextUsage *agentd.ContextUsage
+		if len(sessions) > 0 {
+			contextUsage = &agentd.ContextUsage{UsedTokens: 0, TotalTokens: contextLimit}
+		}
+
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{
+			Healthy: healthy, Ready: ready, Connected: connected,
+			ProvidersConfigured: configured, Sessions: sessions,
+			AgentType: "opencode", AgentVersion: version,
+			UptimeSeconds: int(time.Since(startedAt).Seconds()),
+			Context:       contextUsage,
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp.Sessions, 1)
+	assert.Equal(t, int64(0), resp.Sessions[0].ContextUsed, "cold-start session has no SSE data, ContextUsed=0")
+}
+
+func TestStatuszEndpoint_OldFieldsUnchanged(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "1.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{{ID: "ses_1"}})
+		case "/session/ses_1":
+			json.NewEncoder(w).Encode(map[string]string{"id": "ses_1", "title": "Test"})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+	startedAt := time.Now()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		healthy, version, _ := client.IsHealthy(r.Context())
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
+		ready := healthy && len(connected) > 0
+
+		activeCnt := 0
+		for _, s := range sessions {
+			if s.Status == "busy" {
+				activeCnt++
+			}
+		}
+
+		var modelID string
+		for i, s := range sessions {
+			if pt := tracker.getPromptTokens(s.ID); pt > 0 {
+				sessions[i].ContextUsed = pt
+			}
+			if modelID == "" && s.Model != "" {
+				modelID = s.Model
+			}
+		}
+		contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
+		var contextUsage *agentd.ContextUsage
+		if len(sessions) > 0 {
+			contextUsage = &agentd.ContextUsage{UsedTokens: 0, TotalTokens: contextLimit}
+		}
+
+		json.NewEncoder(w).Encode(agentd.StatuszResponse{
+			Healthy: healthy, Ready: ready, Connected: connected,
+			ProvidersConfigured: configured, Sessions: sessions, SessionsActive: activeCnt,
+			AgentType: "opencode", AgentVersion: version,
+			UptimeSeconds: int(time.Since(startedAt).Seconds()),
+			Disk:          &agentd.DiskUsage{UsedBytes: 100, TotalBytes: 1000},
+			Context:       contextUsage,
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Healthy)
+	assert.True(t, resp.Ready)
+	assert.Len(t, resp.Sessions, 1)
+	assert.Equal(t, "ses_1", resp.Sessions[0].ID)
+	assert.Equal(t, "Test", resp.Sessions[0].Title)
+	assert.Equal(t, "idle", resp.Sessions[0].Status)
+	assert.NotNil(t, resp.Disk)
+	assert.Equal(t, int64(100), resp.Disk.UsedBytes)
+	assert.Equal(t, int64(1000), resp.Disk.TotalBytes)
+}
+
+// === buildStatuszHandler integration: exercises the real production handler ===
+// Unlike the hand-rolled tests above, these call buildStatuszHandler() directly
+// so that any change to the production closure is automatically covered.
+
+func TestBuildStatuszHandler_ContextUsed_PerSession(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "2.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"providers": []map[string]interface{}{
+					{
+						"id": "opencode",
+						"models": map[string]interface{}{
+							"big-pickle": map[string]interface{}{
+								"id":    "big-pickle",
+								"limit": map[string]interface{}{"context": 128000},
+							},
+						},
+					},
+				},
+			})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID    string `json:"id"`
+				Model *struct {
+					ID string `json:"id"`
+				} `json:"model"`
+			}{{ID: "ses_A", Model: &struct {
+				ID string `json:"id"`
+			}{ID: "big-pickle"}}})
+		case "/session/ses_A":
+			json.NewEncoder(w).Encode(map[string]string{"title": "integration test"})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker()
+	tracker.setPromptTokens("ses_A", 55000)
+	startedAt := time.Now()
+
+	// Use the real buildStatuszHandler, not a hand-rolled copy.
+	handler := buildStatuszHandler(client, cache, tracker, startedAt)
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.True(t, resp.Healthy)
+	assert.Len(t, resp.Sessions, 1)
+	assert.Equal(t, "ses_A", resp.Sessions[0].ID)
+	assert.Equal(t, int64(55000), resp.Sessions[0].ContextUsed, "ContextUsed must be threaded from sseTracker into session")
+	assert.NotNil(t, resp.Context)
+	assert.Equal(t, int64(0), resp.Context.UsedTokens, "top-level UsedTokens must be 0")
+	assert.Equal(t, int64(128000), resp.Context.TotalTokens, "TotalTokens from model context limit")
+}
+
+func TestBuildStatuszHandler_NoContextUsed_WhenTrackerEmpty(t *testing.T) {
+	opencodeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "1.0.0"})
+		case "/provider":
+			json.NewEncoder(w).Encode(map[string][]string{"connected": {"opencode"}})
+		case "/config/providers":
+			json.NewEncoder(w).Encode(map[string]interface{}{"providers": []interface{}{}})
+		case "/session":
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{{ID: "ses_cold"}})
+		case "/session/ses_cold":
+			json.NewEncoder(w).Encode(map[string]string{"title": "cold start"})
+		}
+	}))
+	defer opencodeSrv.Close()
+
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(opencodeSrv.URL)
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	cache := &providerCache{}
+	tracker := newSessionStatusTracker() // empty — no SSE data yet
+	startedAt := time.Now()
+
+	handler := buildStatuszHandler(client, cache, tracker, startedAt)
+
+	req := httptest.NewRequest("GET", "/v1/statusz", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp agentd.StatuszResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.Len(t, resp.Sessions, 1)
+	assert.Equal(t, int64(0), resp.Sessions[0].ContextUsed, "cold-start: no SSE data → ContextUsed must be 0")
+}
+
 // setAgentAddr is a test helper to override the package-level agentAddr.
 func setAgentAddr(addr string) {
 	agentAddrAtomic.Store(addr)
@@ -264,6 +701,79 @@ func TestSessionStatusTracker_ProcessEvent_IgnoresOtherTypes(t *testing.T) {
 
 	tracker.processEvent(`{"type":"message.created","properties":{"sessionID":"ses_1"}}`)
 	assert.Equal(t, "idle", tracker.get("ses_1"), "non session.status events should not set status")
+}
+
+func TestSessionStatusTracker_ProcessEvent_StepEnded_CapturesPromptTokens(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc","tokens":{"input":800,"output":400,"reasoning":100,"cache":{"read":200,"write":50}}}}`)
+	assert.Equal(t, int64(1050), tracker.getPromptTokens("ses_abc"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_StepEnded_MissingTokensIgnored(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc"}}`)
+	assert.Equal(t, int64(0), tracker.getPromptTokens("ses_abc"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_StepEnded_EmptySessionIDIgnored(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"type":"session.next.step.ended","properties":{"sessionID":"","tokens":{"input":100,"output":50,"reasoning":0,"cache":{"read":0,"write":0}}}}`)
+	assert.Equal(t, int64(0), tracker.getPromptTokens(""))
+}
+
+func TestSessionStatusTracker_ProcessEvent_StepEnded_NestedFormat(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"payload":{"type":"session.next.step.ended","properties":{"sessionID":"ses_nest","tokens":{"input":500,"output":200,"reasoning":50,"cache":{"read":100,"write":25}}}}}`)
+	assert.Equal(t, int64(625), tracker.getPromptTokens("ses_nest"))
+}
+
+func TestSessionStatusTracker_GetPromptTokens_NoData_ReturnsZero(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	assert.Equal(t, int64(0), tracker.getPromptTokens("nonexistent"))
+}
+
+func TestSessionStatusTracker_GetPromptTokens_ExistingData_ReturnsValue(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.setPromptTokens("ses_1", 5000)
+	assert.Equal(t, int64(5000), tracker.getPromptTokens("ses_1"))
+}
+
+func TestSessionStatusTracker_HasPromptTokens(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	assert.False(t, tracker.hasPromptTokens("ses_1"))
+	tracker.setPromptTokens("ses_1", 100)
+	assert.True(t, tracker.hasPromptTokens("ses_1"))
+}
+
+func TestSessionStatusTracker_Prune_RemovesPromptTokens(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+	tracker.setPromptTokens("ses_1", 5000)
+	tracker.set("ses_2", "idle")
+	tracker.setPromptTokens("ses_2", 3000)
+	tracker.set("ses_old", "busy")
+	tracker.setPromptTokens("ses_old", 90000)
+
+	tracker.prune([]string{"ses_1", "ses_2"})
+
+	assert.Equal(t, int64(5000), tracker.getPromptTokens("ses_1"))
+	assert.Equal(t, int64(3000), tracker.getPromptTokens("ses_2"))
+	assert.Equal(t, int64(0), tracker.getPromptTokens("ses_old"), "pruned session should return 0 prompt tokens")
+	assert.False(t, tracker.hasPromptTokens("ses_old"))
+}
+
+func TestSessionStatusTracker_ProcessEvent_SessionStatus_UnchangedBehavior(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	tracker.processEvent(`{"type":"session.status","properties":{"sessionID":"ses_abc","status":{"type":"busy"}}}`)
+	assert.Equal(t, "busy", tracker.get("ses_abc"))
+
+	tracker.processEvent(`{"type":"session.status","properties":{"sessionID":"ses_abc","status":{"type":"idle"}}}`)
+	assert.Equal(t, "idle", tracker.get("ses_abc"))
 }
 
 func TestSessionStatusTracker_ProcessEvent_InvalidJSON(t *testing.T) {
@@ -323,4 +833,219 @@ func TestSessionStatusTracker_MergesIntoCachedState(t *testing.T) {
 	assert.Len(t, sessions, 2)
 	assert.Equal(t, "busy", sessions[0].Status)
 	assert.Equal(t, "idle", sessions[1].Status)
+}
+
+// === fetchSessionPromptTokens ===
+
+func TestFetchSessionPromptTokens_AssistantWithTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/session/ses_1/message", r.URL.Path)
+		assert.Equal(t, "20", r.URL.Query().Get("limit"))
+		json.NewEncoder(w).Encode([]struct {
+			Info struct {
+				Role   string `json:"role"`
+				Tokens *struct {
+					Input int64 `json:"input"`
+					Cache struct {
+						Read  int64 `json:"read"`
+						Write int64 `json:"write"`
+					} `json:"cache"`
+				} `json:"tokens"`
+			} `json:"info"`
+		}{
+			{Info: struct {
+				Role   string `json:"role"`
+				Tokens *struct {
+					Input int64 `json:"input"`
+					Cache struct {
+						Read  int64 `json:"read"`
+						Write int64 `json:"write"`
+					} `json:"cache"`
+				} `json:"tokens"`
+			}{Role: "user"}},
+			{Info: struct {
+				Role   string `json:"role"`
+				Tokens *struct {
+					Input int64 `json:"input"`
+					Cache struct {
+						Read  int64 `json:"read"`
+						Write int64 `json:"write"`
+					} `json:"cache"`
+				} `json:"tokens"`
+			}{Role: "assistant", Tokens: &struct {
+				Input int64 `json:"input"`
+				Cache struct {
+					Read  int64 `json:"read"`
+					Write int64 `json:"write"`
+				} `json:"cache"`
+			}{Input: 1024, Cache: struct {
+				Read  int64 `json:"read"`
+				Write int64 `json:"write"`
+			}{Read: 200, Write: 50}}}},
+		})
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	tokens := client.fetchSessionPromptTokens(context.Background(), "ses_1")
+	assert.Equal(t, int64(1274), tokens) // 1024 + 200 + 50
+}
+
+func TestFetchSessionPromptTokens_NoAssistant_ReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]struct {
+			Info struct {
+				Role string `json:"role"`
+			} `json:"info"`
+		}{
+			{Info: struct {
+				Role string `json:"role"`
+			}{Role: "user"}},
+		})
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	tokens := client.fetchSessionPromptTokens(context.Background(), "ses_1")
+	assert.Equal(t, int64(0), tokens)
+}
+
+func TestFetchSessionPromptTokens_APIError_ReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	tokens := client.fetchSessionPromptTokens(context.Background(), "ses_1")
+	assert.Equal(t, int64(0), tokens)
+}
+
+func TestFetchSessionPromptTokens_InvalidJSON_ReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	tokens := client.fetchSessionPromptTokens(context.Background(), "ses_1")
+	assert.Equal(t, int64(0), tokens)
+}
+
+func TestFillGaps_SkipsKnownSessions(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.setPromptTokens("ses_1", 5000)
+
+	var fetched []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched = append(fetched, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]struct{}{})
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	state := &fillGapsState{}
+	runFill(context.Background(), client, tracker, func() []agentd.SessionInfo {
+		return []agentd.SessionInfo{{ID: "ses_1"}}
+	}, state)
+
+	assert.Empty(t, fetched, "should not fetch for sessions with known prompt tokens")
+}
+
+func TestFillGaps_FillsUnknownSessions(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]struct {
+			Info struct {
+				Role   string `json:"role"`
+				Tokens *struct {
+					Input int64 `json:"input"`
+					Cache struct {
+						Read  int64 `json:"read"`
+						Write int64 `json:"write"`
+					} `json:"cache"`
+				} `json:"tokens"`
+			} `json:"info"`
+		}{
+			{Info: struct {
+				Role   string `json:"role"`
+				Tokens *struct {
+					Input int64 `json:"input"`
+					Cache struct {
+						Read  int64 `json:"read"`
+						Write int64 `json:"write"`
+					} `json:"cache"`
+				} `json:"tokens"`
+			}{Role: "assistant", Tokens: &struct {
+				Input int64 `json:"input"`
+				Cache struct {
+					Read  int64 `json:"read"`
+					Write int64 `json:"write"`
+				} `json:"cache"`
+			}{Input: 3000, Cache: struct {
+				Read  int64 `json:"read"`
+				Write int64 `json:"write"`
+			}{Read: 500, Write: 100}}}},
+		})
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	state := &fillGapsState{}
+	runFill(context.Background(), client, tracker, func() []agentd.SessionInfo {
+		return []agentd.SessionInfo{{ID: "ses_new"}}
+	}, state)
+
+	assert.Equal(t, int64(3600), tracker.getPromptTokens("ses_new"))
+}
+
+func TestFillGaps_SkipsIfAlreadyRunning(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	state := &fillGapsState{}
+	state.running = true
+
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]struct{}{})
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	origAddr := getAgentAddr()
+	defer func() { setAgentAddr(origAddr) }()
+	setAgentAddr(server.URL)
+
+	runFill(context.Background(), client, tracker, func() []agentd.SessionInfo {
+		return []agentd.SessionInfo{{ID: "ses_1"}}
+	}, state)
+
+	assert.Equal(t, 0, callCount, "should not fetch when already running")
 }

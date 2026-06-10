@@ -19,14 +19,15 @@ const transitioningPhases = new Set(["Pending", "Creating", "Resuming", "Suspend
  * ChatPage) invalidate ["workspace-status", workspaceId], triggering a fresh
  * fetch. staleTime: 0 ensures invalidation always causes a re-fetch.
  *
- * Belt-and-suspenders: while the workspace is in a transitioning phase, a
- * 3-second refetchInterval is active. This covers the narrow window between
- * an SSE connect and a phase event that already fired before the connection
- * was established (e.g. API server restart followed immediately by a resume),
- * as well as any SSE reconnect backoff delay (2s initial, doubles to 30s).
- *
- * Once Active (or Suspended/terminal), the interval is disabled and updates
- * are purely SSE-driven.
+ * Belt-and-suspenders:
+ * - While transitioning: 3-second poll to catch phase events that fired before
+ *   SSE connected (e.g. API restart followed immediately by resume).
+ * - While Active: 30-second poll to keep per-session context usage fresh.
+ *   Context data (ContextUsed on each session) is not delivered via SSE —
+ *   it is derived from agentd's statusz endpoint by the controller health loop.
+ *   Without a background poll, the compaction indicator and DiskUsageBar
+ *   context display would never see updates after initial page load.
+ * - Suspended/terminal: no poll (data is stable).
  */
 export function useWorkspaceStatus(workspaceId: string | undefined) {
   return useQuery({
@@ -39,12 +40,12 @@ export function useWorkspaceStatus(workspaceId: string | undefined) {
     },
     enabled: !!workspaceId,
     staleTime: 0,
-    // Poll every 3 s while transitioning; disabled once stable.
-    // This is intentionally conservative — SSE should deliver the Active event
-    // within 1-2 s of the transition; the poll is a fallback, not the primary path.
     refetchInterval: (query) => {
       const phase = query.state.data?.phase;
-      return phase && transitioningPhases.has(phase) ? 3_000 : false;
+      if (!phase) return false;
+      if (transitioningPhases.has(phase)) return 3_000;
+      if (phase === "Active") return 30_000;
+      return false;
     },
   });
 }

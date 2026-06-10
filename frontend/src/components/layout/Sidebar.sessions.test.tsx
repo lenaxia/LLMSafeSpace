@@ -20,6 +20,7 @@ vi.mock("../../api/workspaces", () => ({
     activate: vi.fn().mockResolvedValue({ resumed: "ws-1" }),
     ensureSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", workspaceId: "ws-1" }),
     getSessions: vi.fn(),
+    getStatus: vi.fn().mockResolvedValue(null),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
     deleteWorkspace: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
@@ -161,6 +162,95 @@ describe("Sidebar — session title display", () => {
     await waitFor(() => {
       expect(screen.getByText("Updated Title")).toBeInTheDocument();
       expect(screen.getByText("Keep This")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("S36.5 — per-session context usage indicator in sidebar", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "My Workspace", phase: "Active", userId: "u1", runtime: "base", storageSize: "5Gi", createdAt: "", updatedAt: "" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-1", title: "Debug session", messageCount: 5, status: "idle" },
+      { id: "sess-2", title: "Refactor session", messageCount: 2, status: "idle" },
+    ]);
+  });
+
+  function renderSidebar() {
+    return render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/chat/ws-1/sess-1"]}>
+            <Sidebar />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows context token count next to a session when workspace status has contextUsed", async () => {
+    // Pre-populate workspace status cache with per-session context data
+    qc.setQueryData(["workspace-status", "ws-1"], {
+      phase: "Active",
+      contextTotal: 200000,
+      sessions: [
+        { id: "sess-1", status: "idle", contextUsed: 42000 },
+        { id: "sess-2", status: "idle", contextUsed: 0 },
+      ],
+    });
+
+    renderSidebar();
+
+    await waitFor(() => {
+      expect(screen.getByText("Debug session")).toBeInTheDocument();
+    });
+
+    // sess-1 has contextUsed=42000 → should show "42K"
+    expect(screen.getAllByText("42K").length).toBeGreaterThan(0);
+    // sess-2 has contextUsed=0 → no indicator (zero is omitted)
+    // "Refactor session" should be visible but no "0K" or "0" context indicator
+    expect(screen.getByText("Refactor session")).toBeInTheDocument();
+  });
+
+  it("does NOT show context indicator when workspace status has no session data", async () => {
+    // No workspace-status cache entry at all
+    renderSidebar();
+
+    await waitFor(() => {
+      expect(screen.getByText("Debug session")).toBeInTheDocument();
+    });
+
+    // No context indicators (no "K" suffix numbers from context)
+    expect(screen.queryByText(/42K/)).not.toBeInTheDocument();
+  });
+
+  it("updates context indicator when workspace status cache is updated", async () => {
+    qc.setQueryData(["workspace-status", "ws-1"], {
+      phase: "Active",
+      sessions: [{ id: "sess-1", status: "idle", contextUsed: 10000 }],
+    });
+
+    renderSidebar();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("10K").length).toBeGreaterThan(0);
+    });
+
+    // Update cache — simulates a status poll refreshing context
+    qc.setQueryData(["workspace-status", "ws-1"], {
+      phase: "Active",
+      sessions: [{ id: "sess-1", status: "idle", contextUsed: 75000 }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("75K").length).toBeGreaterThan(0);
+      expect(screen.queryByText("10K")).not.toBeInTheDocument();
     });
   });
 });

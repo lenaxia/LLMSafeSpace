@@ -176,6 +176,20 @@ export function ChatPage() {
   // Track whether SSE has taken over serverBusy (to avoid status poll overriding SSE)
   const sseHasDrivenBusy = useRef(false);
 
+  // S36.4: Compaction indicator — detect when contextUsed drops >50% (opencode auto-compact)
+  const prevContextUsedRef = useRef<number | undefined>(undefined);
+  const [compactionDetected, setCompactionDetected] = useState(false);
+  useEffect(() => {
+    const cur = sessionStatus?.contextUsed;
+    const prev = prevContextUsedRef.current;
+    if (prev != null && cur != null && prev > 0 && cur < prev * 0.5) {
+      setCompactionDetected(true);
+    }
+    if (cur != null) {
+      prevContextUsedRef.current = cur;
+    }
+  }, [sessionStatus?.contextUsed]);
+
   // US-16.11: Pending input requests from the agent
   const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
@@ -231,6 +245,9 @@ export function ChatPage() {
     hasAutoAbortedRef.current = false;
     knownLivePartIds.current.clear();
     setSessionWasInterrupted(false);
+    // S36.4: Reset compaction state when navigating to a different session
+    prevContextUsedRef.current = undefined;
+    setCompactionDetected(false);
   }, [sessionId]);
 
   // US-15.5: Reconcile on idle — fetch authoritative history and clear streaming state
@@ -804,9 +821,16 @@ export function ChatPage() {
           diskTotalBytes={status?.diskTotalBytes}
           memoryUsedBytes={status?.memoryUsedBytes}
           memoryTotalBytes={status?.memoryTotalBytes}
-          contextUsed={status?.contextUsed}
+          contextUsed={sessionStatus?.contextUsed}
           contextTotal={status?.contextTotal}
         />
+      )}
+
+      {compactionDetected && (
+        <div className="flex items-center justify-between gap-2 border-b border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+          <span>Context compacted — conversation history was summarised to free context space.</span>
+          <button onClick={() => setCompactionDetected(false)} className="underline hover:no-underline shrink-0">Dismiss</button>
+        </div>
       )}
 
       {atCapRetryAfter !== null && (

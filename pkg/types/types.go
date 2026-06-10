@@ -479,9 +479,10 @@ type WorkspaceStatusResult struct {
 
 // SessionStatusItem describes a session reported by the workspace agent.
 type SessionStatusItem struct {
-	ID     string `json:"id"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status"`
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"`
+	ContextUsed int64  `json:"contextUsed,omitempty"`
 }
 
 type CredentialStateResult struct {
