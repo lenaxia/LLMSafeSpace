@@ -947,7 +947,7 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
-		userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
+			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				c.Set("userID", userID)
 				if jti := utilities.ExtractJTI(tokenString); jti != "" {
