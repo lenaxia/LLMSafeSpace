@@ -773,7 +773,10 @@ func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]
 
 func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT session_id, title, parent_session_id, last_message_at, message_count
+		`SELECT session_id, title, parent_session_id, last_message_at, message_count,
+		        last_seen_at,
+		        (last_message_at IS NOT NULL
+		         AND (last_seen_at IS NULL OR last_message_at > last_seen_at)) AS has_unread
 		 FROM session_index WHERE workspace_id = $1
 		 ORDER BY last_message_at DESC NULLS LAST LIMIT 100`, workspaceID)
 	if err != nil {
@@ -787,7 +790,8 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 		var title sql.NullString
 		var parentID sql.NullString
 		var lastMsg sql.NullTime
-		if err := rows.Scan(&item.ID, &title, &parentID, &lastMsg, &item.MessageCount); err != nil {
+		var lastSeen sql.NullTime
+		if err := rows.Scan(&item.ID, &title, &parentID, &lastMsg, &item.MessageCount, &lastSeen, &item.HasUnread); err != nil {
 			return nil, err
 		}
 		if title.Valid {
@@ -799,6 +803,10 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 		if lastMsg.Valid {
 			t := lastMsg.Time
 			item.LastMessageAt = &t
+		}
+		if lastSeen.Valid {
+			t := lastSeen.Time
+			item.LastSeenAt = &t
 		}
 		item.Status = "idle"
 		items = append(items, item)
@@ -848,6 +856,16 @@ func (s *Service) UpsertSessionParent(ctx context.Context, workspaceID, sessionI
 		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
 		   parent_session_id = EXCLUDED.parent_session_id,
 		   updated_at = NOW()`, workspaceID, sessionID, parentID)
+	return err
+}
+
+func (s *Service) UpdateSessionLastSeen(ctx context.Context, workspaceID, sessionID string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO session_index (workspace_id, session_id, last_seen_at, message_count, updated_at)
+		 VALUES ($1, $2, NOW(), 0, NOW())
+		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   last_seen_at = NOW(),
+		   updated_at = NOW()`, workspaceID, sessionID)
 	return err
 }
 

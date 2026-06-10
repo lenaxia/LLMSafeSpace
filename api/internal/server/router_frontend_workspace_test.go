@@ -11,11 +11,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -76,31 +81,6 @@ func TestActivateWorkspace_ServiceError(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// --- GET /api/v1/workspaces/:id/sessions ---
-
-func TestListWorkspaceSessions_Success(t *testing.T) {
-	router, svc := newRouterFixture(t)
-
-	svc.workspace.On("ListWorkspaceSessions", mock.Anything, "test-user", "ws-1").Return(
-		[]types.SessionListItem{
-			{ID: "sess-1", Title: "Chat about auth", MessageCount: 12, Status: "idle"},
-			{ID: "sess-2", Title: "Debug proxy", MessageCount: 3, Status: "active"},
-		}, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sessions", nil)
-	req.Header.Set("Authorization", "Bearer token")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	var items []types.SessionListItem
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
-	assert.Len(t, items, 2)
-	assert.Equal(t, "sess-1", items[0].ID)
-	assert.Equal(t, "Chat about auth", items[0].Title)
-	assert.Equal(t, 12, items[0].MessageCount)
 }
 
 func TestListWorkspaceSessions_EmptyList(t *testing.T) {
@@ -342,4 +322,144 @@ func TestEnsureSession_Route_ServiceError(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// --- US-37.2: Active session status merge in GET /:id/sessions ---
+
+func newRouterFixtureWithProxy(t *testing.T) (*gin.Engine, *mockServices, *handlers.ProxyHandler) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	log, err := apilogger.New(false, "error", "json")
+	require.NoError(t, err)
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	ws := &imocks.MockWorkspaceService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	met.On("IncrementActiveConnections", mock.Anything, mock.Anything).Maybe()
+	met.On("DecrementActiveConnections", mock.Anything, mock.Anything).Maybe()
+
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
+		if c.GetHeader("Authorization") == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		c.Set("userID", "test-user")
+		c.Next()
+	}))
+	auth.On("GetUserID", mock.Anything).Return("test-user")
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	proxyHandler, err := handlers.NewProxyHandler(k8sMock, log, "default", nil, nil)
+	require.NoError(t, err)
+
+	svc := &mockServices{auth: auth, metrics: met, workspace: ws}
+	router := NewRouter(svc, log, proxyHandler, RouterConfig{Debug: false})
+	return router, svc, proxyHandler
+}
+
+func TestListWorkspaceSessions_MergesActiveStatus(t *testing.T) {
+	router, svc, proxy := newRouterFixtureWithProxy(t)
+
+	proxy.SetActiveSessionsForTest("ws-1", []string{"sess-2"})
+
+	svc.workspace.On("ListWorkspaceSessions", mock.Anything, "test-user", "ws-1").Return(
+		[]types.SessionListItem{
+			{ID: "sess-1", Title: "Idle chat", MessageCount: 5, Status: "idle"},
+			{ID: "sess-2", Title: "Active chat", MessageCount: 3, Status: "idle"},
+			{ID: "sess-3", Title: "Another idle", MessageCount: 1, Status: "idle"},
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var items []types.SessionListItem
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
+	require.Len(t, items, 3)
+	assert.Equal(t, "idle", items[0].Status)
+	assert.Equal(t, "active", items[1].Status, "sess-2 should be active")
+	assert.Equal(t, "idle", items[2].Status)
+}
+
+func TestListWorkspaceSessions_AllIdleWhenNoProxyHandler(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("ListWorkspaceSessions", mock.Anything, "test-user", "ws-1").Return(
+		[]types.SessionListItem{
+			{ID: "sess-1", Title: "Chat", MessageCount: 5, Status: "idle"},
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var items []types.SessionListItem
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
+	require.Len(t, items, 1)
+	assert.Equal(t, "idle", items[0].Status)
+}
+
+func TestListWorkspaceSessions_EmptyWorkspace_NoCrash(t *testing.T) {
+	router, svc, proxy := newRouterFixtureWithProxy(t)
+
+	proxy.SetActiveSessionsForTest("ws-1", []string{"sess-x"})
+
+	svc.workspace.On("ListWorkspaceSessions", mock.Anything, "test-user", "ws-1").Return(
+		[]types.SessionListItem{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var items []types.SessionListItem
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &items))
+	assert.Empty(t, items)
+}
+
+// --- PUT /api/v1/workspaces/:id/sessions/:sessionId/seen ---
+
+func TestMarkSessionSeen_Success(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("MarkSessionSeen", mock.Anything, "test-user", "ws-1", "sess-1").Return(nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/sessions/sess-1/seen", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestMarkSessionSeen_WrongUser_Returns403(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("MarkSessionSeen", mock.Anything, "test-user", "ws-1", "sess-1").Return(
+		apierrors.NewForbiddenError("user does not own this workspace", nil))
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/sessions/sess-1/seen", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestMarkSessionSeen_Unauthorized(t *testing.T) {
+	router, _ := newRouterFixture(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/sessions/sess-1/seen", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

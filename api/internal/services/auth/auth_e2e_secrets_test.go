@@ -256,6 +256,7 @@ func (m *fullMockDB) UpsertSessionTitle(context.Context, string, string, string)
 func (m *fullMockDB) UpsertSessionParent(context.Context, string, string, string) error {
 	return nil
 }
+func (m *fullMockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
 func (m *fullMockDB) Ping(context.Context) error { return nil }
 func (m *fullMockDB) Start() error               { return nil }
 func (m *fullMockDB) Stop() error                { return nil }

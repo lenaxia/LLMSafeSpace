@@ -594,6 +594,8 @@ type SessionListItem struct {
 	LastMessageAt *time.Time `json:"lastMessageAt,omitempty"`
 	MessageCount  int        `json:"messageCount"`
 	Status        string     `json:"status"` // "active" | "idle"
+	LastSeenAt    *time.Time `json:"lastSeenAt,omitempty"`
+	HasUnread     bool       `json:"hasUnread"`
 }
 
 // ActiveSessionsResponse is returned by GET /workspaces/:id/sessions/active.

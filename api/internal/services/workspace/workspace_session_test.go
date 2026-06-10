@@ -39,6 +39,9 @@ func (m *mockSessionIndex) UpsertTitle(ctx context.Context, workspaceID, session
 func (m *mockSessionIndex) UpsertParent(ctx context.Context, workspaceID, sessionID, parentID string) error {
 	return m.Called(ctx, workspaceID, sessionID, parentID).Error(0)
 }
+func (m *mockSessionIndex) UpdateLastSeen(ctx context.Context, workspaceID, sessionID string) error {
+	return m.Called(ctx, workspaceID, sessionID).Error(0)
+}
 func (m *mockSessionIndex) Start() error { return nil }
 func (m *mockSessionIndex) Stop() error  { return nil }
 
@@ -139,4 +142,42 @@ func TestRenameWorkspace_WrongOwner_Forbidden(t *testing.T) {
 	err := f.svc.RenameWorkspace(context.Background(), "user-1", "ws-1", "new-name")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "does not own")
+}
+
+func TestMarkSessionSeen_DelegatesToSessionIndex(t *testing.T) {
+	f := newFixture(t)
+	si := &mockSessionIndex{}
+	f.svc.SetSessionIndex(si)
+
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{
+		ID: "ws-1", UserID: "user-1",
+	}, nil)
+	si.On("UpdateLastSeen", mock.Anything, "ws-1", "s1").Return(nil)
+
+	err := f.svc.MarkSessionSeen(context.Background(), "user-1", "ws-1", "s1")
+	assert.NoError(t, err)
+	si.AssertCalled(t, "UpdateLastSeen", mock.Anything, "ws-1", "s1")
+}
+
+func TestMarkSessionSeen_WrongOwner_Forbidden(t *testing.T) {
+	f := newFixture(t)
+
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{
+		ID: "ws-1", UserID: "other-user",
+	}, nil)
+
+	err := f.svc.MarkSessionSeen(context.Background(), "user-1", "ws-1", "s1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "does not own")
+}
+
+func TestMarkSessionSeen_NilSessionIndex_NoError(t *testing.T) {
+	f := newFixture(t)
+
+	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{
+		ID: "ws-1", UserID: "user-1",
+	}, nil)
+
+	err := f.svc.MarkSessionSeen(context.Background(), "user-1", "ws-1", "s1")
+	assert.NoError(t, err)
 }

@@ -295,6 +295,10 @@ var implOnlyAllowlist = map[route]bool{
 	// Epic 28: User-scoped SSE event stream. Long-lived connection,
 	// not a typical REST endpoint. Not documented in OpenAPI.
 	{method: "GET", path: "/api/v1/events"}: true,
+
+	// Epic 37: Mark session as seen. Internal UX endpoint, not
+	// part of the public SDK contract.
+	{method: "PUT", path: "/api/v1/workspaces/:id/sessions/:sessionId/seen"}: true,
 }
 
 // -----------------------------------------------------------------------------

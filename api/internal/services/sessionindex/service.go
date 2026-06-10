@@ -95,6 +95,10 @@ func (s *Service) UpsertParent(ctx context.Context, workspaceID, sessionID, pare
 	return s.db.UpsertSessionParent(ctx, workspaceID, sessionID, parentID)
 }
 
+func (s *Service) UpdateLastSeen(ctx context.Context, workspaceID, sessionID string) error {
+	return s.db.UpdateSessionLastSeen(ctx, workspaceID, sessionID)
+}
+
 func (s *Service) drain() {
 	defer s.wg.Done()
 	for {

@@ -23,15 +23,13 @@ func TestListSessionIndex_IncludesParentID(t *testing.T) {
 	svc, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count"}).
-		AddRow("ses_root", "Root chat", nil, time.Now(), 5).
-		AddRow("ses_child", "Subagent task", "ses_root", time.Now(), 3)
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread"}).
+		AddRow("ses_root", "Root chat", nil, time.Now(), 5, nil, false).
+		AddRow("ses_child", "Subagent task", "ses_root", time.Now(), 3, nil, false)
 
 	mock.ExpectQuery(regexp.QuoteMeta(
 		`SELECT session_id, title, parent_session_id, last_message_at, message_count`,
-	)).
-		WithArgs("ws-1").
-		WillReturnRows(rows)
+	)).WithArgs("ws-1").WillReturnRows(rows)
 
 	items, err := svc.ListSessionIndex(context.Background(), "ws-1")
 	require.NoError(t, err)
@@ -52,8 +50,8 @@ func TestListSessionIndex_NullParentBecomesEmpty(t *testing.T) {
 	svc, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count"}).
-		AddRow("ses_solo", "Standalone", nil, time.Now(), 1)
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread"}).
+		AddRow("ses_solo", "Standalone", nil, time.Now(), 1, nil, false)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).
 		WithArgs("ws-1").
 		WillReturnRows(rows)

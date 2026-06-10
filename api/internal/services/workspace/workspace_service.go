@@ -922,6 +922,16 @@ func (s *Service) ListWorkspaceSessions(ctx context.Context, userID, workspaceID
 	return s.sessionIndex.ListByWorkspace(ctx, workspaceID)
 }
 
+func (s *Service) MarkSessionSeen(ctx context.Context, userID, workspaceID, sessionID string) error {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return err
+	}
+	if s.sessionIndex == nil {
+		return nil
+	}
+	return s.sessionIndex.UpdateLastSeen(ctx, workspaceID, sessionID)
+}
+
 // RenameWorkspace updates the name of a workspace.
 func (s *Service) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
 	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {

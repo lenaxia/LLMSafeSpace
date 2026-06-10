@@ -82,14 +82,16 @@
     "parentId": "sess-root",
     "lastMessageAt": "2026-05-24T12:00:00Z",
     "messageCount": 12,
-    "status": "active"
+    "status": "active",
+    "lastSeenAt": "2026-05-24T11:30:00Z",
+    "hasUnread": true
   },
   "WorkspaceListItem": {
     "id": "ws-1",
     "name": "alpha",
     "userId": "u-123",
     "runtime": "python:3.11",
-    "storageSize": "10Gi",
+    "storageSize": "5Gi",
     "phase": "Active",
     "maxActiveSessions": 5,
     "createdAt": "2026-05-24T12:00:00Z",

@@ -958,13 +958,23 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	h.removeActiveSession(workspaceID, sessionID)
 
-	// Publish session idle event to browser SSE subscribers.
 	if h.broker != nil {
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "idle",
 		})
+	}
+
+	if h.userBroker != nil {
+		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+			h.userBroker.PublishToUser(userID, WorkspaceSSEEvent{
+				Type:        "session.status",
+				WorkspaceID: workspaceID,
+				SessionID:   sessionID,
+				Status:      "idle",
+			})
+		}
 	}
 
 	if h.activityTracker != nil {
@@ -1154,6 +1164,16 @@ func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
 	return result
 }
 
+func (h *ProxyHandler) SetActiveSessionsForTest(workspaceID string, sessionIDs []string) {
+	h.activeMu.Lock()
+	defer h.activeMu.Unlock()
+	m := make(map[string]bool, len(sessionIDs))
+	for _, id := range sessionIDs {
+		m[id] = true
+	}
+	h.activeSess[workspaceID] = m
+}
+
 func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.wsConfigMu.RLock()
 	cfg, ok := h.wsConfig[workspaceID]
@@ -1164,13 +1184,23 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	}
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
-	// Publish session busy event to browser SSE subscribers.
 	if h.broker != nil {
 		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "busy",
 		})
+	}
+
+	if h.userBroker != nil {
+		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+			h.userBroker.PublishToUser(userID, WorkspaceSSEEvent{
+				Type:        "session.status",
+				WorkspaceID: workspaceID,
+				SessionID:   sessionID,
+				Status:      "busy",
+			})
+		}
 	}
 }
 

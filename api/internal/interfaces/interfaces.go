@@ -76,6 +76,7 @@ type DatabaseService interface {
 	UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error
 	UpsertSessionTitle(ctx context.Context, workspaceID, sessionID, title string) error
 	UpsertSessionParent(ctx context.Context, workspaceID, sessionID, parentID string) error
+	UpdateSessionLastSeen(ctx context.Context, workspaceID, sessionID string) error
 	Ping(ctx context.Context) error
 	Start() error
 	Stop() error
@@ -130,6 +131,7 @@ type WorkspaceService interface {
 	EnsureSession(ctx context.Context, userID, workspaceID string) (*types.EnsureSessionResponse, error)
 	ListWorkspaceSessions(ctx context.Context, userID, workspaceID string) ([]types.SessionListItem, error)
 	RenameSession(ctx context.Context, userID, workspaceID, sessionID, title string) error
+	MarkSessionSeen(ctx context.Context, userID, workspaceID, sessionID string) error
 	RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error
 	Start() error
 	Stop() error
@@ -141,6 +143,7 @@ type SessionIndexService interface {
 	DeleteByWorkspace(ctx context.Context, workspaceID string) error
 	UpsertTitle(ctx context.Context, workspaceID, sessionID, title string) error
 	UpsertParent(ctx context.Context, workspaceID, sessionID, parentID string) error
+	UpdateLastSeen(ctx context.Context, workspaceID, sessionID string) error
 	Start() error
 	Stop() error
 }

@@ -756,6 +756,18 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		// Skipped when proxyHandler is nil (router built without proxy).
 		if proxyHandler != nil {
 			proxyHandler.BackfillSessionParents(workspaceID)
+			activeIDs := proxyHandler.GetActiveSessions(workspaceID)
+			if len(activeIDs) > 0 {
+				activeSet := make(map[string]struct{}, len(activeIDs))
+				for _, id := range activeIDs {
+					activeSet[id] = struct{}{}
+				}
+				for i := range sessions {
+					if _, ok := activeSet[sessions[i].ID]; ok {
+						sessions[i].Status = "active"
+					}
+				}
+			}
 		}
 		c.JSON(http.StatusOK, sessions)
 	})
@@ -788,6 +800,19 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 			return
 		}
 		if err := wsSvc.RenameSession(c.Request.Context(), userID, c.Param("id"), c.Param("sessionId"), body.Title); err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	rg.PUT("/:id/sessions/:sessionId/seen", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		if err := wsSvc.MarkSessionSeen(c.Request.Context(), userID, c.Param("id"), c.Param("sessionId")); err != nil {
 			respondWithError(c, err)
 			return
 		}

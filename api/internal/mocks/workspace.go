@@ -85,6 +85,10 @@ func (m *MockWorkspaceService) RenameSession(ctx context.Context, userID, worksp
 	return m.Called(ctx, userID, workspaceID, sessionID, title).Error(0)
 }
 
+func (m *MockWorkspaceService) MarkSessionSeen(ctx context.Context, userID, workspaceID, sessionID string) error {
+	return m.Called(ctx, userID, workspaceID, sessionID).Error(0)
+}
+
 func (m *MockWorkspaceService) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
 	return m.Called(ctx, userID, workspaceID, name).Error(0)
 }
