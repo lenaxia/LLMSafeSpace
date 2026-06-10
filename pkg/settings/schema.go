@@ -58,7 +58,7 @@ func InstanceSettings() []SettingDef {
 		{Key: "workspace.defaultStorageSize", Tier: 2, Type: TypeString, Default: "10Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Default Storage", Description: "Default PVC size"},
 		{Key: "workspace.maxStorageSize", Tier: 2, Type: TypeString, Default: "10Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Max Storage", Description: "Max PVC size"},
 		{Key: "workspace.defaultStorageClass", Tier: 2, Type: TypeString, Default: "", Category: "Workspace", Label: "Storage Class", Description: "K8s StorageClass (empty = cluster default)"},
-		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 3, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},
+		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 10, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},
 		{Key: "workspace.defaultMaxActiveSessions", Tier: 2, Type: TypeInt, Default: 5, Min: intPtr(1), Max: intPtr(20), Category: "Workspace", Label: "Max Sessions", Description: "Concurrent sessions per workspace"},
 		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit"},
 		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Category: "Workspace", Label: "Default Memory", Description: "Default memory limit"},
