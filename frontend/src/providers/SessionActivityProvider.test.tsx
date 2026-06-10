@@ -145,6 +145,47 @@ describe("SessionActivityProvider", () => {
     expect(screen.getByTestId("unread1").textContent).toBe("no");
   });
 
+  it("workspace.phase only clears sessions for that workspace, not others", () => {
+    function Display() {
+      const busy1 = useIsSessionBusy("sess-1");
+      const busy3 = useIsSessionBusy("sess-3");
+      const unread1 = useIsSessionUnread("sess-1");
+      const unread3 = useIsSessionUnread("sess-3");
+      return (
+        <>
+          <span data-testid="busy1">{busy1 ? "yes" : "no"}</span>
+          <span data-testid="busy3">{busy3 ? "yes" : "no"}</span>
+          <span data-testid="unread1">{unread1 ? "yes" : "no"}</span>
+          <span data-testid="unread3">{unread3 ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    renderProvider(<Display />);
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-2", session_id: "sess-3", status: "busy" });
+    });
+    expect(screen.getByTestId("busy1").textContent).toBe("yes");
+    expect(screen.getByTestId("busy3").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "idle" });
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-2", session_id: "sess-3", status: "idle" });
+    });
+    expect(screen.getByTestId("unread1").textContent).toBe("yes");
+    expect(screen.getByTestId("unread3").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({ type: "workspace.phase", workspace_id: "ws-1", phase: "Suspended" });
+    });
+    expect(screen.getByTestId("busy1").textContent).toBe("no");
+    expect(screen.getByTestId("unread1").textContent).toBe("no");
+    expect(screen.getByTestId("busy3").textContent).toBe("no");
+    expect(screen.getByTestId("unread3").textContent).toBe("yes");
+  });
+
   it("workspaceBusyCount returns correct count for workspace", () => {
     function CountDisplay() {
       const count = useWorkspaceBusyCount("ws-1");
