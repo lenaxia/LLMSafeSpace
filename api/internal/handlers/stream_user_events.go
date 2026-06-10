@@ -117,6 +117,11 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 				// Snapshot event — no id: line
 				data, marshalErr := json.Marshal(evt)
 				if marshalErr != nil {
+					h.logger.Warn("SSE snapshot event marshal failed, dropping",
+						"error", marshalErr,
+						"userID", uid,
+						"eventType", evt.Type,
+					)
 					continue
 				}
 				if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", data); writeErr != nil {
@@ -127,6 +132,11 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 				// Live event with id: line
 				data, marshalErr := json.Marshal(evt)
 				if marshalErr != nil {
+					h.logger.Warn("SSE live event marshal failed, dropping",
+						"error", marshalErr,
+						"userID", uid,
+						"eventType", evt.Type,
+					)
 					continue
 				}
 				if _, writeErr := fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", evt.EventID, data); writeErr != nil {

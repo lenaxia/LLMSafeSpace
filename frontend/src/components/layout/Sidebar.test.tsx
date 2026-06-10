@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -23,24 +23,32 @@ vi.mock("../../api/workspaces", () => ({
     create: vi.fn().mockResolvedValue({ id: "ws-new", name: "new-ws" }),
     activate: vi.fn().mockResolvedValue({ resumed: "ws-1" }),
     ensureSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", workspaceId: "ws-1" }),
-    getSessions: vi.fn().mockResolvedValue([]),
+    getSessions: vi.fn().mockResolvedValue([
+      { id: "sess-1", title: "My session", messageCount: 3, status: "idle" },
+    ]),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
     deleteWorkspace: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
+import { workspacesApi } from "../../api/workspaces";
+
 function renderSidebar() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <MemoryRouter>
-          <Sidebar />
-        </MemoryRouter>
-      </AuthProvider>
-    </QueryClientProvider>,
-  );
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter>
+            <Sidebar />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("Sidebar", () => {
@@ -99,5 +107,78 @@ describe("Sidebar", () => {
     renderSidebar();
     const scrollContainer = (await screen.findByLabelText("Navigation")).querySelector(".overflow-x-hidden");
     expect(scrollContainer).toBeInTheDocument();
+  });
+});
+
+describe("Sidebar — session delete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls deleteSession when session kebab delete is confirmed", async () => {
+    const { qc } = renderSidebar();
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "My session", messageCount: 3, status: "idle" },
+    ]);
+
+    await screen.findByText("My session");
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
+    sessionKebab.click();
+
+    const deleteBtn = await screen.findByText("Delete");
+    deleteBtn.click();
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("does not call deleteSession when confirm is cancelled", async () => {
+    const { qc } = renderSidebar();
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Keep me", messageCount: 1, status: "idle" },
+    ]);
+
+    await screen.findByText("Keep me");
+
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
+    sessionKebab.click();
+
+    const deleteBtn = await screen.findByText("Delete");
+    deleteBtn.click();
+
+    expect(workspacesApi.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("treats 404 as success on delete", async () => {
+    const { qc } = renderSidebar();
+
+    const err404: any = new Error("not found");
+    err404.status = 404;
+    (workspacesApi.deleteSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err404);
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Will 404", messageCount: 1, status: "idle" },
+    ]);
+
+    await screen.findByText("Will 404");
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
+    sessionKebab.click();
+
+    const deleteBtn = await screen.findByText("Delete");
+    deleteBtn.click();
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
   });
 });

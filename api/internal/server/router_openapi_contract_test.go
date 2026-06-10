@@ -299,6 +299,9 @@ var implOnlyAllowlist = map[route]bool{
 	// Epic 37: Mark session as seen. Internal UX endpoint, not
 	// part of the public SDK contract.
 	{method: "PUT", path: "/api/v1/workspaces/:id/sessions/:sessionId/seen"}: true,
+
+	// Session delete — proxies to opencode's DELETE /session/:id.
+	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId"}: true,
 }
 
 // -----------------------------------------------------------------------------

@@ -133,7 +133,8 @@ func (m *mockDB) CheckResourceOwnership(string, string, string) (bool, error)   
 func (m *mockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
-func (m *mockDB) DeleteSessionIndex(context.Context, string) error { return nil }
+func (m *mockDB) DeleteSessionIndex(context.Context, string) error        { return nil }
+func (m *mockDB) DeleteSessionTree(context.Context, string, string) error { return nil }
 func (m *mockDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -142,9 +143,9 @@ func (m *mockDB) UpsertSessionParent(context.Context, string, string, string) er
 	return nil
 }
 func (m *mockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
-func (m *mockDB) Ping(context.Context) error { return nil }
-func (m *mockDB) Start() error               { return nil }
-func (m *mockDB) Stop() error                { return nil }
+func (m *mockDB) Ping(context.Context) error                                 { return nil }
+func (m *mockDB) Start() error                                               { return nil }
+func (m *mockDB) Stop() error                                                { return nil }
 
 type mockCache struct{}
 

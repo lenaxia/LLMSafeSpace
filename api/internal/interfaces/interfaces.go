@@ -73,6 +73,7 @@ type DatabaseService interface {
 	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
 	ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
 	DeleteSessionIndex(ctx context.Context, workspaceID string) error
+	DeleteSessionTree(ctx context.Context, workspaceID, sessionID string) error
 	UpsertSessionMessage(ctx context.Context, workspaceID, sessionID string, at time.Time) error
 	UpsertSessionTitle(ctx context.Context, workspaceID, sessionID, title string) error
 	UpsertSessionParent(ctx context.Context, workspaceID, sessionID, parentID string) error
@@ -141,6 +142,7 @@ type SessionIndexService interface {
 	RecordMessage(workspaceID, sessionID, title string, at time.Time)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
 	DeleteByWorkspace(ctx context.Context, workspaceID string) error
+	DeleteSession(ctx context.Context, workspaceID, sessionID string) error
 	UpsertTitle(ctx context.Context, workspaceID, sessionID, title string) error
 	UpsertParent(ctx context.Context, workspaceID, sessionID, parentID string) error
 	UpdateLastSeen(ctx context.Context, workspaceID, sessionID string) error

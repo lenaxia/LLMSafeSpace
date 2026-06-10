@@ -828,6 +828,7 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
 	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
+	rg.DELETE("/:id/sessions/:sessionId", proxyHandler.DeleteSession)
 	rg.GET("/:id/session-events", proxyHandler.StreamEvents)
 
 	// Question/Permission input request routes (Epic 16)

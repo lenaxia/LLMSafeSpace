@@ -187,7 +187,7 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			c.JSON(resp.StatusCode, gin.H{"error": "agent returned error"})
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent returned error"})
 			return
 		}
 

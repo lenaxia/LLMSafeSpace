@@ -80,6 +80,11 @@ func (s *Service) DeleteByWorkspace(ctx context.Context, workspaceID string) err
 	return s.db.DeleteSessionIndex(ctx, workspaceID)
 }
 
+// DeleteSession removes a single session and its descendants from the session index.
+func (s *Service) DeleteSession(ctx context.Context, workspaceID, sessionID string) error {
+	return s.db.DeleteSessionTree(ctx, workspaceID, sessionID)
+}
+
 // UpsertTitle updates just the title for a session.
 func (s *Service) UpsertTitle(ctx context.Context, workspaceID, sessionID, title string) error {
 	return s.db.UpsertSessionTitle(ctx, workspaceID, sessionID, title)

@@ -248,7 +248,8 @@ func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error
 func (m *fullMockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
-func (m *fullMockDB) DeleteSessionIndex(context.Context, string) error { return nil }
+func (m *fullMockDB) DeleteSessionIndex(context.Context, string) error        { return nil }
+func (m *fullMockDB) DeleteSessionTree(context.Context, string, string) error { return nil }
 func (m *fullMockDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -257,9 +258,9 @@ func (m *fullMockDB) UpsertSessionParent(context.Context, string, string, string
 	return nil
 }
 func (m *fullMockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
-func (m *fullMockDB) Ping(context.Context) error { return nil }
-func (m *fullMockDB) Start() error               { return nil }
-func (m *fullMockDB) Stop() error                { return nil }
+func (m *fullMockDB) Ping(context.Context) error                                 { return nil }
+func (m *fullMockDB) Start() error                                               { return nil }
+func (m *fullMockDB) Stop() error                                                { return nil }
 
 // --- In-memory secrets mocks ---
 

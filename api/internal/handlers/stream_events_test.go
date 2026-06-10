@@ -25,17 +25,12 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
-// newStreamEventsRouter returns a gin engine with only the StreamEvents route
-// wired. The ProxyHandler already has a broker attached.
 func newStreamEventsRouter(h *ProxyHandler) *gin.Engine {
 	r := gin.New()
 	r.GET("/api/v1/workspaces/:id/events", h.StreamEvents)
 	return r
 }
 
-// doStreamingRequest sends the request to the router and returns a cancel
-// function plus the response body reader. The cancel function cancels the
-// request context which simulates a client disconnect.
 func doStreamingRequest(router *gin.Engine, path string) (cancel context.CancelFunc, body io.ReadCloser, respHeader http.Header, statusCode *int) {
 	pr, pw := io.Pipe()
 	sc := new(int)
@@ -45,7 +40,6 @@ func doStreamingRequest(router *gin.Engine, path string) (cancel context.CancelF
 
 	go func() {
 		req := httptest.NewRequestWithContext(ctx, "GET", path, nil)
-		// Use a custom ResponseWriter that writes to the pipe.
 		rw := &pipeResponseWriter{pw: pw, header: h, code: sc}
 		router.ServeHTTP(rw, req)
 		pw.Close()
@@ -54,7 +48,6 @@ func doStreamingRequest(router *gin.Engine, path string) (cancel context.CancelF
 	return cancelFn, pr, h, sc
 }
 
-// pipeResponseWriter is a minimal http.ResponseWriter that streams to an io.PipeWriter.
 type pipeResponseWriter struct {
 	pw     *io.PipeWriter
 	header http.Header
@@ -75,8 +68,6 @@ func (p *pipeResponseWriter) Write(b []byte) (int, error) {
 }
 func (p *pipeResponseWriter) Flush() {}
 
-// readNextSSEDataLine reads lines from r until it finds a "data: ..." line,
-// then returns the parsed JSON map. Fails the test on timeout.
 func readNextSSEDataLine(t *testing.T, r *bufio.Reader) map[string]interface{} {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -136,7 +127,6 @@ func TestStreamEvents_SetsSSEHeaders(t *testing.T) {
 	cancel, body, header, _ := doStreamingRequest(newStreamEventsRouter(env.handler), "/api/v1/workspaces/ws-1/events")
 	defer body.Close()
 
-	// Give the handler time to write headers.
 	time.Sleep(30 * time.Millisecond)
 	cancel()
 
@@ -146,8 +136,6 @@ func TestStreamEvents_SetsSSEHeaders(t *testing.T) {
 }
 
 func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
-	// Validate: opening /events triggers EnsureWatching on the SSE tracker
-	// so that pod events are available before the first write operation.
 	gin.SetMode(gin.TestMode)
 
 	trackerConnected := make(chan struct{}, 1)
@@ -155,7 +143,6 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 		if r.URL.Path == "/event" {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			// Signal that the SSE tracker connected
 			select {
 			case trackerConnected <- struct{}{}:
 			default:
@@ -190,22 +177,18 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
-	// Wire the SSE tracker directly (same pattern as E2E test)
 	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
 	handler.sseTracker.SetPasswordGetter(handler.getPassword)
 	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
 	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
 	handler.broker = NewWorkspaceEventBroker()
 
-	// Open /events — NO prior write op, so EnsureWatching should be called here
 	cancel, body, _, _ := doStreamingRequest(newStreamEventsRouter(handler), "/api/v1/workspaces/ws-1/events")
 	defer cancel()
 	defer body.Close()
 
-	// Verify the SSE tracker connected to the pod backend
 	select {
 	case <-trackerConnected:
-		// success — EnsureWatching was triggered by StreamEvents
 	case <-time.After(3 * time.Second):
 		t.Fatal("SSE tracker did not connect to pod after /events was opened; EnsureWatching not called from StreamEvents")
 	}
@@ -224,12 +207,8 @@ func TestStreamEvents_PhaseEventDeliveredToClient(t *testing.T) {
 	defer cancel()
 	defer body.Close()
 
-	// Wait for the subscriber to register.
 	require.Eventually(t, func() bool {
-		broker.mu.Lock()
-		n := len(broker.subs["ws-1"])
-		broker.mu.Unlock()
-		return n > 0
+		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
 	broker.Publish("ws-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Suspended"})
@@ -253,10 +232,7 @@ func TestStreamEvents_SessionStatusEventDeliveredToClient(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		broker.mu.Lock()
-		n := len(broker.subs["ws-1"])
-		broker.mu.Unlock()
-		return n > 0
+		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
 	broker.Publish("ws-1", WorkspaceSSEEvent{
@@ -283,23 +259,14 @@ func TestStreamEvents_ClientDisconnectUnsubscribes(t *testing.T) {
 	cancel, body, _, _ := doStreamingRequest(newStreamEventsRouter(env.handler), "/api/v1/workspaces/ws-1/events")
 	defer body.Close()
 
-	// Wait for subscriber to register.
 	require.Eventually(t, func() bool {
-		broker.mu.Lock()
-		n := len(broker.subs["ws-1"])
-		broker.mu.Unlock()
-		return n > 0
+		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
-	// Cancel the client request (simulate disconnect).
 	cancel()
 
-	// Broker should clean up the subscription.
 	assert.Eventually(t, func() bool {
-		broker.mu.Lock()
-		n := len(broker.subs["ws-1"])
-		broker.mu.Unlock()
-		return n == 0
+		return broker.SubscriberCount("ws-1") == 0
 	}, time.Second, 5*time.Millisecond, "broker should unsubscribe disconnected client")
 }
 
@@ -316,7 +283,6 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	// S28.4: workspace.phase now published to userBroker, not legacy broker
 	userBroker := NewUserEventBroker()
 	handler.userBroker = userBroker
 
@@ -361,13 +327,13 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
 	handler.onSessionIdle("ws-1", "s1")
 
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "s1", evt.SessionID)
 		assert.Equal(t, "idle", evt.Status)
@@ -391,14 +357,14 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
 	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello"}}}}`
 	handler.onRawEvent("ws-1", "message.part.updated", rawData)
 
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		assert.Equal(t, "message.part.updated", evt.EventType)
 		require.NotNil(t, evt.Data)
@@ -423,8 +389,8 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
 	events := []struct {
 		eventType string
@@ -440,7 +406,7 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 		handler.onRawEvent("ws-1", e.eventType, e.data)
 
 		select {
-		case evt := <-ch:
+		case evt := <-sub.ch:
 			assert.Equal(t, "opencode.event", evt.Type)
 			assert.Equal(t, e.eventType, evt.EventType)
 		case <-time.After(time.Second):
@@ -458,7 +424,6 @@ func TestStreamEvents_OnRawEvent_NilBrokerDoesNotPanic(t *testing.T) {
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	// broker is nil — onRawEvent should not panic
 
 	handler.onRawEvent("ws-1", "message.part.updated", `{"foo":"bar"}`)
 }
@@ -476,17 +441,15 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
-	// Invalid JSON — unmarshaling fails, Data will be nil
 	handler.onRawEvent("ws-1", "session.status", "not-json-at-all")
 
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		assert.Equal(t, "session.status", evt.EventType)
-		// Data should be nil since JSON unmarshal failed
 		assert.Nil(t, evt.Data)
 	case <-time.After(time.Second):
 		t.Fatal("expected opencode.event even with unparsable data")
@@ -506,14 +469,14 @@ func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
 	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello world"}}}}`
 	handler.onRawEvent("ws-1", "message.part.updated", rawData)
 
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		require.NotNil(t, evt.Data)
 
@@ -552,13 +515,9 @@ func TestStreamEvents_OpenCodeEventDeliveredToSSEClient(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		broker.mu.Lock()
-		n := len(broker.subs["ws-1"])
-		broker.mu.Unlock()
-		return n > 0
+		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
-	// Simulate what onRawEvent does: publish an opencode.event to the broker
 	broker.Publish("ws-1", WorkspaceSSEEvent{
 		Type:      "opencode.event",
 		EventType: "message.part.updated",
@@ -590,28 +549,24 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	ch1 := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch1)
-	ch2 := broker.Subscribe("ws-2")
-	defer broker.Unsubscribe("ws-2", ch2)
+	sub1 := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub1)
+	sub2 := broker.Subscribe("ws-2")
+	defer broker.Unsubscribe("ws-2", sub2)
 
-	// Publish event for ws-1
 	handler.onRawEvent("ws-1", "message.part.updated", `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"s1"}}}`)
 
-	// ws-1 subscriber should receive it
 	select {
-	case evt := <-ch1:
+	case evt := <-sub1.ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 	case <-time.After(time.Second):
 		t.Fatal("ws-1 subscriber should receive opencode.event")
 	}
 
-	// ws-2 subscriber should NOT receive it
 	select {
-	case <-ch2:
+	case <-sub2.ch:
 		t.Fatal("ws-2 subscriber should NOT receive ws-1's event")
 	case <-time.After(200 * time.Millisecond):
-		// expected
 	}
 }
 
@@ -630,18 +585,17 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	broker := NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	// onSessionActive also needs wsConfig to track max sessions.
 	handler.wsConfigMu.Lock()
 	handler.wsConfig["ws-1"] = workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
-	ch := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", ch)
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
 
 	handler.onSessionActive("ws-1", "s2")
 
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "s2", evt.SessionID)
 		assert.Equal(t, "busy", evt.Status)

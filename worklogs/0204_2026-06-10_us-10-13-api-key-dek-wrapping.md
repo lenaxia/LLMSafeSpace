@@ -1,4 +1,4 @@
-# 0201 — US-10.13 API Key DEK Wrapping
+# 0204 — US-10.13 API Key DEK Wrapping
 
 **Date:** 2026-06-10
 **Status:** Complete — all tests pass, pending merge

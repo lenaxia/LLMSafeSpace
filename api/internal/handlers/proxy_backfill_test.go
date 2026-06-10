@@ -40,6 +40,7 @@ func (r *recordingSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]
 	return nil, nil
 }
 func (r *recordingSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error { return nil }
+func (r *recordingSessionIndex) DeleteSession(_ context.Context, _, _ string) error  { return nil }
 func (r *recordingSessionIndex) UpsertTitle(_ context.Context, _, sessionID, title string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -53,8 +54,8 @@ func (r *recordingSessionIndex) UpsertParent(_ context.Context, _, sessionID, pa
 	return nil
 }
 func (r *recordingSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error { return nil }
-func (r *recordingSessionIndex) Start() error { return nil }
-func (r *recordingSessionIndex) Stop() error  { return nil }
+func (r *recordingSessionIndex) Start() error                                        { return nil }
+func (r *recordingSessionIndex) Stop() error                                         { return nil }
 
 func (r *recordingSessionIndex) parentOf(sessionID string) string {
 	r.mu.Lock()

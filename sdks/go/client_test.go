@@ -145,3 +145,42 @@ func TestClient_AutoLogin(t *testing.T) {
 		t.Errorf("expected 2 calls (login + me), got %d", callCount)
 	}
 }
+
+func TestClient_DeleteSession(t *testing.T) {
+	var capturedMethod, capturedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	err := c.Sessions.Delete(context.Background(), "ws-1", "sess-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedMethod != "DELETE" {
+		t.Errorf("expected DELETE, got: %s", capturedMethod)
+	}
+	if capturedPath != "/api/v1/workspaces/ws-1/sessions/sess-1" {
+		t.Errorf("unexpected path: %s", capturedPath)
+	}
+}
+
+func TestClient_DeleteSession_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		json.NewEncoder(w).Encode(map[string]string{"error": "session not found"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	err := c.Sessions.Delete(context.Background(), "ws-1", "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+	if !IsNotFound(err) {
+		t.Errorf("expected NotFound, got: %v", err)
+	}
+}
