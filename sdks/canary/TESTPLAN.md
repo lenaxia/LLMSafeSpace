@@ -495,11 +495,11 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 | P5 | `conditions` array contains an entry with `type=CredentialsAvailable` |
 | P6 | `POST /suspend` → 202; phase → `Suspended` within 60s |
 | P7 | Suspend already-Suspended workspace → 409 Conflict (asserted, not just recorded) |
-| P8 | `POST /resume` → 202; phase → `Active` within 90s |
-| P9 | Resume already-Active workspace → 202 (idempotent, no error) |
+| P8 | `POST /activate` → 200; phase → `Active` within 90s |
+| P9 | Activate already-Active workspace → 200 (idempotent) |
 | P10 | `POST /restart` → 202; workspace transitions and returns to `Active` within 120s |
 | N1 | Suspend nonexistent workspace → error |
-| N2 | Resume nonexistent workspace → error |
+| N2 | Activate nonexistent workspace → error |
 | N3 | Restart Terminating workspace → 409 |
 
 ---
@@ -507,7 +507,7 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 ### D-ACTIVATE-EVICTION — `activate` auto-evicts stalest workspace at cap
 
 **Schedule:** 10 min | **Max duration:** 480s  
-**Note:** Tests `POST /activate` (distinct from `POST /resume`). Creates N+1 workspaces, verifies auto-eviction.
+**Note:** Tests `POST /activate` (which enforces credential injection before resuming).
 
 | # | Check |
 |---|---|

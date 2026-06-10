@@ -50,10 +50,6 @@ func (m *MockWorkspaceService) SuspendWorkspace(ctx context.Context, userID, wor
 	return m.Called(ctx, userID, workspaceID).Error(0)
 }
 
-func (m *MockWorkspaceService) ResumeWorkspace(ctx context.Context, userID, workspaceID string) error {
-	return m.Called(ctx, userID, workspaceID).Error(0)
-}
-
 func (m *MockWorkspaceService) RestartWorkspace(ctx context.Context, userID, workspaceID string) error {
 	return m.Called(ctx, userID, workspaceID).Error(0)
 }

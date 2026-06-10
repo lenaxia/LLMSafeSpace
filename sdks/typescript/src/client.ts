@@ -169,9 +169,6 @@ class WorkspacesAPI {
   suspend(id: string) {
     return this.client.request<void>("POST", `/workspaces/${id}/suspend`);
   }
-  resume(id: string) {
-    return this.client.request<void>("POST", `/workspaces/${id}/resume`);
-  }
   restart(id: string) {
     return this.client.request<void>("POST", `/workspaces/${id}/restart`);
   }

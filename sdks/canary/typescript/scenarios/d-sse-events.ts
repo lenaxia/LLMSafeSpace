@@ -38,9 +38,9 @@ async function run(r: Runner, cfg: Config): Promise<void> {
       30000);
     r.assert(phaseReceived, 'sse: workspace.phase event on suspend');
 
-    // P4: Resume triggers another phase event
+    // P4: Activate triggers another phase event
     const prevCount = events.filter(e => e.type === 'workspace.phase').length;
-    await r.assertNoError(() => c.workspaces.resume(wsId!), 'resume: no error');
+    await r.assertNoError(() => c.workspaces.activate(wsId!), 'activate: no error');
     const resumeReceived = await waitForEventMatching(events, e =>
       e.type === 'workspace.phase' && events.filter(x => x.type === 'workspace.phase').length > prevCount,
       60000);

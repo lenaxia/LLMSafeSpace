@@ -76,9 +76,8 @@ try {
 - `rename(id, name)` — Rename workspace
 - `delete(id)` — Delete workspace
 - `getStatus(id)` — Get workspace status
-- `activate(id)` — Activate (resume + ensure session)
+- `activate(id)` — Activate workspace (injects credentials, resumes from Suspended)
 - `suspend(id)` — Suspend workspace
-- `resume(id)` — Resume workspace
 - `setBindings(id, secretIds)` — Set secret bindings
 - `setEnv(id, env)` — Set environment variables
 - `getEnv(id)` — Get environment variables

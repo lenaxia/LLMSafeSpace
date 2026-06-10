@@ -37,13 +37,13 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     // Double-suspend → conflict
     await r.assertError(() => c.workspaces.suspend(wsId!), 'double-suspend: ConflictError');
 
-    // Resume
-    await r.assertNoError(() => c.workspaces.resume(wsId!), 'resume: no error');
+    // Activate
+    await r.assertNoError(() => c.workspaces.activate(wsId!), 'activate: no error');
     const rp = await waitActive(c, wsId);
-    r.assert(rp === 'Active', 'resume: phase=Active', `got "${rp}"`);
+    r.assert(rp === 'Active', 'activate: phase=Active', `got "${rp}"`);
 
-    // Resume already-Active → idempotent
-    await r.assertNoError(() => c.workspaces.resume(wsId!), 'resume-already-active: no error');
+    // Activate already-Active → idempotent
+    await r.assertNoError(() => c.workspaces.activate(wsId!), 'activate-already-active: no error');
 
     // Restart
     await r.assertNoError(() => c.workspaces.restart(wsId!), 'restart: no error');

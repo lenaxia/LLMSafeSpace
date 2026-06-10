@@ -50,7 +50,6 @@ func TestSpec_Completeness(t *testing.T) {
 		{"/workspaces/{id}/status", "get"},
 		{"/workspaces/{id}/activate", "post"},
 		{"/workspaces/{id}/suspend", "post"},
-		{"/workspaces/{id}/resume", "post"},
 		// Sessions
 		{"/workspaces/{id}/sessions", "get"},
 		{"/workspaces/{id}/sessions/new", "post"},
