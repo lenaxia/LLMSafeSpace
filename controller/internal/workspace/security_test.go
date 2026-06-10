@@ -98,6 +98,9 @@ func TestSandboxPod_SecurityContextHardening(t *testing.T) {
 // model and to this list deliberately.
 func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	ws := newWorkspaceForSecurity(t)
+	// Set InitScript so buildPod creates the workspace-setup init container,
+	// enabling the SubPath regression assertion below to actually execute.
+	ws.Spec.InitScript = "true"
 	r := reconcilerFor(t)
 
 	pod, err := r.buildPod(context.Background(), ws)
