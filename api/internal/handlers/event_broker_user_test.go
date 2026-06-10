@@ -454,21 +454,7 @@ func TestUserBroker_PublishToUserSetsEventIDOnDeliveredEvent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out")
 	}
-}
-
-func TestUserBroker_GetAllWorkspaceOwners(t *testing.T) {
-	b := NewUserEventBroker()
-
-	b.RecordWorkspaceOwner("ws-1", "user-1")
-	b.RecordWorkspaceOwner("ws-2", "user-2")
-	b.RecordWorkspaceOwner("ws-3", "user-1")
-
-	owners := b.GetAllWorkspaceOwners()
-	assert.Equal(t, "user-1", owners["ws-1"])
-	assert.Equal(t, "user-2", owners["ws-2"])
-	assert.Equal(t, "user-1", owners["ws-3"])
-	assert.Len(t, owners, 3)
-}
+	}
 
 func TestUserBroker_UnsubscribeReleasesSlot(t *testing.T) {
 	b := NewUserEventBroker()

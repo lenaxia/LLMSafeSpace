@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,14 +21,30 @@ const (
 	writeDeadlineWindow = 30 * time.Second
 	snapshotTimeout     = 5 * time.Second
 
-	// labelUserID is the label key used on Workspace CRDs to identify the owner.
-	// Set by workspace_service.go:636; read here and in terminal.go.
 	labelUserID = "user-id"
+
+	sseConnRateLimit   = 10
+	sseConnRateWindow  = time.Minute
+)
+
+type sseConnAttempt struct {
+	count   int
+	resetAt time.Time
+}
+
+var (
+	sseConnMu     sync.Mutex
+	sseConnCounts = make(map[string]*sseConnAttempt)
 )
 
 // StreamUserEvents is the user-scoped SSE endpoint (GET /api/v1/events).
 // It delivers workspace.phase events for ALL of the user's workspaces.
 func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
+	if !sseConnAllowed(c.ClientIP()) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many SSE connection attempts"})
+		return
+	}
+
 	userID, _ := c.Get("userID")
 	uid, ok := userID.(string)
 	if !ok || uid == "" {
@@ -144,10 +161,24 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 					return
 				}
 			}
-			flusher.Flush()
-			_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 		}
+		flusher.Flush()
+		_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
 	}
+}
+
+func sseConnAllowed(ip string) bool {
+	sseConnMu.Lock()
+	defer sseConnMu.Unlock()
+
+	now := time.Now()
+	entry, ok := sseConnCounts[ip]
+	if !ok || now.After(entry.resetAt) {
+		sseConnCounts[ip] = &sseConnAttempt{count: 1, resetAt: now.Add(sseConnRateWindow)}
+		return true
+	}
+	entry.count++
+	return entry.count <= sseConnRateLimit
 }
 
 // snapshotUserWorkspaces lists the user's workspaces and emits their current phases

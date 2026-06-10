@@ -310,17 +310,3 @@ func (b *UserEventBroker) CleanupUser(userID string) {
 	delete(sh.replay, userID)
 	sh.mu.Unlock()
 }
-
-// GetAllWorkspaceOwners returns a copy of the full workspace→user ownership map.
-// Used by the snapshot goroutine.
-func (b *UserEventBroker) GetAllWorkspaceOwners() map[string]string {
-	result := make(map[string]string)
-	for i := range b.shards {
-		b.shards[i].mu.Lock()
-		for wsID, userID := range b.shards[i].wsOwner {
-			result[wsID] = userID
-		}
-		b.shards[i].mu.Unlock()
-	}
-	return result
-}

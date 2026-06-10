@@ -571,3 +571,48 @@ func TestStreamUserEvents_WriteErrorCancelsStream(t *testing.T) {
 		return brokerSubCount(broker, "user-wd") == 0
 	}, 2*time.Second, 20*time.Millisecond, "subscription should be unregistered after write failure")
 }
+
+func TestSSEConnAllowed_EnforcesRateLimit(t *testing.T) {
+	sseConnMu.Lock()
+	for k := range sseConnCounts {
+		delete(sseConnCounts, k)
+	}
+	sseConnMu.Unlock()
+
+	ip := "10.0.0.1"
+
+	for i := 0; i < sseConnRateLimit; i++ {
+		assert.True(t, sseConnAllowed(ip), "attempt %d should be allowed", i+1)
+	}
+	assert.False(t, sseConnAllowed(ip), "attempt beyond limit should be rejected")
+
+	sseConnMu.Lock()
+	delete(sseConnCounts, ip)
+	sseConnMu.Unlock()
+}
+
+func TestSSEConnAllowed_ResetsAfterWindow(t *testing.T) {
+	sseConnMu.Lock()
+	for k := range sseConnCounts {
+		delete(sseConnCounts, k)
+	}
+	sseConnMu.Unlock()
+
+	ip := "10.0.0.2"
+
+	for i := 0; i < sseConnRateLimit; i++ {
+		sseConnAllowed(ip)
+	}
+	assert.False(t, sseConnAllowed(ip))
+
+	sseConnMu.Lock()
+	entry := sseConnCounts[ip]
+	entry.resetAt = time.Now().Add(-time.Second)
+	sseConnMu.Unlock()
+
+	assert.True(t, sseConnAllowed(ip), "should be allowed after window expires")
+
+	sseConnMu.Lock()
+	delete(sseConnCounts, ip)
+	sseConnMu.Unlock()
+}
