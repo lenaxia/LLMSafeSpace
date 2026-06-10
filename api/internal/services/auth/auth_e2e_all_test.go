@@ -679,6 +679,9 @@ func (m *apiKeyAwareDB) ListSessionIndex(context.Context, string) ([]types.Sessi
 	return nil, nil
 }
 func (m *apiKeyAwareDB) DeleteSessionIndex(context.Context, string) error { return nil }
+func (m *apiKeyAwareDB) DeleteSessionTree(context.Context, string, string) error {
+	return nil
+}
 func (m *apiKeyAwareDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
 	return nil
 }
