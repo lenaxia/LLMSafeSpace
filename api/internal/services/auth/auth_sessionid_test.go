@@ -143,9 +143,9 @@ func (m *mockDB) UpsertSessionParent(context.Context, string, string, string) er
 	return nil
 }
 func (m *mockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
-func (m *mockDB) Ping(context.Context) error { return nil }
-func (m *mockDB) Start() error               { return nil }
-func (m *mockDB) Stop() error                { return nil }
+func (m *mockDB) Ping(context.Context) error                                 { return nil }
+func (m *mockDB) Start() error                                               { return nil }
+func (m *mockDB) Stop() error                                                { return nil }
 
 type mockCache struct{}
 

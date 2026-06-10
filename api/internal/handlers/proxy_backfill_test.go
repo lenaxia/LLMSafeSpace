@@ -54,8 +54,8 @@ func (r *recordingSessionIndex) UpsertParent(_ context.Context, _, sessionID, pa
 	return nil
 }
 func (r *recordingSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error { return nil }
-func (r *recordingSessionIndex) Start() error { return nil }
-func (r *recordingSessionIndex) Stop() error  { return nil }
+func (r *recordingSessionIndex) Start() error                                        { return nil }
+func (r *recordingSessionIndex) Stop() error                                         { return nil }
 
 func (r *recordingSessionIndex) parentOf(sessionID string) string {
 	r.mu.Lock()

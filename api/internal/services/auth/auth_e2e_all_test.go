@@ -692,6 +692,6 @@ func (m *apiKeyAwareDB) UpsertSessionParent(context.Context, string, string, str
 	return nil
 }
 func (m *apiKeyAwareDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
-func (m *apiKeyAwareDB) Ping(context.Context) error { return nil }
-func (m *apiKeyAwareDB) Start() error               { return nil }
-func (m *apiKeyAwareDB) Stop() error                { return nil }
+func (m *apiKeyAwareDB) Ping(context.Context) error                                 { return nil }
+func (m *apiKeyAwareDB) Start() error                                               { return nil }
+func (m *apiKeyAwareDB) Stop() error                                                { return nil }
