@@ -1106,9 +1106,7 @@ func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspace
 // seedEphemeralSecrets injects admin platform credentials (server-side KEK,
 // no user session required) into the workspace-secrets-<id> K8s Secret.
 //
-// Called from two paths:
-//   - CreateWorkspace: only admin credentials are bound at creation time;
-//     user session-encrypted credentials are not yet available.
+// Called from one path:
 //   - refreshEphemeralSecrets fallback: when no sessionID is in context
 //     (API-key auth, controller reconcile), this is called instead of
 //     skipping entirely, ensuring platform credentials are always injected.

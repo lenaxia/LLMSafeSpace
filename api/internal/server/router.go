@@ -601,7 +601,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		ws, err := wsSvc.CreateWorkspace(c.Request.Context(), userID, req)
+		ctx := c.Request.Context()
+		if sid, exists := c.Get("sessionID"); exists {
+			ctx = workspace.ContextWithSessionID(ctx, sid.(string))
+		}
+		ws, err := wsSvc.CreateWorkspace(ctx, userID, req)
 		if err != nil {
 			respondWithError(c, err)
 			return
@@ -682,7 +686,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		if err := wsSvc.RestartWorkspace(c.Request.Context(), userID, c.Param("id")); err != nil {
+		restartCtx := c.Request.Context()
+		if sid, exists := c.Get("sessionID"); exists {
+			restartCtx = workspace.ContextWithSessionID(restartCtx, sid.(string))
+		}
+		if err := wsSvc.RestartWorkspace(restartCtx, userID, c.Param("id")); err != nil {
 			respondWithError(c, err)
 			return
 		}
