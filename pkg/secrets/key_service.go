@@ -43,21 +43,21 @@ type DEKCache interface {
 
 // KeyService manages user key lifecycle.
 type KeyService struct {
-	store        KeyStore
-	cache        DEKCache
-	secretStore  SecretStore
-	logger       pkginterfaces.LoggerInterface
-	apiKeyStore  APIKeyStore
-	masterKey    []byte
+	store       KeyStore
+	cache       DEKCache
+	secretStore SecretStore
+	logger      pkginterfaces.LoggerInterface
+	apiKeyStore APIKeyStore
+	masterKey   []byte
 }
 
 // APIKeyRecord is the subset of API key data needed for DEK re-wrap.
 type APIKeyRecord struct {
-	ID             string
-	WrappedDEK     []byte
-	KekSalt        []byte
-	KeyCiphertext  []byte
-	DecryptAccess  bool
+	ID            string
+	WrappedDEK    []byte
+	KekSalt       []byte
+	KeyCiphertext []byte
+	DecryptAccess bool
 }
 
 // APIKeyStore abstracts database operations for API key DEK re-wrap.
