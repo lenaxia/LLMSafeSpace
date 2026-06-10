@@ -1639,3 +1639,164 @@ func (f *failingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ strin
 func (f *failingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
 func (f *failingDeleteSessionIndex) Start() error                                         { return nil }
 func (f *failingDeleteSessionIndex) Stop() error                                          { return nil }
+
+func TestProxy_DeleteSession_RemovesActiveSession(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	assert.Eventually(t, func() bool {
+		env.handler.activeMu.Lock()
+		defer env.handler.activeMu.Unlock()
+		_, exists := env.handler.activeSess["ws-1"]["s1"]
+		return !exists
+	}, 2*time.Second, 10*time.Millisecond, "deleted session should be removed from active sessions")
+
+	env.handler.activeMu.Lock()
+	assert.True(t, env.handler.activeSess["ws-1"]["s2"], "other sessions should be unaffected")
+	env.handler.activeMu.Unlock()
+}
+
+func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.handler.broker = NewWorkspaceEventBroker()
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	sub := env.handler.broker.Subscribe("ws-1")
+	defer env.handler.broker.Unsubscribe("ws-1", sub)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case evt := <-sub.ch:
+		assert.Equal(t, "session.status", evt.Type)
+		assert.Equal(t, "s1", evt.SessionID)
+		assert.Equal(t, "deleted", evt.Status)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SSE session.status deleted event")
+	}
+}
+
+func TestProxy_DeleteSession_NoSSEWhenOpencodeFails(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	env.handler.SetSessionIndex(si)
+	env.handler.broker = NewWorkspaceEventBroker()
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	sub := env.handler.broker.Subscribe("ws-1")
+	defer env.handler.broker.Unsubscribe("ws-1", sub)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	assert.False(t, si.called, "session index should NOT be called when opencode fails")
+
+	select {
+	case evt := <-sub.ch:
+		t.Fatalf("unexpected SSE event when opencode fails: %+v", evt)
+	default:
+	}
+}
+
+func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	done := make(chan *httptest.ResponseRecorder, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+			done <- w
+		}()
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case w := <-done:
+			assert.Equal(t, http.StatusOK, w.Code)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent delete response")
+		}
+	}
+
+	assert.Eventually(t, func() bool {
+		env.handler.activeMu.Lock()
+		defer env.handler.activeMu.Unlock()
+		_, exists := env.handler.activeSess["ws-1"]["s1"]
+		return !exists
+	}, 2*time.Second, 10*time.Millisecond, "session should be removed from active set after concurrent deletes")
+
+	assert.Eventually(t, func() bool {
+		env.handler.activeMu.Lock()
+		defer env.handler.activeMu.Unlock()
+		_, wsExists := env.handler.activeSess["ws-1"]
+		return !wsExists
+	}, 2*time.Second, 10*time.Millisecond, "workspace entry should be cleaned up when no active sessions remain")
+}
+
+func TestProxy_DeleteSession_NoSideEffectsWithoutBroker(t *testing.T) {
+	si := &recordingDeleteSessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.handler.broker = nil
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, si.called)
+}
+
+func TestProxy_DeleteSession_DeepNestingEndpointMapping(t *testing.T) {
+	var capturedMethod, capturedPath string
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/sess_abc-123", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "DELETE", capturedMethod)
+	assert.Equal(t, "/session/sess_abc-123", capturedPath)
+}

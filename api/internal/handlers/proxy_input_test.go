@@ -23,13 +23,10 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
-// recvWithTimeout reads from ch with a 2-second deadline; fails the test if
-// the channel does not deliver in time. Used by the E2E broker integration
-// tests to surface dropped events as a fast failure rather than a hang.
-func recvWithTimeout(t *testing.T, ch chan WorkspaceSSEEvent, what string) WorkspaceSSEEvent {
+func recvWithTimeout(t *testing.T, sub *subscriber, what string) WorkspaceSSEEvent {
 	t.Helper()
 	select {
-	case evt := <-ch:
+	case evt := <-sub.ch:
 		return evt
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for %s event", what)
@@ -51,10 +48,8 @@ func newInputTestEnv(t *testing.T) *testEnv {
 		})
 	})
 
-	// Set dialect on the handler
 	env.handler.dialect = &agentoc.Dialect{}
 
-	// Register input routes
 	proxy := env.router.Group("/api/v1/workspaces/:id")
 	{
 		proxy.GET("/question", env.handler.ListQuestions)
@@ -174,7 +169,6 @@ func TestProxyInput_WorkspaceNotActive(t *testing.T) {
 
 func TestProxyInput_WorkspaceNotFound(t *testing.T) {
 	env := newInputTestEnv(t)
-	// Set up workspace mock to return error for "ws-nonexistent"
 	env.wsMock.On("Get", "ws-nonexistent", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-nonexistent/question", nil)
@@ -210,7 +204,6 @@ func TestProxyInput_BodyForwardedCorrectly(t *testing.T) {
 
 func TestProxyInput_DialectNil(t *testing.T) {
 	env := newTestEnv(t)
-	// handler.dialect is nil by default in newTestEnv
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	gin.SetMode(gin.TestMode)
@@ -226,13 +219,7 @@ func TestProxyInput_DialectNil(t *testing.T) {
 }
 
 // ===== US-16.3: Normalized Event Emission Tests =====
-//
-// These tests drive onRawEvent directly with the production wire format —
-// the full opencode SSE envelope {"type":"...","properties":{...}}. They
-// complement the broader E2E tests further down the file that drive
-// SSETracker.processEvent (the real upstream caller of onRawEvent).
 
-// makeEnvelope wraps inner properties JSON in the opencode SSE envelope.
 func makeEnvelope(eventType string, props map[string]interface{}) string {
 	propsJSON, _ := json.Marshal(props)
 	envelope, _ := json.Marshal(map[string]interface{}{
@@ -247,8 +234,8 @@ func TestNormalizedEvents_QuestionAsked(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
 		"id":        "que_abc",
@@ -263,14 +250,12 @@ func TestNormalizedEvents_QuestionAsked(t *testing.T) {
 	})
 	handler.onRawEvent("ws-1", "question.asked", envelope)
 
-	// Should receive 2 events: raw opencode.event + normalized agent.question
-	evt1 := recvWithTimeout(t, ch, "opencode.event")
+	evt1 := recvWithTimeout(t, sub, "opencode.event")
 	assert.Equal(t, "opencode.event", evt1.Type)
 	assert.Equal(t, "question.asked", evt1.EventType)
 
-	evt2 := recvWithTimeout(t, ch, "agent.question")
+	evt2 := recvWithTimeout(t, sub, "agent.question")
 	assert.Equal(t, "agent.question", evt2.Type)
-	// Verify the data is a parsed QuestionRequest
 	data, err := json.Marshal(evt2.Data)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"id":"que_abc"`)
@@ -282,8 +267,8 @@ func TestNormalizedEvents_QuestionResolved(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeEnvelope("question.replied", map[string]interface{}{
 		"id":        "que_abc",
@@ -292,12 +277,10 @@ func TestNormalizedEvents_QuestionResolved(t *testing.T) {
 	})
 	handler.onRawEvent("ws-1", "question.replied", envelope)
 
-	// Raw event
-	evt1 := recvWithTimeout(t, ch, "opencode.event")
+	evt1 := recvWithTimeout(t, sub, "opencode.event")
 	assert.Equal(t, "opencode.event", evt1.Type)
 
-	// Normalized resolved event
-	evt2 := recvWithTimeout(t, ch, "agent.question.resolved")
+	evt2 := recvWithTimeout(t, sub, "agent.question.resolved")
 	assert.Equal(t, "agent.question.resolved", evt2.Type)
 	data := evt2.Data.(map[string]string)
 	assert.Equal(t, "que_abc", data["request_id"])
@@ -309,8 +292,8 @@ func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeEnvelope("question.rejected", map[string]interface{}{
 		"id":        "que_abc",
@@ -318,8 +301,8 @@ func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 	})
 	handler.onRawEvent("ws-1", "question.rejected", envelope)
 
-	recvWithTimeout(t, ch, "opencode.event") // raw
-	evt2 := recvWithTimeout(t, ch, "agent.question.resolved")
+	recvWithTimeout(t, sub, "opencode.event")
+	evt2 := recvWithTimeout(t, sub, "agent.question.resolved")
 	assert.Equal(t, "agent.question.resolved", evt2.Type)
 }
 
@@ -339,8 +322,8 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_abc",
@@ -350,8 +333,8 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	})
 	handler.onRawEvent("ws-1", "permission.asked", envelope)
 
-	recvWithTimeout(t, ch, "opencode.event") // raw
-	evt2 := recvWithTimeout(t, ch, "agent.permission")
+	recvWithTimeout(t, sub, "opencode.event")
+	evt2 := recvWithTimeout(t, sub, "agent.permission")
 	assert.Equal(t, "agent.permission", evt2.Type)
 	data, _ := json.Marshal(evt2.Data)
 	assert.Contains(t, string(data), `"id":"per_abc"`)
@@ -363,8 +346,8 @@ func TestNormalizedEvents_PermissionResolved(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeEnvelope("permission.replied", map[string]interface{}{
 		"id":        "per_abc",
@@ -373,8 +356,8 @@ func TestNormalizedEvents_PermissionResolved(t *testing.T) {
 	})
 	handler.onRawEvent("ws-1", "permission.replied", envelope)
 
-	recvWithTimeout(t, ch, "opencode.event") // raw
-	evt2 := recvWithTimeout(t, ch, "agent.permission.resolved")
+	recvWithTimeout(t, sub, "opencode.event")
+	evt2 := recvWithTimeout(t, sub, "agent.permission.resolved")
 	assert.Equal(t, "agent.permission.resolved", evt2.Type)
 	data := evt2.Data.(map[string]string)
 	assert.Equal(t, "per_abc", data["request_id"])
@@ -386,23 +369,20 @@ func TestNormalizedEvents_RawEventAlwaysPublished(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
-	// Unrelated event — only raw should be published
 	envelope := makeEnvelope("session.diff", map[string]interface{}{"some": "data"})
 	handler.onRawEvent("ws-1", "session.diff", envelope)
 
-	evt := recvWithTimeout(t, ch, "opencode.event")
+	evt := recvWithTimeout(t, sub, "opencode.event")
 	assert.Equal(t, "opencode.event", evt.Type)
 	assert.Equal(t, "session.diff", evt.EventType)
 
-	// Channel should be empty (no normalized event for session.diff)
 	select {
-	case <-ch:
+	case <-sub.ch:
 		t.Fatal("unexpected second event for unrelated event type")
 	default:
-		// expected
 	}
 }
 
@@ -411,50 +391,32 @@ func TestNormalizedEvents_ParseError_NoNormalizedEvent(t *testing.T) {
 	handler.broker = NewWorkspaceEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
-	// Malformed question event — properties present but missing required fields
 	envelope := makeEnvelope("question.asked", map[string]interface{}{"invalid": true})
 	handler.onRawEvent("ws-1", "question.asked", envelope)
 
-	// Raw event still published
-	evt := recvWithTimeout(t, ch, "opencode.event")
+	evt := recvWithTimeout(t, sub, "opencode.event")
 	assert.Equal(t, "opencode.event", evt.Type)
 
-	// No normalized event (parse failed)
 	select {
-	case <-ch:
+	case <-sub.ch:
 		t.Fatal("should not publish normalized event on parse error")
 	case <-time.After(100 * time.Millisecond):
-		// expected
 	}
 }
 
 func TestNormalizedEvents_BrokerNil_NoPanic(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	handler.dialect = &agentoc.Dialect{}
-	// broker is nil
 
-	// Should not panic
 	envelope := `{"type":"question.asked","properties":{"id":"que_abc","sessionID":"ses_xyz","questions":[]}}`
 	handler.onRawEvent("ws-1", "question.asked", envelope)
 }
 
 // ===== US-16.3 integration: real wiring through SSETracker.processEvent =====
-//
-// These tests drive the production entry point — SSETracker.processEvent — with
-// real opencode SSE envelope data, exactly as the live wire format delivers it
-// (envelope-with-properties). They prove that the
-//   tracker.processEvent → onRawEvent → emitNormalizedInputEvent → broker.Publish
-// chain produces normalized agent.* events for browser subscribers.
-//
-// The earlier TestNormalizedEvents_* tests pass flat properties directly to
-// onRawEvent and therefore enforced an incorrect contract — the production
-// pipeline always passes the full envelope. These integration tests catch the
-// envelope-vs-properties bug observed in worklog 0072.
 
-// makePermissionAskedEvent builds a real opencode permission.asked envelope.
 func makePermissionAskedEvent(reqID, sessionID, permission string, patterns []string) string {
 	props := map[string]interface{}{
 		"id":         reqID,
@@ -470,7 +432,6 @@ func makePermissionAskedEvent(reqID, sessionID, permission string, patterns []st
 	return string(envelope)
 }
 
-// makeQuestionAskedEvent builds a real opencode question.asked envelope.
 func makeQuestionAskedEvent(reqID, sessionID string) string {
 	props := map[string]interface{}{
 		"id":        reqID,
@@ -493,7 +454,6 @@ func makeQuestionAskedEvent(reqID, sessionID string) string {
 	return string(envelope)
 }
 
-// makeResolutionEvent builds a real opencode question.replied/permission.replied envelope.
 func makeResolutionEvent(eventType, reqID, sessionID, reply string) string {
 	props := map[string]interface{}{
 		"id":        reqID,
@@ -511,8 +471,6 @@ func makeResolutionEvent(eventType, reqID, sessionID, reply string) string {
 }
 
 func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
-	// Configure auto-approve OFF so the normalized event is published
-	// (auto-approve path consumes the event before it reaches the broker).
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
@@ -532,19 +490,17 @@ func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 	tracker := newTestSSETracker(func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makePermissionAskedEvent("per_abc", "ses_xyz", "shell", []string{"rm -rf /tmp"})
 	tracker.processEvent("ws-1", envelope)
 
-	// Always-published raw event
-	evt1 := recvWithTimeout(t, ch, "opencode.event (permission.asked)")
+	evt1 := recvWithTimeout(t, sub, "opencode.event (permission.asked)")
 	assert.Equal(t, "opencode.event", evt1.Type)
 	assert.Equal(t, "permission.asked", evt1.EventType)
 
-	// Normalized event — this is the one that was silently dropped before the fix
-	evt2 := recvWithTimeout(t, ch, "agent.permission")
+	evt2 := recvWithTimeout(t, sub, "agent.permission")
 	assert.Equal(t, "agent.permission", evt2.Type)
 	data, mErr := json.Marshal(evt2.Data)
 	require.NoError(t, mErr)
@@ -562,17 +518,17 @@ func TestNormalizedEvents_E2E_QuestionAsked_ViaProcessEvent(t *testing.T) {
 	tracker := newTestSSETracker(func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeQuestionAskedEvent("que_abc", "ses_xyz")
 	tracker.processEvent("ws-1", envelope)
 
-	evt1 := recvWithTimeout(t, ch, "opencode.event (question.asked)")
+	evt1 := recvWithTimeout(t, sub, "opencode.event (question.asked)")
 	assert.Equal(t, "opencode.event", evt1.Type)
 	assert.Equal(t, "question.asked", evt1.EventType)
 
-	evt2 := recvWithTimeout(t, ch, "agent.question")
+	evt2 := recvWithTimeout(t, sub, "agent.question")
 	assert.Equal(t, "agent.question", evt2.Type)
 	data, mErr := json.Marshal(evt2.Data)
 	require.NoError(t, mErr)
@@ -589,14 +545,14 @@ func TestNormalizedEvents_E2E_PermissionResolved_ViaProcessEvent(t *testing.T) {
 	tracker := newTestSSETracker(func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeResolutionEvent("permission.replied", "per_abc", "ses_xyz", "always")
 	tracker.processEvent("ws-1", envelope)
 
-	recvWithTimeout(t, ch, "opencode.event (permission.replied)") // raw
-	evt2 := recvWithTimeout(t, ch, "agent.permission.resolved")
+	recvWithTimeout(t, sub, "opencode.event (permission.replied)")
+	evt2 := recvWithTimeout(t, sub, "agent.permission.resolved")
 	assert.Equal(t, "agent.permission.resolved", evt2.Type)
 	data := evt2.Data.(map[string]string)
 	assert.Equal(t, "per_abc", data["request_id"])
@@ -613,14 +569,14 @@ func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {
 	tracker := newTestSSETracker(func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	ch := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", ch)
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	envelope := makeResolutionEvent("question.replied", "que_abc", "ses_xyz", "")
 	tracker.processEvent("ws-1", envelope)
 
-	recvWithTimeout(t, ch, "opencode.event (question.replied)") // raw
-	evt2 := recvWithTimeout(t, ch, "agent.question.resolved")
+	recvWithTimeout(t, sub, "opencode.event (question.replied)")
+	evt2 := recvWithTimeout(t, sub, "agent.question.resolved")
 	assert.Equal(t, "agent.question.resolved", evt2.Type)
 	data := evt2.Data.(map[string]string)
 	assert.Equal(t, "que_abc", data["request_id"])

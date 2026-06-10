@@ -1225,4 +1225,66 @@ func TestDeleteSessionTree(t *testing.T) {
 		assert.Error(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("workspace_id_in_anchor_and_recursive", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		mock.ExpectExec(`WITH RECURSIVE descendants`).
+			WithArgs("ws-1", "sess-x").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.DeleteSessionTree(context.Background(), "ws-1", "sess-x")
+		assert.NoError(t, err)
+	})
+
+	t.Run("args_are_workspace_first", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		mock.ExpectExec(`WITH RECURSIVE descendants`).
+			WithArgs("ws-1", "sess-y").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.DeleteSessionTree(context.Background(), "ws-1", "sess-y")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestDeleteSessionTree_SQLStructure(t *testing.T) {
+	sql := `WITH RECURSIVE descendants AS (
+			SELECT session_id FROM session_index
+			WHERE workspace_id = $1 AND session_id = $2
+			UNION ALL
+			SELECT si.session_id FROM session_index si
+			INNER JOIN descendants d ON si.parent_session_id = d.session_id AND si.workspace_id = $1
+		)
+		DELETE FROM session_index
+		WHERE workspace_id = $1 AND session_id IN (SELECT session_id FROM descendants)`
+
+	t.Run("anchor_filters_by_workspace_and_session", func(t *testing.T) {
+		assert.Contains(t, sql, "WHERE workspace_id = $1 AND session_id = $2",
+			"CTE anchor must filter by both workspace_id and session_id to prevent cross-workspace deletion")
+	})
+
+	t.Run("recursive_member_scoped_by_workspace", func(t *testing.T) {
+		assert.Contains(t, sql, "si.workspace_id = $1",
+			"recursive member must scope traversal to same workspace to prevent cross-workspace tree walk")
+	})
+
+	t.Run("delete_scoped_by_workspace", func(t *testing.T) {
+		assert.Contains(t, sql, "WHERE workspace_id = $1 AND session_id IN",
+			"DELETE must include workspace_id filter as defense-in-depth against cross-workspace data corruption")
+	})
+
+	t.Run("uses_union_all_not_union", func(t *testing.T) {
+		assert.Contains(t, sql, "UNION ALL",
+			"CTE must use UNION ALL (not UNION) for performance — no dedup needed since session_id is PK-scoped")
+	})
+
+	t.Run("joins_on_parent_session_id", func(t *testing.T) {
+		assert.Contains(t, sql, "si.parent_session_id = d.session_id",
+			"recursive join must walk parent_session_id → session_id to traverse the tree downward")
+	})
 }

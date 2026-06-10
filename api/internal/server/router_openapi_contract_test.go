@@ -301,7 +301,6 @@ var implOnlyAllowlist = map[route]bool{
 	{method: "PUT", path: "/api/v1/workspaces/:id/sessions/:sessionId/seen"}: true,
 
 	// Session delete — proxies to opencode's DELETE /session/:id.
-	// TODO: document in follow-up SDK pass.
 	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId"}: true,
 }
 

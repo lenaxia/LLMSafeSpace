@@ -512,6 +512,38 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [sessions]
+      summary: Delete a session and its children
+      description: |
+        Deletes a session by proxying DELETE /session/:id to the workspace's
+        opencode agent. The session and all child sessions are removed from
+        both opencode and the session_index. After a successful delete, an SSE
+        `session.status` event with `status: "deleted"` is published for
+        multi-tab consistency.
+      operationId: deleteSession
+      x-opencode-proxy: true
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session deleted successfully
+        "400":
+          description: Invalid session ID (path traversal characters)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Workspace is not active (suspended or transitioning)
   /workspaces/{id}/sessions/{sessionId}/abort:
     post:
       tags: [sessions]

@@ -26,6 +26,7 @@ type subscriber struct {
 	ch          chan WorkspaceSSEEvent
 	missedEvent atomic.Bool
 	closed      atomic.Bool
+	onDrop      func(eventType string)
 }
 
 // send delivers an event to the subscriber's channel. If the channel is full,
@@ -42,6 +43,9 @@ func (s *subscriber) send(evt WorkspaceSSEEvent) {
 		case s.ch <- resync:
 			s.missedEvent.Store(false)
 		default:
+			if s.onDrop != nil {
+				s.onDrop("resync")
+			}
 			return
 		}
 	}
@@ -49,6 +53,9 @@ func (s *subscriber) send(evt WorkspaceSSEEvent) {
 	case s.ch <- evt:
 	default:
 		s.missedEvent.Store(true)
+		if s.onDrop != nil {
+			s.onDrop(evt.Type)
+		}
 	}
 }
 

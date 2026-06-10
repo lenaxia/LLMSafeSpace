@@ -356,8 +356,8 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	ch := h.broker.Subscribe(workspaceID)
-	defer h.broker.Unsubscribe(workspaceID, ch)
+	sub := h.broker.Subscribe(workspaceID)
+	defer h.broker.Unsubscribe(workspaceID, sub)
 
 	// Start watching the workspace pod as soon as a browser subscribes so that
 	// events are available immediately when the user sends a message, rather than
@@ -378,31 +378,33 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	}
 
 	// Heartbeat goroutine — sends comment lines to keep connection alive (FM1)
-	go func() {
-		ticker := time.NewTicker(heartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-streamCtx.Done():
-				return
-			case <-ticker.C:
-				// Send heartbeat directly — legacy broker doesn't use subscriber struct.
-				// The live loop below handles the actual write.
-				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: heartbeatSentinelType})
-			}
-		}
-	}()
+	go heartbeatLoop(streamCtx, sub)
 
 	for {
 		select {
 		case <-streamCtx.Done():
 			return
-		case evt, open := <-ch:
+		case evt, open := <-sub.ch:
 			if !open {
 				return
 			}
 			if evt.Type == heartbeatSentinelType {
 				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {
+					streamCancel()
+					return
+				}
+				flusher.Flush()
+				_ = rc.SetWriteDeadline(time.Now().Add(writeDeadlineWindow))
+				continue
+			}
+			if evt.Type == "resync" {
+				resyncEvt := WorkspaceSSEEvent{Type: "resync", WorkspaceID: workspaceID}
+				data, marshalErr := json.Marshal(resyncEvt)
+				if marshalErr != nil {
+					h.logger.Warn("SSE resync marshal failed", "error", marshalErr, "workspaceID", workspaceID)
+					continue
+				}
+				if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", data); writeErr != nil {
 					streamCancel()
 					return
 				}
@@ -416,6 +418,11 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 			}
 			data, marshalErr := json.Marshal(evt)
 			if marshalErr != nil {
+				h.logger.Warn("SSE event marshal failed, dropping",
+					"error", marshalErr,
+					"workspaceID", workspaceID,
+					"eventType", evt.Type,
+				)
 				continue
 			}
 			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", data); writeErr != nil {

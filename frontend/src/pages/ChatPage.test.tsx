@@ -16,6 +16,7 @@ vi.mock("../api/workspaces", () => ({
     renameWorkspace: vi.fn().mockResolvedValue({}),
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../api/messages", () => {
@@ -313,5 +314,66 @@ describe("ChatPage", () => {
       "sess-1",
       expect.not.objectContaining({ model: expect.anything() }),
     ));
+  });
+});
+
+describe("ChatPage — session delete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ id: "ws-1", name: "Test", phase: "Active" }],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  it("calls deleteSession when kebab delete is confirmed", async () => {
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const deleteBtn = await screen.findByText("Delete session");
+    await userEvent.click(deleteBtn);
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("does not call deleteSession when confirm is cancelled", async () => {
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const deleteBtn = await screen.findByText("Delete session");
+    await userEvent.click(deleteBtn);
+
+    expect(workspacesApi.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("treats 404 as success on delete", async () => {
+    const err404: any = new Error("not found");
+    err404.status = 404;
+    (workspacesApi.deleteSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err404);
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const deleteBtn = await screen.findByText("Delete session");
+    await userEvent.click(deleteBtn);
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
   });
 });
