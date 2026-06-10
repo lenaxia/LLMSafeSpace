@@ -1614,10 +1614,14 @@ func (r *recordingDeleteSessionIndex) DeleteByWorkspace(_ context.Context, _ str
 }
 func (r *recordingDeleteSessionIndex) DeleteSession(_ context.Context, workspaceID, sessionID string) error {
 	r.mu.Lock()
-	r.called = true
 	r.workspaceID = workspaceID
 	r.sessionID = sessionID
+	r.called = true
 	r.mu.Unlock()
+	return nil
+}
+
+func (r *recordingDeleteSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error {
 	return nil
 }
 func (r *recordingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error {
