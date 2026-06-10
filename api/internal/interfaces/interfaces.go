@@ -36,7 +36,7 @@ type AuthService interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
 	Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error)
 	Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error)
-	CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error)
+	CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string) (*types.APIKey, error)
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
 	DeleteAPIKey(ctx context.Context, userID, keyID string) error
 	AuthMiddleware() gin.HandlerFunc
@@ -59,6 +59,9 @@ type DatabaseService interface {
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
 	GetAPIKey(ctx context.Context, userID, keyID string) (*types.APIKey, error)
 	DeleteAPIKey(ctx context.Context, userID, keyID string) error
+	GetAPIKeyRecordByHash(ctx context.Context, keyHash string) (*types.APIKey, error)
+	UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error
+	ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*types.APIKey, error)
 	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
 	CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error

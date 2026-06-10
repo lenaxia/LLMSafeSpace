@@ -227,7 +227,7 @@ func TestListAPIKeys_SecretsStripped(t *testing.T) {
 func TestCreateAPIKey_SecretOnlyOnCreation(t *testing.T) {
 	router, svc := newAuthenticatedFixture(t, "user-1")
 
-	svc.auth.On("CreateAPIKey", mock.Anything, "user-1", mock.Anything).Return(&types.APIKey{
+	svc.auth.On("CreateAPIKey", mock.Anything, "user-1", mock.Anything, mock.Anything).Return(&types.APIKey{
 		ID:     "k1",
 		Name:   "my-key",
 		Key:    "lsp_supersecret123",

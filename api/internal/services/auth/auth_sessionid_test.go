@@ -108,6 +108,13 @@ func (m *mockDB) CreateAPIKey(context.Context, *types.APIKey) error             
 func (m *mockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)     { return nil, nil }
 func (m *mockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) { return nil, nil }
 func (m *mockDB) DeleteAPIKey(context.Context, string, string) error               { return nil }
+func (m *mockDB) GetAPIKeyRecordByHash(context.Context, string) (*types.APIKey, error) {
+	return nil, nil
+}
+func (m *mockDB) UpdateAPIKeyDEK(context.Context, string, []byte, []byte, bool) error { return nil }
+func (m *mockDB) ListAPIKeysWithDecrypt(context.Context, string) ([]*types.APIKey, error) {
+	return nil, nil
+}
 func (m *mockDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
 	return nil, nil
 }
@@ -214,6 +221,14 @@ func (t *trackingKeyService) HasKeys(_ context.Context, userID string) (bool, er
 		return false, nil
 	}
 	return t.initialized[userID], nil
+}
+
+func (t *trackingKeyService) GetDEK(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+
+func (t *trackingKeyService) CacheDEK(_ context.Context, _ string, _ []byte, _ time.Duration) error {
+	return nil
 }
 
 // TestOptionalAuthMiddleware_ValidToken verifies that a valid JWT sets userID

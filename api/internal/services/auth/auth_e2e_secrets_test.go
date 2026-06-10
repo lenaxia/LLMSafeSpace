@@ -191,12 +191,17 @@ type fullMockDB struct {
 
 func (m *fullMockDB) GetUser(_ context.Context, id string) (*types.User, error) {
 	u := m.users[id]
-	return u, nil
+	if u == nil {
+		return nil, nil
+	}
+	cp := *u
+	return &cp, nil
 }
 func (m *fullMockDB) GetUserByEmail(_ context.Context, email string) (*types.User, error) {
 	for _, u := range m.users {
 		if u.Email == email {
-			return u, nil
+			cp := *u
+			return &cp, nil
 		}
 	}
 	return nil, nil
@@ -216,6 +221,15 @@ func (m *fullMockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, 
 	return nil, nil
 }
 func (m *fullMockDB) DeleteAPIKey(context.Context, string, string) error { return nil }
+func (m *fullMockDB) GetAPIKeyRecordByHash(context.Context, string) (*types.APIKey, error) {
+	return nil, nil
+}
+func (m *fullMockDB) UpdateAPIKeyDEK(context.Context, string, []byte, []byte, bool) error {
+	return nil
+}
+func (m *fullMockDB) ListAPIKeysWithDecrypt(context.Context, string) ([]*types.APIKey, error) {
+	return nil, nil
+}
 func (m *fullMockDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
 	return nil, nil
 }

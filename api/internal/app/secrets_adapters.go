@@ -399,6 +399,32 @@ func generateID() string {
 	return fmt.Sprintf("%x", b)
 }
 
+type apiKeyStoreAdapter struct {
+	db interfaces.DatabaseService
+}
+
+func (a *apiKeyStoreAdapter) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*secrets.APIKeyRecord, error) {
+	keys, err := a.db.ListAPIKeysWithDecrypt(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var records []*secrets.APIKeyRecord
+	for _, k := range keys {
+		records = append(records, &secrets.APIKeyRecord{
+			ID:            k.ID,
+			WrappedDEK:    k.WrappedDEK,
+			KekSalt:       k.KekSalt,
+			KeyCiphertext: k.KeyCiphertext,
+			DecryptAccess: k.DecryptAccess,
+		})
+	}
+	return records, nil
+}
+
+func (a *apiKeyStoreAdapter) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
+	return a.db.UpdateAPIKeyDEK(ctx, keyID, wrappedDEK, kekSalt, synced)
+}
+
 // bcryptPasswordUpdater implements handlers.PasswordHashUpdater using the DatabaseService.
 type bcryptPasswordUpdater struct {
 	db interfaces.DatabaseService

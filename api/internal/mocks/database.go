@@ -85,6 +85,26 @@ func (m *MockDatabaseService) DeleteAPIKey(ctx context.Context, userID, keyID st
 	return m.Called(ctx, userID, keyID).Error(0)
 }
 
+func (m *MockDatabaseService) GetAPIKeyRecordByHash(ctx context.Context, keyHash string) (*types.APIKey, error) {
+	args := m.Called(ctx, keyHash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.APIKey), args.Error(1)
+}
+
+func (m *MockDatabaseService) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
+	return m.Called(ctx, keyID, wrappedDEK, kekSalt, synced).Error(0)
+}
+
+func (m *MockDatabaseService) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*types.APIKey), args.Error(1)
+}
+
 func (m *MockDatabaseService) GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
 	args := m.Called(ctx, workspaceID)
 	if args.Get(0) == nil {

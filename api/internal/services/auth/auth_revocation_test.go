@@ -32,6 +32,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // memCache is a minimal in-memory cache that satisfies interfaces.CacheService
@@ -173,7 +174,7 @@ func TestG18_RevokeWritesBothKeys(t *testing.T) {
 	require.NoError(t, svc.RevokeToken(token))
 
 	// Hash-keyed entry: the fast-path in ValidateToken reads this on entry.
-	hashKey := "token:" + hashToken(token)
+	hashKey := "token:" + pkgutil.HashString(token)
 	v, err := cache.Get(context.Background(), hashKey)
 	require.NoError(t, err, "hash-keyed revocation entry missing — fast-path will not see revocation")
 	require.Equal(t, "revoked", v)
@@ -195,7 +196,7 @@ func TestG18_RevocationDefenseInDepth_HashCacheEvicted(t *testing.T) {
 	require.NoError(t, svc.RevokeToken(token))
 
 	// Manually evict the hash-keyed revocation entry but leave the jti entry.
-	hashKey := "token:" + hashToken(token)
+	hashKey := "token:" + pkgutil.HashString(token)
 	require.NoError(t, cache.Delete(context.Background(), hashKey))
 
 	userID, err := svc.ValidateToken(token)

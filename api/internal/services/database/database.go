@@ -583,8 +583,9 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
-        INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy,
+                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     `
 	var expiresAt interface{}
 	if apiKey.ExpiresAt != nil {
@@ -604,6 +605,11 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 		expiresAt,
 		prefix,
 		apiKey.Legacy,
+		apiKey.DecryptAccess,
+		apiKey.KekSalt,
+		apiKey.WrappedDEK,
+		apiKey.DekSynced,
+		apiKey.KeyCiphertext,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create api key: %w", err)
@@ -612,7 +618,8 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 }
 func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	query := `
-        SELECT id, user_id, key, name, active, created_at, expires_at
+        SELECT id, user_id, key, name, active, created_at, expires_at,
+               COALESCE(decrypt_access, false), COALESCE(dek_synced, false)
         FROM api_keys
         WHERE user_id = $1
         ORDER BY created_at DESC
@@ -628,7 +635,7 @@ func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIK
 		var k types.APIKey
 		var keyStr string
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt); err != nil {
+		if err := rows.Scan(&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt, &k.DecryptAccess, &k.DekSynced); err != nil {
 			return nil, fmt.Errorf("failed to scan api key: %w", err)
 		}
 		k.Prefix = "lsp_"
@@ -674,6 +681,92 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 		return fmt.Errorf("failed to delete api key: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) GetAPIKeyRecordByHash(ctx context.Context, keyHash string) (*types.APIKey, error) {
+	query := `
+		SELECT id, user_id, key, name, active, created_at, expires_at,
+		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext
+		FROM api_keys
+		WHERE key = $1 AND active = true
+	`
+	var k types.APIKey
+	var expiresAt sql.NullTime
+	var decryptAccess bool
+	var kekSalt, wrappedDEK, keyCiphertext []byte
+	var dekSynced bool
+
+	err := s.DB.QueryRowContext(ctx, query, keyHash).Scan(
+		&k.ID, &k.UserID, new(string), &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
+		&decryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get api key by hash: %w", err)
+	}
+	k.DecryptAccess = decryptAccess
+	k.KekSalt = kekSalt
+	k.WrappedDEK = wrappedDEK
+	k.DekSynced = dekSynced
+	k.KeyCiphertext = keyCiphertext
+	if expiresAt.Valid {
+		t := expiresAt.Time
+		k.ExpiresAt = &t
+	}
+	return &k, nil
+}
+
+func (s *Service) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE api_keys SET wrapped_dek = $1, kek_salt = $2, dek_synced = $3 WHERE id = $4`,
+		wrappedDEK, kekSalt, synced, keyID)
+	if err != nil {
+		return fmt.Errorf("failed to update api key DEK: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*types.APIKey, error) {
+	query := `
+		SELECT id, user_id, key, name, active, created_at, expires_at,
+		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext
+		FROM api_keys
+		WHERE user_id = $1 AND decrypt_access = true AND active = true
+		ORDER BY created_at DESC
+	`
+	rows, err := s.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list api keys with decrypt: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var keys []*types.APIKey
+	for rows.Next() {
+		var k types.APIKey
+		var keyStr string
+		var expiresAt sql.NullTime
+		var kekSalt, wrappedDEK, keyCiphertext []byte
+		var dekSynced bool
+
+		if err := rows.Scan(
+			&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
+			&k.DecryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan api key: %w", err)
+		}
+		k.KekSalt = kekSalt
+		k.WrappedDEK = wrappedDEK
+		k.DekSynced = dekSynced
+		k.KeyCiphertext = keyCiphertext
+		if expiresAt.Valid {
+			t := expiresAt.Time
+			k.ExpiresAt = &t
+		}
+		keys = append(keys, &k)
+	}
+	return keys, rows.Err()
 }
 
 // --- Session Index DB methods (Phase A) ---

@@ -244,7 +244,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)
 			authSvc.SetInstanceSettings(instanceSettings)
+			authSvc.SetMasterKey(dekMasterKey())
 		}
+		keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, dekMasterKey())
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)

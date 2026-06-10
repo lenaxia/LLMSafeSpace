@@ -499,7 +499,9 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 			c.JSON(http.StatusBadRequest, gin.H{"error": sanitizeBindError(err)})
 			return
 		}
-		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req)
+		sessionID, _ := c.Get("sessionID")
+		sid, _ := sessionID.(string)
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req, sid)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
