@@ -224,9 +224,10 @@ type WorkspaceCondition struct {
 
 // AgentSessionStatus describes a session reported by the workspace agent.
 type AgentSessionStatus struct {
-	ID     string `json:"id"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status"` // "idle" | "busy"
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"` // "idle" | "busy"
+	ContextUsed int64  `json:"contextUsed,omitempty"`
 }
 
 // WorkspaceStatus defines the observed state of a Workspace.

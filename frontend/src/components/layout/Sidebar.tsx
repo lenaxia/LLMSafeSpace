@@ -433,6 +433,25 @@ function WorkspaceSessionList({
     enabled: !!workspaceId,
   });
 
+  // S36.5: Subscribe to workspace status cache (populated by ChatPage poller)
+  // to show per-session context usage indicators. staleTime:Infinity + enabled:false
+  // means: read from cache only, never trigger a fetch from here.
+  const { data: wsStatus } = useQuery({
+    queryKey: ["workspace-status", workspaceId],
+    queryFn: () => workspacesApi.getStatus(workspaceId!),
+    enabled: false,
+    staleTime: Infinity,
+  });
+  const contextBySessionId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of wsStatus?.sessions ?? []) {
+      if (s.contextUsed != null && s.contextUsed > 0) {
+        m.set(s.id, s.contextUsed);
+      }
+    }
+    return m;
+  }, [wsStatus?.sessions]);
+
   // Tree shape: roots + orphans, where roots/orphans contain children of
   // arbitrary depth. Recomputed only when the session list changes.
   const tree = useMemo(() => buildSessionTree(sessions ?? []), [sessions]);
@@ -566,6 +585,7 @@ function WorkspaceSessionList({
               renamingSession={renamingSession}
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
+              contextBySessionId={contextBySessionId}
             />
           ))}
 
@@ -584,6 +604,7 @@ function WorkspaceSessionList({
               renamingSession={renamingSession}
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
+              contextBySessionId={contextBySessionId}
             />
           )}
         </div>
@@ -605,6 +626,8 @@ interface SessionTreeRowProps {
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
+  /** Per-session context token count from workspace status (S36.5). */
+  contextBySessionId: Map<string, number>;
 }
 
 /** Single row in the session tree. Renders its children recursively when
@@ -622,12 +645,14 @@ function SessionTreeRow({
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
+  contextBySessionId,
 }: SessionTreeRowProps) {
   const s = node.session;
   const isRenaming = renamingSession?.sessionId === s.id;
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(s.id);
   const title = sessionDisplayTitle(s.title, s.lastMessageAt);
+  const contextUsed = contextBySessionId.get(s.id);
 
   if (isRenaming) {
     return (
@@ -699,6 +724,14 @@ function SessionTreeRow({
         >
           <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
           <span className="flex-1 truncate">{title}</span>
+          {contextUsed != null && (
+            <span
+              className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50"
+              aria-label={`Context: ${contextUsed} tokens`}
+            >
+              {contextUsed < 1000 ? String(contextUsed) : contextUsed < 1_000_000 ? `${Math.round(contextUsed / 1000)}K` : `${(contextUsed / 1_000_000).toFixed(1)}M`}
+            </span>
+          )}
           {s.lastMessageAt && (
             <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
           )}
@@ -726,6 +759,7 @@ function SessionTreeRow({
             renamingSession={renamingSession}
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
+            contextBySessionId={contextBySessionId}
           />
         ))}
     </>
@@ -746,6 +780,8 @@ interface OrphansGroupProps {
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
+  /** Per-session context token count from workspace status (S36.5). */
+  contextBySessionId: Map<string, number>;
 }
 
 /** Synthetic top-level entry that collects all sessions whose parent is
@@ -766,6 +802,7 @@ function OrphansGroup({
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
+  contextBySessionId,
 }: OrphansGroupProps) {
   return (
     <>
@@ -801,6 +838,7 @@ function OrphansGroup({
             renamingSession={renamingSession}
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
+            contextBySessionId={contextBySessionId}
           />
         ))}
     </>

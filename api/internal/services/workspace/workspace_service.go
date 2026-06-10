@@ -580,7 +580,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 
 	for _, s := range crd.Status.Sessions {
 		result.Sessions = append(result.Sessions, types.SessionStatusItem{
-			ID: s.ID, Title: s.Title, Status: s.Status,
+			ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed,
 		})
 	}
 	result.DiskUsedBytes = crd.Status.DiskUsedBytes

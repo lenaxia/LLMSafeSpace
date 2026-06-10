@@ -161,6 +161,40 @@ func TestCheckAgentHealth_SessionsWithoutTitles(t *testing.T) {
 	assert.Equal(t, "busy", ws.Status.Sessions[0].Status)
 }
 
+func TestCheckAgentHealth_ThreadsContextUsed(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Sessions: []agentd.SessionInfo{
+			{ID: "ses_1", Title: "main session", Status: "idle", ContextUsed: 42000},
+			{ID: "ses_2", Title: "other session", Status: "busy", ContextUsed: 99000},
+		},
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Len(t, ws.Status.Sessions, 2)
+	assert.Equal(t, int64(42000), ws.Status.Sessions[0].ContextUsed, "ses_1 ContextUsed threaded to CRD")
+	assert.Equal(t, int64(99000), ws.Status.Sessions[1].ContextUsed, "ses_2 ContextUsed threaded to CRD")
+}
+
+func TestCheckAgentHealth_ZeroContextUsed_NotSet(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Sessions: []agentd.SessionInfo{
+			{ID: "ses_new", Title: "fresh", Status: "idle"}, // ContextUsed not set (zero value)
+		},
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Len(t, ws.Status.Sessions, 1)
+	assert.Equal(t, int64(0), ws.Status.Sessions[0].ContextUsed, "zero ContextUsed preserved as-is")
+}
+
 func TestCheckAgentHealth_SetsActiveSessions(t *testing.T) {
 	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
 		Healthy: true, Ready: true, Connected: []string{"opencode"},

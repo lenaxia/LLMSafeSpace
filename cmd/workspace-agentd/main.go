@@ -228,14 +228,19 @@ type providerCache struct {
 	lastFetchedAt time.Time
 }
 
-// sessionStatusTracker subscribes to opencode's SSE stream and tracks busy/idle per session.
+// sessionStatusTracker subscribes to opencode's SSE stream and tracks busy/idle per session
+// and per-session prompt tokens from step-finish events.
 type sessionStatusTracker struct {
-	mu       sync.RWMutex
-	statuses map[string]string // session ID → "busy" | "idle"
+	mu           sync.RWMutex
+	statuses     map[string]string // session ID → "busy" | "idle"
+	promptTokens map[string]int64  // session ID → current context size (input + cache.read + cache.write)
 }
 
 func newSessionStatusTracker() *sessionStatusTracker {
-	return &sessionStatusTracker{statuses: make(map[string]string)}
+	return &sessionStatusTracker{
+		statuses:     make(map[string]string),
+		promptTokens: make(map[string]int64),
+	}
 }
 
 func (t *sessionStatusTracker) set(sessionID, status string) {
@@ -263,9 +268,29 @@ func (t *sessionStatusTracker) prune(activeIDs []string) {
 	for id := range t.statuses {
 		if _, exists := active[id]; !exists {
 			delete(t.statuses, id)
+			delete(t.promptTokens, id)
 		}
 	}
 	t.mu.Unlock()
+}
+
+func (t *sessionStatusTracker) setPromptTokens(sessionID string, tokens int64) {
+	t.mu.Lock()
+	t.promptTokens[sessionID] = tokens
+	t.mu.Unlock()
+}
+
+func (t *sessionStatusTracker) getPromptTokens(sessionID string) int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.promptTokens[sessionID]
+}
+
+func (t *sessionStatusTracker) hasPromptTokens(sessionID string) bool {
+	t.mu.RLock()
+	_, ok := t.promptTokens[sessionID]
+	t.mu.RUnlock()
+	return ok
 }
 
 func (t *sessionStatusTracker) subscribe(ctx context.Context, client *OpenCodeClient) {
@@ -356,37 +381,151 @@ func (t *sessionStatusTracker) connectAndRead(ctx context.Context, client *OpenC
 }
 
 func (t *sessionStatusTracker) processEvent(data string) {
-	// Flat format: {"type":"session.status","properties":{"sessionID":"ses_...","status":{"type":"idle"}}}
+	// Parse flat envelope first (cheap). Only try nested if flat fails.
 	var evt struct {
 		Type       string          `json:"type"`
 		Properties json.RawMessage `json:"properties"`
 	}
-	if json.Unmarshal([]byte(data), &evt) != nil || evt.Type != "session.status" {
-		// Try nested format
+	if json.Unmarshal([]byte(data), &evt) != nil {
+		return
+	}
+	switch evt.Type {
+	case "session.status":
+		t.handleSessionStatus(evt.Properties)
+	case "session.next.step.ended":
+		t.handleStepEnded(evt.Properties)
+	default:
+		// Try nested format for session.status (backward compat with global SSE endpoint).
 		var nested struct {
 			Payload struct {
 				Type       string          `json:"type"`
 				Properties json.RawMessage `json:"properties"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal([]byte(data), &nested) != nil || nested.Payload.Type != "session.status" {
+		if json.Unmarshal([]byte(data), &nested) != nil {
 			return
 		}
-		evt.Properties = nested.Payload.Properties
+		switch nested.Payload.Type {
+		case "session.status":
+			t.handleSessionStatus(nested.Payload.Properties)
+		case "session.next.step.ended":
+			t.handleStepEnded(nested.Payload.Properties)
+		}
 	}
+}
 
-	var props struct {
+func (t *sessionStatusTracker) handleSessionStatus(props json.RawMessage) {
+	var p struct {
 		SessionID string `json:"sessionID"`
 		Status    struct {
 			Type string `json:"type"`
 		} `json:"status"`
 	}
-	if json.Unmarshal(evt.Properties, &props) != nil || props.SessionID == "" {
+	if json.Unmarshal(props, &p) != nil || p.SessionID == "" {
 		return
 	}
+	if p.Status.Type == "busy" || p.Status.Type == "idle" {
+		t.set(p.SessionID, p.Status.Type)
+	}
+}
 
-	if props.Status.Type == "busy" || props.Status.Type == "idle" {
-		t.set(props.SessionID, props.Status.Type)
+func (t *sessionStatusTracker) handleStepEnded(props json.RawMessage) {
+	var p struct {
+		SessionID string `json:"sessionID"`
+		Tokens    *struct {
+			Input     int64 `json:"input"`
+			Output    int64 `json:"output"`
+			Reasoning int64 `json:"reasoning"`
+			Cache     struct {
+				Read  int64 `json:"read"`
+				Write int64 `json:"write"`
+			} `json:"cache"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(props, &p) != nil || p.SessionID == "" || p.Tokens == nil {
+		return
+	}
+	promptTokens := p.Tokens.Input + p.Tokens.Cache.Read + p.Tokens.Cache.Write
+	t.setPromptTokens(p.SessionID, promptTokens)
+}
+
+// fillGapsState prevents concurrent fillGaps iterations.
+type fillGapsState struct {
+	mu      sync.Mutex
+	running bool
+}
+
+func (c *OpenCodeClient) fetchSessionPromptTokens(ctx context.Context, sessionID string) int64 {
+	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	resp, err := c.doRequest(fetchCtx, "/session/"+sessionID+"/message?limit=20")
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var messages []struct {
+		Info struct {
+			Role   string `json:"role"`
+			Tokens *struct {
+				Input int64 `json:"input"`
+				Cache struct {
+					Read  int64 `json:"read"`
+					Write int64 `json:"write"`
+				} `json:"cache"`
+			} `json:"tokens"`
+		} `json:"info"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&messages) != nil {
+		return 0
+	}
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Info.Role == "assistant" && messages[i].Info.Tokens != nil {
+			return messages[i].Info.Tokens.Input + messages[i].Info.Tokens.Cache.Read + messages[i].Info.Tokens.Cache.Write
+		}
+	}
+	return 0
+}
+
+func runFill(ctx context.Context, client *OpenCodeClient, tracker *sessionStatusTracker, sessions func() []agentd.SessionInfo, state *fillGapsState) {
+	state.mu.Lock()
+	if state.running {
+		state.mu.Unlock()
+		return
+	}
+	state.running = true
+	state.mu.Unlock()
+	defer func() { state.running = false }()
+
+	iterCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	for _, s := range sessions() {
+		if tracker.hasPromptTokens(s.ID) {
+			continue
+		}
+		select {
+		case <-iterCtx.Done():
+			return
+		default:
+		}
+		if tokens := client.fetchSessionPromptTokens(iterCtx, s.ID); tokens > 0 {
+			tracker.setPromptTokens(s.ID, tokens)
+		}
+	}
+}
+
+func fillGaps(ctx context.Context, client *OpenCodeClient, tracker *sessionStatusTracker, sessions func() []agentd.SessionInfo, state *fillGapsState) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runFill(ctx, client, tracker, sessions, state)
+		}
 	}
 }
 
@@ -528,6 +667,71 @@ func getCPUUsage() *agentd.CPUUsage {
 	}
 }
 
+// buildStatuszHandler returns the /v1/statusz HTTP handler, parameterised on
+// all runtime dependencies. Extracted from main() so tests can exercise the
+// real handler wiring without reimplementing it.
+func buildStatuszHandler(
+	client *OpenCodeClient,
+	cache *providerCache,
+	tracker *sessionStatusTracker,
+	startedAt time.Time,
+) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		healthy, version, _ := client.IsHealthy(r.Context())
+		connected, configured, sessions := cachedState(r.Context(), client, cache, tracker)
+		ready := healthy && len(connected) > 0
+
+		activeCnt := 0
+		for _, s := range sessions {
+			if s.Status == "busy" {
+				activeCnt++
+			}
+		}
+
+		// Context usage: per-session ContextUsed from SSE prompt tokens.
+		// Top-level TotalTokens = model context limit (same for all sessions).
+		// UsedTokens is not meaningful as an aggregate; set to 0.
+		var contextUsage *agentd.ContextUsage
+		{
+			var modelID string
+			for i, s := range sessions {
+				if pt := tracker.getPromptTokens(s.ID); pt > 0 {
+					sessions[i].ContextUsed = pt
+				}
+				if modelID == "" && s.Model != "" {
+					modelID = s.Model
+				}
+			}
+			contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
+			if len(sessions) > 0 {
+				contextUsage = &agentd.ContextUsage{
+					UsedTokens:  0,
+					TotalTokens: contextLimit,
+				}
+			}
+		}
+
+		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
+			Healthy:             healthy,
+			Ready:               ready,
+			Connected:           connected,
+			ProvidersConfigured: configured,
+			Sessions:            sessions,
+			SessionsActive:      activeCnt,
+			SessionsError:       0,
+			LastError:           "",
+			AgentType:           "opencode",
+			AgentVersion:        version,
+			UptimeSeconds:       int(time.Since(startedAt).Seconds()),
+			Disk:                getDiskUsage(),
+			Memory:              getMemoryUsage(),
+			CPU:                 getCPUUsage(),
+			Context:             contextUsage,
+		})
+	})
+}
+
 func main() {
 	var err error
 	log, err = zap.NewProduction()
@@ -569,6 +773,14 @@ func main() {
 	cache := &providerCache{}
 	sseTracker := newSessionStatusTracker()
 	go sseTracker.subscribe(context.Background(), client)
+
+	fillState := &fillGapsState{}
+	go fillGaps(context.Background(), client, sseTracker, func() []agentd.SessionInfo {
+		cache.mu.Lock()
+		sessions := cache.sessions
+		cache.mu.Unlock()
+		return sessions
+	}, fillState)
 
 	// S18.10: Gate recorder measures time-to-each-startup-milestone from boot.
 	// Gates: opencode_up, providers_connected, readyz_first_200.
@@ -675,65 +887,7 @@ func main() {
 	// Performance contract: NO upper bound. Callers must use a generous
 	// timeout (controller uses 30s). Do NOT use this endpoint for liveness
 	// or readiness probes — use /v1/healthz and /v1/readyz respectively.
-	statuszHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		healthy, version, _ := client.IsHealthy(r.Context())
-		connected, configured, sessions := cachedState(r.Context(), client, cache, sseTracker)
-		ready := healthy && len(connected) > 0
-
-		activeCnt := 0
-		for _, s := range sessions {
-			if s.Status == "busy" {
-				activeCnt++
-			}
-		}
-
-		// Context usage: sum token usage across all sessions and
-		// use the active model's context window limit as the total.
-		// TotalTokens=0 means the limit is unknown (provider did not report it);
-		// the frontend treats 0 as "Unknown" and disables auto-compaction warnings.
-		var contextUsage *agentd.ContextUsage
-		{
-			var totalTokens int64
-			var modelID string
-			for _, s := range sessions {
-				if s.Tokens != nil {
-					totalTokens += s.Tokens.Input + s.Tokens.Output + s.Tokens.Reasoning
-				}
-				if modelID == "" && s.Model != "" {
-					modelID = s.Model
-				}
-			}
-			// Use context limit from active model's config; 0 means unknown.
-			// providerID is not available on the session struct so we pass ""
-			// which causes ModelContextLimit to match on model ID alone.
-			contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
-			if totalTokens > 0 || len(sessions) > 0 {
-				contextUsage = &agentd.ContextUsage{
-					UsedTokens:  totalTokens,
-					TotalTokens: contextLimit,
-				}
-			}
-		}
-
-		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
-			Healthy:             healthy,
-			Ready:               ready,
-			Connected:           connected,
-			ProvidersConfigured: configured,
-			Sessions:            sessions,
-			SessionsActive:      activeCnt,
-			SessionsError:       0,
-			LastError:           "",
-			AgentType:           "opencode",
-			AgentVersion:        version,
-			UptimeSeconds:       int(time.Since(startedAt).Seconds()),
-			Disk:                getDiskUsage(),
-			Memory:              getMemoryUsage(),
-			CPU:                 getCPUUsage(),
-			Context:             contextUsage,
-		})
-	})
+	statuszHandler := buildStatuszHandler(client, cache, sseTracker, startedAt)
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
 
 	// S18.10: Expose Prometheus metrics on admin port so the cluster-level

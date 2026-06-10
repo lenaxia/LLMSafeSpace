@@ -1061,6 +1061,27 @@ func TestGetWorkspaceStatus_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, result.ActiveSessions)
 }
 
+func TestGetWorkspaceStatus_IncludesSessionContextUsed(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	activeCrd.Status.Sessions = []v1.AgentSessionStatus{
+		{ID: "ses_1", Title: "main", Status: "idle", ContextUsed: 42000},
+		{ID: "ses_2", Title: "other", Status: "busy", ContextUsed: 99000},
+	}
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+
+	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	require.Len(t, result.Sessions, 2)
+	assert.Equal(t, int64(42000), result.Sessions[0].ContextUsed, "ses_1 ContextUsed threaded to API response")
+	assert.Equal(t, int64(99000), result.Sessions[1].ContextUsed, "ses_2 ContextUsed threaded to API response")
+}
+
 func TestGetWorkspaceStatus_WrongOwner_ReturnsForbidden(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

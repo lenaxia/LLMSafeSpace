@@ -77,7 +77,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
         className={cn(
           "max-w-[90%] sm:max-w-[80%] rounded-lg px-4 py-2.5 min-w-0 overflow-hidden break-words",
           isUser
-            ? "bg-primary text-primary-foreground"
+            ? "bg-primary text-primary-foreground dark:bg-slate-600 dark:text-slate-100 dark:border dark:border-slate-500"
             : "bg-muted text-foreground",
         )}
       >
@@ -92,7 +92,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
           <span
             className={cn(
               "text-xs leading-none truncate",
-              isUser ? "text-primary-foreground/70" : "text-muted-foreground/70",
+              isUser ? "text-primary-foreground/70 dark:text-slate-100/80" : "text-muted-foreground/70",
             )}
           >
             {showTimestamp && (
@@ -115,7 +115,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
               copied
                 ? "text-green-500"
                 : isUser
-                  ? "text-primary-foreground/70 hover:text-primary-foreground"
+                  ? "text-primary-foreground/70 hover:text-primary-foreground dark:text-slate-100/80 dark:hover:text-slate-100"
                   : "text-muted-foreground/70 hover:text-muted-foreground",
             )}
           >
