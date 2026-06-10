@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -127,7 +127,7 @@ describe("Sidebar — session delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const kebabButtons = await screen.findAllByLabelText("Actions");
-    const sessionKebab = kebabButtons[kebabButtons.length - 1];
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
     sessionKebab.click();
 
     const deleteBtn = await screen.findByText("Delete");
@@ -148,7 +148,7 @@ describe("Sidebar — session delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
     const kebabButtons = await screen.findAllByLabelText("Actions");
-    const sessionKebab = kebabButtons[kebabButtons.length - 1];
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
     sessionKebab.click();
 
     const deleteBtn = await screen.findByText("Delete");
@@ -173,7 +173,7 @@ describe("Sidebar — session delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const kebabButtons = await screen.findAllByLabelText("Actions");
-    const sessionKebab = kebabButtons[kebabButtons.length - 1];
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
     sessionKebab.click();
 
     const deleteBtn = await screen.findByText("Delete");
