@@ -219,8 +219,8 @@ func main() {
 	g, _ := c.Workspaces.Get(ctx, ws.ID)
 	ok(g != nil && g.Phase == "Suspended", fmt.Sprintf("phase → Suspended (got: %s)", g.Phase))
 
-	err = c.Workspaces.Resume(ctx, ws.ID)
-	ok(err == nil, "Workspaces.Resume() → no error")
+	_, err = c.Workspaces.Activate(ctx, ws.ID)
+	ok(err == nil, "Workspaces.Activate() → no error")
 
 	rh := waitHealthy(ctx, c, ws.ID)
 	ok(rh == "Healthy", fmt.Sprintf("resume → Healthy (got: %s)", rh))
