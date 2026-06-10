@@ -153,12 +153,11 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		require.True(t, found, "expected main container mount %q to be present", name)
 	}
 
-	// sandbox-home emptyDir was replaced by a PVC subPath mount for /home/sandbox.
-	// Verify the workspace volume is mounted twice — once for /workspace (no subPath,
-	// PVC root, for backward compat with existing data) and once for /home/sandbox
-	// (SubPath: "home") — and that no sandbox-home volume exists.
+	// Both /workspace and /home/sandbox use explicit subPaths on the workspace PVC.
+	// All existing PVC data was migrated into workspace/ before deployment (worklog 0198).
 	var workspaceMountPaths []string
 	homeMountSubPath := ""
+	workspaceMountSubPath := ""
 	for _, m := range main.VolumeMounts {
 		if m.Name == "workspace" {
 			workspaceMountPaths = append(workspaceMountPaths, m.MountPath)
@@ -166,25 +165,24 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 				homeMountSubPath = m.SubPath
 			}
 			if m.MountPath == "/workspace" {
-				require.Empty(t, m.SubPath,
-					"/workspace mount must use PVC root (no SubPath) for backward compat with existing data")
+				workspaceMountSubPath = m.SubPath
 			}
 		}
 		require.NotEqual(t, "sandbox-home", m.Name, "sandbox-home emptyDir mount must not exist")
 	}
 	require.ElementsMatch(t, []string{"/workspace", "/home/sandbox"}, workspaceMountPaths,
 		"workspace PVC must be mounted at both /workspace and /home/sandbox")
+	require.Equal(t, "workspace", workspaceMountSubPath,
+		"/workspace mount must use SubPath: \"workspace\"")
 	require.Equal(t, "home", homeMountSubPath,
-		"/home/sandbox mount must use SubPath: \"home\" on the workspace PVC")
+		"/home/sandbox mount must use SubPath: \"home\"")
 
 	for _, v := range pod.Spec.Volumes {
 		require.NotEqual(t, "sandbox-home", v.Name, "sandbox-home emptyDir volume must not exist")
 	}
 
-	// workspace-setup init container must mount /workspace at PVC root (no SubPath)
-	// so it writes packages and setup scaffolding to the same location the main
-	// container reads from. A SubPath mismatch would silently write to a different
-	// location on the PVC.
+	// workspace-setup init container must use SubPath: "workspace" to match the main
+	// container — a mismatch would silently write packages to the wrong PVC location.
 	var wsSetupInit *corev1.Container
 	for i := range pod.Spec.InitContainers {
 		if pod.Spec.InitContainers[i].Name == "workspace-setup" {
@@ -192,12 +190,11 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 			break
 		}
 	}
-	if wsSetupInit != nil {
-		for _, m := range wsSetupInit.VolumeMounts {
-			if m.Name == "workspace" && m.MountPath == "/workspace" {
-				require.Empty(t, m.SubPath,
-					"workspace-setup init container /workspace mount must use PVC root (no SubPath)")
-			}
+	require.NotNil(t, wsSetupInit, "workspace-setup init container must exist when InitScript is set")
+	for _, m := range wsSetupInit.VolumeMounts {
+		if m.Name == "workspace" && m.MountPath == "/workspace" {
+			require.Equal(t, "workspace", m.SubPath,
+				"workspace-setup init container /workspace mount must use SubPath: \"workspace\"")
 		}
 	}
 }

@@ -111,16 +111,13 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
+			// Both /workspace and /home/sandbox use explicit subPaths so the PVC
+			// root contains only two named subtrees (workspace/ and home/) plus
+			// the Longhorn-managed lost+found/. All existing PVC data was migrated
+			// into workspace/ before this change was deployed (worklog 0198).
+			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
 			{Name: "tmp", MountPath: "/tmp"},
-			// /home/sandbox is a subPath on the same PVC as /workspace so that
-			// tool caches (Go build, npm, mise), SSH keys, and enricher state
-			// survive pod restarts and suspend/resume cycles. Previously this
-			// was a 1Gi emptyDir which caused eviction loops when caches grew.
-			// The /workspace mount intentionally uses no subPath (PVC root) so
-			// existing workspaces are not affected — their data lives at PVC
-			// root and would be invisible if a subPath were added.
 			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
 		Resources: resourceRequirementsFor(workspace),
@@ -410,7 +407,7 @@ func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev
 		Image:   runtimeImage,
 		Command: []string{"/bin/sh", "-c", buildWorkspaceSetupScript(workspace)},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
+			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "tmp", MountPath: "/tmp"},
 		},
 		SecurityContext: &corev1.SecurityContext{
