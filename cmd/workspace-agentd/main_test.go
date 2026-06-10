@@ -253,7 +253,9 @@ func TestStatuszEndpoint_ContextUsage_PerSessionContextUsed(t *testing.T) {
 					ID string `json:"id"`
 				} `json:"model"`
 			}{
-				{ID: "ses_1", Model: &struct{ ID string `json:"id"` }{ID: "claude-sonnet-4-20250514"}},
+				{ID: "ses_1", Model: &struct {
+					ID string `json:"id"`
+				}{ID: "claude-sonnet-4-20250514"}},
 				{ID: "ses_2"},
 			})
 		case "/session/ses_1", "/session/ses_2":
@@ -306,7 +308,7 @@ func TestStatuszEndpoint_ContextUsage_PerSessionContextUsed(t *testing.T) {
 			ProvidersConfigured: configured, Sessions: sessions, SessionsActive: activeCnt,
 			AgentType: "opencode", AgentVersion: version,
 			UptimeSeconds: int(time.Since(startedAt).Seconds()),
-			Context: contextUsage,
+			Context:       contextUsage,
 		})
 	})
 
@@ -366,7 +368,7 @@ func TestStatuszEndpoint_ContextUsage_EmptySessions(t *testing.T) {
 			ProvidersConfigured: configured, Sessions: sessions,
 			AgentType: "opencode", AgentVersion: version,
 			UptimeSeconds: int(time.Since(startedAt).Seconds()),
-			Context: contextUsage,
+			Context:       contextUsage,
 		})
 	})
 
@@ -398,7 +400,9 @@ func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {
 					ID string `json:"id"`
 				} `json:"model"`
 			}{
-				{ID: "ses_1", Model: &struct{ ID string `json:"id"` }{ID: "glm-5.1"}},
+				{ID: "ses_1", Model: &struct {
+					ID string `json:"id"`
+				}{ID: "glm-5.1"}},
 			})
 		case "/session/ses_1":
 			json.NewEncoder(w).Encode(map[string]string{"title": ""})
@@ -441,7 +445,7 @@ func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {
 			ProvidersConfigured: configured, Sessions: sessions,
 			AgentType: "opencode", AgentVersion: version,
 			UptimeSeconds: int(time.Since(startedAt).Seconds()),
-			Context: contextUsage,
+			Context:       contextUsage,
 		})
 	})
 
@@ -518,8 +522,8 @@ func TestStatuszEndpoint_OldFieldsUnchanged(t *testing.T) {
 			ProvidersConfigured: configured, Sessions: sessions, SessionsActive: activeCnt,
 			AgentType: "opencode", AgentVersion: version,
 			UptimeSeconds: int(time.Since(startedAt).Seconds()),
-			Disk:    &agentd.DiskUsage{UsedBytes: 100, TotalBytes: 1000},
-			Context: contextUsage,
+			Disk:          &agentd.DiskUsage{UsedBytes: 100, TotalBytes: 1000},
+			Context:       contextUsage,
 		})
 	})
 
@@ -573,7 +577,9 @@ func TestBuildStatuszHandler_ContextUsed_PerSession(t *testing.T) {
 				Model *struct {
 					ID string `json:"id"`
 				} `json:"model"`
-			}{{ID: "ses_A", Model: &struct{ ID string `json:"id"` }{ID: "big-pickle"}}})
+			}{{ID: "ses_A", Model: &struct {
+				ID string `json:"id"`
+			}{ID: "big-pickle"}}})
 		case "/session/ses_A":
 			json.NewEncoder(w).Encode(map[string]string{"title": "integration test"})
 		}
@@ -851,7 +857,7 @@ func TestFetchSessionPromptTokens_AssistantWithTokens(t *testing.T) {
 				Role   string `json:"role"`
 				Tokens *struct {
 					Input int64 `json:"input"`
-					Cache  struct {
+					Cache struct {
 						Read  int64 `json:"read"`
 						Write int64 `json:"write"`
 					} `json:"cache"`
@@ -861,14 +867,14 @@ func TestFetchSessionPromptTokens_AssistantWithTokens(t *testing.T) {
 				Role   string `json:"role"`
 				Tokens *struct {
 					Input int64 `json:"input"`
-					Cache  struct {
+					Cache struct {
 						Read  int64 `json:"read"`
 						Write int64 `json:"write"`
 					} `json:"cache"`
 				} `json:"tokens"`
 			}{Role: "assistant", Tokens: &struct {
 				Input int64 `json:"input"`
-				Cache  struct {
+				Cache struct {
 					Read  int64 `json:"read"`
 					Write int64 `json:"write"`
 				} `json:"cache"`
@@ -896,7 +902,9 @@ func TestFetchSessionPromptTokens_NoAssistant_ReturnsZero(t *testing.T) {
 				Role string `json:"role"`
 			} `json:"info"`
 		}{
-			{Info: struct{ Role string `json:"role"` }{Role: "user"}},
+			{Info: struct {
+				Role string `json:"role"`
+			}{Role: "user"}},
 		})
 	}))
 	defer server.Close()
@@ -985,14 +993,14 @@ func TestFillGaps_FillsUnknownSessions(t *testing.T) {
 				Role   string `json:"role"`
 				Tokens *struct {
 					Input int64 `json:"input"`
-					Cache  struct {
+					Cache struct {
 						Read  int64 `json:"read"`
 						Write int64 `json:"write"`
 					} `json:"cache"`
 				} `json:"tokens"`
 			}{Role: "assistant", Tokens: &struct {
 				Input int64 `json:"input"`
-				Cache  struct {
+				Cache struct {
 					Read  int64 `json:"read"`
 					Write int64 `json:"write"`
 				} `json:"cache"`
