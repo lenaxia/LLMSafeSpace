@@ -700,10 +700,10 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 
 | Mount | Type | Persists across pod restart? | Owner |
 |---|---|---|---|
-| `/workspace` | Longhorn PVC | Yes | User workspace data, opencode.db, auth.json |
+| `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
+| `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
 | `/tmp` | emptyDir (memory) | No | agent-config.json, secrets-env |
-| `/home/sandbox` | emptyDir (disk, 1Gi) | No — deleted on pod termination | SSH keys, secrets base dir, enricher cache |
 
 **Key path constants** (`pkg/agentd/types.go`):
 

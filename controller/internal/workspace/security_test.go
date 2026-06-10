@@ -107,7 +107,6 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		"workspace":    false,
 		"sandbox-cfg":  false,
 		"tmp":          false,
-		"sandbox-home": false,
 		"pw-secret":    false,
 		"user-secrets": false,
 	}
@@ -138,10 +137,9 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	main := pod.Spec.Containers[0]
 
 	expectedMounts := map[string]bool{
-		"workspace":    false,
-		"sandbox-cfg":  false,
-		"tmp":          false,
-		"sandbox-home": false,
+		"workspace":   false,
+		"sandbox-cfg": false,
+		"tmp":         false,
 	}
 	for _, m := range main.VolumeMounts {
 		if _, ok := expectedMounts[m.Name]; ok {
@@ -150,6 +148,24 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	}
 	for name, found := range expectedMounts {
 		require.True(t, found, "expected main container mount %q to be present", name)
+	}
+
+	// sandbox-home emptyDir was replaced by PVC subPath mounts. Verify the
+	// workspace volume is mounted twice — once for /workspace (subPath:workspace)
+	// and once for /home/sandbox (subPath:home) — and that no sandbox-home
+	// volume exists.
+	var workspaceMountPaths []string
+	for _, m := range main.VolumeMounts {
+		if m.Name == "workspace" {
+			workspaceMountPaths = append(workspaceMountPaths, m.MountPath)
+		}
+		require.NotEqual(t, "sandbox-home", m.Name, "sandbox-home emptyDir mount must not exist")
+	}
+	require.ElementsMatch(t, []string{"/workspace", "/home/sandbox"}, workspaceMountPaths,
+		"workspace PVC must be mounted at both /workspace and /home/sandbox via subPaths")
+
+	for _, v := range pod.Spec.Volumes {
+		require.NotEqual(t, "sandbox-home", v.Name, "sandbox-home emptyDir volume must not exist")
 	}
 }
 

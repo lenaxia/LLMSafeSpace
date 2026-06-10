@@ -42,7 +42,10 @@ export const workspacesApi = {
     api.post<{ id: string; name: string; workspaceId?: string }>("/workspaces", {
       name: params.name,
       runtime: params.runtime || "base",
-      storageSize: "5Gi",
+      // storageSize intentionally omitted — the API resolves the default
+      // from instance_settings (workspace.defaultStorageSize). Hardcoding
+      // it here would shadow operator-configured defaults and require a
+      // frontend deploy to change the value.
     }),
   createWorkspace: (workspaceId: string, runtime = "base") =>
     api.post<{ id: string }>("/workspaces", { runtime, workspaceRef: workspaceId }),
