@@ -605,7 +605,7 @@ func (m *apiKeyAwareDB) CountUsers(_ context.Context) (int, error) { return len(
 func (m *apiKeyAwareDB) UpdateUser(context.Context, string, types.UserUpdates) error {
 	return nil
 }
-func (m *apiKeyAwareDB) DeleteUser(context.Context, string) error         { return nil }
+func (m *apiKeyAwareDB) DeleteUser(context.Context, string) error { return nil }
 func (m *apiKeyAwareDB) GetUserByAPIKey(_ context.Context, key string) (*types.User, error) {
 	for _, k := range m.apiKeys {
 		if k.Key == key && k.Active {

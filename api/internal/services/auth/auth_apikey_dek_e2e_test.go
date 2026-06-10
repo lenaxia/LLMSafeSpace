@@ -17,8 +17,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 func setupDEKRegressionRouter(t *testing.T) (

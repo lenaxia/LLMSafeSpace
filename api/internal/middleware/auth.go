@@ -13,8 +13,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // AuthConfig defines configuration for the authentication middleware

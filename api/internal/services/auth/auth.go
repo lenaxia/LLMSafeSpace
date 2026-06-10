@@ -24,9 +24,9 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // KeyServiceInterface abstracts the key service for DEK lifecycle.
