@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
@@ -390,9 +389,7 @@ func TestE2E_APIKey_RewrapAfterRotation(t *testing.T) {
 		t.Fatal("user not found")
 	}
 
-	staticProvider, provErr := secrets.NewStaticKeyProvider(masterKey)
-	require.NoError(t, provErr)
-	keySvc.SetAPIKeyStore(&testAPIKeyStoreAdapter{db: db}, staticProvider)
+	keySvc.SetAPIKeyStore(&testAPIKeyStoreAdapter{db: db}, masterKey)
 
 	loginResp := dekDoPost(t, client, base+"/api/v1/auth/login",
 		`{"email":"rotate@test.com","password":"pw-123456"}`, "")

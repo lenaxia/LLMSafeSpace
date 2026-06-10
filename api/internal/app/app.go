@@ -241,28 +241,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			_ = auditStore.LogAudit(context.Background(), entry)
 		})
 
-		rkp := newRootKeyProvider(cfg, log)
-
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)
 			authSvc.SetInstanceSettings(instanceSettings)
-
-			if rkp != nil {
-				authSvc.SetRootKeyProvider(rkp)
-			} else {
-				authSvc.SetMasterKey(dekMasterKey())
-			}
+			authSvc.SetMasterKey(dekMasterKey())
 		}
-
-		if rkp != nil {
-			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
-		} else {
-			mk := dekMasterKey()
-			if mk != nil {
-				sp, _ := secrets.NewStaticKeyProvider(mk)
-				keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, sp)
-			}
-		}
+		keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, dekMasterKey())
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)

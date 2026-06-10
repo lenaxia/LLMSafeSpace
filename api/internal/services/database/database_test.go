@@ -985,12 +985,12 @@ func TestCreateAPIKey_WithDEKWrappingColumns(t *testing.T) {
 			wrappedDEK,
 			true,
 			keyCiphertext,
-			nil,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := service.CreateAPIKey(ctx, apiKey)
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCreateAPIKey_WithoutDEKWrappingColumns(t *testing.T) {
@@ -1025,7 +1025,6 @@ func TestCreateAPIKey_WithoutDEKWrappingColumns(t *testing.T) {
 			sqlmock.AnyArg(),
 			false,
 			sqlmock.AnyArg(),
-			nil,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -1048,11 +1047,9 @@ func TestGetAPIKeyRecordByHash_WithDEKColumns(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
 		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
-		"allowed_cidrs",
 	}).AddRow(
 		"key-1", "user-1", keyHash, "dek-key", true, createdAt, nil,
 		true, kekSalt, wrappedDEK, true, keyCiphertext,
-		nil,
 	)
 
 	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
@@ -1081,11 +1078,9 @@ func TestGetAPIKeyRecordByHash_NullDEKColumns(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
 		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
-		"allowed_cidrs",
 	}).AddRow(
 		"key-2", "user-1", "hash2", "plain-key", true, createdAt, nil,
 		false, nil, nil, false, nil,
-		nil,
 	)
 
 	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
