@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -309,5 +308,5 @@ func TestCreateAPIKey_DEKRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rawKey, string(recoveredRaw), "key_ciphertext must decrypt to raw key")
 
-	fmt.Println("DEK round-trip verified: wrapped DEK correctly recovers original DEK")
+	t.Log("DEK round-trip verified: wrapped DEK correctly recovers original DEK")
 }

@@ -184,4 +184,4 @@ All 7 packages pass with zero failures.
 
 1. **`dek_synced=false` 403 enforcement** — design specifies that stale keys should return `"API key DEK re-sync in progress. Retry shortly."` at auth time. Currently `validateAPIKey` still authenticates and simply has no DEK cached. Enforcement deferred pending operator feedback on UX.
 2. **Background retry job for `dek_synced=false` keys** — design item 9 (background retry every 5 minutes). Not implemented; the `rewrapAPIKeyDEKs` call at rotation time covers the immediate case.
-3. **`ChangePassword` does not trigger DEK re-wrap** — `rewrapAPIKeyDEKs` is called in `RotateKeyWithPassword` but not `ChangePassword`. Rotation-triggered re-wrap is wired; password-change path is not. Deferred.
+3. **`rewrapAPIKeyDEKs` final DB write failure** — if `UpdateAPIKeyDEK(ctx, key.ID, wrappedDEK, key.KekSalt, true)` fails, the key retains old `wrapped_dek` with `dek_synced=true`. Next `validateAPIKey` unwraps the stale DEK. Low probability (requires DB outage concurrent with rotation). Documented as known limitation; not blocking.

@@ -191,12 +191,17 @@ type fullMockDB struct {
 
 func (m *fullMockDB) GetUser(_ context.Context, id string) (*types.User, error) {
 	u := m.users[id]
-	return u, nil
+	if u == nil {
+		return nil, nil
+	}
+	cp := *u
+	return &cp, nil
 }
 func (m *fullMockDB) GetUserByEmail(_ context.Context, email string) (*types.User, error) {
 	for _, u := range m.users {
 		if u.Email == email {
-			return u, nil
+			cp := *u
+			return &cp, nil
 		}
 	}
 	return nil, nil
