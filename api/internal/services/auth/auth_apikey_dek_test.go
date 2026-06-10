@@ -15,7 +15,6 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -439,55 +438,6 @@ func TestCreateAPIKey_WithSealedKeyProvider(t *testing.T) {
 	recoveredRaw, decErr := provider.Decrypt(context.Background(), storedKey.KeyCiphertext)
 	require.NoError(t, decErr)
 	assert.Equal(t, apiKey.Key, string(recoveredRaw))
-}
-
-func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
-	svc, mockDb, mockCache, ks := newDEKTestService(t)
-
-	masterKey := make([]byte, 32)
-	rand.Read(masterKey)
-	provider, err := secrets.NewStaticKeyProvider(masterKey)
-	require.NoError(t, err)
-	svc.SetRootKeyProvider(provider)
-
-	originalDEK := []byte("original-dek-32-bytes-long-enough!!")
-	ks.dek = originalDEK
-	ks.sessionID = "jwt-session-1"
-
-	rawKey := "lsp_sync_test_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
-	h := sha256.Sum256([]byte(rawKey))
-	keyHash := hex.EncodeToString(h[:])
-
-	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
-	require.NoError(t, encErr)
-
-	kekSalt := make([]byte, 32)
-	rand.Read(kekSalt)
-	apiKEK, _ := secrets.DeriveKEK([]byte(rawKey), kekSalt, "llmsafespace-apikey-kek")
-	wrappedDEK, _ := secrets.EncryptSecret(apiKEK, originalDEK)
-
-	keyRecord := &types.APIKey{
-		ID:            "kr-sync",
-		KeyCiphertext: ct,
-		DecryptAccess: true,
-		KekSalt:       kekSalt,
-		WrappedDEK:    wrappedDEK,
-		DekSynced:     false,
-	}
-
-	mockCache.On("Get", mock.Anything, mock.Anything).Return("", errors.New("miss"))
-	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
-	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
-	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
-
-	userID, err := svc.validateAPIKey(rawKey, "")
-	assert.NoError(t, err, "auth should still succeed with dek_synced=false")
-	assert.Equal(t, "u1", userID)
-
-	sessionID := "apikey:" + pkgutil.HashString(rawKey)
-	cachedDEK, cacheErr := ks.GetDEK(context.Background(), sessionID)
-	assert.Error(t, cacheErr, "DEK should NOT be cached when dek_synced=false")
-	assert.Nil(t, cachedDEK)
 }
 
 func writeToFile(path string, data []byte) error {

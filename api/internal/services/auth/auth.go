@@ -493,21 +493,17 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 			}
 
 			if keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
-				if !keyRec.DekSynced {
-					s.logger.Warn("API key DEK re-sync in progress", "key_id", keyRec.ID)
+				apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+				if deriveErr != nil {
+					s.logger.Error("Failed to derive API KEK", deriveErr)
 				} else {
-					apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
-					if deriveErr != nil {
-						s.logger.Error("Failed to derive API KEK", deriveErr)
+					dek, decErr := secrets.DecryptSecret(apiKEK, keyRec.WrappedDEK)
+					if decErr != nil {
+						s.logger.Error("Failed to unwrap DEK for API key", decErr, "key_id", keyRec.ID)
 					} else {
-						dek, decErr := secrets.DecryptSecret(apiKEK, keyRec.WrappedDEK)
-						if decErr != nil {
-							s.logger.Error("Failed to unwrap DEK for API key", decErr, "key_id", keyRec.ID)
-						} else {
-							sessionID := "apikey:" + pkgutil.HashString(apiKey)
-							if cacheErr := s.keyService.CacheDEK(ctx, sessionID, dek, s.apiKeyDEKTTL()); cacheErr != nil {
-								s.logger.Error("Failed to cache DEK for API key session", cacheErr, "session_id", sessionID)
-							}
+						sessionID := "apikey:" + pkgutil.HashString(apiKey)
+						if cacheErr := s.keyService.CacheDEK(ctx, sessionID, dek, s.apiKeyDEKTTL()); cacheErr != nil {
+							s.logger.Error("Failed to cache DEK for API key session", cacheErr, "session_id", sessionID)
 						}
 					}
 				}
