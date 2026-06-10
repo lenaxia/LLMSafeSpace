@@ -150,22 +150,52 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		require.True(t, found, "expected main container mount %q to be present", name)
 	}
 
-	// sandbox-home emptyDir was replaced by PVC subPath mounts. Verify the
-	// workspace volume is mounted twice — once for /workspace (subPath:workspace)
-	// and once for /home/sandbox (subPath:home) — and that no sandbox-home
-	// volume exists.
+	// sandbox-home emptyDir was replaced by a PVC subPath mount for /home/sandbox.
+	// Verify the workspace volume is mounted twice — once for /workspace (no subPath,
+	// PVC root, for backward compat with existing data) and once for /home/sandbox
+	// (SubPath: "home") — and that no sandbox-home volume exists.
 	var workspaceMountPaths []string
+	homeMountSubPath := ""
 	for _, m := range main.VolumeMounts {
 		if m.Name == "workspace" {
 			workspaceMountPaths = append(workspaceMountPaths, m.MountPath)
+			if m.MountPath == "/home/sandbox" {
+				homeMountSubPath = m.SubPath
+			}
+			if m.MountPath == "/workspace" {
+				require.Empty(t, m.SubPath,
+					"/workspace mount must use PVC root (no SubPath) for backward compat with existing data")
+			}
 		}
 		require.NotEqual(t, "sandbox-home", m.Name, "sandbox-home emptyDir mount must not exist")
 	}
 	require.ElementsMatch(t, []string{"/workspace", "/home/sandbox"}, workspaceMountPaths,
-		"workspace PVC must be mounted at both /workspace and /home/sandbox via subPaths")
+		"workspace PVC must be mounted at both /workspace and /home/sandbox")
+	require.Equal(t, "home", homeMountSubPath,
+		"/home/sandbox mount must use SubPath: \"home\" on the workspace PVC")
 
 	for _, v := range pod.Spec.Volumes {
 		require.NotEqual(t, "sandbox-home", v.Name, "sandbox-home emptyDir volume must not exist")
+	}
+
+	// workspace-setup init container must mount /workspace at PVC root (no SubPath)
+	// so it writes packages and setup scaffolding to the same location the main
+	// container reads from. A SubPath mismatch would silently write to a different
+	// location on the PVC.
+	var wsSetupInit *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == "workspace-setup" {
+			wsSetupInit = &pod.Spec.InitContainers[i]
+			break
+		}
+	}
+	if wsSetupInit != nil {
+		for _, m := range wsSetupInit.VolumeMounts {
+			if m.Name == "workspace" && m.MountPath == "/workspace" {
+				require.Empty(t, m.SubPath,
+					"workspace-setup init container /workspace mount must use PVC root (no SubPath)")
+			}
+		}
 	}
 }
 

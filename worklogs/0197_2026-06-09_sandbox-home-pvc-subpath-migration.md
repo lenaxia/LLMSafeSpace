@@ -182,23 +182,27 @@ the new PVC subPath layout.
 
 ## Migration path for existing workspaces
 
-Existing PVCs have no `home/` subdirectory. On the first pod boot after the controller
-is updated:
+The `/workspace` mount intentionally keeps **no subPath** (PVC root). This is backward
+compatible: existing workspace data written to the PVC root remains accessible unchanged.
 
-1. Kubernetes attempts to mount `subPath: home` on the existing PVC
-2. If Kubernetes auto-creates the directory (standard behavior), the mount succeeds and
-   `/home/sandbox` starts empty (equivalent to current emptyDir behavior for that boot)
+The `subPath: home` for `/home/sandbox` is the only new subPath. On first pod boot after
+the controller is updated:
+
+1. Kubernetes auto-creates a `home/` directory at the PVC root (verified live on cluster)
+2. `/home/sandbox` starts empty — equivalent to the previous emptyDir behavior for that boot
 3. Subsequent boots find the persisted home directory
 
-There is **no data migration required** and **no compatibility break** — existing PVCs
-simply gain a new subdirectory on first mount. PVCs that were `5Gi` will have less
-headroom (workspace + home sharing the same 5Gi), which is why the default bump to 10Gi
-matters for new workspaces.
+There is **no data migration required and no compatibility break** for the `/workspace`
+path. PVCs that were `5Gi` will have slightly less headroom (the `home/` subtree now grows
+on the PVC), which is why the default is bumped to 10Gi for new workspaces.
 
-Existing 5Gi workspaces: the `/workspace` subPath currently uses ~4.3G on `a3a1c914`.
-After migration, those workspaces should be resized or the home dir will quickly fill
-the remaining ~700MB. Longhorn supports online PVC expansion — this can be done via
-`kubectl patch pvc` without pod restart.
+Existing 5Gi workspaces: `a3a1c914` is at ~4.3G used on `/workspace` alone with ~600MB
+free. That workspace should be resized before the migration lands. Longhorn supports
+online PVC expansion via `kubectl patch pvc` without pod restart.
+
+**Note:** An initial PR revision used `SubPath: "workspace"` on the `/workspace` mount
+as well. This was correctly rejected in code review — it would have made existing PVC
+root data invisible after upgrade. Option B (subPath only on `/home/sandbox`) was adopted.
 
 ## Separate issue: unbounded gh log cache
 
