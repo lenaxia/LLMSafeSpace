@@ -106,8 +106,8 @@ describe("useSessionTitle", () => {
 
   it("updates sessions cache directly when title is received", async () => {
     const sessions: SessionListItem[] = [
-      { id: "sess-1", messageCount: 3, status: "idle" },
-      { id: "sess-2", title: "Existing", messageCount: 1, status: "idle" },
+      { id: "sess-1", messageCount: 3, status: "idle", hasUnread: false },
+      { id: "sess-2", title: "Existing", messageCount: 1, status: "idle", hasUnread: false },
     ];
     qc.setQueryData(["sessions", "ws-1"], sessions);
     // Keep the cache alive by setting a long gcTime for this specific key
@@ -135,7 +135,7 @@ describe("useSessionTitle", () => {
 
   it("does not modify sessions cache when title is empty", async () => {
     const sessions: SessionListItem[] = [
-      { id: "sess-1", messageCount: 3, status: "idle" },
+      { id: "sess-1", messageCount: 3, status: "idle", hasUnread: false },
     ];
     qc.setQueryData(["sessions", "ws-1"], sessions);
 
@@ -176,9 +176,9 @@ describe("useSessionTitle", () => {
 
   it("only updates the matching session in cache, not others", async () => {
     const sessions: SessionListItem[] = [
-      { id: "sess-1", messageCount: 1, status: "idle" },
-      { id: "sess-2", messageCount: 2, status: "active" },
-      { id: "sess-3", title: "Keep Me", messageCount: 0, status: "idle" },
+      { id: "sess-1", messageCount: 1, status: "idle", hasUnread: false },
+      { id: "sess-2", messageCount: 2, status: "active", hasUnread: false },
+      { id: "sess-3", title: "Keep Me", messageCount: 0, status: "idle", hasUnread: false },
     ];
     qc.setQueryData(["sessions", "ws-1"], sessions);
     qc.setQueryDefaults(["sessions", "ws-1"], { gcTime: Infinity });

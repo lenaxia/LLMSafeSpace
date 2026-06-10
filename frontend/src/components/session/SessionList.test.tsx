@@ -6,8 +6,8 @@ import { SessionList } from "./SessionList";
 import type { SessionListItem } from "../../api/types";
 
 const mockSessions: SessionListItem[] = [
-  { id: "s1", title: "Refactor auth", lastMessageAt: new Date().toISOString(), messageCount: 5, status: "active" },
-  { id: "s2", title: "Fix bug", lastMessageAt: new Date(Date.now() - 3600_000).toISOString(), messageCount: 2, status: "idle" },
+  { id: "s1", title: "Refactor auth", lastMessageAt: new Date().toISOString(), messageCount: 5, status: "active", hasUnread: false },
+  { id: "s2", title: "Fix bug", lastMessageAt: new Date(Date.now() - 3600_000).toISOString(), messageCount: 2, status: "idle", hasUnread: false },
 ];
 
 describe("SessionList", () => {

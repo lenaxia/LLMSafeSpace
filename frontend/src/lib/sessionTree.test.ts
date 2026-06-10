@@ -3,7 +3,7 @@ import { buildSessionTree, ancestorChain } from "./sessionTree";
 import type { SessionListItem } from "../api/types";
 
 function s(id: string, parentId?: string): SessionListItem {
-  return { id, parentId, messageCount: 0, status: "idle" };
+  return { id, parentId, messageCount: 0, status: "idle", hasUnread: false };
 }
 
 describe("buildSessionTree", () => {

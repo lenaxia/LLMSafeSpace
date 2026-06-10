@@ -55,8 +55,8 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", title: "Clone lenaxia/llmsafespace", messageCount: 3, status: "idle" },
-      { id: "sess-2", title: "Fix the bug", messageCount: 1, status: "active" },
+      { id: "sess-1", title: "Clone lenaxia/llmsafespace", messageCount: 3, status: "idle", hasUnread: false },
+      { id: "sess-2", title: "Fix the bug", messageCount: 1, status: "active", hasUnread: false },
     ]);
 
     renderSidebar();
@@ -73,7 +73,7 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", messageCount: 3, status: "idle" },
+      { id: "sess-1", messageCount: 3, status: "idle", hasUnread: false },
     ]);
 
     renderSidebar();
@@ -89,7 +89,7 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", messageCount: 3, status: "idle" },
+      { id: "sess-1", messageCount: 3, status: "idle", hasUnread: false },
     ]);
 
     renderSidebar();
@@ -120,9 +120,9 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", title: "Has Title", messageCount: 5, status: "idle" },
-      { id: "sess-2", messageCount: 0, status: "idle" },
-      { id: "sess-3", title: "Another Title", messageCount: 2, status: "active" },
+      { id: "sess-1", title: "Has Title", messageCount: 5, status: "idle", hasUnread: false },
+      { id: "sess-2", messageCount: 0, status: "idle", hasUnread: false },
+      { id: "sess-3", title: "Another Title", messageCount: 2, status: "active", hasUnread: false },
     ]);
 
     renderSidebar();
@@ -140,8 +140,8 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", messageCount: 1, status: "idle" },
-      { id: "sess-2", title: "Keep This", messageCount: 2, status: "idle" },
+      { id: "sess-1", messageCount: 1, status: "idle", hasUnread: false },
+      { id: "sess-2", title: "Keep This", messageCount: 2, status: "idle", hasUnread: false },
     ]);
 
     renderSidebar();
