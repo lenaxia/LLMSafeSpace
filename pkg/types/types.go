@@ -365,8 +365,8 @@ type APIKey struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 	Legacy    bool       `json:"legacy,omitempty" db:"key_legacy"`
 
-	DecryptAccess bool  `json:"decryptAccess"`
-	DekSynced     bool  `json:"dekSynced"`
+	DecryptAccess bool   `json:"decryptAccess"`
+	DekSynced     bool   `json:"dekSynced"`
 	KekSalt       []byte `json:"-" db:"kek_salt"`
 	WrappedDEK    []byte `json:"-" db:"wrapped_dek"`
 	KeyCiphertext []byte `json:"-" db:"key_ciphertext"`
