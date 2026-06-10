@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -26,9 +26,7 @@ import (
 // TestE2E_RealAuth_WorkspaceEnv tests PUT/GET/DELETE /workspaces/:id/env
 func TestE2E_RealAuth_WorkspaceEnv(t *testing.T) {
 	router, token, _ := setupRealAuthRouter(t)
-	ln := startServer(t, router)
-	defer ln.Close()
-	base := "http://" + ln.Addr().String()
+	base := startServer(t, router)
 	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Set env vars
@@ -74,9 +72,7 @@ func TestE2E_RealAuth_WorkspaceEnv(t *testing.T) {
 // TestE2E_RealAuth_ChangePassword tests POST /account/change-password
 func TestE2E_RealAuth_ChangePassword(t *testing.T) {
 	router, token, svc := setupRealAuthRouter(t)
-	ln := startServer(t, router)
-	defer ln.Close()
-	base := "http://" + ln.Addr().String()
+	base := startServer(t, router)
 	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Change password
@@ -121,9 +117,7 @@ func TestE2E_RealAuth_ChangePassword(t *testing.T) {
 // TestE2E_RealAuth_ChangePassword_WrongOld tests wrong old password
 func TestE2E_RealAuth_ChangePassword_WrongOld(t *testing.T) {
 	router, token, _ := setupRealAuthRouter(t)
-	ln := startServer(t, router)
-	defer ln.Close()
-	base := "http://" + ln.Addr().String()
+	base := startServer(t, router)
 	c := &http.Client{Timeout: 30 * time.Second}
 
 	resp := doPost(t, c, base+"/api/v1/account/change-password",
@@ -138,9 +132,7 @@ func TestE2E_RealAuth_ChangePassword_WrongOld(t *testing.T) {
 // TestE2E_RealAuth_Recover tests POST /account/recover
 func TestE2E_RealAuth_Recover(t *testing.T) {
 	router, _, svc := setupRealAuthRouter(t)
-	ln := startServer(t, router)
-	defer ln.Close()
-	base := "http://" + ln.Addr().String()
+	base := startServer(t, router)
 	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Get the recovery key (stored during registration in the key store)
@@ -189,9 +181,7 @@ func TestE2E_RealAuth_Recover(t *testing.T) {
 // TestE2E_RealAuth_RotateKey_ThenSecrets tests rotation doesn't break existing secrets
 func TestE2E_RealAuth_RotateKey_ThenSecrets(t *testing.T) {
 	router, token, _ := setupRealAuthRouter(t)
-	ln := startServer(t, router)
-	defer ln.Close()
-	base := "http://" + ln.Addr().String()
+	base := startServer(t, router)
 	c := &http.Client{Timeout: 30 * time.Second}
 
 	// Create a secret before rotation
@@ -344,16 +334,11 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 	return router, loginResp.Token, tc
 }
 
-func startServer(t *testing.T, router *gin.Engine) net.Listener {
+func startServer(t *testing.T, router *gin.Engine) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen: %v", err)
-	}
-	srv := &http.Server{Handler: router}
-	go srv.Serve(ln)
-	t.Cleanup(func() { srv.Close() })
-	return ln
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func doPut(t *testing.T, c *http.Client, url, body, token string) *http.Response {
@@ -502,12 +487,10 @@ func TestE2E_APIKey_CreateWithDecryptAccess_SecretsOperationSucceeds(t *testing.
 	authed.POST("/secrets", secretsHandler.CreateSecret)
 	authed.GET("/secrets", secretsHandler.ListSecrets)
 
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	srv := &http.Server{Handler: router}
-	go srv.Serve(ln)
+	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	base := "http://" + ln.Addr().String()
+	base := srv.URL
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	resp := doPost(t, client, base+"/api/v1/auth/register",
