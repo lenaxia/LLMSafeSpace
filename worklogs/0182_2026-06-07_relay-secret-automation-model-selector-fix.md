@@ -62,7 +62,7 @@ All tests updated. 38 handler tests + 6 relay injector tests pass.
 
 ### 2. Relay secret recovery
 
-Generated new secret: `03699376f8525d08b9ba7f710d9c7019b8a87df94b0cdcf71b2e69bcf248878f`
+Generated new secret: `<redacted>`
 
 - Pushed to CF Worker via CF API (token redacted — stored in cluster secret)
 - Added `--inference-relay-secret` to controller via `helm upgrade --set inferenceRelaySecret=<value>`
