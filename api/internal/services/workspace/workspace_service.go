@@ -232,18 +232,14 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		}
 	}
 
-	// Write the workspace-secrets K8s Secret immediately after seeding so the
-	// pod's init container finds provider credentials (OPENAI_API_KEY, etc.) on
-	// first boot without waiting for a live reload.
-	//
-	// Admin platform credentials (owner_type='admin') use a server-side KEK and
-	// do not require a user sessionID. Passing sessionID="" is correct here:
-	// the only credentials that can be bound at this point are admin-owned
-	// (SeedWorkspaceCredentials just ran; the user has no session-encrypted
-	// credentials yet). refreshEphemeralSecrets's sessionID guard is intentionally
-	// bypassed here — user credentials will be injected later when the user opens
-	// the workspace and an active session DEK is available.
-	s.seedEphemeralSecrets(ctx, userID, meta.ID)
+	// Write the workspace-secrets K8s Secret so the pod's init container
+	// finds credentials on first boot. The user's DEK is always available
+	// at workspace creation time — the user must be authenticated (JWT in
+	// context) to reach this code path, and the DEK is unlocked at login
+	// and at registration. Using refreshEphemeralSecrets (not seed) injects
+	// the full user credential set (thekao API keys etc.) rather than
+	// admin-only platform credentials.
+	s.refreshEphemeralSecrets(ctx, userID, meta.ID)
 
 	ws := &types.Workspace{
 		ID:          meta.ID,
