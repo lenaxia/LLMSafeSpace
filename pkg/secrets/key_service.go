@@ -43,12 +43,12 @@ type DEKCache interface {
 
 // KeyService manages user key lifecycle.
 type KeyService struct {
-	store       KeyStore
-	cache       DEKCache
-	secretStore SecretStore
-	logger      pkginterfaces.LoggerInterface
-	apiKeyStore APIKeyStore
-	masterKey   []byte
+	store           KeyStore
+	cache           DEKCache
+	secretStore     SecretStore
+	logger          pkginterfaces.LoggerInterface
+	apiKeyStore     APIKeyStore
+	rootKeyProvider RootKeyProvider
 }
 
 // APIKeyRecord is the subset of API key data needed for DEK re-wrap.
@@ -72,9 +72,9 @@ func NewKeyService(store KeyStore, cache DEKCache) *KeyService {
 }
 
 // SetAPIKeyStore wires the API key store for DEK re-wrap on rotation.
-func (s *KeyService) SetAPIKeyStore(store APIKeyStore, masterKey []byte) {
+func (s *KeyService) SetAPIKeyStore(store APIKeyStore, provider RootKeyProvider) {
 	s.apiKeyStore = store
-	s.masterKey = masterKey
+	s.rootKeyProvider = provider
 }
 
 // SetLogger installs the logger used to surface non-fatal failures
@@ -540,7 +540,7 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 }
 
 func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK []byte) {
-	if s.apiKeyStore == nil || s.masterKey == nil {
+	if s.apiKeyStore == nil || s.rootKeyProvider == nil {
 		return
 	}
 
@@ -557,7 +557,7 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 			continue
 		}
 
-		rawKey, decErr := DecryptSecret(s.masterKey, key.KeyCiphertext)
+		rawKey, decErr := s.rootKeyProvider.Decrypt(ctx, key.KeyCiphertext)
 		if decErr != nil {
 			if s.logger != nil {
 				s.logger.Warn("rewrapAPIKeyDEKs: failed to decrypt key_ciphertext",

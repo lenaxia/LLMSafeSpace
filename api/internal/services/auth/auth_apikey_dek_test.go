@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -130,7 +132,7 @@ func TestCreateAPIKey_WithDecryptAccess_RequiresMasterKey(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)
-	assert.Contains(t, err.Error(), "master key not configured")
+	assert.Contains(t, err.Error(), "root key not configured")
 }
 
 func TestCreateAPIKey_WithDecryptAccess_DEKNotAvailable(t *testing.T) {
@@ -302,11 +304,318 @@ func TestCreateAPIKey_DEKRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, originalDEK, recoveredDEK, "round-tripped DEK must match original")
 
-	masterKey := svc.masterKey
-	require.NotNil(t, masterKey)
-	recoveredRaw, err := secrets.DecryptSecret(masterKey, storedKey.KeyCiphertext)
+	provider := svc.rootKeyProvider
+	require.NotNil(t, provider)
+	recoveredRaw, err := provider.Decrypt(context.Background(), storedKey.KeyCiphertext)
 	require.NoError(t, err)
 	assert.Equal(t, rawKey, string(recoveredRaw), "key_ciphertext must decrypt to raw key")
 
 	t.Log("DEK round-trip verified: wrapped DEK correctly recovers original DEK")
+}
+
+func TestCreateAPIKey_NonDecryptKey_GetsKeyCiphertext(t *testing.T) {
+	svc, mockDb, _, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	var storedKey *types.APIKey
+	mockDb.On("CreateAPIKey", mock.Anything, mock.AnythingOfType("*types.APIKey")).Run(func(args mock.Arguments) {
+		storedKey = args.Get(1).(*types.APIKey)
+	}).Return(nil)
+
+	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
+		Name:          "no-decrypt",
+		DecryptAccess: false,
+	}, "")
+	require.NoError(t, err)
+	require.NotNil(t, apiKey)
+
+	assert.False(t, storedKey.DecryptAccess)
+	assert.Nil(t, storedKey.WrappedDEK)
+	assert.Nil(t, storedKey.KekSalt)
+	assert.NotNil(t, storedKey.KeyCiphertext, "non-decrypt key should still have key_ciphertext")
+	assert.True(t, storedKey.KeyCiphertext != nil)
+
+	recoveredRaw, decErr := provider.Decrypt(context.Background(), storedKey.KeyCiphertext)
+	require.NoError(t, decErr)
+	assert.Equal(t, apiKey.Key, string(recoveredRaw), "key_ciphertext must decrypt to raw key even for non-decrypt keys")
+}
+
+func TestCreateAPIKey_NoRootKeyProvider_NoKeyCiphertext(t *testing.T) {
+	svc, mockDb, _, _ := newDEKTestService(t)
+
+	var storedKey *types.APIKey
+	mockDb.On("CreateAPIKey", mock.Anything, mock.AnythingOfType("*types.APIKey")).Run(func(args mock.Arguments) {
+		storedKey = args.Get(1).(*types.APIKey)
+	}).Return(nil)
+
+	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
+		Name:          "basic",
+		DecryptAccess: false,
+	}, "")
+	require.NoError(t, err)
+	require.NotNil(t, apiKey)
+	assert.Nil(t, storedKey.KeyCiphertext, "without RootKeyProvider, key_ciphertext should be nil")
+}
+
+func TestValidateAPIKey_ConstantTimeCompare_RejectsMismatch(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, err := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, err)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr1",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("miss"))
+	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "")
+	assert.NoError(t, err)
+	assert.Equal(t, "u1", userID)
+
+	wrongKey := "lsp_0000000000000000000000000000000000000000000000000000000000000000"
+	wrongHash := sha256.Sum256([]byte(wrongKey))
+	wrongHashStr := hex.EncodeToString(wrongHash[:])
+
+	mockDb.On("GetUserByAPIKey", mock.Anything, wrongHashStr).Return(&types.User{ID: "u1", Active: true}, nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, wrongHashStr).Return(keyRecord, nil)
+	mockCache.On("Get", mock.Anything, "apikey:"+wrongKey).Return("", errors.New("miss"))
+
+	userID2, err2 := svc.validateAPIKey(wrongKey, "")
+	assert.Error(t, err2, "wrong key should fail constant-time comparison")
+	assert.Equal(t, "", userID2)
+}
+
+func TestCreateAPIKey_WithSealedKeyProvider(t *testing.T) {
+	svc, mockDb, _, _ := newDEKTestService(t)
+
+	tmpDir := t.TempDir()
+	sealedPath := tmpDir + "/sealed"
+	passPath := tmpDir + "/passphrase"
+	passphrase := []byte("test-sealed-passphrase")
+
+	rootKey := make([]byte, 32)
+	rand.Read(rootKey)
+	require.NoError(t, secrets.SealRootKey(sealedPath, passphrase, rootKey))
+	require.NoError(t, writeToFile(passPath, passphrase))
+
+	provider, err := secrets.NewSealedKeyProvider(sealedPath, passPath)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	var storedKey *types.APIKey
+	mockDb.On("CreateAPIKey", mock.Anything, mock.AnythingOfType("*types.APIKey")).Run(func(args mock.Arguments) {
+		storedKey = args.Get(1).(*types.APIKey)
+	}).Return(nil)
+
+	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
+		Name:          "sealed-test",
+		DecryptAccess: false,
+	}, "")
+	require.NoError(t, err)
+	require.NotNil(t, apiKey)
+	assert.NotNil(t, storedKey.KeyCiphertext)
+
+	recoveredRaw, decErr := provider.Decrypt(context.Background(), storedKey.KeyCiphertext)
+	require.NoError(t, decErr)
+	assert.Equal(t, apiKey.Key, string(recoveredRaw))
+}
+
+func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
+	svc, mockDb, mockCache, ks := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	originalDEK := []byte("original-dek-32-bytes-long-enough!!")
+	ks.dek = originalDEK
+	ks.sessionID = "jwt-session-1"
+
+	rawKey := "lsp_sync_test_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	kekSalt := make([]byte, 32)
+	rand.Read(kekSalt)
+	apiKEK, _ := secrets.DeriveKEK([]byte(rawKey), kekSalt, "llmsafespace-apikey-kek")
+	wrappedDEK, _ := secrets.EncryptSecret(apiKEK, originalDEK)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-sync",
+		KeyCiphertext: ct,
+		DecryptAccess: true,
+		KekSalt:       kekSalt,
+		WrappedDEK:    wrappedDEK,
+		DekSynced:     false,
+	}
+
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", errors.New("miss"))
+	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "")
+	assert.NoError(t, err, "auth should still succeed with dek_synced=false")
+	assert.Equal(t, "u1", userID)
+
+	sessionID := "apikey:" + pkgutil.HashString(rawKey)
+	cachedDEK, cacheErr := ks.GetDEK(context.Background(), sessionID)
+	assert.Error(t, cacheErr, "DEK should NOT be cached when dek_synced=false")
+	assert.Nil(t, cachedDEK)
+}
+
+func writeToFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0600)
+}
+
+func TestIPInAnyCIDR(t *testing.T) {
+	tests := []struct {
+		name     string
+		clientIP string
+		cidrs    []string
+		want     bool
+	}{
+		{"matching CIDR", "10.0.1.5", []string{"10.0.0.0/8"}, true},
+		{"non-matching CIDR", "192.168.1.5", []string{"10.0.0.0/8"}, false},
+		{"multiple CIDRs first match", "10.0.1.5", []string{"192.168.0.0/16", "10.0.0.0/8"}, true},
+		{"multiple CIDRs no match", "172.16.1.5", []string{"10.0.0.0/8", "192.168.0.0/16"}, false},
+		{"empty CIDR list", "10.0.1.5", []string{}, false},
+		{"invalid IP", "not-an-ip", []string{"10.0.0.0/8"}, false},
+		{"invalid CIDR skipped", "10.0.1.5", []string{"not-a-cidr", "10.0.0.0/8"}, true},
+		{"IPv4 in /24", "10.0.1.100", []string{"10.0.1.0/24"}, true},
+		{"IPv4 outside /24", "10.0.2.1", []string{"10.0.1.0/24"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ipInAnyCIDR(tt.clientIP, tt.cidrs))
+		})
+	}
+}
+
+func TestValidateAPIKey_CIDREnforcement(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_cidr_test_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-cidr",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+		AllowedCIDRs:  []string{"10.0.0.0/8", "172.16.0.0/12"},
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("miss"))
+	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
+	assert.NoError(t, err)
+	assert.Equal(t, "u1", userID)
+
+	mockCache.On("Get", mock.Anything, mock.Anything).Return("", errors.New("miss")).Once()
+	userID, err = svc.validateAPIKey(rawKey, "192.168.1.5")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not in allowed ranges")
+	assert.Equal(t, "", userID)
+}
+
+func TestValidateAPIKey_CIDRCacheBypass_Blocked(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_cache_bypass_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-cache",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+		AllowedCIDRs:  []string{"10.0.0.0/8"},
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "192.168.1.5")
+	assert.Error(t, err, "CIDR must be enforced even on cache hit")
+	assert.Contains(t, err.Error(), "not in allowed ranges")
+	assert.Equal(t, "", userID)
+}
+
+func TestValidateAPIKey_CIDRCacheHit_AllowedIP(t *testing.T) {
+	svc, mockDb, mockCache, _ := newDEKTestService(t)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	provider, err := secrets.NewStaticKeyProvider(masterKey)
+	require.NoError(t, err)
+	svc.SetRootKeyProvider(provider)
+
+	rawKey := "lsp_cache_allowed_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	h := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(h[:])
+
+	ct, encErr := provider.Encrypt(context.Background(), []byte(rawKey))
+	require.NoError(t, encErr)
+
+	keyRecord := &types.APIKey{
+		ID:            "kr-cache2",
+		KeyCiphertext: ct,
+		DecryptAccess: false,
+		AllowedCIDRs:  []string{"10.0.0.0/8"},
+	}
+
+	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
+
+	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
+	assert.NoError(t, err, "CIDR check should pass for allowed IP on cache hit")
+	assert.Equal(t, "u1", userID)
 }

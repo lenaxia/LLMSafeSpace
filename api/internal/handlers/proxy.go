@@ -34,6 +34,11 @@ const (
 	opencodePort               = agentd.AgentPort
 	retryAfterSec              = 10
 
+	// maxNonStreamingResponseBytes caps the buffered read in the shouldFilter
+	// path to prevent OOM on a misbehaving or compromised upstream. (Epic 25 G1)
+	// 32 MB matches the limit in models.go for provider /models responses.
+	maxNonStreamingResponseBytes int64 = 32 << 20
+
 	phaseActive      = v1.WorkspacePhaseActive
 	phaseSuspending  = "Suspending"
 	phaseSuspended   = "Suspended"
@@ -640,9 +645,14 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	shouldFilter := stripPatch && isJSON && resp.StatusCode >= 200 && resp.StatusCode < 300
 
 	if shouldFilter {
-		raw, readErr := io.ReadAll(resp.Body)
+		// Bound the read to prevent OOM on a misbehaving upstream. (Epic 25 G1)
+		// 32 MB matches the limit already established in models.go for provider responses.
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxNonStreamingResponseBytes))
 		if readErr != nil {
 			return fmt.Errorf("reading workspace response: %w", readErr)
+		}
+		if int64(len(raw)) >= maxNonStreamingResponseBytes {
+			return fmt.Errorf("workspace response exceeds %d-byte limit", maxNonStreamingResponseBytes)
 		}
 		filtered, filterErr := stripPatchParts(raw)
 		if filterErr != nil {
@@ -681,9 +691,14 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 				break
 			}
 			// Any other error is a true mid-stream failure. Headers are already
-			// flushed (status 200), so we cannot change the status code. Log the
-			// error and return it to suppress the spurious retry+c.JSON path in
-			// the caller (headers are committed — retry would double-write).
+			// flushed (status 200), so we cannot change the status code.
+			// Write an SSE error event so the client can distinguish "pod died"
+			// from "clean stream end" and trigger reconnect logic. (Epic 25 B2)
+			const sseErrEvent = "event: error\ndata: {\"error\":\"upstream connection lost\"}\n\n"
+			_, _ = c.Writer.Write([]byte(sseErrEvent))
+			if canFlush {
+				flusher.Flush()
+			}
 			return fmt.Errorf("upstream stream cut short: %w", readErr)
 		}
 	}
@@ -958,6 +973,12 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			h.priorPhaseMu.Lock()
 			delete(h.priorPhase, workspace.Name)
 			h.priorPhaseMu.Unlock()
+
+			// Remove activity tracker entry so deleted workspaces do not
+			// accumulate unboundedly in the tracker map. (Epic 25 B5)
+			if h.activityTracker != nil {
+				h.activityTracker.Delete(workspace.Name)
+			}
 		}
 		return
 	}
