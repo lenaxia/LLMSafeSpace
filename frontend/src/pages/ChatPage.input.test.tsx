@@ -17,7 +17,16 @@ vi.mock("../api/workspaces", () => ({
     activate: vi.fn(),
     list: vi.fn().mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } }),
     renameSession: vi.fn(),
+    markSessionSeen: vi.fn().mockResolvedValue(undefined),
+    getSessions: vi.fn().mockResolvedValue([]),
   },
+}));
+vi.mock("../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }), sendAsync: vi.fn() } }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));

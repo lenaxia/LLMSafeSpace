@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
+import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount } from "../../providers/SessionActivityProvider";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
 import { WorkspaceSettingsDrawer } from "../workspace/WorkspaceSettingsDrawer";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
@@ -290,6 +291,7 @@ function WorkspaceGroup({
   const isSuspended = workspace.phase === "Suspended";
   const isResuming = workspace.phase === "Resuming";
   const isActive = workspace.phase === "Active";
+  const busyCount = useWorkspaceBusyCount(workspace.id);
 
   const [showSettings, setShowSettings] = useState(false);
 
@@ -353,6 +355,9 @@ function WorkspaceGroup({
             )}
             {!isActive && !isSuspended && !activating && workspace.phase && (
               <span className="text-xs text-muted-foreground">{workspace.phase}</span>
+            )}
+            {!expanded && busyCount > 0 && (
+              <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />
             )}
           </button>
           {isActive && (
@@ -652,6 +657,10 @@ function SessionTreeRow({
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(s.id);
   const title = sessionDisplayTitle(s.title, s.lastMessageAt);
+  const isBusy = useIsSessionBusy(s.id);
+  const isUnread = useIsSessionUnread(s.id);
+  const isSelected = s.id === selectedSessionId;
+  const showPulse = isUnread && !isSelected && !isBusy;
   const contextUsed = contextBySessionId.get(s.id);
 
   if (isRenaming) {
@@ -722,8 +731,8 @@ function SessionTreeRow({
               : "text-muted-foreground",
           )}
         >
-          <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
-          <span className="flex-1 truncate">{title}</span>
+          <MessageSquare className={cn("h-3.5 w-3.5 flex-shrink-0", showPulse && "animate-unread-pulse")} />
+          <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse")}>{title}</span>
           {contextUsed != null && (
             <span
               className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50"
@@ -735,9 +744,7 @@ function SessionTreeRow({
           {s.lastMessageAt && (
             <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
           )}
-          {s.status === "active" && (
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-          )}
+          {isBusy && <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />}
         </button>
         <div className="mr-1 flex-shrink-0">
           <KebabMenu items={kebabItems} align="left" />

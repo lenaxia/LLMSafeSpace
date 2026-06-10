@@ -25,6 +25,7 @@ import { sessionsApi } from "../api/sessions";
 import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
 import { QuestionPrompt } from "../components/chat/QuestionPrompt";
 import { PermissionPrompt } from "../components/chat/PermissionPrompt";
+import { useClearPendingUnread } from "../providers/SessionActivityProvider";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -71,6 +72,40 @@ export function ChatPage() {
   const activateMutation = useActivateWorkspace();
 
   const isReady = status?.phase === "Active";
+  const clearPendingUnread = useClearPendingUnread();
+
+  useEffect(() => {
+    if (!workspaceId || !sessionId || !isReady) return;
+
+    clearPendingUnread(sessionId);
+
+    workspacesApi.markSessionSeen(workspaceId, sessionId).catch(() => {});
+
+    queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+  }, [sessionId, workspaceId, isReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const prevSessionRef = useRef<{ wsId: string; sId: string } | null>(null);
+  const markSeenDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    if (prevSessionRef.current) {
+      const { wsId, sId } = prevSessionRef.current;
+      if (markSeenDebounceRef.current) clearTimeout(markSeenDebounceRef.current);
+      markSeenDebounceRef.current = setTimeout(() => {
+        workspacesApi.markSessionSeen(wsId, sId).catch(() => {});
+      }, 1000);
+    }
+
+    prevSessionRef.current = workspaceId && sessionId ? { wsId: workspaceId, sId: sessionId } : null;
+
+    return () => {
+      if (markSeenDebounceRef.current) clearTimeout(markSeenDebounceRef.current);
+    };
+  }, [sessionId, workspaceId]);
+
+  const sessionsData = queryClient.getQueryData<SessionListItem[]>(["sessions", workspaceId]);
+  const currentSession = sessionsData?.find((s) => s.id === sessionId);
+  const lastSeenAt = currentSession?.lastSeenAt;
 
   // Current model for prompt injection — subscribes to the same cache key that
   // ModelSelector populates. enabled:!!workspaceId (not gated on isReady) so
@@ -847,6 +882,7 @@ export function ChatPage() {
             onQueueRetry={queue.retry}
             onQueueDismiss={queue.dismiss}
             models={modelsData?.models}
+            lastSeenAt={lastSeenAt}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
                 <>

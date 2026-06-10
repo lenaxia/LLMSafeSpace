@@ -3,8 +3,8 @@ import { Outlet, useLocation, useMatches } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
-import { useUserEventStream } from "../../hooks/useUserEventStream";
 import { useSwipeableSidebar } from "../../hooks/useSwipeableSidebar";
+import { SessionActivityProvider } from "../../providers/SessionActivityProvider";
 
 const SIDEBAR_WIDTH_PX = 256;
 
@@ -18,8 +18,6 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const matches = useMatches();
   const isInitialMount = useRef(true);
-
-  useUserEventStream();
 
   useSwipeableSidebar({
     containerRef,
@@ -45,6 +43,7 @@ export function AppShell() {
   }, [location.pathname]);
 
   return (
+    <SessionActivityProvider>
     <div
       ref={containerRef}
       className="flex h-screen overflow-hidden overscroll-none"
@@ -106,5 +105,6 @@ export function AppShell() {
         </main>
       </div>
     </div>
+    </SessionActivityProvider>
   );
 }

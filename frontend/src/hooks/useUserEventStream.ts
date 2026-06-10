@@ -16,9 +16,14 @@ const READ_TIMEOUT_MS = 35_000; // Must exceed backend heartbeat interval (25s)
  * of the app. It handles reconnection with exponential backoff and Last-Event-ID
  * replay.
  */
-export function useUserEventStream() {
+export function useUserEventStream(options?: { onEvent?: (event: unknown) => void }) {
   const queryClient = useQueryClient();
   const lastEventIDRef = useRef<string | null>(null);
+  const onEventRef = useRef(options?.onEvent);
+
+  useEffect(() => {
+    onEventRef.current = options?.onEvent;
+  });
 
   useEffect(() => {
     const { apiBaseUrl } = getEnv();
@@ -61,6 +66,8 @@ export function useUserEventStream() {
             queryClient.invalidateQueries({ queryKey: ["workspaces"] });
             queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
           }
+
+          onEventRef.current?.(data);
         },
         onConnect: () => {
           // On reconnect, invalidate all workspace caches
