@@ -94,17 +94,17 @@ func runWSLifecycle(ctx context.Context, run *canary.Runner, cfg canary.Config) 
 		"double-suspend: 409 Conflict",
 		canary.ErrDetail(err, "expected IsConflict=true"))
 
-	// P8: Resume
-	err = c.Workspaces.Resume(ctx, wsID)
-	run.AssertNoError(err, "resume: no error")
+	// P8: Activate
+	_, err = c.Workspaces.Activate(ctx, wsID)
+	run.AssertNoError(err, "activate: no error")
 
 	resumePhase := canary.WaitActive(ctx, c, wsID)
-	run.Assert(resumePhase == "Active", "resume: phase=Active",
+	run.Assert(resumePhase == "Active", "activate: phase=Active",
 		fmt.Sprintf("got %q", resumePhase))
 
-	// P9: Resume already-Active → idempotent (202/200, no error)
-	err = c.Workspaces.Resume(ctx, wsID)
-	run.AssertNoError(err, "resume-already-active: idempotent no error")
+	// P9: Activate already-Active → idempotent (200, no error)
+	_, err = c.Workspaces.Activate(ctx, wsID)
+	run.AssertNoError(err, "activate-already-active: idempotent no error")
 
 	// P10: Restart
 	err = c.Workspaces.Restart(ctx, wsID)

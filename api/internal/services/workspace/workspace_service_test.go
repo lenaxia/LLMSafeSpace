@@ -988,6 +988,39 @@ func TestActivateWorkspace_WrongOwner_ReturnsForbidden(t *testing.T) {
 	assert.Contains(t, err.Error(), "forbidden")
 }
 
+func TestActivateWorkspace_K8sGetFails(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
+
+	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace_get_failed")
+	f.ws.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).
+		Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
+
+	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace_resume_failed")
+}
+
 // ===== GetWorkspaceStatus =====
 
 func TestGetWorkspaceStatus_HappyPath(t *testing.T) {

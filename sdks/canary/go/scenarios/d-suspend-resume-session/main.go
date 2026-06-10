@@ -87,11 +87,11 @@ func runSuspendResumeSession(ctx context.Context, run *canary.Runner, cfg canary
 	run.Assert(suspPhase == "Suspended", "suspend: phase=Suspended",
 		fmt.Sprintf("got %q", suspPhase))
 
-	// P5: Resume → Active
-	err = c.Workspaces.Resume(ctx, wsID)
-	run.AssertNoError(err, "resume: no error")
+	// P5: Activate → Active
+	_, err = c.Workspaces.Activate(ctx, wsID)
+	run.AssertNoError(err, "activate: no error")
 	resumePhase := canary.WaitActive(ctx, c, wsID)
-	run.Assert(resumePhase == "Active", "resume: phase=Active",
+	run.Assert(resumePhase == "Active", "activate: phase=Active",
 		fmt.Sprintf("got %q", resumePhase))
 
 	// P6: Ensure session (with retries for agent startup)

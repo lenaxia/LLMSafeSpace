@@ -76,11 +76,6 @@ export class ApiService {
     await this.client!.workspaces.activate(id);
   }
 
-  async activateWorkspace(id: string): Promise<void> {
-    this.ensureClient();
-    await this.client!.workspaces.activate(id);
-  }
-
   async deleteWorkspace(id: string): Promise<void> {
     this.ensureClient();
     await this.client!.workspaces.delete(id);
