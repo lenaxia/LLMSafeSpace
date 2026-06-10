@@ -190,12 +190,11 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 			break
 		}
 	}
-	if wsSetupInit != nil {
-		for _, m := range wsSetupInit.VolumeMounts {
-			if m.Name == "workspace" && m.MountPath == "/workspace" {
-				require.Equal(t, "workspace", m.SubPath,
-					"workspace-setup init container /workspace mount must use SubPath: \"workspace\"")
-			}
+	require.NotNil(t, wsSetupInit, "workspace-setup init container must exist when InitScript is set")
+	for _, m := range wsSetupInit.VolumeMounts {
+		if m.Name == "workspace" && m.MountPath == "/workspace" {
+			require.Equal(t, "workspace", m.SubPath,
+				"workspace-setup init container /workspace mount must use SubPath: \"workspace\"")
 		}
 	}
 }

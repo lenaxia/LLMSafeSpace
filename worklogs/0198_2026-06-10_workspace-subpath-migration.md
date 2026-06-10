@@ -152,7 +152,7 @@ Spot-check a few workspaces:
 |---|---|
 | `controller/internal/workspace/pod_builder.go` | Add `SubPath: "workspace"` to `/workspace` mounts |
 | `controller/internal/workspace/security_test.go` | Update assertions: `/workspace` must have `SubPath: "workspace"`, init container same |
-| `worklogs/0197_…` | Update migration notes section |
+| `worklogs/0198_…` | This worklog (migration plan and verification) |
 | `README-LLM.md` | Update volume table: `/workspace` → `subPath: workspace` |
 
 **No CRD changes.** The CRD `spec.storage.size` covers the whole PVC regardless
