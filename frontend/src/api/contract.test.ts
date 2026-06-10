@@ -56,7 +56,7 @@ describe("Go↔TS contract", () => {
     expect(data.name).toBe("alpha");
     expect(data.userId).toBe("u-123");
     expect(data.runtime).toBe("python:3.11");
-    expect(data.storageSize).toBe("10Gi");
+    expect(data.storageSize).toBe("5Gi");
     expect(data.phase).toBe("Active");
     expect(data.maxActiveSessions).toBe(5);
     expect(data.createdAt).toBeDefined();
