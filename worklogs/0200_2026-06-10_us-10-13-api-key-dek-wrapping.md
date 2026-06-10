@@ -1,6 +1,6 @@
-# 0194 — US-10.13 API Key DEK Wrapping
+# 0200 — US-10.13 API Key DEK Wrapping
 
-**Date:** 2026-06-09
+**Date:** 2026-06-10
 **Status:** Complete — all tests pass, pending merge
 
 ---
@@ -43,9 +43,9 @@ Deterministic per key. Both `validateAPIKey` and `AuthMiddleware` compute it ind
 ## Changes
 
 ### New Files
-- `api/migrations/000018_api_key_dek_wrapping.up.sql` — adds `decrypt_access`, `kek_salt`, `wrapped_dek`, `dek_synced`, `key_ciphertext` to `api_keys`
-- `api/migrations/000018_api_key_dek_wrapping.down.sql`
-- `charts/llmsafespace/migrations/000018_api_key_dek_wrapping.{up,down}.sql` — chart mirror (required by `pkg/repolint` chart-sync test)
+- `api/migrations/000019_api_key_dek_wrapping.up.sql` — adds `decrypt_access`, `kek_salt`, `wrapped_dek`, `dek_synced`, `key_ciphertext` to `api_keys`
+- `api/migrations/000019_api_key_dek_wrapping.down.sql`
+- `charts/llmsafespace/migrations/000019_api_key_dek_wrapping.{up,down}.sql` — chart mirror (required by `pkg/repolint` chart-sync test)
 - `api/internal/services/auth/auth_apikey_dek_test.go` — 9 unit tests (TDD-first)
 - `api/internal/services/auth/auth_apikey_dek_e2e_test.go` — 6 e2e regression tests
 
