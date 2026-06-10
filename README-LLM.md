@@ -609,7 +609,7 @@ llmsafespace/
 │   │  │  │ main: opencode serve --hostname 0.0.0.0 --port 4096       │ │   │
 │   │  │  │ security: readOnlyRoot, runAsNonRoot, drop ALL caps        │ │   │
 │   │  │  └──────────────────────────────────────────────────────────┘  │ │   │
-│   │  │  Volumes: PVC at /workspace + /home/sandbox (subPath:home) + emptyDirs (/tmp, /sandbox-cfg)  │ │   │
+│   │  │  Volumes: PVC at /workspace (subPath:workspace) + /home/sandbox (subPath:home) + emptyDirs (/tmp, /sandbox-cfg)  │ │   │
 │   │  └───────────────────────────────────────────────────────────────┘ │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
@@ -700,7 +700,7 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 
 | Mount | Type | Persists across pod restart? | Owner |
 |---|---|---|---|
-| `/workspace` | Longhorn PVC (root, no subPath) | Yes | User workspace data, opencode.db, auth.json |
+| `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
 | `/tmp` | emptyDir (memory) | No | agent-config.json, secrets-env |
