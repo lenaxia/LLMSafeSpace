@@ -341,9 +341,7 @@ describe("useMessageQueue", () => {
     // A UUID like msg_feeb1f32-... would sort higher than msg_eb... IDs,
     // causing the wrong lastUser to be selected. Our ULID IDs must sort
     // correctly relative to other ULID IDs (not above the fe... UUID range).
-    const problematicUUID = "msg_feeb1f32-7882-4255-9595-4c86267f671f";
-    // Our generated ID should be a proper ULID - both will sort by timestamp
-    // prefix naturally. Assert our ID is not in the UUID namespace.
+    // Assert our ID is not in the UUID namespace (no dashes).
     expect(id).not.toContain("-");
   });
 });
