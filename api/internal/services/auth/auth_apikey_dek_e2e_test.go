@@ -189,8 +189,8 @@ type testAPIKeyStoreAdapter struct {
 	db *apiKeyAwareDB
 }
 
-func (a *testAPIKeyStoreAdapter) ListAPIKeysWithDecrypt(_ context.Context, userID string) ([]*secrets.APIKeyRecord, error) {
-	keys, _ := a.db.ListAPIKeysWithDecrypt(context.Background(), userID)
+func (a *testAPIKeyStoreAdapter) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*secrets.APIKeyRecord, error) {
+	keys, _ := a.db.ListAPIKeysWithDecrypt(ctx, userID)
 	var records []*secrets.APIKeyRecord
 	for _, k := range keys {
 		records = append(records, &secrets.APIKeyRecord{
@@ -204,8 +204,8 @@ func (a *testAPIKeyStoreAdapter) ListAPIKeysWithDecrypt(_ context.Context, userI
 	return records, nil
 }
 
-func (a *testAPIKeyStoreAdapter) UpdateAPIKeyDEK(_ context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
-	return a.db.UpdateAPIKeyDEK(context.Background(), keyID, wrappedDEK, kekSalt, synced)
+func (a *testAPIKeyStoreAdapter) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
+	return a.db.UpdateAPIKeyDEK(ctx, keyID, wrappedDEK, kekSalt, synced)
 }
 
 func TestE2E_APIKey_WithoutDecryptAccess_SecretsOperation403(t *testing.T) {
