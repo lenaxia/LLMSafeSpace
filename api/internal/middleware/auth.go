@@ -5,7 +5,6 @@ package middleware
 
 import (
 	"context"
-
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +13,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -112,8 +112,12 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 		c.Set("userID", userID)
 
 		// Extract JWT's jti claim as sessionID for DEK cache lookup.
+		// For API key sessions (no jti), derive a deterministic sessionID
+		// from the token hash so DEK caching works for decrypt_access keys.
 		if jti := utilities.ExtractJTI(token); jti != "" {
 			c.Set("sessionID", jti)
+		} else {
+			c.Set("sessionID", "apikey:"+pkgutil.HashString(token))
 		}
 
 		ctx := context.WithValue(c.Request.Context(), types.ContextKeyUserID, userID)

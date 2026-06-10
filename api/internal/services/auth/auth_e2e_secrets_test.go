@@ -216,6 +216,15 @@ func (m *fullMockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, 
 	return nil, nil
 }
 func (m *fullMockDB) DeleteAPIKey(context.Context, string, string) error { return nil }
+func (m *fullMockDB) GetAPIKeyRecordByHash(context.Context, string) (*types.APIKey, error) {
+	return nil, nil
+}
+func (m *fullMockDB) UpdateAPIKeyDEK(context.Context, string, []byte, []byte, bool) error {
+	return nil
+}
+func (m *fullMockDB) ListAPIKeysWithDecrypt(context.Context, string) ([]*types.APIKey, error) {
+	return nil, nil
+}
 func (m *fullMockDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
 	return nil, nil
 }

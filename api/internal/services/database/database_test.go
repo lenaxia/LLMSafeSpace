@@ -5,6 +5,7 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"testing"
 	"time"
@@ -938,4 +939,243 @@ func TestMarkWorkspaceDeleted_BindingDeleteFailureRollsBack(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)
 	}
+}
+
+func TestCreateAPIKey_WithDEKWrappingColumns(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	kekSalt := make([]byte, 32)
+	wrappedDEK := make([]byte, 48)
+	keyCiphertext := make([]byte, 48)
+	rand.Read(kekSalt)
+	rand.Read(wrappedDEK)
+	rand.Read(keyCiphertext)
+
+	apiKey := &types.APIKey{
+		ID:            "key-dek-1",
+		UserID:        "user-1",
+		Key:           "hash-of-key",
+		Name:          "dek-key",
+		Active:        true,
+		CreatedAt:     time.Now(),
+		Prefix:        "lsp_",
+		Legacy:        false,
+		DecryptAccess: true,
+		KekSalt:       kekSalt,
+		WrappedDEK:    wrappedDEK,
+		DekSynced:     true,
+		KeyCiphertext: keyCiphertext,
+	}
+
+	mock.ExpectExec("INSERT INTO api_keys").
+		WithArgs(
+			apiKey.ID,
+			apiKey.UserID,
+			apiKey.Key,
+			apiKey.Name,
+			apiKey.Active,
+			apiKey.CreatedAt,
+			nil,
+			"lsp_",
+			false,
+			true,
+			kekSalt,
+			wrappedDEK,
+			true,
+			keyCiphertext,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := service.CreateAPIKey(ctx, apiKey)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateAPIKey_WithoutDEKWrappingColumns(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	apiKey := &types.APIKey{
+		ID:        "key-nodek-1",
+		UserID:    "user-1",
+		Key:       "hash-of-key",
+		Name:      "plain-key",
+		Active:    true,
+		CreatedAt: time.Now(),
+		Prefix:    "lsp_",
+		Legacy:    false,
+	}
+
+	mock.ExpectExec("INSERT INTO api_keys").
+		WithArgs(
+			apiKey.ID,
+			apiKey.UserID,
+			apiKey.Key,
+			apiKey.Name,
+			apiKey.Active,
+			apiKey.CreatedAt,
+			nil,
+			"lsp_",
+			false,
+			false,
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			false,
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := service.CreateAPIKey(ctx, apiKey)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetAPIKeyRecordByHash_WithDEKColumns(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	keyHash := "abc123"
+	kekSalt := []byte("salt-32-bytes-long-salt-32-bytes!")
+	wrappedDEK := []byte("wrapped-dek-data")
+	keyCiphertext := []byte("key-ciphertext")
+	createdAt := time.Now()
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
+		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
+	}).AddRow(
+		"key-1", "user-1", keyHash, "dek-key", true, createdAt, nil,
+		true, kekSalt, wrappedDEK, true, keyCiphertext,
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
+		WithArgs(keyHash).
+		WillReturnRows(rows)
+
+	rec, err := service.GetAPIKeyRecordByHash(ctx, keyHash)
+	assert.NoError(t, err)
+	assert.NotNil(t, rec)
+	assert.Equal(t, "key-1", rec.ID)
+	assert.True(t, rec.DecryptAccess)
+	assert.Equal(t, kekSalt, rec.KekSalt)
+	assert.Equal(t, wrappedDEK, rec.WrappedDEK)
+	assert.True(t, rec.DekSynced)
+	assert.Equal(t, keyCiphertext, rec.KeyCiphertext)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetAPIKeyRecordByHash_NullDEKColumns(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	createdAt := time.Now()
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
+		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
+	}).AddRow(
+		"key-2", "user-1", "hash2", "plain-key", true, createdAt, nil,
+		false, nil, nil, false, nil,
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
+		WithArgs("hash2").
+		WillReturnRows(rows)
+
+	rec, err := service.GetAPIKeyRecordByHash(ctx, "hash2")
+	assert.NoError(t, err)
+	assert.NotNil(t, rec)
+	assert.False(t, rec.DecryptAccess)
+	assert.Nil(t, rec.KekSalt)
+	assert.Nil(t, rec.WrappedDEK)
+	assert.False(t, rec.DekSynced)
+	assert.Nil(t, rec.KeyCiphertext)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetAPIKeyRecordByHash_NotFound(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
+		WithArgs("nonexistent").
+		WillReturnError(sql.ErrNoRows)
+
+	rec, err := service.GetAPIKeyRecordByHash(ctx, "nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, rec)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateAPIKeyDEK(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	newWrapped := []byte("new-wrapped-dek")
+	newSalt := []byte("new-salt-32-bytes-long-enough!!")
+
+	mock.ExpectExec("UPDATE api_keys SET wrapped_dek").
+		WithArgs(newWrapped, newSalt, true, "key-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := service.UpdateAPIKeyDEK(ctx, "key-1", newWrapped, newSalt, true)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateAPIKeyDEK_SyncFailure(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	mock.ExpectExec("UPDATE api_keys SET wrapped_dek").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), false, "key-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := service.UpdateAPIKeyDEK(ctx, "key-1", nil, nil, false)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAPIKeysWithDecrypt(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	createdAt := time.Now()
+	salt := []byte("salt")
+	wrapped := []byte("wrapped")
+	ciphertext := []byte("ciphertext")
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
+		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
+	}).AddRow(
+		"key-1", "user-1", "hash1", "dek-key", true, createdAt, nil,
+		true, salt, wrapped, true, ciphertext,
+	).AddRow(
+		"key-2", "user-1", "hash2", "another-dek", true, createdAt, nil,
+		true, salt, wrapped, false, ciphertext,
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
+		WithArgs("user-1").
+		WillReturnRows(rows)
+
+	keys, err := service.ListAPIKeysWithDecrypt(ctx, "user-1")
+	assert.NoError(t, err)
+	assert.Len(t, keys, 2)
+	assert.True(t, keys[0].DecryptAccess)
+	assert.True(t, keys[0].DekSynced)
+	assert.False(t, keys[1].DekSynced)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }

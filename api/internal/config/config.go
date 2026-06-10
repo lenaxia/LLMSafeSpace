@@ -72,6 +72,7 @@ type Config struct {
 		LockoutEnabled      bool          `mapstructure:"lockoutEnabled"`
 		LockoutAttempts     int           `mapstructure:"lockoutAttempts"`
 		LockoutDuration     time.Duration `mapstructure:"lockoutDuration"`
+		APIKeyDEKTTL        time.Duration `mapstructure:"apiKeyDEKTTL"`
 	} `mapstructure:"auth"`
 
 	Security struct {

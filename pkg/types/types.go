@@ -349,7 +349,8 @@ type AuthResponse struct {
 
 // CreateAPIKeyRequest is the request body for creating an API key.
 type CreateAPIKeyRequest struct {
-	Name string `json:"name" binding:"required,min=1,max=128"`
+	Name          string `json:"name" binding:"required,min=1,max=128"`
+	DecryptAccess bool   `json:"decryptAccess"`
 }
 
 // APIKey represents an API key record returned in list responses.
@@ -362,8 +363,13 @@ type APIKey struct {
 	Active    bool       `json:"active"`
 	CreatedAt time.Time  `json:"createdAt"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	// Legacy is true for keys created before hashing was introduced (migration 000017).
-	Legacy bool `json:"legacy,omitempty" db:"key_legacy"`
+	Legacy    bool       `json:"legacy,omitempty" db:"key_legacy"`
+
+	DecryptAccess bool  `json:"decryptAccess"`
+	DekSynced     bool  `json:"dekSynced"`
+	KekSalt       []byte `json:"-" db:"kek_salt"`
+	WrappedDEK    []byte `json:"-" db:"wrapped_dek"`
+	KeyCiphertext []byte `json:"-" db:"key_ciphertext"`
 }
 
 // live Kubernetes status with database metadata and pagination so callers never

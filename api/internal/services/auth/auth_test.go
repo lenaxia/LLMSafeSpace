@@ -674,6 +674,14 @@ func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, erro
 	return true, nil
 }
 
+func (f *fakeKeyService) GetDEK(ctx context.Context, sessionID string) ([]byte, error) {
+	return nil, errors.New("not implemented in fake")
+}
+
+func (f *fakeKeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
+	return nil
+}
+
 // TestRegister_UnlocksDEKAndReturnsRecoveryKey is the regression test for
 // Bug 5 (Register must UnlockDEK so the new user can immediately CreateSecret)
 // and Bug 10 (Register must surface the recovery key one time so the user
@@ -856,7 +864,7 @@ func TestCreateAPIKey_Success(t *testing.T) {
 		return k.UserID == "user-1" && k.Name == "my-key" && k.Active && len(k.Key) > 4
 	})).Return(nil)
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"})
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, apiKey)
@@ -872,7 +880,7 @@ func TestCreateAPIKey_DBError(t *testing.T) {
 
 	mockDb.On("CreateAPIKey", ctx, mock.Anything).Return(errors.New("db error"))
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"})
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)

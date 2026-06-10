@@ -24,25 +24,18 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
-
-// hashToken derives a stable Redis cache key from a JWT/API key without
-// storing the raw secret in Redis. SHA-256 is the standard choice; MD5
-// was used historically (see worklog 0028 / M2) but flagged by gosec
-// G401/G501. The output length doesn't matter — Redis happily accepts
-// 64-char keys.
-func hashToken(token string) string {
-	h := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(h[:])
-}
 
 // KeyServiceInterface abstracts the key service for DEK lifecycle.
 type KeyServiceInterface interface {
 	InitializeUserKeys(ctx context.Context, userID string, password []byte) (recoveryKeyHex string, err error)
 	UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error
 	HasKeys(ctx context.Context, userID string) (bool, error)
+	GetDEK(ctx context.Context, sessionID string) ([]byte, error)
+	CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error
 }
 
 // SetKeyService sets the optional key service for secret management.
@@ -53,6 +46,21 @@ func (s *Service) SetKeyService(ks KeyServiceInterface) {
 // SetInstanceSettings injects the instance settings service for runtime config reads.
 func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
 	s.instanceSettings = svc
+}
+
+// SetMasterKey sets the server master key used for encrypting API key ciphertext
+// (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACE_MASTER_SECRET.
+func (s *Service) SetMasterKey(key []byte) {
+	s.masterKey = key
+}
+
+const defaultAPIKeyDEKTTL = 24 * time.Hour
+
+func (s *Service) apiKeyDEKTTL() time.Duration {
+	if s.config.Auth.APIKeyDEKTTL > 0 {
+		return s.config.Auth.APIKeyDEKTTL
+	}
+	return defaultAPIKeyDEKTTL
 }
 
 // lockoutConfig reads lockout configuration from instance settings (if available),
@@ -95,6 +103,7 @@ type Service struct {
 	tokenDuration      time.Duration
 	keyService         KeyServiceInterface
 	instanceSettings   *settings.InstanceService
+	masterKey          []byte
 }
 
 // Start initializes the auth service
@@ -251,7 +260,7 @@ func (s *Service) RevokeToken(token string) error {
 	// Without writing both, ValidateToken's fast-path would still return the
 	// cached userID and revocation would be silently ignored. See worklog 0078
 	// and `auth_revocation_test.go` for the regression that locks this in.
-	hashKey := "token:" + hashToken(token)
+	hashKey := "token:" + pkgutil.HashString(token)
 	jtiKey := "token:" + jti
 	if err := s.cacheService.Set(ctx, hashKey, "revoked", remainingTime); err != nil {
 		return fmt.Errorf("failed to revoke token (hash key): %w", err)
@@ -338,7 +347,7 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	// Check if token is cached
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cacheKey := fmt.Sprintf("token:%s", hashToken(tokenString))
+	cacheKey := fmt.Sprintf("token:%s", pkgutil.HashString(tokenString))
 
 	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
@@ -413,17 +422,17 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 
 // validateAPIKey validates an API key (internal method)
 func (s *Service) validateAPIKey(apiKey string) (string, error) {
-	// Check if API key is cached
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
 
-	// Try to get from cache first
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
+		if cachedUserID == "revoked" {
+			return "", errors.New("token has been revoked")
+		}
 		return cachedUserID, nil
 	}
 
-	// Hash-first lookup (new keys). Fall back to plaintext for legacy keys. (Epic 10 US-10.13)
 	h := sha256.Sum256([]byte(apiKey))
 	keyHash := hex.EncodeToString(h[:])
 	user, err := s.dbService.GetUserByAPIKey(ctx, keyHash)
@@ -441,11 +450,31 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 		return "", errors.New("invalid API key")
 	}
 
-	// Cache the API key for 15 minutes
+	if s.keyService != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
+		keyRec, dbErr := s.dbService.GetAPIKeyRecordByHash(ctx, keyHash)
+		if dbErr != nil {
+			s.logger.Error("Failed to get API key record for DEK check", dbErr, "key_hash", keyHash)
+		} else if keyRec != nil && keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
+			apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+			if deriveErr != nil {
+				s.logger.Error("Failed to derive API KEK", deriveErr)
+			} else {
+				dek, decErr := secrets.DecryptSecret(apiKEK, keyRec.WrappedDEK)
+				if decErr != nil {
+					s.logger.Error("Failed to unwrap DEK for API key", decErr, "key_id", keyRec.ID)
+				} else {
+					sessionID := "apikey:" + pkgutil.HashString(apiKey)
+					if cacheErr := s.keyService.CacheDEK(ctx, sessionID, dek, s.apiKeyDEKTTL()); cacheErr != nil {
+						s.logger.Error("Failed to cache DEK for API key session", cacheErr, "session_id", sessionID)
+					}
+				}
+			}
+		}
+	}
+
 	err = s.cacheService.Set(ctx, cacheKey, user.ID, 15*time.Minute)
 	if err != nil {
 		s.logger.Error("Failed to cache API key", err, "user_id", user.ID)
-		// Continue even if caching fails
 	}
 
 	return user.ID, nil
@@ -682,7 +711,7 @@ func (s *Service) clearFailedAttempts(ctx context.Context, email string) {
 	}
 }
 
-func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest) (*types.APIKey, error) {
+func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string) (*types.APIKey, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, fmt.Errorf("failed to generate api key: %w", err)
@@ -705,6 +734,49 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 		Active:    true,
 		CreatedAt: time.Now(),
 		Legacy:    false,
+	}
+
+	if req.DecryptAccess {
+		if s.masterKey == nil {
+			return nil, errors.New("server master key not configured; decrypt_access keys unavailable")
+		}
+		if sessionID == "" {
+			return nil, errors.New("JWT session required to create a key with decrypt_access=true")
+		}
+		if s.keyService == nil {
+			return nil, errors.New("key service not configured; decrypt_access keys unavailable")
+		}
+
+		dek, err := s.keyService.GetDEK(ctx, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("DEK not available for wrapping: %w", err)
+		}
+
+		kekSalt := make([]byte, 32)
+		if _, err := rand.Read(kekSalt); err != nil {
+			return nil, fmt.Errorf("failed to generate KEK salt: %w", err)
+		}
+
+		apiKEK, err := secrets.DeriveKEK([]byte(keyStr), kekSalt, "llmsafespace-apikey-kek")
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive API KEK: %w", err)
+		}
+
+		wrappedDEK, err := secrets.EncryptSecret(apiKEK, dek)
+		if err != nil {
+			return nil, fmt.Errorf("failed to wrap DEK: %w", err)
+		}
+
+		keyCiphertext, err := secrets.EncryptSecret(s.masterKey, []byte(keyStr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt key ciphertext: %w", err)
+		}
+
+		apiKey.DecryptAccess = true
+		apiKey.KekSalt = kekSalt
+		apiKey.WrappedDEK = wrappedDEK
+		apiKey.DekSynced = true
+		apiKey.KeyCiphertext = keyCiphertext
 	}
 
 	if err := s.dbService.CreateAPIKey(ctx, apiKey); err != nil {
@@ -773,9 +845,11 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		// Set user ID in context
 		c.Set("userID", userID)
 
-		// Set session ID (JWT jti) for DEK cache lookup in secret management.
+		// Set session ID for DEK cache lookup in secret management.
 		if jti := utilities.ExtractJTI(tokenString); jti != "" {
 			c.Set("sessionID", jti)
+		} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
+			c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 		}
 
 		// Load user role into context for AdminGuard and authorization checks.
@@ -802,6 +876,8 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 				c.Set("userID", userID)
 				if jti := utilities.ExtractJTI(tokenString); jti != "" {
 					c.Set("sessionID", jti)
+				} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
+					c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 				}
 				if s.dbService != nil {
 					if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {

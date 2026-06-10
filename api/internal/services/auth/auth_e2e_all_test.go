@@ -6,8 +6,10 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -306,6 +308,21 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 	authed.DELETE("/workspaces/:id/env/:name", secretsHandler.DeleteWorkspaceEnv)
 	authed.POST("/account/rotate-key", rotateHandler.RotateKey)
 	authed.POST("/account/change-password", rotateHandler.ChangePassword)
+	authed.POST("/api-keys", func(c *gin.Context) {
+		var req types.CreateAPIKeyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		sid, _ := c.Get("sessionID")
+		sidStr, _ := sid.(string)
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, apiKey)
+	})
 
 	// Register + login to get token
 	// We do this programmatically to avoid HTTP overhead in setup
@@ -399,3 +416,278 @@ func (c *capturingKeyService) UnlockDEK(ctx context.Context, userID string, pass
 func (c *capturingKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	return c.inner.HasKeys(ctx, userID)
 }
+
+func (c *capturingKeyService) GetDEK(ctx context.Context, sessionID string) ([]byte, error) {
+	return c.inner.GetDEK(ctx, sessionID)
+}
+
+func (c *capturingKeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
+	return c.inner.CacheDEK(ctx, sessionID, dek, ttl)
+}
+
+func TestE2E_APIKey_CreateWithDecryptAccess_SecretsOperationSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &apiKeyAwareDB{
+		users:   make(map[string]*types.User),
+		apiKeys: make(map[string]*types.APIKey),
+	}
+	cache := &mockCache{}
+
+	authSvc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New auth: %v", err)
+	}
+
+	keyStore := &memKeyStore{records: make(map[string]*secrets.UserKeyRecord)}
+	dekCache := &memDEKCache{store: make(map[string][]byte)}
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := &memSecretStore{secrets: make(map[string]*secrets.UserSecret), bindings: make(map[string][]string)}
+	secretSvc := secrets.NewSecretService(keySvc, secretStore)
+	secretsHandler := handlers.NewSecretsHandler(secretSvc)
+
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	authSvc.SetMasterKey(masterKey)
+	authSvc.SetKeyService(keySvc)
+
+	router := gin.New()
+
+	router.POST("/api/v1/auth/register", func(c *gin.Context) {
+		var req types.RegisterRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		resp, err := authSvc.Register(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, resp)
+	})
+	router.POST("/api/v1/auth/login", func(c *gin.Context) {
+		var req types.LoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		resp, err := authSvc.Login(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(401, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, resp)
+	})
+
+	authed := router.Group("/api/v1")
+	authed.Use(authSvc.AuthMiddleware())
+	authed.POST("/api-keys", func(c *gin.Context) {
+		var req types.CreateAPIKeyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		sid, _ := c.Get("sessionID")
+		sidStr, _ := sid.(string)
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, apiKey)
+	})
+	authed.POST("/secrets", secretsHandler.CreateSecret)
+	authed.GET("/secrets", secretsHandler.ListSecrets)
+
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	srv := &http.Server{Handler: router}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	base := "http://" + ln.Addr().String()
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	resp := doPost(t, client, base+"/api/v1/auth/register",
+		`{"username":"e2euser","email":"e2e@test.com","password":"secure-password-123"}`, "")
+	if resp.StatusCode != 201 {
+		t.Fatalf("Register: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doPost(t, client, base+"/api/v1/auth/login",
+		`{"email":"e2e@test.com","password":"secure-password-123"}`, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("Login: %d", resp.StatusCode)
+	}
+	var loginResp struct{ Token string }
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	resp.Body.Close()
+	jwt := loginResp.Token
+
+	resp = doPost(t, client, base+"/api/v1/api-keys",
+		`{"name":"dek-key","decryptAccess":true}`, jwt)
+	if resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("Create API key with decrypt_access: %d: %s", resp.StatusCode, body)
+	}
+	var apiKeyResp struct {
+		ID            string `json:"id"`
+		Key           string `json:"key"`
+		DecryptAccess bool   `json:"decryptAccess"`
+	}
+	json.NewDecoder(resp.Body).Decode(&apiKeyResp)
+	resp.Body.Close()
+
+	if !apiKeyResp.DecryptAccess {
+		t.Fatal("Expected decryptAccess=true")
+	}
+	if apiKeyResp.Key == "" {
+		t.Fatal("Expected raw key in response")
+	}
+
+	resp = doPost(t, client, base+"/api/v1/secrets",
+		`{"name":"e2e-secret","type":"api-key","value":"sk-test-123","metadata":{"provider":"test"}}`, apiKeyResp.Key)
+	if resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("Create secret with API key: %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = doGet(t, client, base+"/api/v1/secrets", apiKeyResp.Key)
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("List secrets with API key: %d: %s", resp.StatusCode, body)
+	}
+	var listResp struct{ Secrets []struct{ Name string } }
+	json.NewDecoder(resp.Body).Decode(&listResp)
+	resp.Body.Close()
+	if len(listResp.Secrets) != 1 || listResp.Secrets[0].Name != "e2e-secret" {
+		t.Fatalf("Expected 1 secret 'e2e-secret', got %v", listResp.Secrets)
+	}
+
+	t.Log("E2E API Key DEK: register → login → create key with decrypt_access → create secret → list — PASSED")
+}
+
+type apiKeyAwareDB struct {
+	users   map[string]*types.User
+	apiKeys map[string]*types.APIKey
+}
+
+func (m *apiKeyAwareDB) GetUser(_ context.Context, id string) (*types.User, error) {
+	u := m.users[id]
+	if u == nil {
+		return nil, nil
+	}
+	cp := *u
+	return &cp, nil
+}
+func (m *apiKeyAwareDB) GetUserByEmail(_ context.Context, email string) (*types.User, error) {
+	for _, u := range m.users {
+		if u.Email == email {
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+func (m *apiKeyAwareDB) CreateUser(_ context.Context, u *types.User) error {
+	cp := *u
+	m.users[u.ID] = &cp
+	return nil
+}
+func (m *apiKeyAwareDB) CountUsers(_ context.Context) (int, error) { return len(m.users), nil }
+func (m *apiKeyAwareDB) UpdateUser(context.Context, string, types.UserUpdates) error {
+	return nil
+}
+func (m *apiKeyAwareDB) DeleteUser(context.Context, string) error         { return nil }
+func (m *apiKeyAwareDB) GetUserByAPIKey(_ context.Context, key string) (*types.User, error) {
+	for _, k := range m.apiKeys {
+		if k.Key == key && k.Active {
+			return m.users[k.UserID], nil
+		}
+	}
+	return nil, nil
+}
+func (m *apiKeyAwareDB) CreateAPIKey(_ context.Context, k *types.APIKey) error {
+	cp := *k
+	m.apiKeys[k.ID] = &cp
+	return nil
+}
+func (m *apiKeyAwareDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error) {
+	return nil, nil
+}
+func (m *apiKeyAwareDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) {
+	return nil, nil
+}
+func (m *apiKeyAwareDB) DeleteAPIKey(context.Context, string, string) error { return nil }
+func (m *apiKeyAwareDB) GetAPIKeyRecordByHash(_ context.Context, keyHash string) (*types.APIKey, error) {
+	for _, k := range m.apiKeys {
+		if k.Key == keyHash && k.Active {
+			return k, nil
+		}
+	}
+	return nil, nil
+}
+func (m *apiKeyAwareDB) UpdateAPIKeyDEK(_ context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error {
+	for _, k := range m.apiKeys {
+		if k.ID == keyID {
+			k.WrappedDEK = wrappedDEK
+			k.KekSalt = kekSalt
+			k.DekSynced = synced
+			break
+		}
+	}
+	return nil
+}
+func (m *apiKeyAwareDB) ListAPIKeysWithDecrypt(_ context.Context, userID string) ([]*types.APIKey, error) {
+	var keys []*types.APIKey
+	for _, k := range m.apiKeys {
+		if k.UserID == userID && k.DecryptAccess && k.Active {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+func (m *apiKeyAwareDB) GetWorkspace(context.Context, string) (*types.WorkspaceMetadata, error) {
+	return nil, nil
+}
+func (m *apiKeyAwareDB) CreateWorkspace(context.Context, *types.WorkspaceMetadata) error {
+	return nil
+}
+func (m *apiKeyAwareDB) UpdateWorkspace(context.Context, string, types.WorkspaceUpdates) error {
+	return nil
+}
+func (m *apiKeyAwareDB) DeleteWorkspace(context.Context, string) error { return nil }
+func (m *apiKeyAwareDB) ListWorkspaces(context.Context, string, int, int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
+	return nil, nil, nil
+}
+func (m *apiKeyAwareDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
+func (m *apiKeyAwareDB) MarkWorkspaceDeleted(context.Context, string)                     {}
+func (m *apiKeyAwareDB) CheckPermission(string, string, string, string) (bool, error) {
+	return false, nil
+}
+func (m *apiKeyAwareDB) CheckResourceOwnership(string, string, string) (bool, error) {
+	return false, nil
+}
+func (m *apiKeyAwareDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
+	return nil, nil
+}
+func (m *apiKeyAwareDB) DeleteSessionIndex(context.Context, string) error { return nil }
+func (m *apiKeyAwareDB) UpsertSessionMessage(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (m *apiKeyAwareDB) UpsertSessionTitle(context.Context, string, string, string) error {
+	return nil
+}
+func (m *apiKeyAwareDB) UpsertSessionParent(context.Context, string, string, string) error {
+	return nil
+}
+func (m *apiKeyAwareDB) Ping(context.Context) error { return nil }
+func (m *apiKeyAwareDB) Start() error               { return nil }
+func (m *apiKeyAwareDB) Stop() error                { return nil }

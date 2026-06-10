@@ -43,15 +43,38 @@ type DEKCache interface {
 
 // KeyService manages user key lifecycle.
 type KeyService struct {
-	store       KeyStore
-	cache       DEKCache
-	secretStore SecretStore
-	logger      pkginterfaces.LoggerInterface
+	store        KeyStore
+	cache        DEKCache
+	secretStore  SecretStore
+	logger       pkginterfaces.LoggerInterface
+	apiKeyStore  APIKeyStore
+	masterKey    []byte
+}
+
+// APIKeyRecord is the subset of API key data needed for DEK re-wrap.
+type APIKeyRecord struct {
+	ID             string
+	WrappedDEK     []byte
+	KekSalt        []byte
+	KeyCiphertext  []byte
+	DecryptAccess  bool
+}
+
+// APIKeyStore abstracts database operations for API key DEK re-wrap.
+type APIKeyStore interface {
+	ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*APIKeyRecord, error)
+	UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK, kekSalt []byte, synced bool) error
 }
 
 // NewKeyService creates a new KeyService.
 func NewKeyService(store KeyStore, cache DEKCache) *KeyService {
 	return &KeyService{store: store, cache: cache}
+}
+
+// SetAPIKeyStore wires the API key store for DEK re-wrap on rotation.
+func (s *KeyService) SetAPIKeyStore(store APIKeyStore, masterKey []byte) {
+	s.apiKeyStore = store
+	s.masterKey = masterKey
 }
 
 // SetLogger installs the logger used to surface non-fatal failures
@@ -182,6 +205,12 @@ func (s *KeyService) UnlockDEK(ctx context.Context, userID string, password []by
 // EvictDEK removes the cached DEK for a session. Called on logout/expiry.
 func (s *KeyService) EvictDEK(ctx context.Context, sessionID string) error {
 	return s.cache.EvictDEK(ctx, sessionID)
+}
+
+// CacheDEK stores a DEK in the session cache. Used by API key auth to cache
+// an unwrapped DEK under a deterministic sessionID.
+func (s *KeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
+	return s.cache.CacheDEK(ctx, sessionID, dek, ttl)
 }
 
 // GetDEK retrieves the cached DEK for a session.
@@ -502,10 +531,71 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 		return RotationResult{}, fmt.Errorf("cache new DEK: %w", err)
 	}
 
+	s.rewrapAPIKeyDEKs(ctx, userID, newDEK)
+
 	return RotationResult{
 		NewKeyVersion:     newVersion,
 		NewRecoveryKeyHex: hex.EncodeToString(newRecoveryKey),
 	}, nil
+}
+
+func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK []byte) {
+	if s.apiKeyStore == nil || s.masterKey == nil {
+		return
+	}
+
+	keys, err := s.apiKeyStore.ListAPIKeysWithDecrypt(ctx, userID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("rewrapAPIKeyDEKs: failed to list API keys", "userID", userID, "error", err.Error())
+		}
+		return
+	}
+
+	for _, key := range keys {
+		if !key.DecryptAccess || len(key.KeyCiphertext) == 0 {
+			continue
+		}
+
+		rawKey, decErr := DecryptSecret(s.masterKey, key.KeyCiphertext)
+		if decErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to decrypt key_ciphertext",
+					"keyID", key.ID, "error", decErr.Error())
+			}
+			s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			continue
+		}
+
+		apiKEK, deriveErr := DeriveKEK(rawKey, key.KekSalt, "llmsafespace-apikey-kek")
+		zeroBytes(rawKey)
+		if deriveErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to derive API KEK",
+					"keyID", key.ID, "error", deriveErr.Error())
+			}
+			s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			continue
+		}
+
+		wrappedDEK, wrapErr := EncryptSecret(apiKEK, newDEK)
+		zeroBytes(apiKEK)
+		if wrapErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to wrap new DEK",
+					"keyID", key.ID, "error", wrapErr.Error())
+			}
+			s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			continue
+		}
+
+		if updateErr := s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, wrappedDEK, key.KekSalt, true); updateErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to update wrapped DEK in DB",
+					"keyID", key.ID, "error", updateErr.Error())
+			}
+		}
+	}
 }
 
 // zeroBytes overwrites b with zeros to reduce the time secret material

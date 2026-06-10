@@ -249,7 +249,7 @@ func TestCreateAPIKey_Success(t *testing.T) {
 	}
 	svc.auth.On("CreateAPIKey", mock.Anything, "user-1", mock.MatchedBy(func(r types.CreateAPIKeyRequest) bool {
 		return r.Name == "my-key"
-	})).Return(apiKey, nil)
+	}), mock.Anything).Return(apiKey, nil)
 
 	rec := doRequest(t, router, http.MethodPost, "/api/v1/auth/api-keys", types.CreateAPIKeyRequest{Name: "my-key"})
 

@@ -159,8 +159,10 @@ func TestListModels_AgentUnreachable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	handler := NewSecretsHandler(nil)
-	// Resolver returns IP but nothing is listening on 4096
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.99"})
+	// Resolver returns a non-routable IP (RFC 5737 TEST-NET-1) — guaranteed
+	// unreachable, unlike 127.0.0.99 which is reachable when opencode serve
+	// listens on 0.0.0.0:4096 inside the same host.
+	handler.SetPodIPResolver(&staticPodIPResolver{addr: "192.0.2.1"})
 	handler.SetPasswordGetter(mockPasswordGetter("some-pw"))
 
 	router := gin.New()
