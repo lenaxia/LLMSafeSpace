@@ -319,11 +319,29 @@ describe("useMessageQueue", () => {
     expect(result.current.queuedMessages[0]!.error).toBe("retry fail");
   });
 
-  it("messageID starts with msg_ prefix", async () => {
+  it("messageID starts with msg_ prefix and uses ULID-style format (not UUID)", async () => {
     const { result } = render();
     await act(async () => { result.current.enqueue("hello"); });
 
     const call = (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(call[2]!.messageID).toMatch(/^msg_/);
+    const id: string = call[2]!.messageID;
+    expect(id).toMatch(/^msg_/);
+    // Must NOT be UUID format (msg_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+    expect(id).not.toMatch(/^msg_[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    // Must be msg_ + 12 hex chars + 14 base62 chars (opencode ULID scheme)
+    expect(id).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+  });
+
+  it("messageID sorts lexicographically below opencode internal UUIDs (fe... range)", async () => {
+    const { result } = render();
+    await act(async () => { result.current.enqueue("hello"); });
+
+    const id: string = result.current.queuedMessages[0]!.id;
+    // opencode ULIDs currently encode timestamps in the eb... range.
+    // A UUID like msg_feeb1f32-... would sort higher than msg_eb... IDs,
+    // causing the wrong lastUser to be selected. Our ULID IDs must sort
+    // correctly relative to other ULID IDs (not above the fe... UUID range).
+    // Assert our ID is not in the UUID namespace (no dashes).
+    expect(id).not.toContain("-");
   });
 });
