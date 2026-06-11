@@ -60,9 +60,11 @@ design/stories/epic-17-security-review/phase-0/phase-0-artefacts/
 design/stories/epic-17-security-review/phase-0-prod/phase-0-prod-artefacts/
 .tmp/
 
-# Compiled canary scenario binaries (built by CI, not committed)
+# Compiled canary binaries (built on-the-fly by canary runner / CI)
 sdks/canary/go/s-*
 sdks/canary/go/d-*
+sdks/canary/mcp/mcp
+sdks/canary/go/cmd/seed-accounts/seed-accounts
 
 # Local credentials and binaries
 .cf
