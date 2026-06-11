@@ -252,4 +252,123 @@ describe("SessionActivityProvider", () => {
     const sessions = qc.getQueryData(["sessions", "ws-1"]) as Array<{ id: string; status: string }>;
     expect(sessions.find((s) => s.id === "sess-1")?.status).toBe("active");
   });
+
+  // Test 17: Provider initializes busySessions from REST session cache on mount.
+  it("initializes busy state from cached REST data with status:active (#17)", async () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-active");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-active", title: "Active", messageCount: 0, status: "active", hasUnread: false },
+      { id: "sess-idle",   title: "Idle",   messageCount: 0, status: "idle",   hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+  });
+
+  // Test 23: Provider initializes pendingUnread from REST session cache on mount.
+  it("initializes unread state from cached REST data with hasUnread:true (#23)", async () => {
+    function UnreadDisplay() {
+      const isUnread = useIsSessionUnread("sess-unread");
+      return <span data-testid="unread">{isUnread ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-unread", title: "Unread", messageCount: 3, status: "idle", hasUnread: true },
+      { id: "sess-seen",   title: "Seen",   messageCount: 1, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <UnreadDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
+
+  it("does not mark idle+read session as unread on REST init (#23 boundary)", async () => {
+    function UnreadDisplay() {
+      const isUnread = useIsSessionUnread("sess-seen");
+      return <span data-testid="unread">{isUnread ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-seen", title: "Seen", messageCount: 1, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <UnreadDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+  });
+
+  // Multi-workspace REST init: exercises the full loop (lines 31-41 of provider).
+  it("initializes state from multiple workspaces' caches on mount", () => {
+    function MultiDisplay() {
+      const busyA  = useIsSessionBusy("sess-a");
+      const busyB  = useIsSessionBusy("sess-b");
+      const unreadC = useIsSessionUnread("sess-c");
+      const unreadD = useIsSessionUnread("sess-d");
+      return (
+        <>
+          <span data-testid="busyA">{busyA ? "yes" : "no"}</span>
+          <span data-testid="busyB">{busyB ? "yes" : "no"}</span>
+          <span data-testid="unreadC">{unreadC ? "yes" : "no"}</span>
+          <span data-testid="unreadD">{unreadD ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-a", status: "active", hasUnread: false, messageCount: 1 },
+      { id: "sess-c", status: "idle",   hasUnread: true,  messageCount: 2 },
+    ]);
+    qc.setQueryData(["sessions", "ws-2"], [
+      { id: "sess-b", status: "active", hasUnread: false, messageCount: 3 },
+      { id: "sess-d", status: "idle",   hasUnread: true,  messageCount: 1 },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <MultiDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busyA").textContent).toBe("yes");
+    expect(screen.getByTestId("busyB").textContent).toBe("yes");
+    expect(screen.getByTestId("unreadC").textContent).toBe("yes");
+    expect(screen.getByTestId("unreadD").textContent).toBe("yes");
+  });
 });

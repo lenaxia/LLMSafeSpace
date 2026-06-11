@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
@@ -21,6 +21,28 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const params = useParams();
   const currentSessionId = params.sessionId;
+
+  useEffect(() => {
+    const queryCache = queryClient.getQueryCache();
+    const queries = queryCache.getAll();
+    const busy = new Map<string, string>();
+    const unread = new Map<string, string>();
+
+    for (const query of queries) {
+      const key = query.queryKey;
+      if (!Array.isArray(key) || key[0] !== "sessions" || typeof key[1] !== "string") continue;
+      const wsId = key[1];
+      const data = query.state.data;
+      if (!Array.isArray(data)) continue;
+      for (const session of data as Array<{ id: string; status?: string; hasUnread?: boolean }>) {
+        if (session.status === "active") busy.set(session.id, wsId);
+        if (session.hasUnread) unread.set(session.id, wsId);
+      }
+    }
+
+    setBusySessions(busy);
+    setPendingUnread(unread);
+  }, [queryClient]);
 
   useUserEventStream({
     onEvent: (data) => {

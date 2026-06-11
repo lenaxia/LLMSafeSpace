@@ -18,6 +18,14 @@ vi.mock("../../api/workspaces", () => ({
   },
 }));
 
+vi.mock("../../providers/SessionActivityProvider", () => ({
+  useClearPendingUnread: () => () => {},
+  useIsSessionBusy: () => false,
+  useIsSessionUnread: () => false,
+  useWorkspaceBusyCount: () => 0,
+  SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 function renderWithDataRouter(initialPath: string, childElement: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(

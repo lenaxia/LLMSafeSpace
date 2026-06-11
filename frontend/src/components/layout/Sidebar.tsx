@@ -731,7 +731,11 @@ function SessionTreeRow({
               : "text-muted-foreground",
           )}
         >
-          <MessageSquare className={cn("h-3.5 w-3.5 flex-shrink-0", showPulse && "animate-unread-pulse")} />
+          {isBusy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
+          ) : (
+            <MessageSquare className={cn("h-3.5 w-3.5 flex-shrink-0", showPulse && "animate-unread-pulse")} />
+          )}
           <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse")}>{title}</span>
           {contextUsed != null && (
             <span
@@ -744,7 +748,6 @@ function SessionTreeRow({
           {s.lastMessageAt && (
             <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
           )}
-          {isBusy && <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />}
         </button>
         <div className="mr-1 flex-shrink-0">
           <KebabMenu items={kebabItems} align="left" />

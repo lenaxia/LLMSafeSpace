@@ -616,3 +616,54 @@ func TestSSEConnAllowed_ResetsAfterWindow(t *testing.T) {
 	delete(sseConnCounts, ip)
 	sseConnMu.Unlock()
 }
+
+// Test 16 (US-37.1): user-scoped SSE delivers session.status event.
+// Full path: PublishToUser → StreamUserEvents → client receives session_id, workspace_id, status.
+func TestStreamUserEvents_DeliversSessionStatusEvent(t *testing.T) {
+	broker := NewUserEventBroker()
+	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-sess-status")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	time.Sleep(50 * time.Millisecond)
+	broker.PublishToUser("user-sess-status", WorkspaceSSEEvent{
+		Type:        "session.status",
+		WorkspaceID: "ws-abc",
+		SessionID:   "sess-xyz",
+		Status:      "busy",
+	})
+
+	scanner := bufio.NewScanner(resp.Body)
+	var found bool
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var evt WorkspaceSSEEvent
+		if err2 := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err2 != nil {
+			continue
+		}
+		if evt.Type == "session.status" && evt.WorkspaceID == "ws-abc" &&
+			evt.SessionID == "sess-xyz" && evt.Status == "busy" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "user-scoped SSE must deliver session.status event with correct fields")
+}
