@@ -548,6 +548,62 @@ func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
 	}
 }
 
+// TestValidateMountPath is a direct unit test for the validateMountPath
+// helper. It covers the cases that previously caused HTTP 400 when the
+// frontend prepended "/home/sandbox/.secrets/" to the relative path, as
+// well as path traversal patterns the function must block.
+func TestValidateMountPath(t *testing.T) {
+	rejected := []struct {
+		name string
+		mp   string
+	}{
+		// These are the cases from the bug: absolute paths (even valid ones
+		// under the secrets base) must be rejected at the API layer so the
+		// database always stores a relative path.
+		{"absolute under secrets base", "/home/sandbox/.secrets/cert.pem"},
+		{"absolute root", "/etc/passwd"},
+		{"absolute with traversal", "/home/sandbox/.secrets/../../../etc/shadow"},
+		// Classic traversal patterns.
+		{"parent traversal", "../../etc/passwd"},
+		{"single parent", "../escaped"},
+		{"escape via valid prefix", "valid/../../escape"},
+		{"sibling dir escape", "foo/../../bar"},
+		// Degenerate inputs.
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"bare dot", "."},
+	}
+	for _, tc := range rejected {
+		t.Run("reject_"+tc.name, func(t *testing.T) {
+			if err := validateMountPath(tc.mp); err == nil {
+				t.Errorf("validateMountPath(%q) returned nil; want an error", tc.mp)
+			}
+		})
+	}
+
+	accepted := []struct {
+		name string
+		mp   string
+	}{
+		// Simple filenames: the primary user-facing input after the bug fix.
+		{"simple filename", "cert.pem"},
+		{"filename with extension", "app.yaml"},
+		// Paths within subdirectories stay under base.
+		{"subdirectory path", "config/app.yaml"},
+		{"deeply nested", "a/b/c/d.txt"},
+		// Path components that clean to something safe.
+		{"trailing slash cleaned", "certs/"},
+		{"redundant dot", "certs/./file.pem"},
+	}
+	for _, tc := range accepted {
+		t.Run("accept_"+tc.name, func(t *testing.T) {
+			if err := validateMountPath(tc.mp); err != nil {
+				t.Errorf("validateMountPath(%q) returned %v; want nil", tc.mp, err)
+			}
+		})
+	}
+}
+
 // fakeWorkspaceOwnerVerifier returns ErrWorkspaceNotOwned for any
 // (userID, workspaceID) pair not in the allowedPairs map. Used to
 // exercise the cross-tenant binding-pollution defense (validator

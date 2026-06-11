@@ -5,6 +5,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ToastProvider } from "../../providers/ToastProvider";
 import { AdminProviderCredentialsTab } from "./AdminProviderCredentialsTab";
+import { ApiClientError } from "../../api/client";
 
 // ─── API mocks ───────────────────────────────────────────────────────────────
 
@@ -69,10 +70,10 @@ describe("AdminProviderCredentialsTab", () => {
     });
   });
 
-  it("returns null for non-admin users (403)", async () => {
-    mockList.mockRejectedValue(new Error("403 Forbidden"));
+  it("returns null for non-admin users (404 from AdminGuard)", async () => {
+    mockList.mockRejectedValue(new ApiClientError(404, { error: "Not Found" }));
     renderTab();
-    // The component returns null on 403 — no heading or spinner should appear
+    // The component returns null on 404 — no heading or spinner should appear
     await waitFor(() => {
       expect(screen.queryByText(/Platform LLM Provider/)).not.toBeInTheDocument();
       expect(document.querySelector(".animate-spin")).not.toBeInTheDocument();

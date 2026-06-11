@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
+import { ApiClientError } from "../api/client";
 import { settingsApi, type SettingDef } from "../api/settings";
 import { SettingsForm } from "../components/settings/SettingsForm";
 import { Spinner } from "../components/ui/Spinner";
+import { useToast } from "../providers/ToastProvider";
 
 export function AdminSettingsPage() {
   const [schema, setSchema] = useState<SettingDef[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     async function load() {
@@ -19,7 +22,7 @@ export function AdminSettingsPage() {
         setSchema(schemaRes.settings);
         setValues(valuesRes.settings);
       } catch (e: unknown) {
-        if (e instanceof Error && e.message.includes("404")) {
+        if (e instanceof ApiClientError && e.status === 404) {
           setError("not-admin");
         } else {
           setError(e instanceof Error ? e.message : "Failed to load settings");
@@ -32,8 +35,13 @@ export function AdminSettingsPage() {
   }, []);
 
   const handleSave = async (key: string, value: unknown) => {
-    await settingsApi.setAdminSetting(key, value);
-    setValues((prev) => ({ ...prev, [key]: value }));
+    try {
+      await settingsApi.setAdminSetting(key, value);
+      setValues((prev) => ({ ...prev, [key]: value }));
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "Failed to save setting", "error");
+      throw e;
+    }
   };
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;
