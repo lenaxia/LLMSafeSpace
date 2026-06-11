@@ -61,16 +61,18 @@ context.md → core-rules.md → <command>.md → [code-change-workflow.md] → 
 
 ## Tests Run
 
-- 267-assertion shell test harness validating:
-  - Correct routing for all 10 commands
+- Shell-based routing test harness (274 assertions) executed outside the repository:
+  - Correct routing for all 10 commands (with and without trailing text)
+  - Prefix matching rejects non-commands (`/testing` does not match `/test`, `/fixing` does not match `/fix`)
+  - Bare commands without text still route correctly
   - Custom text extraction and preservation
   - Inline command detection
-  - Code-change-workflow only on code commands
+  - Code-change-workflow only on code commands, not read-only ones
   - Core rules present in every prompt
   - Correct prompt ordering (context < core-rules < command)
   - Footer on every response
   - Context header on every response
-- `make repolint` passes locally (216 worklogs, all contiguous)
+- `make repolint` passes locally (217 worklogs, all contiguous)
 - All 3 workflow YAML files validated with Python yaml.safe_load
 
 ---
@@ -90,7 +92,6 @@ context.md → core-rules.md → <command>.md → [code-change-workflow.md] → 
 - .github/prompts/commands-footer.md (new)
 - .github/prompts/core-rules.md (new)
 - .github/prompts/explain.md (new)
-- .github/prompts/commands-footer.md (new)
 - .github/prompts/fix.md (new)
 - .github/prompts/help.md (new)
 - .github/prompts/implement.md (new)

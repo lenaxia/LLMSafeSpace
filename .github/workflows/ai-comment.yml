@@ -91,16 +91,16 @@ jobs:
             /fix\ *|/fix)             COMMAND="/fix" ;;
             /help\ *|/help)           COMMAND="/help" ;;
             /ai\ *|/ai)               COMMAND="/ai" ;;
-            *" /implement"*) COMMAND="/implement" ;;
-            *" /security"*)  COMMAND="/security" ;;
-            *" /analyze"*)   COMMAND="/analyze" ;;
-            *" /review"*)    COMMAND="/review" ;;
-            *" /explain"*)   COMMAND="/explain" ;;
-            *" /triage"*)    COMMAND="/triage" ;;
-            *" /test"*)      COMMAND="/test" ;;
-            *" /fix"*)       COMMAND="/fix" ;;
-            *" /help"*)      COMMAND="/help" ;;
-            *" /ai"*)        COMMAND="/ai" ;;
+            *" /implement "*) COMMAND="/implement" ;;
+            *" /security "*)  COMMAND="/security" ;;
+            *" /analyze "*)   COMMAND="/analyze" ;;
+            *" /review "*)    COMMAND="/review" ;;
+            *" /explain "*)   COMMAND="/explain" ;;
+            *" /triage "*)    COMMAND="/triage" ;;
+            *" /test "*)      COMMAND="/test" ;;
+            *" /fix "*)       COMMAND="/fix" ;;
+            *" /help "*)      COMMAND="/help" ;;
+            *" /ai "*)        COMMAND="/ai" ;;
             *)               COMMAND="/ai" ;;
           esac
 
