@@ -50,6 +50,11 @@ export function ChatPage() {
     sseHasDrivenBusy.current = false;
     setPendingQuestions([]);
     setPendingPermissions([]);
+    // Reset compaction state on session switch to prevent false positives:
+    // prevContextUsedRef from the old session would otherwise be compared against
+    // the new session's first contextUsed value, triggering spurious compaction banners.
+    prevContextUsedRef.current = undefined;
+    setCompactionDetected(false);
   }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
