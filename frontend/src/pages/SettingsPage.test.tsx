@@ -100,9 +100,6 @@ describe("SettingsPage", () => {
   it("AdminSettingsPage shows 'Admin access required' message when backend returns 404", async () => {
     const user = userEvent.setup();
     // Override the admin settings API to reject with a 404 ApiClientError
-    vi.mocked(
-      (await import("../api/settings")).settingsApi.getAdminSchema,
-    );
     // Re-mock for this test only using a spy approach via module mock override
     const { settingsApi } = await import("../api/settings");
     vi.spyOn(settingsApi, "getAdminSchema").mockRejectedValueOnce(

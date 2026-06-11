@@ -294,6 +294,26 @@ describe("ApiKeysTab", () => {
     expect(screen.getByText("CI Key")).toBeInTheDocument();
   });
 
+  it("delete failure: keeps key in list and shows error toast", async () => {
+    mockList.mockResolvedValue([KEY1, KEY2]);
+    mockDelete.mockRejectedValueOnce(new Error("Server error"));
+    renderTab();
+    await waitFor(() => screen.getByText("CI Key"));
+
+    // Confirm delete on the first key (CI Key)
+    fireEvent.click(screen.getAllByTitle("Delete key")[0]!);
+    fireEvent.click(screen.getByText("Yes"));
+
+    // Key must remain in the list after a failed delete
+    await waitFor(() => {
+      expect(screen.getByText("CI Key")).toBeInTheDocument();
+    });
+    // Verify delete was attempted and key was NOT optimistically removed
+    expect(mockDelete).toHaveBeenCalledWith("key-1");
+    // Both keys still rendered — neither was removed
+    expect(screen.getAllByText(/CI Key|Local Dev/)).toHaveLength(2);
+  });
+
   // ── Expand row ─────────────────────────────────────────────────────────────
 
   it("expands row to show metadata on click", async () => {

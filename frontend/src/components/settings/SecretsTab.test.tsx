@@ -8,6 +8,10 @@
  * "/home/sandbox/.secrets/" to mount_path before sending to the API,
  * causing the backend's validateMountPath to reject the request with
  * HTTP 400 (it only accepts relative paths).
+ *
+ * Also covers the legacyOnly rendering path for "api-key" typed secrets:
+ * these must be visible in the list (with a migration banner) and absent
+ * from the create dropdown.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -148,5 +152,102 @@ describe("CreateSecretForm – mount_path handling", () => {
 
     // "../" sequences must have been removed from the value stored in state.
     expect(sentPath).not.toContain("../");
+  });
+});
+
+// ─── legacyOnly rendering ────────────────────────────────────────────────────
+
+describe("SecretsTab – legacy api-key type rendering", () => {
+  const listMock = secretsApiModule.secretsApi.list as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (secretsApiModule.secretsApi.getSecretBindings as ReturnType<typeof vi.fn>).mockResolvedValue({ workspaces: [] });
+    (secretsApiModule.secretsApi.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  });
+
+  it("renders the 'API Keys (legacy)' group when api-key secrets exist", async () => {
+    listMock.mockResolvedValue({
+      secrets: [
+        {
+          id: "legacy-1",
+          name: "old-api-key",
+          type: "api-key",
+          metadata: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<SecretsTab />);
+    await waitFor(() => expect(screen.queryByText("Loading secrets...")).not.toBeInTheDocument());
+
+    // The group header must be visible
+    expect(screen.getByText("API Keys (legacy)")).toBeInTheDocument();
+    // The secret name must be visible inside the group
+    expect(screen.getByText("old-api-key")).toBeInTheDocument();
+  });
+
+  it("shows a migration banner in the api-key group", async () => {
+    listMock.mockResolvedValue({
+      secrets: [
+        {
+          id: "legacy-2",
+          name: "another-key",
+          type: "api-key",
+          metadata: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<SecretsTab />);
+    await waitFor(() => expect(screen.queryByText("Loading secrets...")).not.toBeInTheDocument());
+
+    // The migration banner text must be present (distinct from the group header)
+    expect(screen.getByText(/These are legacy/i)).toBeInTheDocument();
+  });
+
+  it("does not show the api-key group when no api-key secrets exist", async () => {
+    listMock.mockResolvedValue({
+      secrets: [
+        {
+          id: "env-1",
+          name: "my-env",
+          type: "env-secret",
+          metadata: { var_name: "DATABASE_URL" },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<SecretsTab />);
+    await waitFor(() => expect(screen.queryByText("Loading secrets...")).not.toBeInTheDocument());
+
+    expect(screen.queryByText("API Keys (legacy)")).not.toBeInTheDocument();
+  });
+
+  it("excludes api-key from the create dropdown", async () => {
+    listMock.mockResolvedValue({ secrets: [] });
+
+    render(<SecretsTab />);
+    await waitFor(() => expect(screen.queryByText("Loading secrets...")).not.toBeInTheDocument());
+
+    // Open the create form
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "+ New Secret" }));
+
+    // All comboboxes in the form (first one is the type selector)
+    const [typeSelect] = screen.getAllByRole("combobox");
+    const options = Array.from(typeSelect!.querySelectorAll("option")).map((o) => o.textContent ?? "");
+
+    // api-key should not appear in the dropdown
+    expect(options.some((o) => o.toLowerCase().includes("api key") || o.toLowerCase().includes("api-key"))).toBe(false);
+    // Standard types should be present
+    expect(options.some((o) => o.toLowerCase().includes("llm provider"))).toBe(true);
+    expect(options.some((o) => o.toLowerCase().includes("ssh key"))).toBe(true);
   });
 });

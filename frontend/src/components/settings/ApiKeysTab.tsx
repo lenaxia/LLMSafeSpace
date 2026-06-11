@@ -148,7 +148,8 @@ function NewKeyBanner({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback: select the text
+      // Clipboard API unavailable (e.g. non-HTTPS context).
+      // The <code> element has `select-all` CSS so users can manually select and copy.
     }
   };
 
