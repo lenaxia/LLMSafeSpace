@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -81,8 +82,14 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	// Set up metrics
-	metrics.SetupMetrics()
+	// Register custom metrics with the controller-runtime metrics registry
+	// (not prometheus.DefaultRegisterer). controller-runtime v0.15+ serves
+	// /metrics from its own private registry; registering on the global
+	// default makes the metrics invisible to the scrape endpoint.
+	if err := metrics.RegisterWith(ctrlmetrics.Registry); err != nil {
+		setupLog.Error(err, "unable to register custom metrics")
+		os.Exit(1)
+	}
 
 	// Create manager options
 	options := ctrl.Options{

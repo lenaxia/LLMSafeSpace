@@ -76,3 +76,21 @@ webhooks:
 # during startup ("failed to wait for workspace caches to sync").
 rbac:
   scope: cluster
+
+# Monitoring: Grafana dashboards, Prometheus alerting rules, and
+# ServiceMonitors for API and controller. The cluster runs
+# kube-prometheus-stack in the `monitoring` namespace with empty
+# selectors (picks up all ServiceMonitors/PrometheusRules across all
+# namespaces). Grafana sidecar imports dashboards via the
+# `grafana_dashboard: "1"` label.
+monitoring:
+  enabled: true
+  dashboards:
+    enabled: true
+    namespace: default
+  prometheusRules:
+    enabled: true
+    namespace: default
+  serviceMonitors:
+    enabled: true
+    namespace: default
