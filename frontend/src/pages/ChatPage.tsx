@@ -456,6 +456,7 @@ export function ChatPage() {
           setRetryStatus(null);
           clearStreamTimedOut();
           reconcileOnIdle();
+          queue.notifyIdle();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
           setPendingPermissions([]);
@@ -646,8 +647,9 @@ export function ChatPage() {
   const phaseLabel = status?.phase ? status.phase.toLowerCase() : "loading";
 
   const handleSend = (text: string) => {
-    // If streaming, enqueue — prompt_async fires immediately, server serializes
-    if (streaming) {
+    // If busy, hold the message locally — it will be sent when the session
+    // next goes idle (matching TUI serialized queue behavior).
+    if (serverBusy || streaming) {
       queue.enqueue(text);
       return;
     }

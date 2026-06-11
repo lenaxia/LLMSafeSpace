@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { messagesApi } from "../api/messages";
 import { ApiClientError } from "../api/client";
 import type { Message } from "../api/types";
@@ -6,8 +6,7 @@ import type { Message } from "../api/types";
 export type QueuedMessage = {
   id: string;
   text: string;
-  sentAt: number;
-  status: "pending" | "error";
+  status: "pending" | "sending" | "error";
   error?: string;
 };
 
@@ -52,16 +51,29 @@ export function useMessageQueue(
 ) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 
-  const enqueue = (text: string) => {
+  // Send the first pending item in the queue. Called when the session goes idle.
+  // Matches TUI behavior: remove the item from the queue as soon as promptAsync
+  // returns 204, then the next notifyIdle (from the server's session.status=idle
+  // after processing) will drain the next item.
+  const drainOne = useCallback((msgs: QueuedMessage[]) => {
     if (!workspaceId || !sessionId) return;
-    const id = "msg_" + uid();
-    const msg: QueuedMessage = { id, text, sentAt: Date.now(), status: "pending" };
-    setQueuedMessages((prev) => [...prev, msg]);
+    const head = msgs.find((m) => m.status === "pending");
+    if (!head) return;
+
+    // Mark as sending
+    setQueuedMessages((prev) =>
+      prev.map((m) => m.id === head.id ? { ...m, status: "sending" } : m),
+    );
 
     messagesApi
       .sendAsync(workspaceId, sessionId, {
-        parts: [{ type: "text", text }],
-        messageID: id,
+        parts: [{ type: "text", text: head.text }],
+        messageID: head.id,
+      })
+      .then(() => {
+        // 204 received — remove from queue immediately (TUI behavior).
+        // The next session.status=idle event will drain the next item.
+        setQueuedMessages((prev) => prev.filter((m) => m.id !== head.id));
       })
       .catch((err: unknown) => {
         let error = err instanceof Error ? err.message : "Failed to send";
@@ -70,10 +82,28 @@ export function useMessageQueue(
           error = `Rate limited. Retry after ${retryAfter}s`;
         }
         setQueuedMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, status: "error", error } : m)),
+          prev.map((m) => m.id === head.id ? { ...m, status: "error", error } : m),
         );
       });
-  };
+  }, [workspaceId, sessionId]);
+
+  // Add a message to the back of the local queue. Does NOT call sendAsync —
+  // the message will be sent when notifyIdle() is called.
+  const enqueue = useCallback((text: string) => {
+    if (!workspaceId || !sessionId) return;
+    const id = "msg_" + uid();
+    const msg: QueuedMessage = { id, text, status: "pending" };
+    setQueuedMessages((prev) => [...prev, msg]);
+  }, [workspaceId, sessionId]);
+
+  // Called by ChatPage when session.status=idle arrives via SSE.
+  // Drains the next pending item from the queue.
+  const notifyIdle = useCallback(() => {
+    setQueuedMessages((prev) => {
+      drainOne(prev);
+      return prev;
+    });
+  }, [drainOne]);
 
   const remove = (id: string) => {
     setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
@@ -81,6 +111,8 @@ export function useMessageQueue(
 
   const clear = () => setQueuedMessages([]);
 
+  // reconcile is kept for backward compatibility but is no longer the primary
+  // removal mechanism — items are removed on 204 from sendAsync.
   const reconcile = (history: Message[]) => {
     const historyIds = new Set(history.filter((m) => m.role === "user").map((m) => m.id));
     setQueuedMessages((prev) => prev.filter((m) => !historyIds.has(m.id)));
@@ -99,27 +131,12 @@ export function useMessageQueue(
       }
     } catch { /* history fetch failed — fall through to retry send */ }
 
+    // Re-enqueue as pending; it will be sent on the next notifyIdle.
     setQueuedMessages((prev) =>
       prev.map((m) =>
-        m.id === id ? { ...m, status: "pending", error: undefined, sentAt: Date.now() } : m,
+        m.id === id ? { ...m, status: "pending", error: undefined } : m,
       ),
     );
-
-    messagesApi
-      .sendAsync(workspaceId, sessionId, {
-        parts: [{ type: "text", text: msg.text }],
-        messageID: id,
-      })
-      .catch((err: unknown) => {
-        let error = err instanceof Error ? err.message : "Failed to send";
-        if (err instanceof ApiClientError && err.status === 429) {
-          const retryAfter = ((err.body as unknown) as Record<string, unknown>).retryAfter ?? 60;
-          error = `Rate limited. Retry after ${retryAfter}s`;
-        }
-        setQueuedMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, status: "error", error } : m)),
-        );
-      });
   };
 
   const dismiss = (id: string) => remove(id);
@@ -128,25 +145,13 @@ export function useMessageQueue(
     if (phase === "Creating" || phase === "Pending" || phase === "Suspending") {
       setQueuedMessages((prev) =>
         prev.map((m) =>
-          m.status === "pending" ? { ...m, status: "error", error: "Workspace restarted" } : m,
+          m.status === "pending" || m.status === "sending"
+            ? { ...m, status: "error", error: "Workspace restarted" }
+            : m,
         ),
       );
     }
   };
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setQueuedMessages((prev) =>
-        prev.map((m) =>
-          m.status === "pending" && now - m.sentAt > 90_000
-            ? { ...m, status: "error", error: "Timed out" }
-            : m,
-        ),
-      );
-    }, 15_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return { queuedMessages, enqueue, remove, retry, dismiss, clear, reconcile, onPhaseChange };
+  return { queuedMessages, enqueue, notifyIdle, remove, retry, dismiss, clear, reconcile, onPhaseChange };
 }
