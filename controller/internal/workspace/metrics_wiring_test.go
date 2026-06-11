@@ -148,11 +148,12 @@ func TestRecordRecoveryMetrics_SafeMode_SetsGauge(t *testing.T) {
 
 	ws := &v1.Workspace{}
 	ws.Status.ConsecutiveFailures = 6
-	ws.Status.SafeMode = true // already in safe mode → gauge should be 1
+	ws.Status.SafeMode = true // safe mode entered → gauge=1 AND failedCtr incremented
 
 	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
 
 	assert.Equal(t, float64(1), gaugeScalarValue(t, safeModeGauge))
+	assert.Equal(t, float64(1), counterValue(t, failedCtr, string(FailureClassProcess)))
 }
 
 func TestRecordRecoveryMetrics_NoSafeMode_GaugeZero(t *testing.T) {

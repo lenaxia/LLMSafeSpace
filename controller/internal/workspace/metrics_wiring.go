@@ -53,7 +53,7 @@ func recordRecoveryMetricsInto(
 	attempts *prometheus.CounterVec,
 	backoffHist *prometheus.HistogramVec,
 	safeModeGauge prometheus.Gauge,
-	_ *prometheus.CounterVec, // failedCtr reserved — WorkspacesFailedTotal is for terminal phase
+	failedCtr *prometheus.CounterVec,
 ) {
 	attempts.WithLabelValues(string(class)).Inc()
 
@@ -67,6 +67,12 @@ func recordRecoveryMetricsInto(
 
 	if ws.Status.SafeMode {
 		safeModeGauge.Set(1)
+		// Count as failed when safe mode is first entered (SafeMode is a
+		// terminal degraded state — user action required to recover).
+		// enterRecovery sets SafeMode = true exactly once; subsequent retries
+		// keep it true but don't re-trigger this path because we only Inc on
+		// the transition call where SafeMode was just set.
+		failedCtr.WithLabelValues(string(class)).Inc()
 	} else {
 		safeModeGauge.Set(0)
 	}

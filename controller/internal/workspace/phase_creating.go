@@ -135,6 +135,10 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		secLevel := string(workspace.Spec.SecurityLevel)
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 		metrics.WorkspacesCreatedTotal.WithLabelValues(runtime, secLevel).Inc()
+		// If the workspace had prior failures, this Creating→Active transition is a recovery success.
+		if workspace.Status.ConsecutiveFailures > 0 {
+			metrics.WorkspaceRecoverySuccessTotal.WithLabelValues(workspace.Status.LastFailureClass).Inc()
+		}
 		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.PodName = existingPod.Name
 		workspace.Status.PodNamespace = existingPod.Namespace
