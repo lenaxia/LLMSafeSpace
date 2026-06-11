@@ -31,7 +31,6 @@ vi.mock("../api/workspaces", () => ({
     suspend: vi.fn().mockResolvedValue({}),
     abortSession: vi.fn().mockResolvedValue({}),
     markSessionSeen: vi.fn().mockResolvedValue(undefined),
-    getSessions: vi.fn().mockResolvedValue([]),
     deleteSession: vi.fn().mockResolvedValue(undefined),
   },
 }));
