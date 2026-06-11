@@ -25,9 +25,13 @@ jobs:
           {
             echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
             cat .github/prompts/context.md
-            printf '\n\n'
+            printf '\n\n---\n\n'
+            cat .github/prompts/core-rules.md
+            printf '\n\n---\n\n'
             cat .github/prompts/issue-responder.md
             printf '\n\nA new GitHub issue has been opened. Analyze it and take the appropriate action.\n'
+            printf '\n\n'
+            cat .github/prompts/commands-footer.md
             echo "__PROMPT_EOF__"
           } >> "$GITHUB_ENV"
 

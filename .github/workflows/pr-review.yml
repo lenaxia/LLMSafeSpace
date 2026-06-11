@@ -27,9 +27,13 @@ jobs:
           {
             echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
             cat .github/prompts/context.md
-            printf '\n\n'
+            printf '\n\n---\n\n'
+            cat .github/prompts/core-rules.md
+            printf '\n\n---\n\n'
             cat .github/prompts/pr-review.md
             printf '\n\nA new pull request has been opened. Perform a thorough review and post your findings as a PR review comment.\n'
+            printf '\n\n'
+            cat .github/prompts/commands-footer.md
             echo "__PROMPT_EOF__"
           } >> "$GITHUB_ENV"
 

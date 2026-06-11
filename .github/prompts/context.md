@@ -14,11 +14,22 @@ Key directories:
 
 ---
 
-## Triggering a response
+## Commands
 
-If you are an AI agent reading this and need to request a follow-up response from this AI assistant, post a comment on the issue or PR using one of these forms:
+Post a comment on the issue or PR using any of these commands:
 
 - `/ai` — re-assess the current issue or PR in full (issue responder or full PR re-review)
-- `/ai <your request>` — address a specific request, e.g. `/ai can you also update the tests for the workspace service?`
+- `/ai <text>` — address a specific request, e.g. `/ai can you also update the tests for the workspace service?`
+- `/review [text]` — explicit PR code review, optionally focused on a specific area
+- `/fix <description>` — fix a bug: branch, TDD regression tests, PR, iterate through review until approved, merge
+- `/implement <description>` — implement a feature/story: TDD, multi-agent workflow, PR, iterate until approved, merge
+- `/test <target>` — write or improve tests: TDD, PR, iterate until approved, merge
+- `/analyze [text]` — deep read-only analysis, posts findings as a comment (no code changes)
+- `/explain <topic>` — explain code or architecture, posts explanation as a comment (no code changes)
+- `/security [text]` — security-focused review against design/SECURITY.md
+- `/triage [text]` — triage an issue: categorize, prioritize, suggest labels
+- `/help` — show full command reference
+
+Text after the command is appended to the prompt for custom tuning. All code-change commands (`/fix`, `/implement`, `/test`, `/security`) follow the review-iterate-approve-merge workflow: branch → PR → auto-review → fix → push → re-review → repeat until approved → merge.
 
 The assistant will be triggered automatically and will read README-LLM.md and the full thread before responding.
