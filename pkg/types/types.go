@@ -38,7 +38,7 @@ const ContextKeyUserID contextKey = "userID"
 const ContextKeyUserRole contextKey = "userRole"
 
 // Kubernetes object — there is no TypeMeta or ObjectMeta embedding. The
-// service layer converts a v1.Sandbox CRD into one of these for client
+// service layer converts a v1.Workspace CRD into one of these for client
 // responses.
 
 // ResourceRequirements defines resource limits for a sandbox
@@ -119,12 +119,12 @@ type SecurityContext struct {
 	AllowPrivilegeEscalation bool `json:"allowPrivilegeEscalation,omitempty"`
 }
 
-// ProfileReference defines a reference to a SandboxProfile
+// ProfileReference defines a reference to a RuntimeEnvironment
 type ProfileReference struct {
-	// Name of SandboxProfile to use
+	// Name of RuntimeEnvironment to use
 	Name string `json:"name"`
 
-	// Namespace of SandboxProfile
+	// Namespace of RuntimeEnvironment
 	Namespace string `json:"namespace,omitempty"`
 }
 

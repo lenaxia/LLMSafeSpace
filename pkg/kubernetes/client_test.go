@@ -17,7 +17,7 @@ import (
 )
 
 // TestNegotiatedSerializerDecodesWatchPayload reproduces the cluster-observed
-// failure: when the apiserver delivers a Sandbox object via the watch stream,
+// failure: when the apiserver delivers a Workspace object via the watch stream,
 // the rest client's negotiated serializer must be able to decode it without
 // trying to convert through an unregistered internal version.
 //
@@ -38,7 +38,7 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 	negotiatedNoConv := codecs.WithoutConversion()
 
 	// JSON payload as it would arrive from the apiserver in a watch event:
-	// a Sandbox object with TypeMeta filled in.
+	// a Workspace object with TypeMeta filled in.
 	payload := []byte(`{
 		"apiVersion": "llmsafespace.dev/v1",
 		"kind": "Workspace",
@@ -57,7 +57,7 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 	decoder := negotiatedNoConv.DecoderToVersion(info.Serializer, gv)
 
 	obj, _, err := decoder.Decode(payload, nil, nil)
-	require.NoError(t, err, "Sandbox watch payload must decode without conversion errors")
+	require.NoError(t, err, "Workspace watch payload must decode without conversion errors")
 
 	sb, ok := obj.(*v1.Workspace)
 	require.True(t, ok, "decoded object must be *v1.Workspace, got %T", obj)
@@ -106,11 +106,11 @@ func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 
 // TestSchemeRegisteredWithGroup is a regression check for the init() in
 // client_crds.go. Without this registration, even WithoutConversion() codecs
-// can't recognize Sandbox objects.
+// can't recognize Workspace objects.
 func TestSchemeRegisteredWithGroup(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "llmsafespace.dev", Version: "v1", Kind: "Workspace"}
 	obj, err := scheme.Scheme.New(gvk)
-	require.NoError(t, err, "scheme must recognize Sandbox GVK after init()")
+	require.NoError(t, err, "scheme must recognize Workspace GVK after init()")
 	_, ok := obj.(*v1.Workspace)
 	assert.True(t, ok, "scheme.New must return *v1.Workspace, got %T", obj)
 

@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.11
-**Last Updated:** 2026-06-08
+**Version:** 1.12
+**Last Updated:** 2026-06-11
 **Project Status:** Active Development
 
 ---
@@ -41,22 +41,21 @@
 
 **Three deliverables:**
 
-1. `api` — Go API service (Gin) + MCP server — reverse proxy to sandbox agents, workspace/credential management
-2. `controller` — Kubernetes operator (controller-runtime) — manages Sandbox, Workspace, SandboxProfile, RuntimeEnvironment CRDs
+1. `api` — Go API service (Gin) + MCP server — reverse proxy to workspace agents, workspace/credential/secret management, session tracking, event streaming
+2. `controller` — Kubernetes operator (controller-runtime) — manages Workspace CRD (pod lifecycle, PVC, credentials, health monitoring via agentd sidecar), validating webhooks for Workspace and RuntimeEnvironment
 3. `runtimes` — Container images (Python, Node.js, Go) — hardened environments with `opencode serve`, `redact` binary, credential injection
 
 **Authoritative design document:**
 
-- [`design/EVOLUTION-V2.md`](design/EVOLUTION-V2.md) — V2 architecture (v2.4). Supersedes all V1 design docs for the areas it covers.
+- [`design/0021_2026-05-21_evolution-v2.md`](design/0021_2026-05-21_evolution-v2.md) — V2 architecture (v2.4). Supersedes all V1 design docs for the areas it covers.
 
-**V1 design docs (reference only — superseded by EVOLUTION-V2.md where they conflict):**
+**V1 design docs (reference only — superseded by evolution-v2.md where they conflict):**
 
-- [`design/ARCHITECTURE.md`](design/ARCHITECTURE.md) — System overview, deployment topology, security model
-- [`design/CONTROLLER.md`](design/CONTROLLER.md) — Controller specification (V1 CRDs, reconciliation loops)
-- [`design/SECURITY.md`](design/SECURITY.md) — Defense-in-depth security model
-- [`design/NETWORK.md`](design/NETWORK.md) — Network policy design and egress filtering
-- [`design/WARMINGPOOL.md`](design/WARMINGPOOL.md) — Warm pool architecture (REMOVED in V2)
-- Other `design/CONTROLLER-*.md` files contain detailed V1 controller documentation
+- `design/0001_2025-03-05_architecture.md` — System overview, deployment topology, security model
+- `design/0003_2025-03-05_controller.md` — Controller specification (V1 CRDs, reconciliation loops)
+- `design/0005_2025-03-05_security.md` — Defense-in-depth security model
+- `design/0007_2025-03-05_network.md` — Network policy design and egress filtering
+- `design/0006_2025-03-05_runtimeenv.md` — Runtime environments
 
 ---
 
@@ -178,15 +177,13 @@ Key documents by area:
 
 | Area | Document |
 |------|----------|
-| **V2 Architecture** | `design/EVOLUTION-V2.md` (authoritative) |
-| V2 Implementation stories | `design/stories/README.md` |
-| System overview (V1) | `design/ARCHITECTURE.md` |
-| Controller + CRDs (V1) | `design/CONTROLLER.md` |
-| Reconciliation loops (V1) | `design/CONTROLLER-RECONCILIATION.md` |
-| Security model | `design/SECURITY.md`, `design/EVOLUTION-V2.md §9` |
-| Network policies | `design/NETWORK.md` |
-| Runtime environments (V1) | `design/RUNTIMEENV.md` |
-| Error handling (V1) | `design/CONTROLLER-ERROR.md` |
+| **V2 Architecture** | `design/0021_2026-05-21_evolution-v2.md` (authoritative) |
+| V2 Implementation stories | `design/stories/` |
+| Security model | `design/0027_2026-05-24_security-policy-v21.md`, `design/0021 §9` |
+| System overview (V1) | `design/0001_2025-03-05_architecture.md` |
+| Controller + CRDs (V1) | `design/0003_2025-03-05_controller.md` |
+| Runtime environments (V1) | `design/0006_2025-03-05_runtimeenv.md` |
+| Network policies (V1) | `design/0007_2025-03-05_network.md` |
 
 ### 9. Communication Tone
 
@@ -261,8 +258,22 @@ llmsafespace/
 ├── cmd/                                   # Top-level binaries
 │   ├── redact/
 │   │   └── main.go                        # Standalone redact binary (imports pkg/redact)
-│   └── mcp/
-│       └── main.go                        # MCP server entrypoint (imports api/internal/mcp)
+│   ├── mcp/
+│   │   └── main.go                        # MCP server entrypoint (imports pkg/mcp)
+│   ├── repolint/
+│   │   └── main.go                        # Repository layout linter (imports pkg/repolint)
+│   ├── seal-key/
+│   │   └── main.go                        # Key sealing utility (AES-256-GCM passphrase wrapping)
+│   └── workspace-agentd/                  # Sidecar binary (20 files)
+│       ├── main.go                        #   Entrypoint: health probes, admin server, user server
+│       ├── healthz.go                     #   Liveness handler
+│       ├── secrets.go                     #   Secret reload handler, enricher, workspace config
+│       ├── relay_injector.go              #   Free-tier relay injection goroutine
+│       ├── sse_tracker.go                 #   SSE event tracking for session status
+│       ├── managed_process.go             #   opencode process supervisor
+│       ├── gate_recorder.go               #   Agent permission gate recording
+│       ├── agent_reload.go                #   Agent credential hot-reload
+│       └── admin_token.go                 #   Admin token generation
 │
 ├── api/                                   # Agent API service
 │   ├── Makefile                           # API-specific build targets
@@ -276,29 +287,30 @@ llmsafespace/
 │   │   ├── app/
 │   │   │   └── app.go                     # Application bootstrap (Gin router, services, lifecycle)
 │   │   ├── config/
-│   │   │   ├── config.go                  # Config struct + Viper loading
-│   │   │   └── config_test.go
-│   │   ├── docs/
-│   │   │   └── swagger.go                 # Swagger/OpenAPI documentation
-│   │   ├── errors/
-│   │   │   └── errors.go                  # Domain error types
-│   │   ├── handlers/                      # Gin HTTP route handlers
-│   │   │   ├── sandbox.go                 # Sandbox lifecycle handlers
-│   │   │   ├── workspace.go               # Workspace lifecycle handlers
+│   │   │   └── config.go                  # Config struct + Viper loading
+│   │   ├── handlers/                      # Gin HTTP route handlers (53 files)
 │   │   │   ├── proxy.go                   # Reverse proxy to opencode serve
-│   │   │   └── user.go                    # User management handlers
+│   │   │   ├── secrets.go                 # Secret CRUD, bindings, reload, models
+│   │   │   ├── settings.go                # Admin + user settings
+│   │   │   ├── models.go                  # Model listing and selection
+│   │   │   ├── terminal.go                # WebSocket terminal proxy
+│   │   │   ├── session_tracker.go         # Session state tracking
+│   │   │   ├── event_broker.go            # SSE event broker (session-scoped)
+│   │   │   ├── event_broker_user.go       # SSE event broker (user-scoped)
+│   │   │   ├── crd_watcher.go             # K8s CRD change watcher
+│   │   │   ├── agent_reload.go            # Agent credential hot-reload handler
+│   │   │   ├── agent_drain.go             # Agent drain handler
+│   │   │   ├── stream_user_events.go      # User event stream handler
+│   │   │   ├── proxy_chat_enrichment.go   # Chat message enrichment
+│   │   │   ├── proxy_input.go             # Input request proxy
+│   │   │   ├── activity.go                # Activity tracking
+│   │   │   ├── admin_provider_credentials.go  # Admin credential CRUD
+│   │   │   └── user_provider_credentials.go   # User credential CRUD
 │   │   ├── interfaces/
 │   │   │   └── interfaces.go              # Service interfaces
 │   │   ├── logger/
-│   │   │   ├── logger.go                  # Zap logger construction
-│   │   │   └── logger_test.go
-│   │   ├── mcp/                           # MCP server implementation
-│   │   │   ├── server.go                  # MCP server core
-│   │   │   ├── tools.go                   # Tool definitions and handlers
-│   │   │   ├── resources.go               # Resource handlers
-│   │   │   ├── prompts.go                 # Prompt templates
-│   │   │   └── transport.go               # stdio + SSE transport
-│   │   ├── middleware/
+│   │   │   └── logger.go                  # Zap logger construction
+│   │   ├── middleware/                     # HTTP middleware chain (12 middlewares)
 │   │   │   ├── auth.go                    # JWT + API key authentication
 │   │   │   ├── cors.go                    # CORS handling
 │   │   │   ├── error_handler.go           # Error response formatting
@@ -310,246 +322,192 @@ llmsafespace/
 │   │   │   ├── security.go                # Security headers
 │   │   │   ├── tracing.go                 # Distributed tracing
 │   │   │   ├── validation.go              # Request validation
-│   │   │   ├── README.md
-│   │   │   ├── MISSINGTESTS.md
-│   │   │   └── tests/                     # Per-middleware tests
-│   │   │       ├── auth_test.go
-│   │   │       ├── cors_test.go
-│   │   │       ├── error_handler_test.go
-│   │   │       ├── logging_test.go
-│   │   │       ├── metrics_test.go
-│   │   │       ├── middleware_chain_test.go
-│   │   │       ├── middleware_test.go
-│   │   │       ├── rate_limit_test.go
-│   │   │       ├── recovery_test.go
-│   │   │       ├── request_id_test.go
-│   │   │       ├── security_test.go
-│   │   │       ├── tracing_test.go
-│   │   │       ├── validation_test.go
-│   │   │       └── README.md
-│   │   ├── mocks/                         # Service mocks for testing
-│   │   │   ├── cache.go
-│   │   │   ├── database.go
-│   │   │   ├── metrics.go
-│   │   │   ├── middleware_mocks.go
-│   │   │   ├── ratelimiter.go
-│   │   │   ├── sandbox.go
-│   │   │   └── workspace.go
+│   │   │   └── admin_guard.go             # Admin role check
 │   │   ├── server/
-│   │   │   └── router.go                  # Gin route definitions
+│   │   │   └── router.go                  # Gin route definitions (83 routes)
 │   │   ├── services/                      # Core business logic
-│   │   │   ├── services.go                # Service initialization + lifecycle
-│   │   │   ├── services_test.go
-│   │   │   ├── auth/                      # Authentication (JWT + API key)
-│   │   │   │   ├── auth.go
-│   │   │   │   └── auth_test.go
+│   │   │   ├── auth/                      # Authentication (JWT + API key + bcrypt)
 │   │   │   ├── cache/                     # Redis cache service
-│   │   │   │   ├── cache.go
-│   │   │   │   └── cache_test.go
 │   │   │   ├── database/                  # PostgreSQL access (pgx)
-│   │   │   │   ├── database.go
-│   │   │   │   └── database_test.go
 │   │   │   ├── kubernetes/                # K8s client wrapper
-│   │   │   │   └── kubernetes.go
 │   │   │   ├── metrics/                   # Prometheus metrics collection
-│   │   │   │   ├── metrics.go
-│   │   │   │   └── metrics_test.go
-│   │   │   ├── sandbox/                   # Sandbox lifecycle management
-│   │   │   │   ├── sandbox_service.go
-│   │   │   │   ├── sandbox_service_test.go
-│   │   │   │   ├── DESIGN.md
-│   │   │   │   └── validation/
-│   │   │   │       └── validators.go
+│   │   │   ├── ratelimit/                 # Rate limiting (Redis-backed)
+│   │   │   ├── sessionindex/              # Session tracking per workspace
 │   │   │   └── workspace/                 # Workspace lifecycle management
-│   │   │       ├── workspace_service.go
-│   │   │       └── workspace_service_test.go
-│   │   ├── tests/
-│   │   │   └── integration/
-│   │   │       └── api_flow_test.go
-│   │   ├── utilities/
-│   │   │   ├── token_extractor.go
-│   │   │   └── token_extractor_test.go
-│   │   └── validation/
-│   │       ├── sandbox.go
-│   │       ├── validation.go
-│   │       └── workspace.go
-│   ├── migrations/                        # PostgreSQL schema migrations
-│   │   ├── 000001_initial_schema.up.sql
-│   │   ├── 000001_initial_schema.down.sql
-│   │   ├── 000002_workspaces.up.sql       # V2: Workspace table + sandbox workspace_id FK
-│   │   └── 000002_workspaces.down.sql
-│   └── scripts/                           # Operational scripts
-│       ├── health-check.sh
-│       ├── init-db.sh
-│       └── migrate.sh
+│   │   └── mocks/                         # Service mocks for testing
+│   ├── migrations/                         # PostgreSQL schema migrations (000001-000021)
+│   └── scripts/                            # Operational scripts
 │
-├── controller/                            # Kubernetes operator
-│   ├── main.go                            # Controller entrypoint (flags, manager, webhooks)
-│   ├── Makefile                           # Controller build targets
-│   ├── Dockerfile                         # Controller Docker image
-│   ├── bin/
-│   │   └── manager                        # Built binary
-│   ├── config/
-│   │   └── manager/
-│   │       └── manager.yaml               # Controller deployment config
-│   ├── examples/                          # Example CRD manifests
-│   │   ├── runtimeenvironment.yaml
-│   │   ├── sandbox.yaml
-│   │   ├── sandboxprofile.yaml
-│   │   └── workspace.yaml
+├── controller/                             # Kubernetes operator
+│   ├── main.go                             # Controller entrypoint (flags, manager, webhooks)
+│   ├── Makefile                            # Controller build targets
+│   ├── Dockerfile                          # Controller Docker image
 │   ├── internal/
-│   │   ├── common/                        # Shared utilities
-│   │   │   ├── condition_adapter.go
-│   │   │   ├── constants.go
-│   │   │   ├── leader_election.go
-│   │   │   ├── metrics.go
-│   │   │   ├── network_policy_manager.go
-│   │   │   ├── pod_manager.go
-│   │   │   ├── service_manager.go
-│   │   │   └── utils.go
-│   │   ├── controller/                    # Reconciler registration
-│   │   │   ├── controller.go
-│   │   │   └── setup.go
-│   │   ├── metrics/                       # Controller Prometheus metrics
-│   │   │   └── metrics.go
-│   │   ├── resources/                     # CRD type definitions + webhooks
-│   │   │   ├── register.go
-│   │   │   ├── workspace_types.go         # V2: Workspace CRD type
-│   │   │   ├── workspace_deepcopy.go
-│   │   │   ├── workspace_webhook.go
-│   │   │   ├── sandbox_types.go           # V2: extended with workspaceRef, podIP, suspend phases
-│   │   │   ├── sandbox_deepcopy.go
-│   │   │   ├── sandbox_webhook.go
-│   │   │   ├── sandboxprofile_types.go
-│   │   │   ├── sandboxprofile_deepcopy.go
-│   │   │   ├── sandboxprofile_webhook.go
-│   │   │   ├── runtimeenvironment_types.go
-│   │   │   ├── runtimeenvironment_deepcopy.go
-│   │   │   └── runtimeenvironment_webhook.go
-│   │   ├── sandbox/                       # Sandbox reconciler
-│   │   │   └── controller.go
-│   │   └── workspace/                     # Workspace reconciler
-│   │       └── controller.go
-│   └── scripts/
-│       ├── install-crds.sh
-│       └── test-controller.sh
+│   │   ├── common/                         # Shared utilities
+│   │   │   ├── constants.go               # Constants
+│   │   │   ├── leader_election.go         # Leader election
+│   │   │   └── utils.go                   # Utilities
+│   │   ├── controller/
+│   │   │   └── controller.go              # Reconciler registration
+│   │   ├── metrics/
+│   │   │   └── metrics.go                 # Controller Prometheus metrics
+│   │   ├── webhooks/                       # Validating admission webhooks
+│   │   │   ├── workspace_webhook.go       # Workspace validation
+│   │   │   └── runtimeenvironment_webhook.go  # RuntimeEnvironment validation
+│   │   └── workspace/                      # Workspace reconciler (31 files)
+│   │       ├── reconciler.go              #   Phase state machine dispatcher
+│   │       ├── phase_pending.go           #   PVC + Pod creation
+│   │       ├── phase_creating.go          #   Pod readiness check
+│   │       ├── phase_active.go            #   Health monitoring, auto-suspend
+│   │       ├── phase_suspend.go           #   Pod deletion + resuming
+│   │       ├── phase_terminating.go       #   Resource cleanup
+│   │       ├── pod_builder.go             #   Pod spec construction
+│   │       ├── pvc.go                     #   PVC lifecycle
+│   │       ├── secrets.go                 #   K8s Secret management
+│   │       ├── network_policy.go          #   Per-workspace NetworkPolicy
+│   │       ├── health.go                  #   Agent health checking
+│   │       ├── recovery.go                #   Automatic failure recovery
+│   │       ├── runtime_resolver.go        #   RuntimeEnvironment image resolution
+│   │       └── classification.go          #   Failure classification
+│   └── examples/                           # Example CRD manifests
+│       └── runtimeenvironment.yaml
 │
-├── runtimes/                              # Execution runtime environments
-│   ├── base/                              # Base runtime image (shared by all languages)
-│   │   ├── Dockerfile                     # V2: builds redact, installs opencode, entrypoints
+├── runtimes/                               # Execution runtime environments
+│   ├── base/                               # Base runtime image (shared by all languages)
+│   │   ├── Dockerfile                      # Builds redact, installs opencode, entrypoints
 │   │   ├── security/
 │   │   │   ├── apparmor-profiles/
-│   │   │   │   ├── default.profile
-│   │   │   │   └── high-security.profile
 │   │   │   └── seccomp-profiles/
-│   │   │       └── default.json
 │   │   └── tools/
-│   │       ├── entrypoints/               # Agent entrypoint scripts
-│   │       │   ├── entrypoint-common.sh   # Credential materialization + setup
-│   │       │   └── entrypoint-opencode.sh # opencode serve runner
-│   │       └── smoke-test.sh              # Verify all required binaries present
-│   ├── python/
-│   │   ├── Dockerfile                     # Extends base; adds Python toolchain
-│   │   └── Dockerfile.ml                  # ML-optimized Python runtime
-│   ├── nodejs/
-│   │   └── Dockerfile                     # Extends base; adds Node.js toolchain
-│   ├── go/
-│   │   └── Dockerfile                     # Extends base; adds Go toolchain
-│   └── tests/
-│       ├── run_tests.sh
-│       ├── requirements.txt
-│       ├── test_runtime.py
-│       └── results/
-│           ├── junit.xml
-│           ├── summary.txt
-│           └── test.log
+│   │       ├── entrypoints/                # Agent entrypoint scripts
+│   │       └── smoke-test.sh
+│   ├── python/                             # Python runtime (extends base)
+│   ├── nodejs/                             # Node.js runtime (extends base)
+│   ├── go/                                 # Go runtime (extends base)
+│   └── tests/                              # Runtime smoke test suite
 │
-├── pkg/                                   # Shared packages (imported by api/ and controller/)
-│   ├── README.md
+├── pkg/                                    # Shared packages (imported by api/ and controller/)
+│   ├── apis/llmsafespace/v1/              # CRD Go types (Workspace, RuntimeEnvironment) — AUTHORITATIVE
+│   │   ├── workspace_types.go
+│   │   ├── runtimeenvironment_types.go
+│   │   ├── register.go                    # Scheme registration
+│   │   ├── zz_generated.deepcopy.go       # Generated DeepCopy methods
+│   │   └── doc.go
+│   ├── agent/                              # Agent runtime abstraction and registry
+│   │   ├── agent.go                       # AgentType enum, AgentRuntime interface, Dialect interface
+│   │   └── opencode/                      # OpenCode agent implementation
+│   │       ├── client.go                  # HTTP client for opencode API
+│   │       ├── dialect.go                 # Route paths and SSE event mapping
+│   │       ├── format.go                  # Config file formatting
+│   │       └── register.go               # Self-registration via init()
+│   ├── agentd/                             # Workspace-agentd sidecar types and constants
+│   │   ├── types.go                       # Well-known paths, ports, response types
+│   │   └── secrets/                       # In-pod secret materializer
+│   │       └── secrets.go                 # Validates, encodes, atomically writes secrets
 │   ├── config/
 │   │   └── kubernetes_config.go           # Kubernetes configuration types
 │   ├── crds/                              # CRD YAML definitions
-│   │   ├── workspace_crd.yaml             # V2: Workspace CRD
-│   │   ├── sandbox_crd.yaml
-│   │   ├── sandboxprofile_crd.yaml
-│   │   └── runtimeenvironment_crd.yaml
+│   │   ├── workspace.yaml
+│   │   └── runtimeenvironment.yaml
 │   ├── http/
-│   │   └── writer.go                      # BodyCaptureWriter, safe HTTP client
+│   │   └── writer.go                      # BodyCaptureWriter
 │   ├── interfaces/
 │   │   ├── kubernetes.go                  # KubernetesClient interface
 │   │   └── logger.go                      # LoggerInterface
 │   ├── kubernetes/                        # K8s client utilities
-│   │   ├── client.go                      # Client management
-│   │   ├── client_crds.go                 # CRD operations
-│   │   ├── client_test.go
-│   │   ├── informers.go                   # Shared informers
-│   │   ├── kubernetes_operations.go       # Operations executor
-│   │   └── tests/                         # Comprehensive K8s client tests
-│   │       ├── README.md
-│   │       ├── client_crds_test.go
-│   │       ├── client_test.go
-│   │       ├── informers_test.go
-│   │       ├── kubernetes_operations_test.go
-│   │       ├── main_test.go
-│   │       ├── mocks_test.go
-│   │       ├── run_tests.sh
-│   │       └── test_helpers.go
+│   │   ├── client.go                      # Client management, leader election
+│   │   ├── client_crds.go                 # Typed CRD operations
+│   │   └── informers.go                   # Shared informers
 │   ├── logger/
-│   │   ├── logger.go                      # Zap-based structured logging
-│   │   └── mock_test.go
-│   ├── redact/                            # Secret redaction engine (ported from k8s-mechanic)
-│   │   ├── redact.go                      # 16 compiled regex rules; used by cmd/redact
-│   │   └── redact_test.go
-│   ├── types/
-│   │   ├── types.go                       # API transfer object types (CreateSandboxRequest, etc.)
-│   │   └── doc.go
-│   └── utilities/
-│       ├── hashing.go                     # SHA-256 hashing utilities
-│       ├── masking.go                     # Sensitive data masking
-│       └── strings.go                     # String utilities
+│   │   └── logger.go                      # Zap-based structured logging
+│   ├── mcp/                               # MCP server + HTTP client
+│   │   ├── server.go                      # 12 tools for workspace/session/credential management
+│   │   └── client.go                      # HTTP client with SSE streaming
+│   ├── redact/                            # Secret redaction engine
+│   │   └── redact.go                      # 16 compiled regex rules
+│   ├── repolint/                          # Repository layout lint checks
+│   │   ├── sequence.go                    # Migration/worklog numbering checks
+│   │   └── crd_drift.go                   # CRD schema drift detection
+│   ├── secrets/                           # Zero-knowledge encrypted secret store (34 files)
+│   │   ├── crypto.go                      # AES-256-GCM encryption/decryption
+│   │   ├── key_service.go                 # Per-user DEK management, key rotation
+│   │   ├── secret_service.go              # Secret CRUD, workspace bindings, injection
+│   │   ├── injection.go                   # Secret injection pipeline for pod creation
+│   │   ├── root_key.go                    # Root key sealing/unsealing
+│   │   ├── audit.go                       # Async audit logging (buffered channel)
+│   │   ├── credential_store.go            # Admin credential management
+│   │   ├── redis_dek_cache.go             # Encrypted DEK caching in Redis
+│   │   ├── bindings_diff.go               # Binding change diff computation
+│   │   └── types.go                       # Secret type definitions
+│   ├── settings/                          # Declarative settings schema + services
+│   │   ├── schema.go                      # Setting definitions with types, defaults, validation
+│   │   ├── instance_service.go            # Admin-mutable settings (singleflight cached)
+│   │   └── user_service.go               # Per-user settings
+│   ├── types/                             # API transfer objects (NOT CRD types)
+│   │   └── types.go                       # Request/response DTOs
+│   ├── utilities/
+│   │   ├── hashing.go                     # SHA-256 hashing
+│   │   ├── masking.go                     # Sensitive data masking
+│   │   └── strings.go                     # String utilities
+│   └── validation/
+│       └── name.go                        # Secret name validation
 │
-├── mocks/                                 # Generated/convention-based mocks
-│   ├── factory.go                         # Mock factory
-│   ├── kubernetes/                        # K8s client mocks
-│   │   ├── kubernetes_client.go
-│   │   ├── llmsafespace_v1.go
-│   │   ├── runtimeenvironment.go
-│   │   ├── sandbox.go
-│   │   ├── sandboxprofile.go
-│   │   └── workspace.go
+├── mocks/                                  # Shared test mocks
+│   ├── factory.go                          # Mock factory for test fixtures
+│   ├── kubernetes/                         # K8s client mocks
+│   │   └── mocks.go                       # Consolidated mock implementations
 │   ├── logger/
 │   │   └── logger.go
 │   └── types/
-│       └── wsconnection.go
+│       ├── wsconnection.go
+│       └── session.go
 │
-├── design/                                # Design documents
-│   ├── EVOLUTION-V2.md                    # V2 authoritative design (supersedes conflicting V1 docs)
-│   ├── stories/                           # User story specifications
-│   │   ├── README.md
-│   │   └── epic-*/                        # Per-epic story files
-│   ├── ARCHITECTURE.md                    # System overview (V1, reference only)
-│   ├── API.md                             # REST + WebSocket API specification (V1)
-│   ├── SECURITY.md                        # Defense-in-depth security model
-│   ├── NETWORK.md                         # Network policy design
-│   ├── RUNTIMEENV.md                      # Runtime environment images (V1)
-│   ├── WARMINGPOOL.md                     # Warm pool architecture (REMOVED in V2)
-│   ├── CONTROLLER.md                      # Controller spec (V1)
-│   └── CONTROLLER-*.md                    # Detailed V1 controller documentation
+├── sdks/                                   # Client SDKs generated from OpenAPI spec
+│   ├── openapi.yaml                        # OpenAPI 3.0.3 specification
+│   ├── go/                                 # Go SDK
+│   ├── typescript/                         # TypeScript SDK
+│   ├── python/                             # Python SDK
+│   ├── java/                               # Java SDK
+│   ├── vscode-llmsafespace/               # VS Code extension
+│   ├── canary/                             # Canary tests
+│   └── tests/                              # Cross-SDK integration tests
 │
-├── hack/                                  # Build and code generation scripts
-│   ├── boilerplate.go.txt                 # Code generation boilerplate header
-│   ├── kube_codegen.sh                    # Kubernetes code generation script
-│   ├── tools.go                           # Tool dependencies
-│   ├── update-codegen.sh                  # Code generation update script
-│   ├── update-deepcopy.sh                 # DeepCopy regeneration (called by make deepcopy)
-│   └── verify-codegen.sh                 # Code generation verification
+├── workers/
+│   └── inference-relay/                    # Cloudflare Worker (TypeScript)
+│       └── src/index.ts                    # Proxies free-tier inference via CF edge
+│
+├── frontend/                               # React 19 + TypeScript + Vite SPA
+│   ├── src/
+│   │   ├── pages/                          # 6 pages (Login, Register, Chat, Settings, Admin, NotFound)
+│   │   ├── components/                     # ~100 components (chat, workspace, session, settings, ui, layout, auth)
+│   │   ├── api/                            # API client layer (21 files)
+│   │   ├── hooks/                          # 25 custom hooks
+│   │   ├── providers/                      # 8 context providers
+│   │   └── lib/                            # Utility libraries
+│   └── package.json
+│
+├── charts/llmsafespace/                    # Helm chart
+│   ├── templates/                          # 25 templates
+│   ├── crds/                               # workspace.yaml, runtimeenvironment.yaml
+│   └── values.yaml                         # 662 lines of configuration
+│
+├── design/                                 # Design documents (27 numbered + story directories)
+│   ├── 0021_2026-05-21_evolution-v2.md     # V2 authoritative design (supersedes conflicting V1 docs)
+│   ├── 0027_2026-05-24_security-policy-v21.md  # V2.1 composable security policy (draft)
+│   ├── stories/                            # Per-epic story files
+│   └── 0001-0020                           # V1 design docs (reference only)
+│
+├── hack/                                   # Build and code generation scripts
+├── local/                                  # bootstrap.sh, test.sh, teardown.sh for kind
+├── tests/                                  # End-to-end integration tests
 │
 ├── .github/
-│   ├── renovate.json                      # Renovate bot configuration
-│   └── workflows/
-│       └── build-runtimes.yml             # CI: Build and test runtime images
+│   ├── workflows/                          # 11 CI/CD workflows
+│   └── prompts/                            # AI prompt templates
 │
-└── APIIMPLEMENTATION.md                   # API implementation notes
+├── APIIMPLEMENTATION.md                    # API implementation order (partially stale)
+├── COORDINATE.md                           # Multi-agent work coordination
+└── opencode.json                           # OpenCode AI assistant configuration
 ```
 
 **Key principles:**
@@ -575,8 +533,8 @@ llmsafespace/
 │   │  │ (Gin)    │  │ Stream   │  │ JWT+APIKey│  │  + Validation    │  │   │
 │   │  └──────────┘  └──────────┘  └───────────┘  └──────────────────┘  │   │
 │   │  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌──────────────────┐  │   │
-│   │  │ Sandbox  │  │Workspace │  │  Proxy    │  │  MCP Server      │  │   │
-│   │  │ Service  │  │ Service  │  │ Handler   │  │  (stdio/SSE)     │  │   │
+│   │  │ Workspace│  │  Proxy   │  │  Secrets  │  │  MCP Server      │  │   │
+│   │  │ Service  │  │ Handler  │  │  Service  │  │  (stdio/SSE)     │  │   │
 │   │  └──────────┘  └──────────┘  └───────────┘  └──────────────────┘  │   │
 │   │  ┌──────────┐  ┌──────────┐  ┌───────────┐                         │   │
 │   │  │ Database │  │  Cache   │  │  Metrics  │                         │   │
@@ -590,17 +548,14 @@ llmsafespace/
 │   │                                                                     │   │
 │   │  ┌───────────────────────────────────────────────────────────────┐ │   │
 │   │  │  Controller (controller-runtime)                               │ │   │
-│   │  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────────────────┐│ │   │
-│   │  │  │   Sandbox   │ │  Workspace   │ │ SandboxProfile          ││ │   │
-│   │  │  │ Reconciler  │ │ Reconciler   │ │ Reconciler              ││ │   │
-│   │  │  └─────────────┘ └──────────────┘ └─────────────────────────┘│ │   │
-│   │  │  ┌────────────────────────────────────────────────────────┐   │ │   │
-│   │  │  │ RuntimeEnvironment Reconciler                           │   │ │   │
-│   │  │  └────────────────────────────────────────────────────────┘   │ │   │
+│   │  │  ┌──────────────────┐  ┌────────────────────────────────────┐ │ │   │
+│   │  │  │  Workspace       │  │  Validating Webhooks               │ │ │   │
+│   │  │  │  Reconciler      │  │  (Workspace + RuntimeEnvironment)  │ │ │   │
+│   │  │  └──────────────────┘  └────────────────────────────────────┘ │ │   │
 │   │  └───────────────────────────────────────────────────────────────┘ │   │
 │   │                                                                     │   │
 │   │  ┌───────────────────────────────────────────────────────────────┐ │   │
-│   │  │  Sandbox Pods (each runs opencode serve :4096)                │ │   │
+│   │  │  Workspace Pods (each runs opencode serve :4096)             │ │   │
 │   │  │  ┌──────────────────┐  ┌──────────────────┐                  │ │   │
 │   │  │  │ init: workspace- │  │ init: credential- │                  │ │   │
 │   │  │  │ setup (packages, │  │ setup (creds →    │                  │ │   │
@@ -616,22 +571,22 @@ llmsafespace/
 │   ┌─────────────────────┐  ┌─────────────────┐                              │
 │   │ PostgreSQL           │  │ Redis            │                              │
 │   │ (user metadata,      │  │ (caching, rate   │                              │
-│   │  workspace names,    │  │  limiting)        │                              │
-│   │  sandbox metadata)   │  │                   │                              │
+│   │  workspace names,    │  │  limiting, DEK    │                              │
+│   │  secrets, settings)  │  │  cache)           │                              │
 │   └─────────────────────┘  └─────────────────┘                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Custom Resource Definitions
 
-The controller manages 4 CRDs in the `llmsafespace.dev/v1` API group (V2 — WarmPool/WarmPod removed):
+The controller manages 2 CRDs in the `llmsafespace.dev/v1` API group:
 
 | CRD | Kind | Scope | Short | Purpose |
 |-----|------|-------|-------|---------|
-| `workspace_crd.yaml` | `Workspace` | Namespaced | `ws` | PVC-backed persistent environment |
-| `sandbox_crd.yaml` | `Sandbox` | Namespaced | `sb` | K8s pod running `opencode serve` |
-| `sandboxprofile_crd.yaml` | `SandboxProfile` | Namespaced | `sbp` | Reusable security and resource profile |
-| `runtimeenvironment_crd.yaml` | `RuntimeEnvironment` | Cluster | `rte` | Defines a runtime image (Python, Node.js, Go) |
+| `workspace.yaml` | `Workspace` | Namespaced | `ws` | PVC-backed persistent environment + pod running `opencode serve` |
+| `runtimeenvironment.yaml` | `RuntimeEnvironment` | Cluster | `rte` | Defines a runtime image (Python, Node.js, Go) |
+
+V1 CRDs (Sandbox, SandboxProfile, WarmPool, WarmPod) have been removed. The Workspace CRD absorbs all sandbox and profile functionality.
 
 ### CRD type ownership
 
@@ -639,51 +594,47 @@ CRD types exist in two locations with strictly separate roles:
 
 | Location | Purpose |
 |----------|---------|
-| `controller/internal/resources/*_types.go` | **Authoritative** — kubebuilder-annotated, used by the controller, generated deepcopy |
-| `pkg/types/types.go` | **API transfer objects only** — REST request/response shapes (`CreateSandboxRequest`, etc.). No generated deepcopy. |
+| `pkg/apis/llmsafespace/v1/` | **Authoritative** — kubebuilder-annotated CRD types (Workspace, RuntimeEnvironment), used by both controller and API service |
+| `pkg/types/` | **API transfer objects only** — REST request/response shapes (`CreateWorkspaceRequest`, etc.). Not CRD schemas. |
 
-These are intentionally different types. The API types are transfer objects; the controller types are CRD schemas. They must not be merged.
-
-### Sandbox lifecycle (V2)
-
-```
-Pending → Creating → Running → Suspending → Suspended → Resuming → Running
-                       ↘           ↘
-                         Terminating → Terminated
-                         Failed
-```
-
-Suspend/resume is workspace-level. Suspended workspace retains PVC; resuming creates a new pod (~3s).
+These are intentionally different types. The API types are transfer objects; the CRD types are Kubernetes schemas. They must not be merged.
 
 ### Workspace lifecycle (V2)
 
 ```
-Pending → Active → Suspending → Suspended → Resuming → Active
-                 ↘               ↘           ↘
-                   Terminating     Terminating  Terminating
-                        ↘               ↘           ↘
-                      Terminated     Terminated   Terminated
+Pending → Creating → Active → Suspending → Suspended → Resuming → Active
+             │                   ↘           ↘           ↘
+             └──→ Failed           Terminating            Terminating
+                                      ↘                       ↘
+                                    Terminated              Terminated
 ```
+
+Nine phases: `Pending`, `Creating`, `Active`, `Suspending`, `Suspended`, `Resuming`, `Terminating`, `Terminated`, `Failed`.
+
+Suspend deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod (~3s). Session history in the PVC survives.
 
 ### State management: K8s CRD vs PostgreSQL
 
 | Data | Owner | Source of Truth |
 |------|-------|-----------------|
-| Workspace/Sandbox phase | Controller | K8s CRD status |
+| Workspace phase | Controller | K8s CRD status |
 | PVC name, pod IP | Controller | K8s CRD status |
 | Conditions | Controller | K8s CRD status |
 | `status.lastActivityAt` (workspace) | API server (batched, ≤60s flush) | K8s CRD status |
 | Workspace display name | API | PostgreSQL |
-| User ID ownership | Both | K8s CRD (`spec.owner.userID`) authoritative; PostgreSQL mirrors for query perf |
+| User ID ownership | Both | K8s CRD (`spec.owner`) authoritative; PostgreSQL mirrors for query perf |
 | Creation/update timestamps | Both | K8s CRD authoritative; PostgreSQL mirrors |
 | Credentials | Controller | K8s Secrets (never PostgreSQL) |
+| User auth data (passwords, API keys, DEKs) | API | PostgreSQL |
+| Encrypted secrets | API | PostgreSQL (zero-knowledge encrypted) |
+| Settings | API | PostgreSQL |
 
 ### Service initialization order
 
 The API service starts dependencies in a specific order with rollback on failure:
 
 ```
-Metrics → Database → Cache → Auth → Sandbox → Workspace
+Metrics → Database → Cache → Auth → Workspace → SessionIndex → Secrets → Settings → ProviderCredentials
 ```
 
 Shutdown reverses this order.
@@ -963,7 +914,7 @@ Validated on live cluster 2026-06-08: `connected=["opencode-relay"]` on old Phas
 
 | Component | Technology | Reason |
 |-----------|-----------|--------|
-| API language | Go 1.23 | Type-safe, strong concurrency, idiomatic for K8s ecosystem |
+| API language | Go 1.25 | Type-safe, strong concurrency, idiomatic for K8s ecosystem |
 | API framework | Gin | High-performance HTTP framework with middleware support |
 | Controller framework | controller-runtime | Standard Kubernetes controller pattern |
 | Database | PostgreSQL (pgx/v5) | Relational data for users, API keys, workspace metadata |
@@ -1950,21 +1901,21 @@ make docker-run
 Use table-driven tests with `t.Run()` for any function with multiple input cases:
 
 ```go
-func TestCreateSandbox(t *testing.T) {
+func TestCreateWorkspace(t *testing.T) {
     tests := []struct {
         name    string
-        req     types.CreateSandboxRequest
+        req     types.CreateWorkspaceRequest
         wantErr bool
     }{
-        {"valid python sandbox", types.CreateSandboxRequest{Runtime: "python:3.10"}, false},
-        {"empty runtime", types.CreateSandboxRequest{Runtime: ""}, true},
-        {"invalid timeout", types.CreateSandboxRequest{Runtime: "python:3.10", Timeout: -1}, true},
+        {"valid workspace", types.CreateWorkspaceRequest{Runtime: "base", Name: "test"}, false},
+        {"empty name", types.CreateWorkspaceRequest{Runtime: "base", Name: ""}, true},
+        {"invalid storage size", types.CreateWorkspaceRequest{Runtime: "base", Name: "test", StorageSize: "-1"}, true},
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            _, err := svc.CreateSandbox(ctx, tt.req)
+            _, err := svc.CreateWorkspace(ctx, tt.req)
             if (err != nil) != tt.wantErr {
-                t.Errorf("CreateSandbox() error = %v, wantErr %v", err, tt.wantErr)
+                t.Errorf("CreateWorkspace() error = %v, wantErr %v", err, tt.wantErr)
             }
         })
     }
@@ -1991,14 +1942,14 @@ go test ./...
 
 ### Code generation
 
-When modifying CRD types in `controller/internal/resources/*_types.go`, you must regenerate the DeepCopy implementations:
+When modifying CRD types in `pkg/apis/llmsafespace/v1/*_types.go`, you must regenerate the DeepCopy implementations:
 
 ```bash
 # From project root
 make deepcopy
 
 # Verify and commit generated changes
-git add controller/internal/resources/*_deepcopy.go
+git add pkg/apis/llmsafespace/v1/zz_generated.deepcopy.go
 git commit -m "Update generated DeepCopy code"
 ```
 
@@ -2048,110 +1999,35 @@ Shell script against running server: `./local/test-auth.sh http://localhost:8080
 
 ---
 
-## Sandbox API
+## API Reference
 
-The API exposes full CRUD for Sandboxes (replacing the previous kubectl-only flow).
+The complete REST API is documented in `README.md` under "REST API". The API has 83 routes covering:
 
-### Endpoints
-
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/api/v1/sandboxes` | GET | API key/JWT | List the caller's sandboxes (paginated: `?limit=&offset=`) |
-| `/api/v1/sandboxes` | POST | API key/JWT | Create a sandbox; body is `types.CreateSandboxRequest` |
-| `/api/v1/sandboxes/:id` | GET | API key/JWT | Get one sandbox (returns 404 if user does not own it) |
-| `/api/v1/sandboxes/:id` | DELETE | API key/JWT | Terminate (deletes pod + CRD + DB metadata) |
-| `/api/v1/sandboxes/:id/status` | GET | API key/JWT | Get phase + pod IP + resource usage |
-
-### Authorization model
-
-Sandbox CRUD is wired on a **separate** Gin group from the proxy group (`registerSandboxCRUDRoutes` in `api/internal/server/router.go`). It does **not** apply the proxy's `sandboxOwnershipMiddleware` because:
-
-1. List/Create have no `:id` to check
-2. Service-level methods (`GetSandbox`, `TerminateSandbox`) perform their own ownership checks
-3. The GET handler additionally compares `sb.Labels["user-id"]` to the authenticated user — sandboxes the user does not own return 404 (not 403; do not leak existence)
-
-### Request flow
-
-```
-POST /api/v1/sandboxes
-  → sanitizeBindError on bad JSON → 400
-  → CreateSandbox(ctx, req)
-      → validate req
-      → check user exists in DB
-      → check permission "sandbox:create"
-      → if no workspaceRef, auto-create workspace
-      → build CRD; Create(crd) in K8s
-      → CreateSandbox(meta) in DB; on failure delete CRD
-      → return *types.Sandbox (201 Created)
-```
-
-### Body shape
-
-```go
-type CreateSandboxRequest struct {
-    Runtime       string                `json:"runtime"`        // required: e.g. "base", "python:3.11"
-    SecurityLevel string                `json:"securityLevel,omitempty"`
-    Timeout       int                   `json:"timeout,omitempty"`
-    UserID        string                `json:"userId"`         // overwritten by auth context
-    Resources     *ResourceRequirements `json:"resources,omitempty"`
-    NetworkAccess *NetworkAccess        `json:"networkAccess,omitempty"`
-    WorkspaceRef  string                `json:"workspaceRef,omitempty"`
-}
-```
-
-The router always overwrites `UserID` with the authenticated user from the JWT/API key context; clients cannot impersonate.
-
----
-
-## Session Proxy
-
-The session endpoints are reverse-proxied to the sandbox pod's `opencode serve` instance on port 4096 (HTTP basic auth `opencode:<password from sandbox-pw-<id> Secret>`).
-
-### Endpoints
-
-| Endpoint | Method | Opencode target |
-|----------|--------|-----------------|
-| `/api/v1/sandboxes/:id/sessions` | POST | `POST /session` |
-| `/api/v1/sandboxes/:id/sessions` | GET | `GET /session` |
-| `/api/v1/sandboxes/:id/sessions/:sessionId/message` | POST | `POST /session/:id/message` |
-| `/api/v1/sandboxes/:id/sessions/:sessionId/prompt` | POST | `POST /session/:id/prompt_async` |
-| `/api/v1/sandboxes/:id/sessions/:sessionId/message` | GET | `GET /session/:id/message` |
-| `/api/v1/sandboxes/:id/sessions/:sessionId/abort` | POST | `POST /session/:id/abort` |
-| `/api/v1/sandboxes/:id/events` | GET | `GET /event` (SSE) |
-
-All proxy routes pass through `sandboxOwnershipMiddleware`, which loads the Sandbox CRD, verifies `sb.Labels["user-id"]` matches the authenticated user, and caches the CRD on `c.Set("sandbox", sb)` to avoid a second K8s read in the proxy handler.
+- **Auth** (8 routes): register, login, logout, me, API key CRUD
+- **Workspaces** (9 routes): CRUD + suspend, activate, restart, status, agent reload
+- **Session management** (5 routes): list, ensure, rename, mark-seen, active
+- **Session proxy** (7 routes): message, prompt, history, get, abort, delete, SSE events — reverse-proxied to the workspace pod's `opencode serve` on port 4096
+- **Questions & Permissions** (5 routes): list/reply/reject agent questions and permission requests
+- **Events** (2 routes): user-scoped SSE stream, bulk agent reload
+- **Secrets** (8 routes): CRUD + audit + reveal + bindings — zero-knowledge encrypted store
+- **Workspace bindings** (3 routes): set/get bindings, reload-secrets
+- **Workspace env** (3 routes): set/get/delete environment variables
+- **Models** (2 routes): list available models, set default model
+- **Terminal** (2 routes): ticket + WebSocket proxy
+- **Admin provider credentials** (8 routes): CRUD + auto-apply rules
+- **User provider credentials** (7 routes): CRUD + bindings
+- **Settings** (6 routes): admin instance + user preferences + schemas
+- **Account** (3 routes): key rotation, password change, recovery
+- **Infrastructure** (4 routes): livez, health, readyz, metrics
 
 ### `?verbose=true` flag
 
-opencode emits a `patch` part on every assistant turn listing every workspace file it touched (`/workspace/.local/opencode/snapshot/...`). Each one is ~2 KB of internal snapshot paths and is rarely useful to the caller.
+By default, the proxy strips parts of `type=="patch"` from message and history responses. opencode emits a `patch` part for every assistant turn, listing every workspace file it touched (~2 KB per response of internal snapshot paths). For most clients this is noise.
 
-The proxy strips parts where `type == "patch"` from `SendMessage` and `GetHistory` responses by default. Pass `?verbose=true` to disable filtering.
-
-| Flag | Behavior |
-|------|----------|
-| (default) | `parts[]` filtered: `patch` entries removed |
-| `?verbose=true` | `parts[]` returned unmodified |
-| `?verbose=false` (or any other value) | Same as default — strip patch parts |
-
-The `verbose` query parameter is consumed by the proxy and **must not** be forwarded to opencode (it would be ignored, but stripping prevents future opencode versions from rejecting it as unknown). See `stripVerboseQuery` in `api/internal/handlers/proxy.go`.
-
-The filter only runs when:
-
-- The handler called `proxyToSandbox(..., filterParts=true)` (only `SendMessage` and `GetHistory`)
-- The response `Content-Type` contains `application/json`
-- The response status is 2xx
-
-For non-JSON or non-2xx responses, the body is streamed unmodified. SSE streaming endpoints (`/events`, `/prompt_async`) always pass `filterParts=false` and are never buffered.
-
-### Implementation notes
-
-- `stripPatchParts(body []byte) ([]byte, error)` handles both opencode response shapes:
-  - `{info, parts: [...]}` for `POST /message`
-  - `[{info, parts: [...]}, ...]` for `GET /message` (history)
-- Filtering uses `json.RawMessage` for unknown fields so the round-trip is lossless except for the explicitly removed parts
-- On filter-time JSON parse failure, the original bytes are returned with a warning logged (defensive: never lose the response)
+Pass `?verbose=true` on any message or history request to receive the unfiltered response.
 
 ---
+
 
 ## Configuration Reference
 
@@ -2193,6 +2069,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.12 | 2026-06-11 | Major doc audit: fixed repository structure to match actual code (removed 30+ phantom files/dirs), corrected CRD count (2 not 4), corrected CRD type location (`pkg/apis/` not `controller/internal/resources/`), fixed architecture diagram (1 reconciler not 4), added Creating+Failed phases to lifecycle, replaced stale Sandbox API/Session Proxy sections with current Workspace-based API reference, fixed tech stack (Go 1.25 not 1.23), fixed Quickstart in README.md, fixed SSE path (`session-events` not `events`), removed stale `/resume` and `/credentials` routes, documented all 83 current routes, fixed worklog 0209 collision |
 | 1.11 | 2026-06-08 | Added Relay Config Subsystem section: confirmed bugs (Bug 1 relay clobber, Bug 2 enricher cache, Bug 3 personal key routing, Bug 4 cascade failure), volume layout, opencode config merge order, design (relay-state.json, WriteAgentConfig single writer, re-triggerable injector, credential fingerprint, defaultModel resolution), and Gap 5/6 fixes with implementation checklist |
 | 1.10 | 2026-06-04 | Added PR Review Guide with 1–10 rubric scoring for robustness, scalability, maintainability, reliability, performance, security, test coverage, SOLID compliance, and right-sized complexity — each with remediation steps to reach ≥9; added E2E wiring verification section (workflow tracing, evidence requirements, common wiring failures); added adversarial assessment section with Phase 1 (identify weaknesses/gaps/failure modes), Phase 2 (validate each finding), Phase 3 (final report); expanded Rule 11 with three-phase structure and "only validated findings" rule; cross-referenced Rule 7 (Assumptions) and Rule 11 throughout |
 | 1.9 | 2026-05-27 | Frontend streaming UX fixes (user echo, thinking blocks, bubble overflow); SSE format unwrapping; tested against real cluster; 369 frontend tests passing |

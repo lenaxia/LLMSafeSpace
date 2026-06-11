@@ -34,14 +34,11 @@ import (
 // @scope.write Grants write access
 // @scope.admin Grants admin access
 
-// @tag.name Sandboxes
-// @tag.description Sandbox management endpoints
+// @tag.name Workspaces
+// @tag.description Workspace management endpoints
 
 // @tag.name Runtimes
 // @tag.description Runtime environment endpoints
-
-// @tag.name Profiles
-// @tag.description Security profile endpoints
 
 // @tag.name Users
 // @tag.description User management endpoints

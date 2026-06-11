@@ -176,7 +176,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		})
 	}
 
-	// Authenticated sandbox CRUD routes (Create, List, Get, Delete, Status).
+	// Authenticated workspace CRUD routes (Create, List, Get, Delete, Status).
 	// These do NOT use the proxy ownership middleware because:
 	//   - List/Create have no :id yet
 	//   - Service-level methods perform their own ownership/permission checks
@@ -820,7 +820,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 	})
 }
 
-// registerProxyRoutes adds all /api/v1/sandboxes/:id proxy routes.
+// registerProxyRoutes adds all /api/v1/workspaces/:id proxy routes.
 // All routes require authentication and ownership check (applied on the group).
 func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
 	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
