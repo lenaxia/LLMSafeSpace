@@ -16,6 +16,7 @@
 //	CANARY_API_KEY_1=lsp_...
 //	CANARY_API_KEY_2=lsp_...
 //	CANARY_PASSWORD_1=<password>
+//	CANARY_PASSWORD_2=<password>
 package main
 
 import (

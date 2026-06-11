@@ -11,7 +11,18 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     return;
   }
 
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 120000, fetch: nodeFetch as any });
+  const jwtAvailable = cfg.email !== '' && cfg.password !== '';
+  if (!jwtAvailable) {
+    run.ok('cred-model-flow: JWT credentials not set — agent tests will be skipped (only API surface tested)');
+  }
+
+  const clientOpts: any = { baseUrl: cfg.apiUrl, timeout: 120000, fetch: nodeFetch as any };
+  if (jwtAvailable) {
+    clientOpts.credentials = { email: cfg.email, password: cfg.password };
+  } else {
+    clientOpts.apiKey = cfg.apiKey;
+  }
+  const c = new LLMSafeSpace(clientOpts);
   let wsId: string | null = null;
   let credId: string | null = null;
 
@@ -41,6 +52,11 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     await run.assertNoError(() => c.workspaces.setBindings(wsId!, [credId!]), 'bind-cred: no error');
 
     await run.assertNoError(() => c.workspaces.setModel(wsId!, cfg.llmModel), 'set-model: no error');
+
+    if (!jwtAvailable) {
+      run.ok('agent-tests: skipped (JWT required for DEK-based secret injection)');
+      return;
+    }
 
     // Step 5: Ensure session
     let sess: any;
