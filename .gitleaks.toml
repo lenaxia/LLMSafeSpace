@@ -81,6 +81,13 @@ paths = [
   # Epic 10 design docs contain example API key patterns in code
   # snippets and architecture diagrams. Never real credentials.
   '''design/stories/epic-10-multi-tenant-trust/.*''',
+  # ApiKeysTab.test.tsx uses a synthetic lsp_ key fixture
+  # ("llmsk_abcdef1234567890...") to exercise the one-time key banner
+  # copy flow. The string is a fixed-length hex placeholder constructed
+  # to look like a real key for UI testing; it is not a real credential
+  # and is not valid against any running instance (verified by inspection
+  # 2026-06-11).
+  '''frontend/src/components/settings/ApiKeysTab\.test\.tsx''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
