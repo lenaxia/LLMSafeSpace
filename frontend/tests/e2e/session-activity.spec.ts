@@ -191,7 +191,10 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
-    await expect(page.getByText("New answer")).toBeVisible({ timeout: 10_000 });
+    // Wait for the older (user) message to confirm the message list has loaded
+    await expect(page.getByText("Old question")).toBeVisible({ timeout: 10_000 });
+    // The newer assistant message should also be present
+    await expect(page.getByText("New answer")).toBeVisible({ timeout: 3_000 });
 
     // The "New messages" divider should be present
     await expect(page.getByRole("separator", { name: "New messages" })).toBeVisible({ timeout: 3_000 });
