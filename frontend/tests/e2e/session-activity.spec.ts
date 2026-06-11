@@ -47,9 +47,11 @@ async function setupBase(page: Page, opts: {
   sessAStatus?: "active" | "idle";
   sessBHasUnread?: boolean;
   sessALastSeenAt?: string;
+  sessAMessages?: unknown[];
 } = {}) {
   const sessAStatus = opts.sessAStatus ?? "idle";
   const sessBHasUnread = opts.sessBHasUnread ?? false;
+  const sessAMessages = opts.sessAMessages ?? [];
 
   // Auth
   await page.route(`${API}/auth/me`, (r: Route) =>
@@ -85,9 +87,9 @@ async function setupBase(page: Page, opts: {
       { id: SESS_B1, title: "Task Beta", status: "idle", hasUnread: sessBHasUnread, messageCount: 3, lastSeenAt: "2026-06-10T10:00:00Z" },
     ])}));
 
-  // Message history (empty, not relevant here)
-  await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
-    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
+  // Message history — default empty; callers can pass sessAMessages to override
+  await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message**`, (r: Route) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sessAMessages) }));
 
   // Models
   await page.route(`${API}/workspaces/${WS_A}/models`, (r: Route) =>
@@ -158,7 +160,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/seen`, (r: Route) =>
       r.fulfill({ status: 204, body: "" }));
     // WS_B session message history
-    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
     await page.route(`${API}/workspaces/${WS_B}/models`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: [], currentModel: "" }) }));
@@ -177,37 +179,37 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
   // Test 43: New messages divider appears when session has unseen messages.
   test("43 — new messages divider appears in chat when lastSeenAt is in the past", async ({ page }) => {
     const lastSeenAt = "2026-06-10T10:00:00Z";
-    await setupBase(page, { sessALastSeenAt: lastSeenAt });
+    await setupBase(page, {
+      sessALastSeenAt: lastSeenAt,
+      sessAMessages: [
+        { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], info: { role: "user", id: "msg-old", time: { created: new Date("2026-06-10T09:59:00Z").getTime() } } },
+        { id: "msg-new", role: "user", parts: [{ type: "text", text: "New question" }], info: { role: "user", id: "msg-new", time: { created: new Date("2026-06-10T10:01:00Z").getTime() } } },
+      ],
+    });
 
     await page.route(`${API}/events`, (r: Route) =>
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
-    // Return messages with createdAt after lastSeenAt
-    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
-      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
-        { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], createdAt: "2026-06-10T09:59:00Z" },
-        { id: "msg-new", role: "assistant", parts: [{ type: "text", text: "New answer" }], createdAt: "2026-06-10T10:01:00Z" },
-      ])}));
-
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
-    await expect(page.getByText("New answer")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Old question")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("New question")).toBeVisible({ timeout: 3_000 });
 
-    // The "New messages" divider should be present
+    // The "New messages" divider should be present (msg-new has createdAt after lastSeenAt)
     await expect(page.getByRole("separator", { name: "New messages" })).toBeVisible({ timeout: 3_000 });
   });
 
   // Test 44: Divider is gone on revisit after mark-seen fires.
   test("44 — divider gone on revisit after mark-seen fires", async ({ page }) => {
     const lastSeenAt = "2026-06-11T12:00:00Z"; // future — all messages already seen
-    await setupBase(page, { sessALastSeenAt: lastSeenAt });
+    await setupBase(page, {
+      sessALastSeenAt: lastSeenAt,
+      sessAMessages: [
+        { id: "msg-1", role: "user", parts: [{ type: "text", text: "Question" }], createdAt: "2026-06-10T09:00:00Z" },
+      ],
+    });
 
     await page.route(`${API}/events`, (r: Route) =>
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
-
-    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
-      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
-        { id: "msg-1", role: "user", parts: [{ type: "text", text: "Question" }], createdAt: "2026-06-10T09:00:00Z" },
-      ])}));
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
     await expect(page.getByText("Question")).toBeVisible({ timeout: 10_000 });
@@ -239,7 +241,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     // Navigate to WS_B so WS_A is collapsed
-    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
     await page.route(`${API}/workspaces/${WS_B}/models`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: [], currentModel: "" }) }));
@@ -247,8 +249,10 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await page.goto(`/chat/${WS_B}/${SESS_B1}`);
     await expect(page.getByText("Alpha")).toBeVisible({ timeout: 10_000 });
 
-    // Click Alpha to collapse it (it auto-expands on load, collapse it)
-    await page.getByText("Alpha").click();
+    // Click the workspace header button (not the session row) to collapse it.
+    // Use getByRole to target the workspace group button specifically, avoiding
+    // strict-mode violation from "Task Alpha" also matching "Alpha".
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
 
     // Collapsed Alpha workspace should show the blue spinner (text-blue-500)
     await expect(page.locator(".animate-spin.text-blue-500").first()).toBeVisible({ timeout: 3_000 });
@@ -264,9 +268,9 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
 
-    // On mobile, sidebar starts closed (no session param or initial mount)
-    // Swipe right from left edge to open sidebar
-    await page.touchscreen.tap(10, 400);
+    // On mobile, sidebar starts closed. Simulate a left-edge swipe using
+    // mouse events only — touchscreen.tap requires hasTouch on the context
+    // which is not set in the default Playwright project config.
     await page.mouse.move(10, 400);
     await page.mouse.down();
     await page.mouse.move(200, 400, { steps: 10 });

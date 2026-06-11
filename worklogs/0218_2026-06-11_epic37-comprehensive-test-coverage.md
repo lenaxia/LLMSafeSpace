@@ -1,7 +1,7 @@
-# Worklog 0209: Epic 37 — Comprehensive Test Coverage
+# Worklog 0218: Epic 37 — Comprehensive Test Coverage
 
 **Date:** 2026-06-11
-**Session:** Audit all 53 epic-37 tests against the design plan, fix all gaps, open PR #98
+**Session:** Audit all 53 epic-37 tests against the design plan, fix all gaps, open PR #98/#99
 **Status:** Complete
 
 ---
@@ -20,14 +20,19 @@ Full gap analysis against `design/stories/epic-37-session-activity-unread-state/
 - 11 tests missing, 6 partial
 - Root cause of 17+23: provider started empty, relied solely on SSE; REST `status:"active"` and `hasUnread:true` were never seeded on mount
 
-### Provider fix (tests 17+23)
+### Provider rewrite (tests 17+23)
 
-Added `useEffect` to `SessionActivityProvider.tsx:25-45` that runs once on mount:
-```
-queryClient.getQueryCache().getAll()
-  → filter for ["sessions", wsId] keys
-  → seed busySessions from status === "active"
-  → seed pendingUnread from hasUnread === true
+Replaced one-shot `useEffect([queryClient])` with `queryCache.subscribe()` in `SessionActivityProvider.tsx`:
+- `seedFromCache()` runs immediately on mount and on every `updated`/`added` cache event for a `["sessions", wsId]` query
+- This fixes both mount-time seeding (E2E scenario: queries resolve after component mounts) and subsequent cache updates
+
+**State clobbering fix (PR #99 review finding):** The `queryCache.subscribe` pattern created a race where `seedFromCache` (triggered synchronously by `setQueryData` inside the SSE idle handler) overwrote the functional-updater's `pendingUnread` addition because the cache still had `hasUnread: false`. Fixed by writing `hasUnread: true` into the cache in the SSE idle handler for non-current sessions, and `hasUnread: false` in `clearPendingUnread`. Two regression tests added to `SessionActivityProvider.test.tsx` to pin this behavior.
+
+### E2E test fixes (PR #99, tests 40-53)
+
+- **Test 43/44**: Message route patterns updated to `message**` to match `?limit=50` query param; messages passed through `setupBase()` option to avoid route registration order race
+- **Test 46**: `getByRole('button', { name: 'Alpha', exact: true })` fixes strict-mode violation (workspace header vs session row both matched "Alpha")
+- **Test 53**: Removed `page.touchscreen.tap()` which requires `hasTouch: true` on browser context; mouse-only swipe sufficient
 ```
 
 **Assumptions validated:**
