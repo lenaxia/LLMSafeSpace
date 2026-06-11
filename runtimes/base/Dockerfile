@@ -121,6 +121,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim-tiny \
     xz-utils \
     && apt-get upgrade -y zlib1g \
+    && apt-get upgrade -y curl libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install opencode from upstream releases.
