@@ -86,7 +86,7 @@ async function setupBase(page: Page, opts: {
     ])}));
 
   // Message history (empty, not relevant here)
-  await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
+  await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message**`, (r: Route) =>
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
 
   // Models
@@ -158,7 +158,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/seen`, (r: Route) =>
       r.fulfill({ status: 204, body: "" }));
     // WS_B session message history
-    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
     await page.route(`${API}/workspaces/${WS_B}/models`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: [], currentModel: "" }) }));
@@ -183,7 +183,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     // Return messages with createdAt after lastSeenAt
-    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
         { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], createdAt: "2026-06-10T09:59:00Z" },
         { id: "msg-new", role: "assistant", parts: [{ type: "text", text: "New answer" }], createdAt: "2026-06-10T10:01:00Z" },
@@ -204,7 +204,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await page.route(`${API}/events`, (r: Route) =>
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
-    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_A}/sessions/${SESS_A1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
         { id: "msg-1", role: "user", parts: [{ type: "text", text: "Question" }], createdAt: "2026-06-10T09:00:00Z" },
       ])}));
@@ -239,7 +239,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     // Navigate to WS_B so WS_A is collapsed
-    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message`, (r: Route) =>
+    await page.route(`${API}/workspaces/${WS_B}/sessions/${SESS_B1}/message**`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
     await page.route(`${API}/workspaces/${WS_B}/models`, (r: Route) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: [], currentModel: "" }) }));
