@@ -110,7 +110,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
             aria-label={copyLabel}
             className={cn(
               "shrink-0 rounded p-0.5 transition-all",
-              "opacity-0 group-hover:opacity-100 focus:opacity-100",
+              "opacity-40 group-hover:opacity-100 focus:opacity-100",
               "hover:scale-110 active:scale-95",
               copied
                 ? "text-green-500"
