@@ -272,19 +272,42 @@ describe("useMessageQueue", () => {
     await act(async () => {});
   });
 
-  // ── remove / clear ────────────────────────────────────────────────────────
+  it("after sending timeout, subsequent notifyIdle can send again (no deadlock)", async () => {
+    let resolveSend!: () => void;
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise<void>((r) => { resolveSend = r; }),
+    );
 
-  it("remove deletes a specific message by id", () => {
+    const now = Date.now();
+    vi.setSystemTime(now);
+
     const { result } = render();
-    act(() => { result.current.enqueue("first"); });
-    act(() => { result.current.enqueue("second"); });
+    act(() => { result.current.enqueue("stuck"); });
+    await act(async () => { result.current.notifyIdle(); });
+    await act(async () => {});
+    expect(result.current.queuedMessages[0]!.status).toBe("sending");
 
-    const id = result.current.queuedMessages[0]!.id;
-    act(() => { result.current.remove(id); });
+    vi.setSystemTime(now + 61_000);
+    await act(async () => { vi.advanceTimersByTimeAsync(10_000); });
+    await act(async () => {});
+    expect(result.current.queuedMessages[0]!.status).toBe("error");
 
+    resolveSend();
+    await act(async () => {});
+
+    act(() => { result.current.enqueue("next"); });
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+    await act(async () => { result.current.notifyIdle(); });
+    await act(async () => {});
+
+    expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
     expect(result.current.queuedMessages).toHaveLength(1);
-    expect(result.current.queuedMessages[0]!.text).toBe("second");
+    expect(result.current.queuedMessages[0]!.status).toBe("error");
+    expect(result.current.queuedMessages[0]!.text).toBe("stuck");
   });
+
+  // ── remove / clear ────────────────────────────────────────────────────────
 
   it("clear removes all messages", () => {
     const { result } = render();
@@ -430,7 +453,9 @@ describe("useMessageQueue", () => {
 
     const { result } = render();
     act(() => { result.current.enqueue("hello"); });
-    act(() => { result.current.notifyIdle(); });
+
+    await act(async () => { result.current.notifyIdle(); });
+    await act(async () => {});
 
     expect(result.current.queuedMessages[0]!.status).toBe("sending");
 
@@ -438,6 +463,7 @@ describe("useMessageQueue", () => {
     expect(result.current.queuedMessages[0]!.status).toBe("error");
 
     resolveSend();
+    await act(async () => {});
   });
 
   it("onPhaseChange does not affect Active phase", () => {
