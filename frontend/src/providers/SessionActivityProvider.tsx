@@ -107,17 +107,33 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
               next.set(evt.session_id!, evt.workspace_id!);
               return next;
             });
-          }
 
-          const sessionsKey = ["sessions", evt.workspace_id];
-          const existing = queryClient.getQueryData(sessionsKey);
-          if (existing) {
-            queryClient.setQueryData(sessionsKey, (old: unknown) => {
-              if (!Array.isArray(old)) return old;
-              return old.map((s: Record<string, unknown>) =>
-                s.id === evt.session_id ? { ...s, status: "idle" } : s
-              );
-            });
+            // Write hasUnread:true into the cache so seedFromCache() (called
+            // by queryCache.subscribe) rebuilds the correct unread state if it
+            // fires after this SSE event. Without this, seedFromCache reads the
+            // stale cache entry (hasUnread:false) and clobbers the functional
+            // updater above.
+            const sessionsKey = ["sessions", evt.workspace_id];
+            const existing = queryClient.getQueryData(sessionsKey);
+            if (existing) {
+              queryClient.setQueryData(sessionsKey, (old: unknown) => {
+                if (!Array.isArray(old)) return old;
+                return old.map((s: Record<string, unknown>) =>
+                  s.id === evt.session_id ? { ...s, status: "idle", hasUnread: true } : s
+                );
+              });
+            }
+          } else {
+            const sessionsKey = ["sessions", evt.workspace_id];
+            const existing = queryClient.getQueryData(sessionsKey);
+            if (existing) {
+              queryClient.setQueryData(sessionsKey, (old: unknown) => {
+                if (!Array.isArray(old)) return old;
+                return old.map((s: Record<string, unknown>) =>
+                  s.id === evt.session_id ? { ...s, status: "idle" } : s
+                );
+              });
+            }
           }
         }
       }
