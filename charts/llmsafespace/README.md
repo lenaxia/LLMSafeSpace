@@ -196,7 +196,7 @@ behavior) to avoid accidental data loss. Delete them manually if intended.
 
 - No Kyverno policy templates yet (deferred per EVOLUTION-V2.md §9.6)
 - No bundled Postgres or Redis sub-charts
-- Migrations run with the official `migrate/migrate`` image; the database
+- Migrations run with the official `migrate/migrate` image; the database
   must exist before the chart is installed (`CREATE DATABASE` is not run)
 - The API service does not yet support TLS at the API level (use an Ingress
   with TLS termination)
