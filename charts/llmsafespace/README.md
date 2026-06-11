@@ -111,7 +111,7 @@ The chart exposes ~150 documented values. Highlights:
 | `controller.leaderElection.enabled` | `true` | Use leader election for HA controller |
 | `crds.install` | `true` | Install CRDs from `crds/` |
 | `rbac.create` | `true` | Create (Cluster)Role and (Cluster)RoleBinding |
-| `rbac.scope` | `"cluster"` | `"cluster"` or `"namespace"` (defense-in-depth) |
+| `rbac.scope` | `"namespace"` | `"cluster"` or `"namespace"` (defense-in-depth) |
 | `webhooks.enabled` | `true` | Deploy ValidatingWebhookConfiguration (requires cert-manager) |
 | `webhooks.failurePolicy` | `"Fail"` | Admission failure policy |
 | `migrations.enabled` | `true` | Run migrations as pre-install/upgrade Helm hook |
@@ -157,13 +157,13 @@ security over availability.
 
 ### RBAC scope
 
-`rbac.scope=cluster` (default) gives the controller cluster-wide permissions.
-This is required when `controller.watchNamespaces` is empty (cluster-wide
-mode).
-
-`rbac.scope=namespace` gives the controller only namespace-scoped Role on
+`rbac.scope=namespace` (default) gives the controller only namespace-scoped Role on
 the release namespace. Combine with `controller.watchNamespaces=<release-ns>`
 for tightest isolation. Resources in other namespaces will not be reconciled.
+
+`rbac.scope=cluster` gives the controller cluster-wide permissions.
+This is required when `controller.watchNamespaces` is empty (cluster-wide
+mode).
 
 ### Workspace namespace
 
@@ -260,6 +260,12 @@ automatically overrides `controller.metricsAddr` to `0.0.0.0:8080` so the
 ServiceMonitor can reach the metrics endpoint through the Kubernetes
 Service. Without this, the default loopback binding (`127.0.0.1:8080`)
 rejects connections from other pods.
+
+**Security note:** This exposes controller metrics (including reconciliation
+details and workspace phase transitions) to any pod that can reach the
+controller Service. For production, consider deploying a `kube-rbac-proxy`
+sidecar to authenticate scrapes, or use NetworkPolicy to restrict access to
+the controller metrics port.
 
 ### API metrics authentication
 

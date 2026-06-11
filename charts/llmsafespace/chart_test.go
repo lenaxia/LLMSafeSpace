@@ -1649,3 +1649,58 @@ func TestMonitoring_NamespaceOverride(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitoring_PrometheusRule_ContainsAllAlerts verifies all expected
+// alert names are present in the rendered PrometheusRule.
+func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var rule map[string]any
+	for _, d := range docs {
+		if d["kind"] == "PrometheusRule" {
+			rule = d
+			break
+		}
+	}
+	require.NotNil(t, rule, "PrometheusRule must be rendered")
+
+	spec, _ := rule["spec"].(map[string]any)
+	groups, _ := spec["groups"].([]any)
+
+	alertNames := map[string]bool{}
+	for _, g := range groups {
+		gm, _ := g.(map[string]any)
+		rules, _ := gm["rules"].([]any)
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if name, ok := rm["alert"].(string); ok {
+				alertNames[name] = true
+			}
+		}
+	}
+
+	expected := []string{
+		"LLMSafeSpaceHighAPIErrorRate",
+		"LLMSafeSpaceHighAPIErrorRateCritical",
+		"LLMSafeSpaceHighLatency",
+		"LLMSafeSpaceHighAuthFailures",
+		"LLMSafeSpaceSSEBrokerDroppingEvents",
+		"LLMSafeSpaceReconciliationErrors",
+		"LLMSafeSpaceWorkspaceFailures",
+		"LLMSafeSpaceWorkspaceCreationSlow",
+		"LLMSafeSpaceRecoveryBackoffHigh",
+		"LLMSafeSpaceSafeModeActive",
+		"LLMSafeSpaceHighConsecutiveFailures",
+		"LLMSafeSpaceStatusUpdateConflicts",
+		"LLMSafeSpaceInitContainerSlow",
+		"LLMSafeSpaceAgentReloadFailures",
+		"LLMSafeSpaceAgentdSlowStartup",
+		"LLMSafeSpaceRelayInjectorFailures",
+		"LLMSafeSpaceHighInferenceCostRate",
+		"LLMSafeSpaceWorkspaceDiskUsageHigh",
+		"LLMSafeSpaceLegacyAPIKeysRemaining",
+	}
+	for _, expectedName := range expected {
+		require.True(t, alertNames[expectedName],
+			"PrometheusRule must contain alert %q", expectedName)
+	}
+}

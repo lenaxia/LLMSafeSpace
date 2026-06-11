@@ -212,11 +212,14 @@ spec:
 
     - name: llmsafespace.agentd
       rules:
+        {{- /* llmsafespace_agent_reload_total is emitted by the API service
+              (api/internal/services/metrics/metrics.go:147), not by agentd
+              pods. Use $apiJob to match. */}}
         - alert: LLMSafeSpaceAgentReloadFailures
           expr: |
-            sum(rate(llmsafespace_agent_reload_total{job=~".*agentd.*",result="failure"}[5m]))
+            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}",result="failure"}[5m]))
             /
-            sum(rate(llmsafespace_agent_reload_total{job=~".*agentd.*"}[5m]))
+            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}"}[5m]))
             > 0.1
           for: 5m
           labels:
@@ -228,6 +231,12 @@ spec:
               {{ `{{ $value | humanizePercentage }}` }} of agent reloads are failing. Credential
               injection or agent restart may be broken.
 
+        {{- /* llmsafespace_agentd_gate_duration_seconds is emitted by
+              workspace-agentd (cmd/workspace-agentd/gate_recorder.go).
+              This alert requires operators to configure pod-level scraping
+              of workspace pods (e.g. via PodMonitor or a custom
+              ServiceMonitor), since the chart only ships ServiceMonitors
+              for API and controller. */}}
         - alert: LLMSafeSpaceAgentdSlowStartup
           expr: |
             histogram_quantile(0.95,
@@ -243,9 +252,15 @@ spec:
               Agentd pods are taking {{ `{{ $value | humanizeDuration }}` }} to reach readyz=200
               at p95. Check opencode boot, provider connections, or relay injection.
 
+        {{- /* llmsafespace_relay_injector_total is emitted by both
+              workspace-agentd (cmd/workspace-agentd/relay_injector.go)
+              and the API service (api/internal/services/metrics/metrics.go).
+              Using $apiJob catches API-side recordings. For full coverage,
+              operators should also configure pod-level scraping of
+              workspace pods. */}}
         - alert: LLMSafeSpaceRelayInjectorFailures
           expr: |
-            sum(increase(llmsafespace_relay_injector_total{job=~".*agentd.*",outcome=~"config_write_failed|auth_write_failed|unhealthy_timeout"}[1h])) > 0
+            sum(increase(llmsafespace_relay_injector_total{job=~"{{ $apiJob }}",outcome=~"config_write_failed|auth_write_failed|unhealthy_timeout"}[1h])) > 0
           for: 1m
           labels:
             severity: warning
