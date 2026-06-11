@@ -451,7 +451,7 @@ func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyP
 		}
 		p, err := secrets.NewSealedKeyProvider(cfg.Security.SealedKeyPath, cfg.Security.PassphrasePath)
 		if err != nil {
-			log.Error("failed to initialise sealed root key provider", err)
+			log.Error("failed to initialize sealed root key provider", err)
 			return nil
 		}
 		return p
@@ -462,7 +462,7 @@ func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyP
 		}
 		p, err := secrets.NewStaticKeyProvider(mk)
 		if err != nil {
-			log.Error("failed to initialise static root key provider", err)
+			log.Error("failed to initialize static root key provider", err)
 			return nil
 		}
 		if provider == "static" {
