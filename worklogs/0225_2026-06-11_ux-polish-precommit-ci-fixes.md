@@ -1,4 +1,4 @@
-# Worklog 0220: UX polish + comprehensive test coverage + CI fixes
+# Worklog 0225: UX polish + comprehensive test coverage + CI fixes
 
 **Date:** 2026-06-11
 **Session:** Spinner icon replacement, pulse visibility, test coverage completion, CI failures
@@ -77,7 +77,7 @@ Full gap analysis against `design/stories/epic-37-session-activity-unread-state/
 | #101 | Fix lastSeenAt reactivity + E2E test 43 | Rebased onto main; conflict resolved; ready for CI |
 | #103 | Repolint: rename duplicate worklog 0218→0219 (ai-command-routing) | Open |
 
-PR #99 and #100 both used worklog number 0218, creating a collision on main. PR #103 fixes this by renaming ai-command-routing to 0219. This worklog is 0220.
+PR #99 and #100 both used worklog number 0218, creating a collision on main. PR #103 fixes this by renaming ai-command-routing to 0219. This worklog is 0225.
 
 ---
 
@@ -127,4 +127,4 @@ None. PR #103 should merge before PR #101 to avoid worklog number conflicts.
 - `frontend/src/components/layout/AppShell.test.tsx` — SessionActivityProvider mock fix
 - `frontend/src/pages/ChatPage.context.test.tsx` — missing mock fixes
 - `api/internal/handlers/stream_user_events_test.go` — test 16
-- `worklogs/0218_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed from 0209)
+- `worklogs/0222_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed from 0209)

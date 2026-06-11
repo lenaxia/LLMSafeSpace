@@ -1158,10 +1158,26 @@ List every file created or modified in this session.
 
 ### Before starting work
 
-1. Read `README-LLM.md` (this file)
-2. Read the relevant design document(s) from `design/` — see the table in [Rule 8](#8-understand-the-architecture-first)
-3. Read `pkg/README.md` for shared package conventions
-4. Check recent git history to understand current state of the area you're modifying
+1. **Install pre-commit hooks** — run `make install-hooks` immediately after cloning. This is not optional. Every commit runs repolint, gofmt, goimports, golangci-lint, and helm-render checks. Without hooks installed, broken commits reach CI and waste time.
+2. Read `README-LLM.md` (this file)
+3. Read the relevant design document(s) from `design/` — see the table in [Rule 8](#8-understand-the-architecture-first)
+4. Read `pkg/README.md` for shared package conventions
+5. Check recent git history to understand current state of the area you're modifying
+
+### Branch and PR workflow (MANDATORY)
+
+**Never push directly to main.** Every change — no matter how small — follows this cycle:
+
+1. **Create a feature branch** from main: `feat/`, `fix/`, `test/`, `chore/`, or `security/` prefix.
+2. **Do the work** — TDD, write code, run tests locally.
+3. **Push the branch and open a PR.**
+4. **Wait for the automated review** — the AI reviewer triggers on every PR open and push.
+5. **Read every finding.** Fix all real issues. Push to the same branch (triggers re-review).
+6. **Iterate** — repeat steps 4–5 until the automated reviewer posts **APPROVE**.
+7. **Merge** — only after approval. Use squash merge.
+8. **Write a worklog entry** if the session was substantive.
+
+This applies to humans and AI agents equally. No exceptions. The review-iterate-approve-merge cycle is the quality gate — skipping it defeats the purpose of having it.
 
 ### During work
 

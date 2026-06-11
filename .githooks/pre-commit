@@ -95,6 +95,7 @@ run_gate "repolint" "repolint" \
     "duplicate migration: rename to next 6-digit number (ls api/migrations/).
   chart migrations drift: run 'make chart-sync-migrations' and stage the result.
   duplicate worklog: pick the next 4-digit number (ls worklogs/).
+  mainline worklog collision: renumber your worklog to avoid the version on origin/main.
   CRD drift: read the failure message; align chart CRD properties with Go
     JSON tags (see pkg/repolint/crd_drift.go and worklog 0119)."
 

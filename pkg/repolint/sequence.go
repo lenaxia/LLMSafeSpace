@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -430,7 +431,6 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			return renames, fmt.Errorf("read %s: %w", dir, err)
 		}
 
-		// Build version → []filename map (only post-grandfather entries).
 		byVersion := map[int][]string{}
 		maxVer := 0
 		for _, e := range entries {
@@ -453,7 +453,6 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			}
 		}
 
-		// Find the lowest duplicated version (deterministic repair order).
 		dupVers := []int{}
 		for v, files := range byVersion {
 			if len(files) > 1 {
@@ -461,24 +460,21 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			}
 		}
 		if len(dupVers) == 0 {
-			break // nothing to fix
+			break
 		}
 		sort.Ints(dupVers)
 
 		for _, v := range dupVers {
 			files := byVersion[v]
-			sort.Strings(files) // deterministic: lexically earlier = "older"
+			sort.Strings(files)
 
-			// The last file lexically is considered the newcomer and gets
-			// renumbered. For same-date worklogs this picks the one whose
-			// slug sorts later, which is consistent and reversible.
 			newcomer := files[len(files)-1]
 			m := WorklogPattern.FindStringSubmatch(newcomer)
 			if m == nil {
-				continue // shouldn't happen; already matched above
+				continue
 			}
-			datePart := m[2] // YYYY-MM-DD
-			slugPart := m[3] // slug
+			datePart := m[2]
+			slugPart := m[3]
 
 			maxVer++
 			newName := fmt.Sprintf("%04d_%s_%s.md", maxVer, datePart, slugPart)
@@ -490,8 +486,6 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 				return renames, fmt.Errorf("rename %s → %s: %w", newcomer, newName, err)
 			}
 
-			// Update any self-reference inside the file content so that
-			// e.g. "worklogs/0140_..._foo.md — This worklog" stays accurate.
 			newPath := filepath.Join(dir, newName)
 			if data, err := os.ReadFile(newPath); err == nil {
 				updated := strings.ReplaceAll(string(data), newcomer, newName)
@@ -504,4 +498,190 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 		}
 	}
 	return renames, nil
+}
+
+// MainlineCollision reports worklog version numbers that exist both locally
+// and on the target branch (typically origin/main).
+type MainlineCollision struct {
+	Version     int
+	LocalFiles  []string
+	RemoteFiles []string
+}
+
+// MainlineReport is the result of a MainlineCheck run.
+type MainlineReport struct {
+	Collisions []MainlineCollision
+	NextNumber int
+}
+
+// OK reports whether there are no collisions with mainline.
+func (r MainlineReport) OK() bool {
+	return len(r.Collisions) == 0
+}
+
+// String returns a human-readable failure description, or "(ok)".
+func (r MainlineReport) String() string {
+	if r.OK() {
+		return "(ok)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %d worklog version(s) collide with %s:\n",
+		len(r.Collisions), mainlineRef)
+	for _, c := range r.Collisions {
+		fmt.Fprintf(&b, "    version %04d:\n", c.Version)
+		for _, f := range c.LocalFiles {
+			fmt.Fprintf(&b, "      local:  %s\n", f)
+		}
+		for _, f := range c.RemoteFiles {
+			fmt.Fprintf(&b, "      remote: %s\n", f)
+		}
+	}
+	if r.NextNumber > 0 {
+		fmt.Fprintf(&b, "  next available worklog number: %04d\n", r.NextNumber)
+	}
+	return b.String()
+}
+
+const mainlineRef = "origin/main"
+
+// MainlineCheck compares local worklog versions against origin/main to
+// detect collisions that would cause repolint failures when the branch is
+// merged. It also reports the next available worklog number.
+//
+// The function uses `git ls-tree` to enumerate remote worklog filenames
+// without needing a network fetch (assumes origin/main is present in the
+// local clone's remote-tracking refs, which is always true after `git clone`
+// or `git fetch`).
+// MainlineCheck detects worklog version collisions between a branch's NEW
+// worklogs (those not yet on origin/main) and worklogs already on origin/main.
+// This prevents two branches from choosing the same worklog number and causing
+// a repolint failure on merge.
+//
+// Worklogs that exist identically on both local and remote are NOT flagged —
+// they are shared ancestry. Only new worklogs unique to this branch are checked
+// for collisions against the remote set.
+//
+// It also reports the next available worklog number (max of local and remote + 1).
+func MainlineCheck(dir string) (MainlineReport, error) {
+	_, localFiles, localMax, err := scanWorklogDir(dir)
+	if err != nil {
+		return MainlineReport{}, err
+	}
+
+	_, remoteFiles, remoteMax, err := scanWorklogGit(dir)
+	if err != nil {
+		return MainlineReport{}, err
+	}
+
+	maxVer := localMax
+	if remoteMax > maxVer {
+		maxVer = remoteMax
+	}
+
+	rep := MainlineReport{}
+	for v, localNames := range localFiles {
+		remoteNames, existsOnRemote := remoteFiles[v]
+		if !existsOnRemote {
+			continue
+		}
+		sort.Strings(localNames)
+		sort.Strings(remoteNames)
+
+		var newLocal []string
+		for _, f := range localNames {
+			if !fileInList(f, remoteNames) {
+				newLocal = append(newLocal, f)
+			}
+		}
+		if len(newLocal) == 0 {
+			continue
+		}
+		rep.Collisions = append(rep.Collisions, MainlineCollision{
+			Version:     v,
+			LocalFiles:  newLocal,
+			RemoteFiles: remoteNames,
+		})
+	}
+	sort.Slice(rep.Collisions, func(i, j int) bool {
+		return rep.Collisions[i].Version < rep.Collisions[j].Version
+	})
+
+	if maxVer > 0 {
+		rep.NextNumber = maxVer + 1
+	}
+
+	return rep, nil
+}
+
+func scanWorklogDir(dir string) (map[int]bool, map[int][]string, int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	versions := map[int]bool{}
+	files := map[int][]string{}
+	maxVer := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := WorklogPattern.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		v, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		versions[v] = true
+		files[v] = append(files[v], e.Name())
+		if v > maxVer {
+			maxVer = v
+		}
+	}
+	return versions, files, maxVer, nil
+}
+
+func fileInList(name string, list []string) bool {
+	for _, f := range list {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+func scanWorklogGit(dir string) (map[int]bool, map[int][]string, int, error) {
+	versions := map[int]bool{}
+	files := map[int][]string{}
+	maxVer := 0
+
+	cmd := exec.Command("git", "ls-tree", "--name-only", mainlineRef, "--", "worklogs/")
+	cmd.Dir = filepath.Dir(dir)
+	out, err := cmd.Output()
+	if err != nil {
+		return versions, files, 0, nil
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		base := filepath.Base(line)
+		m := WorklogPattern.FindStringSubmatch(base)
+		if m == nil {
+			continue
+		}
+		v, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		versions[v] = true
+		files[v] = append(files[v], base)
+		if v > maxVer {
+			maxVer = v
+		}
+	}
+	return versions, files, maxVer, nil
 }
