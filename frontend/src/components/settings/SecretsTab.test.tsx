@@ -92,8 +92,9 @@ describe("CreateSecretForm – mount_path handling", () => {
 
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    const callArg = createMock.mock.calls[0][0] as { metadata?: { mount_path?: string } };
-    const sentPath = callArg.metadata?.mount_path;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
+    const sentPath = callArg.metadata?.mount_path ?? "";
 
     // The sent value must be relative — no absolute path prefix.
     expect(sentPath).toBe("cert.pem");
@@ -118,8 +119,9 @@ describe("CreateSecretForm – mount_path handling", () => {
     await user.click(screen.getByRole("button", { name: "Create Secret" }));
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    const callArg = createMock.mock.calls[0][0] as { metadata?: { mount_path?: string } };
-    const sentPath = callArg.metadata?.mount_path;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
+    const sentPath = callArg.metadata?.mount_path ?? "";
 
     // Leading slash must have been stripped.
     expect(sentPath).not.toMatch(/^\//);
@@ -140,7 +142,8 @@ describe("CreateSecretForm – mount_path handling", () => {
     await user.click(screen.getByRole("button", { name: "Create Secret" }));
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    const callArg = createMock.mock.calls[0][0] as { metadata?: { mount_path?: string } };
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
     const sentPath = callArg.metadata?.mount_path ?? "";
 
     // "../" sequences must have been removed from the value stored in state.
