@@ -103,9 +103,16 @@ export function ChatPage() {
     };
   }, [sessionId, workspaceId]);
 
-  const sessionsData = queryClient.getQueryData<SessionListItem[]>(["sessions", workspaceId]);
-  const currentSession = sessionsData?.find((s) => s.id === sessionId);
-  const lastSeenAt = currentSession?.lastSeenAt;
+  // Subscribe to sessions query so lastSeenAt is reactive: re-renders when
+  // the sessions list refetches (e.g. after mark-seen invalidates the query).
+  const { data: lastSeenAt } = useQuery({
+    queryKey: ["sessions", workspaceId],
+    queryFn: () => workspacesApi.getSessions(workspaceId!),
+    enabled: !!workspaceId && !!sessionId,
+    select: (sessions) => sessions.find((s) => s.id === sessionId)?.lastSeenAt,
+    staleTime: 30_000,
+    notifyOnChangeProps: ["data"],
+  });
 
   // Current model for prompt injection — subscribes to the same cache key that
   // ModelSelector populates. enabled:!!workspaceId (not gated on isReady) so

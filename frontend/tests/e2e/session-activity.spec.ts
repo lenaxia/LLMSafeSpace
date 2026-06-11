@@ -191,11 +191,15 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
-    await expect(page.getByText("Old question")).toBeVisible({ timeout: 15_000 });
+
+    // Wait for sidebar sessions to load (confirms sessions query is in cache before
+    // asserting the divider — lastSeenAt is only reactive once the cache is populated).
+    await expect(page.getByText("Task Alpha")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Old question")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("New question")).toBeVisible({ timeout: 3_000 });
 
-    // The "New messages" divider should be present (msg-new has createdAt after lastSeenAt)
-    await expect(page.getByRole("separator", { name: "New messages" })).toBeVisible({ timeout: 3_000 });
+    // The "New messages" divider should appear once lastSeenAt is in cache.
+    await expect(page.getByRole("separator", { name: "New messages" })).toBeVisible({ timeout: 8_000 });
   });
 
   // Test 44: Divider is gone on revisit after mark-seen fires.
