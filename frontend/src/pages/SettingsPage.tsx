@@ -30,7 +30,7 @@ export function SettingsPage() {
       {/* Mobile: horizontal tab bar. Desktop: vertical sidebar */}
       <nav className="border-b border-border p-2 md:border-b-0 md:border-r md:w-52 md:p-4 md:shrink-0">
         <h2 className="hidden md:block mb-4 text-sm font-semibold">Settings</h2>
-        <ul className="flex gap-1 overflow-x-auto md:flex-col">
+        <ul className="flex gap-1 overflow-x-auto touch-manipulation md:flex-col">
           {tabs.map((tab) => (
             <li key={tab.id}>
               <button
