@@ -781,7 +781,8 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 		`SELECT session_id, title, parent_session_id, last_message_at, message_count,
 		        last_seen_at,
 		        (last_message_at IS NOT NULL
-		         AND (last_seen_at IS NULL OR last_message_at > last_seen_at)) AS has_unread
+		         AND (last_seen_at IS NULL OR last_message_at > last_seen_at)) AS has_unread,
+		        context_used
 		 FROM session_index WHERE workspace_id = $1
 		 ORDER BY last_message_at DESC NULLS LAST LIMIT 100`, workspaceID)
 	if err != nil {
@@ -796,7 +797,8 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 		var parentID sql.NullString
 		var lastMsg sql.NullTime
 		var lastSeen sql.NullTime
-		if err := rows.Scan(&item.ID, &title, &parentID, &lastMsg, &item.MessageCount, &lastSeen, &item.HasUnread); err != nil {
+		var contextUsed sql.NullInt64
+		if err := rows.Scan(&item.ID, &title, &parentID, &lastMsg, &item.MessageCount, &lastSeen, &item.HasUnread, &contextUsed); err != nil {
 			return nil, err
 		}
 		if title.Valid {
@@ -812,6 +814,10 @@ func (s *Service) ListSessionIndex(ctx context.Context, workspaceID string) ([]t
 		if lastSeen.Valid {
 			t := lastSeen.Time
 			item.LastSeenAt = &t
+		}
+		if contextUsed.Valid {
+			v := contextUsed.Int64
+			item.ContextUsed = &v
 		}
 		item.Status = "idle"
 		items = append(items, item)
@@ -856,6 +862,20 @@ func (s *Service) UpsertSessionTitle(ctx context.Context, workspaceID, sessionID
 		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
 		   title = EXCLUDED.title,
 		   updated_at = NOW()`, workspaceID, sessionID, title)
+	return err
+}
+
+// UpsertSessionContextUsed persists the prompt token count for the most recent
+// LLM step in this session. Called by the API proxy on every
+// session.next.step.ended SSE event. Idempotent: concurrent writes of the same
+// value are safe (both replicas receive the same event and write the same data).
+func (s *Service) UpsertSessionContextUsed(ctx context.Context, workspaceID, sessionID string, contextUsed int64) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO session_index (workspace_id, session_id, context_used, updated_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (workspace_id, session_id) DO UPDATE SET
+		   context_used = EXCLUDED.context_used,
+		   updated_at = NOW()`, workspaceID, sessionID, contextUsed)
 	return err
 }
 

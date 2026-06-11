@@ -191,6 +191,20 @@ func (h *ProxyHandler) Start() error {
 			return
 		}
 		h.watcher = watcher
+
+		// Subscribe to SSE for all currently-Active workspaces so that
+		// session.next.step.ended events are captured immediately on API
+		// replica startup — not only after the first browser connection.
+		// Without this, a replica restart leaves all workspaces unwatched
+		// until a user navigates to them, causing missed step-ended events
+		// and stale context_used values in session_index.
+		if h.sseTracker != nil {
+			for wsName, phase := range watcher.GetAllKnownPhases() {
+				if phase == string(phaseActive) {
+					h.sseTracker.EnsureWatching(wsName)
+				}
+			}
+		}
 	})
 	return startErr
 }
@@ -1267,20 +1281,25 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
-	if h.broker == nil {
-		return
+	// Forward event to browser SSE subscribers
+	if h.broker != nil {
+		var parsed interface{}
+		_ = json.Unmarshal([]byte(rawData), &parsed)
+		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			Type:      "opencode.event",
+			EventType: eventType,
+			Data:      parsed,
+		})
 	}
-	var parsed interface{}
-	_ = json.Unmarshal([]byte(rawData), &parsed)
-	h.broker.Publish(workspaceID, WorkspaceSSEEvent{
-		Type:      "opencode.event",
-		EventType: eventType,
-		Data:      parsed,
-	})
 
 	// Persist session title to DB when opencode emits session.updated with a title
 	if eventType == "session.updated" && h.sessionIndex != nil {
 		h.persistTitleFromEvent(workspaceID, rawData)
+	}
+
+	// Persist prompt token count to DB for durable context_used tracking
+	if eventType == "session.next.step.ended" {
+		h.persistContextFromEvent(workspaceID, rawData)
 	}
 
 	// Emit normalized input request events for questions/permissions
@@ -1299,6 +1318,9 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 // The dialect parsers expect the inner properties object, so we unwrap the
 // envelope here before dispatching. Per US-16.3 design.
 func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData string) {
+	if h.broker == nil {
+		return
+	}
 	var envelope struct {
 		Properties json.RawMessage `json:"properties"`
 	}
@@ -1483,6 +1505,41 @@ func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 	if evt.Properties.Info.ParentID != "" {
 		_ = h.sessionIndex.UpsertParent(context.Background(), workspaceID, id, evt.Properties.Info.ParentID)
 	}
+}
+
+// persistContextFromEvent extracts the prompt token count from a
+// session.next.step.ended SSE event and persists it to session_index.
+// This makes context_used durable across pod restarts and available for
+// any session regardless of whether opencode currently has it in memory.
+//
+// promptTokens = tokens.input + tokens.cache.read + tokens.cache.write
+// (the raw prompt size for the last LLM step — not cumulative).
+func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
+	if h.sessionIndex == nil {
+		return
+	}
+	var evt struct {
+		Properties struct {
+			SessionID string `json:"sessionID"`
+			Tokens    *struct {
+				Input int64 `json:"input"`
+				Cache struct {
+					Read  int64 `json:"read"`
+					Write int64 `json:"write"`
+				} `json:"cache"`
+			} `json:"tokens"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal([]byte(rawData), &evt) != nil {
+		return
+	}
+	if evt.Properties.SessionID == "" || evt.Properties.Tokens == nil {
+		return
+	}
+	promptTokens := evt.Properties.Tokens.Input +
+		evt.Properties.Tokens.Cache.Read +
+		evt.Properties.Tokens.Cache.Write
+	_ = h.sessionIndex.UpsertContextUsed(context.Background(), workspaceID, evt.Properties.SessionID, promptTokens)
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {

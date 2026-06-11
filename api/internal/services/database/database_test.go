@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1291,5 +1292,108 @@ func TestDeleteSessionTree_SQLStructure(t *testing.T) {
 	t.Run("joins_on_parent_session_id", func(t *testing.T) {
 		assert.Contains(t, sql, "si.parent_session_id = d.session_id",
 			"recursive join must walk parent_session_id → session_id to traverse the tree downward")
+	})
+}
+
+func TestUpsertSessionContextUsed(t *testing.T) {
+	t.Run("happy_path_upserts_context_used", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		mock.ExpectExec(`INSERT INTO session_index`).
+			WithArgs("ws-1", "ses_abc", int64(12500)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpsertSessionContextUsed(context.Background(), "ws-1", "ses_abc", 12500)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("zero_value_upserts_zero", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		mock.ExpectExec(`INSERT INTO session_index`).
+			WithArgs("ws-1", "ses_abc", int64(0)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.UpsertSessionContextUsed(context.Background(), "ws-1", "ses_abc", 0)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error_is_returned", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		mock.ExpectExec(`INSERT INTO session_index`).
+			WithArgs("ws-1", "ses_abc", int64(5000)).
+			WillReturnError(fmt.Errorf("connection refused"))
+
+		err := service.UpsertSessionContextUsed(context.Background(), "ws-1", "ses_abc", 5000)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "connection refused")
+	})
+}
+
+func TestListSessionIndex_IncludesContextUsed(t *testing.T) {
+	t.Run("non_null_context_used_is_populated", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		contextUsed := int64(42000)
+		rows := sqlmock.NewRows([]string{
+			"session_id", "title", "parent_session_id", "last_message_at",
+			"message_count", "last_seen_at", "has_unread", "context_used",
+		}).AddRow("ses_1", "My Session", nil, nil, 3, nil, false, contextUsed)
+
+		mock.ExpectQuery(`SELECT session_id`).
+			WithArgs("ws-1").
+			WillReturnRows(rows)
+
+		items, err := service.ListSessionIndex(context.Background(), "ws-1")
+		assert.NoError(t, err)
+		assert.Len(t, items, 1)
+		assert.NotNil(t, items[0].ContextUsed)
+		assert.Equal(t, contextUsed, *items[0].ContextUsed)
+	})
+
+	t.Run("null_context_used_maps_to_nil", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"session_id", "title", "parent_session_id", "last_message_at",
+			"message_count", "last_seen_at", "has_unread", "context_used",
+		}).AddRow("ses_2", "New Session", nil, nil, 0, nil, false, nil)
+
+		mock.ExpectQuery(`SELECT session_id`).
+			WithArgs("ws-1").
+			WillReturnRows(rows)
+
+		items, err := service.ListSessionIndex(context.Background(), "ws-1")
+		assert.NoError(t, err)
+		assert.Len(t, items, 1)
+		assert.Nil(t, items[0].ContextUsed, "NULL context_used in DB must map to nil pointer")
+	})
+
+	t.Run("zero_context_used_maps_to_pointer_to_zero", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		rows := sqlmock.NewRows([]string{
+			"session_id", "title", "parent_session_id", "last_message_at",
+			"message_count", "last_seen_at", "has_unread", "context_used",
+		}).AddRow("ses_3", "Empty Session", nil, nil, 1, nil, false, int64(0))
+
+		mock.ExpectQuery(`SELECT session_id`).
+			WithArgs("ws-1").
+			WillReturnRows(rows)
+
+		items, err := service.ListSessionIndex(context.Background(), "ws-1")
+		assert.NoError(t, err)
+		assert.Len(t, items, 1)
+		assert.NotNil(t, items[0].ContextUsed)
+		assert.Equal(t, int64(0), *items[0].ContextUsed)
 	})
 }

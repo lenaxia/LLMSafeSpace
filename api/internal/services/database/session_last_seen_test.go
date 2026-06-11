@@ -17,10 +17,10 @@ func TestListSessionIndex_IncludesLastSeenAtAndHasUnread(t *testing.T) {
 
 	now := time.Now()
 	rows := sqlmock.NewRows([]string{
-		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread",
-	}).AddRow("ses-1", "Chat", nil, now, 5, now.Add(-time.Hour), true).
-		AddRow("ses-2", "Caught up", nil, now, 3, now, false).
-		AddRow("ses-3", "Never visited", nil, now, 1, nil, false)
+		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used",
+	}).AddRow("ses-1", "Chat", nil, now, 5, now.Add(-time.Hour), true, nil).
+		AddRow("ses-2", "Caught up", nil, now, 3, now, false, int64(5000)).
+		AddRow("ses-3", "Never visited", nil, now, 1, nil, false, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(
 		`SELECT session_id, title, parent_session_id, last_message_at, message_count, last_seen_at`,
@@ -32,8 +32,11 @@ func TestListSessionIndex_IncludesLastSeenAtAndHasUnread(t *testing.T) {
 
 	assert.True(t, items[0].HasUnread, "last_message_at > last_seen_at → has_unread=true")
 	assert.NotNil(t, items[0].LastSeenAt)
+	assert.Nil(t, items[0].ContextUsed, "nil context_used in DB → nil pointer")
 
 	assert.False(t, items[1].HasUnread, "last_seen_at >= last_message_at → has_unread=false")
+	assert.NotNil(t, items[1].ContextUsed)
+	assert.Equal(t, int64(5000), *items[1].ContextUsed)
 
 	assert.False(t, items[2].HasUnread, "last_seen_at IS NULL → has_unread=false")
 	assert.Nil(t, items[2].LastSeenAt)
@@ -46,8 +49,8 @@ func TestListSessionIndex_HasUnreadTrueWhenNewerMessage(t *testing.T) {
 	lastMsg := time.Now()
 	lastSeen := lastMsg.Add(-2 * time.Hour)
 	rows := sqlmock.NewRows([]string{
-		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread",
-	}).AddRow("ses-1", "Unread", nil, lastMsg, 10, lastSeen, true)
+		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used",
+	}).AddRow("ses-1", "Unread", nil, lastMsg, 10, lastSeen, true, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).WithArgs("ws-1").WillReturnRows(rows)
 
@@ -63,8 +66,8 @@ func TestListSessionIndex_HasUnreadFalseWhenCaughtUp(t *testing.T) {
 
 	ts := time.Now()
 	rows := sqlmock.NewRows([]string{
-		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread",
-	}).AddRow("ses-1", "Caught up", nil, ts, 5, ts, false)
+		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used",
+	}).AddRow("ses-1", "Caught up", nil, ts, 5, ts, false, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).WithArgs("ws-1").WillReturnRows(rows)
 
@@ -79,8 +82,8 @@ func TestListSessionIndex_HasUnreadFalseWhenNullSeenAt(t *testing.T) {
 	defer cleanup()
 
 	rows := sqlmock.NewRows([]string{
-		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread",
-	}).AddRow("ses-1", "New session", nil, time.Now(), 1, nil, false)
+		"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used",
+	}).AddRow("ses-1", "New session", nil, time.Now(), 1, nil, false, nil)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).WithArgs("ws-1").WillReturnRows(rows)
 

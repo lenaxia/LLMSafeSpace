@@ -63,12 +63,16 @@ func TestStripVerboseQuery_OnlyStrippedParams(t *testing.T) {
 // --- persistTitleFromEvent tests ---
 
 type mockSessionIndex struct {
-	mu     sync.Mutex
-	titles map[string]string // key: "workspaceID/sessionID"
+	mu          sync.Mutex
+	titles      map[string]string // key: "workspaceID/sessionID"
+	contextUsed map[string]*int64 // key: "workspaceID/sessionID"
 }
 
 func newMockSessionIndex() *mockSessionIndex {
-	return &mockSessionIndex{titles: make(map[string]string)}
+	return &mockSessionIndex{
+		titles:      make(map[string]string),
+		contextUsed: make(map[string]*int64),
+	}
 }
 
 func (m *mockSessionIndex) UpsertTitle(_ context.Context, workspaceID, sessionID, title string) error {
@@ -85,9 +89,16 @@ func (m *mockSessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types
 func (m *mockSessionIndex) DeleteByWorkspace(_ context.Context, _ string) error  { return nil }
 func (m *mockSessionIndex) DeleteSession(_ context.Context, _, _ string) error   { return nil }
 func (m *mockSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error  { return nil }
-func (m *mockSessionIndex) Start() error                                         { return nil }
-func (m *mockSessionIndex) Stop() error                                          { return nil }
+func (m *mockSessionIndex) UpsertContextUsed(_ context.Context, workspaceID, sessionID string, contextUsed int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v := contextUsed
+	m.contextUsed[workspaceID+"/"+sessionID] = &v
+	return nil
+}
+func (m *mockSessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error { return nil }
+func (m *mockSessionIndex) Start() error                                        { return nil }
+func (m *mockSessionIndex) Stop() error                                         { return nil }
 
 var _ interfaces.SessionIndexService = (*mockSessionIndex)(nil)
 
@@ -218,4 +229,83 @@ func TestSSETracker_ProcessEvent_V115Format_HeartbeatIgnored(t *testing.T) {
 	defer mu.Unlock()
 	require.Len(t, eventTypes, 1)
 	assert.Equal(t, "server.heartbeat", eventTypes[0])
+}
+
+// --- persistContextFromEvent tests ---
+
+func TestPersistContextFromEvent_HappyPath(t *testing.T) {
+	// session.next.step.ended flat format: input=800, cache.read=200, cache.write=50 → 1050
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc","tokens":{"input":800,"output":400,"reasoning":100,"cache":{"read":200,"write":50}}}}`
+
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	h.persistContextFromEvent("ws-1", event)
+
+	v := mock.contextUsed["ws-1/ses_abc"]
+	require.NotNil(t, v, "context_used must be stored")
+	assert.Equal(t, int64(1050), *v, "promptTokens = input + cache.read + cache.write")
+}
+
+func TestPersistContextFromEvent_ZeroTokens(t *testing.T) {
+	// Provider returns all-zero usage — still persisted so 0 is distinguishable from nil
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_xyz","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}`
+
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	h.persistContextFromEvent("ws-1", event)
+
+	v := mock.contextUsed["ws-1/ses_xyz"]
+	require.NotNil(t, v, "zero tokens must still be stored")
+	assert.Equal(t, int64(0), *v)
+}
+
+func TestPersistContextFromEvent_MissingTokens_NoWrite(t *testing.T) {
+	// No tokens field — should be silently ignored
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc"}}`
+
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	h.persistContextFromEvent("ws-1", event)
+
+	assert.Nil(t, mock.contextUsed["ws-1/ses_abc"], "missing tokens must not write")
+}
+
+func TestPersistContextFromEvent_EmptySessionID_NoWrite(t *testing.T) {
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"","tokens":{"input":100,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}`
+
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	h.persistContextFromEvent("ws-1", event)
+
+	assert.Empty(t, mock.contextUsed, "empty sessionID must not write")
+}
+
+func TestPersistContextFromEvent_MalformedJSON_NoWrite(t *testing.T) {
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	h.persistContextFromEvent("ws-1", "not json at all")
+
+	assert.Empty(t, mock.contextUsed, "malformed JSON must not write")
+}
+
+func TestPersistContextFromEvent_NilSessionIndex_NoPanic(t *testing.T) {
+	// sessionIndex is nil — must not panic
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc","tokens":{"input":800,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}`
+
+	h := &ProxyHandler{sessionIndex: nil}
+	assert.NotPanics(t, func() { h.persistContextFromEvent("ws-1", event) })
+}
+
+func TestOnRawEvent_StepEnded_CallsPersistContext(t *testing.T) {
+	// Integration: onRawEvent with step.ended wires through to persistContextFromEvent
+	event := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc","tokens":{"input":500,"output":200,"reasoning":0,"cache":{"read":100,"write":25}}}}`
+
+	mock := newMockSessionIndex()
+	h := &ProxyHandler{sessionIndex: mock}
+	// broker is nil — onRawEvent must handle nil broker gracefully
+	h.onRawEvent("ws-1", "session.next.step.ended", event)
+
+	v := mock.contextUsed["ws-1/ses_abc"]
+	require.NotNil(t, v, "onRawEvent must persist context on step.ended")
+	assert.Equal(t, int64(625), *v, "500+100+25=625")
 }

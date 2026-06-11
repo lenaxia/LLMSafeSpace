@@ -71,6 +71,8 @@ export interface SessionListItem {
   status: string;
   lastSeenAt?: string;
   hasUnread: boolean;
+  /** Prompt tokens from the last LLM step for this session. undefined = no step completed yet. */
+  contextUsed?: number;
 }
 
 // Shape returned by the opencode agent GET /session/:id (proxied through)

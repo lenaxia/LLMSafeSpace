@@ -42,6 +42,7 @@ describe("Go↔TS contract", () => {
     expect(data.status).toBe("active");
     expect(data.lastSeenAt).toBeDefined();
     expect(data.hasUnread).toBe(true);
+    expect(data.contextUsed).toBe(12500);
   });
 
   it("ActiveSessionsResponse matches Go shape", () => {

@@ -83,8 +83,9 @@
     "lastMessageAt": "2026-05-24T12:00:00Z",
     "messageCount": 12,
     "status": "active",
-    "lastSeenAt": "2026-05-24T11:30:00Z",
-    "hasUnread": true
+    "lastSeenAt": "2026-05-24T11:00:00Z",
+    "hasUnread": true,
+    "contextUsed": 12500
   },
   "WorkspaceListItem": {
     "id": "ws-1",

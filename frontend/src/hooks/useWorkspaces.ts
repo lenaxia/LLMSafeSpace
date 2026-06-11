@@ -22,12 +22,13 @@ const transitioningPhases = new Set(["Pending", "Creating", "Resuming", "Suspend
  * Belt-and-suspenders:
  * - While transitioning: 3-second poll to catch phase events that fired before
  *   SSE connected (e.g. API restart followed immediately by resume).
- * - While Active: 30-second poll to keep per-session context usage fresh.
- *   Context data (ContextUsed on each session) is not delivered via SSE —
- *   it is derived from agentd's statusz endpoint by the controller health loop.
- *   Without a background poll, the compaction indicator and DiskUsageBar
- *   context display would never see updates after initial page load.
+ * - While Active: 30-second poll to keep disk/memory/credential state fresh.
  * - Suspended/terminal: no poll (data is stable).
+ *
+ * Note: context_used is no longer sourced from this status endpoint. It is
+ * read from the sessions list (GET /workspaces/:id/sessions) which reads
+ * session_index — persisted by the API proxy on every session.next.step.ended
+ * SSE event. Real-time updates arrive via the opencode.event SSE stream.
  */
 export function useWorkspaceStatus(workspaceId: string | undefined) {
   return useQuery({

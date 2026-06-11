@@ -45,6 +45,9 @@ func (m *mockSessionIndex) UpsertParent(ctx context.Context, workspaceID, sessio
 func (m *mockSessionIndex) UpdateLastSeen(ctx context.Context, workspaceID, sessionID string) error {
 	return m.Called(ctx, workspaceID, sessionID).Error(0)
 }
+func (m *mockSessionIndex) UpsertContextUsed(ctx context.Context, workspaceID, sessionID string, contextUsed int64) error {
+	return m.Called(ctx, workspaceID, sessionID, contextUsed).Error(0)
+}
 func (m *mockSessionIndex) Start() error { return nil }
 func (m *mockSessionIndex) Stop() error  { return nil }
 

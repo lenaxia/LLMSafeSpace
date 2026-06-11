@@ -674,6 +674,9 @@ func (m *apiKeyAwareDB) UpsertSessionTitle(context.Context, string, string, stri
 func (m *apiKeyAwareDB) UpsertSessionParent(context.Context, string, string, string) error {
 	return nil
 }
+func (m *apiKeyAwareDB) UpsertSessionContextUsed(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 func (m *apiKeyAwareDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
 func (m *apiKeyAwareDB) Ping(context.Context) error                                 { return nil }
 func (m *apiKeyAwareDB) Start() error                                               { return nil }

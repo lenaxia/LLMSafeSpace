@@ -23,9 +23,9 @@ func TestListSessionIndex_IncludesParentID(t *testing.T) {
 	svc, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread"}).
-		AddRow("ses_root", "Root chat", nil, time.Now(), 5, nil, false).
-		AddRow("ses_child", "Subagent task", "ses_root", time.Now(), 3, nil, false)
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used"}).
+		AddRow("ses_root", "Root chat", nil, time.Now(), 5, nil, false, nil).
+		AddRow("ses_child", "Subagent task", "ses_root", time.Now(), 3, nil, false, int64(8000))
 
 	mock.ExpectQuery(regexp.QuoteMeta(
 		`SELECT session_id, title, parent_session_id, last_message_at, message_count`,
@@ -37,9 +37,12 @@ func TestListSessionIndex_IncludesParentID(t *testing.T) {
 
 	assert.Equal(t, "ses_root", items[0].ID)
 	assert.Equal(t, "", items[0].ParentID, "top-level session has empty ParentID")
+	assert.Nil(t, items[0].ContextUsed)
 
 	assert.Equal(t, "ses_child", items[1].ID)
 	assert.Equal(t, "ses_root", items[1].ParentID, "child carries its parent")
+	require.NotNil(t, items[1].ContextUsed)
+	assert.Equal(t, int64(8000), *items[1].ContextUsed)
 }
 
 // TestListSessionIndex_NullParentBecomesEmpty pins the conversion of a
@@ -50,8 +53,8 @@ func TestListSessionIndex_NullParentBecomesEmpty(t *testing.T) {
 	svc, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread"}).
-		AddRow("ses_solo", "Standalone", nil, time.Now(), 1, nil, false)
+	rows := sqlmock.NewRows([]string{"session_id", "title", "parent_session_id", "last_message_at", "message_count", "last_seen_at", "has_unread", "context_used"}).
+		AddRow("ses_solo", "Standalone", nil, time.Now(), 1, nil, false, nil)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT session_id, title, parent_session_id`)).
 		WithArgs("ws-1").
 		WillReturnRows(rows)
