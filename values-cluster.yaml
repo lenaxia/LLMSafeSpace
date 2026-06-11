@@ -3,14 +3,14 @@
 # traefik ingress, no cluster-internal DNS named redis-master, etc.)
 
 # Pin all components to the same commit so they reconcile against
-# matching CRD schema and protocol expectations. ts-1781148614 includes:
-#   - fix(lint): initialise → initialize (misspell)
-#   - fix(test): add missing markSessionSeen mock to ChatPage.context.test.tsx
-#   - fix(test): eliminate data race on global log in workspace-agentd tests
+# matching CRD schema and protocol expectations. ts-1781197595 includes:
+#   - fix(controller): register custom metrics with controller-runtime registry (#110)
+#   - fix(repolint): resolve worklog 0227 collision (#109)
+#   - feat(monitoring): Grafana dashboards, Prometheus alerts, ServiceMonitors (#108)
 api:
   image:
-    tag: ts-1781148614
-    pullPolicy: IfNotPresent
+    tag: ts-1781197595
+    pullPolicy: Always
   ingress:
     # API is exposed via the frontend ingress at /api; no separate
     # api-only ingress needed.
@@ -18,8 +18,8 @@ api:
 
 controller:
   image:
-    tag: ts-1781148614
-    pullPolicy: IfNotPresent
+    tag: ts-1781197595
+    pullPolicy: Always
 
 # inferenceRelayURL is the Cloudflare Worker base URL for free-tier inference.
 # inferenceRelaySecret is passed at deploy time via --set (not stored here).
@@ -40,8 +40,8 @@ mcp:
 frontend:
   enabled: true
   image:
-    tag: ts-1781148614
-    pullPolicy: IfNotPresent
+    tag: ts-1781197595
+    pullPolicy: Always
   ingress:
     enabled: true
     className: traefik
@@ -58,7 +58,7 @@ frontend:
 runtimeEnvironments:
   base:
     image:
-      tag: ts-1781148614
+      tag: ts-1781197595
 
 # Webhook image-registry allow-list — required so the controller's
 # RuntimeEnvironment validating webhook accepts ghcr.io images.
