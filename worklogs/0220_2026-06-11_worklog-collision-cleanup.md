@@ -45,3 +45,4 @@ No files were renumbered, avoiding mainline collisions entirely.
 - `worklogs/0218_2026-06-11_epic37-context-used-persistence-design.md` (deleted)
 - `worklogs/0223_2026-06-11_epic37-context-used-persistence-design.md` (deleted)
 - `worklogs/0220_2026-06-11_worklog-collision-cleanup.md` (created)
+- `pkg/repolint/sequence.go` (replaced `exec.Command` with `exec.CommandContext` + 10s timeout to fix `noctx` lint)
