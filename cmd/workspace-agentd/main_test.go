@@ -352,9 +352,6 @@ func TestStatuszEndpoint_OldFieldsUnchanged(t *testing.T) {
 	assert.Equal(t, "ses_1", resp.Sessions[0].ID)
 	assert.Equal(t, "Test", resp.Sessions[0].Title)
 	assert.Equal(t, "idle", resp.Sessions[0].Status)
-	// getDiskUsage uses syscall.Statfs(workspacePath) which returns nil when
-	// /workspace is not mounted (CI runners, local dev). Only assert on disk
-	// fields when the workspace path is actually present on this host.
 	if resp.Disk != nil {
 		assert.Greater(t, resp.Disk.UsedBytes, int64(0))
 		assert.Greater(t, resp.Disk.TotalBytes, int64(0))

@@ -22,7 +22,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	log, _ = zap.NewDevelopment()
+	log = zap.NewNop()
 	os.Exit(m.Run())
 }
 

@@ -34,7 +34,6 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // Build the workspace-agentd binary once per test process; subsequent
@@ -201,10 +200,6 @@ func TestReloadSecretsHandler_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
-
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -226,10 +221,6 @@ func TestReloadSecretsHandler_BadJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
 
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
-
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
@@ -239,10 +230,6 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 	cfg := materializeConfig{}
 	req := httptest.NewRequest(http.MethodGet, "/v1/reload-secrets", nil)
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
@@ -387,10 +374,6 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
-
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	// Handler should succeed (materializer and flush work in-process)
@@ -429,10 +412,6 @@ func TestReloadSecretsHandler_LLMProvider_FlushFailure_Returns500(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
-
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -466,10 +445,6 @@ func TestReloadSecretsHandler_MixedBatch_LLMAndEnv(t *testing.T) {
 	]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 
@@ -512,10 +487,6 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	body := `[{"type":"env-secret","name":"x","metadata":{"var_name":"X"},"plaintext":"v"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	// proc=nil means restart won't actually fire, but we can check the response
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
@@ -563,10 +534,6 @@ func TestReloadSecretsHandler_RemergesRelayAfterFlush(t *testing.T) {
 	body := `[{"type":"llm-provider","name":"thekao","plaintext":"{\"provider\":\"thekao\",\"apiKey\":\"sk-test\",\"baseURL\":\"https://ai.thekao.cloud/v1\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -620,10 +587,6 @@ func TestReloadSecretsHandler_SkipsRelayMergeWhenModelsNil(t *testing.T) {
 	body := `[{"type":"llm-provider","name":"openai","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-personal\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	reloadSecretsHandler(cfg, nil, "")(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -689,10 +652,6 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	body := `[{"type":"llm-provider","name":"p","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-key\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-
-	prevLog := log
-	log = zap.NewNop()
-	defer func() { log = prevLog }()
 
 	// FlushProviders will fail (unwritable directory) → 500. The test is that
 	// when FlushProviders itself succeeds but re-merge fails, we get 200.
