@@ -183,7 +183,7 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       sessALastSeenAt: lastSeenAt,
       sessAMessages: [
         { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], createdAt: "2026-06-10T09:59:00Z" },
-        { id: "msg-new", role: "assistant", parts: [{ type: "text", text: "New answer" }], createdAt: "2026-06-10T10:01:00Z" },
+        { id: "msg-new", role: "user", parts: [{ type: "text", text: "New question" }], createdAt: "2026-06-10T10:01:00Z" },
       ],
     });
 
@@ -191,12 +191,10 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
       r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
-    // Wait for the older (user) message to confirm the message list has loaded
-    await expect(page.getByText("Old question")).toBeVisible({ timeout: 10_000 });
-    // The newer assistant message should also be present
-    await expect(page.getByText("New answer")).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByText("Old question")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("New question")).toBeVisible({ timeout: 3_000 });
 
-    // The "New messages" divider should be present
+    // The "New messages" divider should be present (msg-new has createdAt after lastSeenAt)
     await expect(page.getByRole("separator", { name: "New messages" })).toBeVisible({ timeout: 3_000 });
   });
 

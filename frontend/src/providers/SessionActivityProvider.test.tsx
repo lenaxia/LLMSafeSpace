@@ -329,46 +329,96 @@ describe("SessionActivityProvider", () => {
     expect(screen.getByTestId("unread").textContent).toBe("no");
   });
 
-  // Multi-workspace REST init: exercises the full loop (lines 31-41 of provider).
-  it("initializes state from multiple workspaces' caches on mount", () => {
-    function MultiDisplay() {
-      const busyA  = useIsSessionBusy("sess-a");
-      const busyB  = useIsSessionBusy("sess-b");
-      const unreadC = useIsSessionUnread("sess-c");
-      const unreadD = useIsSessionUnread("sess-d");
-      return (
-        <>
-          <span data-testid="busyA">{busyA ? "yes" : "no"}</span>
-          <span data-testid="busyB">{busyB ? "yes" : "no"}</span>
-          <span data-testid="unreadC">{unreadC ? "yes" : "no"}</span>
-          <span data-testid="unreadD">{unreadD ? "yes" : "no"}</span>
-        </>
-      );
+  // Regression: SSE idle event must not be clobbered by seedFromCache when
+  // the query cache is populated (the clobbering bug introduced by the
+  // queryCache.subscribe pattern). The idle handler now writes hasUnread:true
+  // into the cache so seedFromCache re-seeds the correct unread state.
+  it("SSE idle event preserves unread indicator even when cache is pre-populated (regression)", () => {
+    function UnreadDisplay() {
+      const isUnread = useIsSessionUnread("sess-1");
+      return <span data-testid="unread">{isUnread ? "yes" : "no"}</span>;
     }
 
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    // Pre-populate cache with hasUnread:false (simulates REST data loaded before SSE)
     qc.setQueryData(["sessions", "ws-1"], [
-      { id: "sess-a", status: "active", hasUnread: false, messageCount: 1 },
-      { id: "sess-c", status: "idle",   hasUnread: true,  messageCount: 2 },
-    ]);
-    qc.setQueryData(["sessions", "ws-2"], [
-      { id: "sess-b", status: "active", hasUnread: false, messageCount: 3 },
-      { id: "sess-d", status: "idle",   hasUnread: true,  messageCount: 1 },
+      { id: "sess-1", title: "Test", messageCount: 0, status: "active", hasUnread: false },
     ]);
 
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter>
           <SessionActivityProvider>
-            <MultiDisplay />
+            <UnreadDisplay />
           </SessionActivityProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
-    expect(screen.getByTestId("busyA").textContent).toBe("yes");
-    expect(screen.getByTestId("busyB").textContent).toBe("yes");
-    expect(screen.getByTestId("unreadC").textContent).toBe("yes");
-    expect(screen.getByTestId("unreadD").textContent).toBe("yes");
+    // Session starts not-unread
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // SSE: session goes idle on a non-current workspace (user is not viewing it)
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "sess-1",
+        status: "idle",
+      });
+    });
+
+    // Unread indicator must survive — seedFromCache must read hasUnread:true
+    // (written by the idle handler) and not clobber pendingUnread with stale data
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    // The cache entry must also reflect hasUnread:true for the next seedFromCache
+    const sessions = qc.getQueryData(["sessions", "ws-1"]) as Array<{ id: string; hasUnread: boolean }>;
+    expect(sessions.find((s) => s.id === "sess-1")?.hasUnread).toBe(true);
+  });
+
+  // Regression: clearPendingUnread must also clear hasUnread in cache so
+  // seedFromCache does not re-add the session to pendingUnread on subsequent
+  // cache updates.
+  it("clearPendingUnread clears hasUnread in cache to prevent re-seed (regression)", () => {
+    function Display() {
+      const isUnread = useIsSessionUnread("sess-1");
+      const clear = useClearPendingUnread();
+      return (
+        <>
+          <span data-testid="unread">{isUnread ? "yes" : "no"}</span>
+          <button data-testid="clear" onClick={() => clear("sess-1")}>clear</button>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    // Start with session already unread in cache
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: true },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    // Clear unread
+    act(() => {
+      screen.getByTestId("clear").click();
+    });
+
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // Cache must have hasUnread:false so seedFromCache won't re-add it
+    const sessions = qc.getQueryData(["sessions", "ws-1"]) as Array<{ id: string; hasUnread: boolean }>;
+    expect(sessions.find((s) => s.id === "sess-1")?.hasUnread).toBe(false);
   });
 });

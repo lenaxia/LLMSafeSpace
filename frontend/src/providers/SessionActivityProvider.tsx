@@ -186,7 +186,23 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
       next.delete(sessionId);
       return next;
     });
-  }, []);
+    // Also clear hasUnread in the query cache so seedFromCache does not
+    // re-add the session to pendingUnread if it fires after this call
+    // (e.g. on a subsequent cache update for the same workspace).
+    const wsId = pendingUnread.get(sessionId);
+    if (wsId) {
+      const sessionsKey = ["sessions", wsId];
+      const existing = queryClient.getQueryData(sessionsKey);
+      if (existing) {
+        queryClient.setQueryData(sessionsKey, (old: unknown) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((s: Record<string, unknown>) =>
+            s.id === sessionId ? { ...s, hasUnread: false } : s
+          );
+        });
+      }
+    }
+  }, [pendingUnread, queryClient]);
 
   return (
     <SessionActivityContext.Provider
