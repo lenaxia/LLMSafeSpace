@@ -37,7 +37,11 @@ spec:
           securityContext:
             {{- toYaml .Values.controller.containerSecurityContext | nindent 12 }}
           args:
-            - --metrics-addr={{ .Values.controller.metricsAddr }}
+            {{- $metricsAddr := .Values.controller.metricsAddr }}
+            {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
+            {{- $metricsAddr = "0.0.0.0:8080" }}
+            {{- end }}
+            - --metrics-addr={{ $metricsAddr }}
             - --health-probe-bind-address={{ .Values.controller.probeAddr }}
             {{- if .Values.controller.leaderElection.enabled }}
             - --enable-leader-election=true

@@ -711,3 +711,14 @@ monitoring:
     # Prometheus Operator serviceMonitorSelector).
     labels: {}
     annotations: {}
+    api:
+      # Optional bearerTokenSecret for the API /metrics endpoint.
+      # The API requires `Authorization: Bearer <token>` when the env var
+      # LLMSAFESPACE_METRICS_TOKEN is set. If you use that env var, set
+      # this to a Secret reference containing the same token under the
+      # "token" key. If LLMSAFESPACE_METRICS_TOKEN is not set, leave this
+      # empty (scrapes are unauthenticated).
+      bearerTokenSecret: {}
+      # Example:
+      #   name: llmsafespace-metrics-token
+      #   key: token

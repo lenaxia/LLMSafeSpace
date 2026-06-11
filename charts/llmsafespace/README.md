@@ -194,10 +194,105 @@ behavior) to avoid accidental data loss. Delete them manually if intended.
 
 ## Limitations
 
-- No NetworkPolicy templates yet (gap; planned for follow-up)
 - No Kyverno policy templates yet (deferred per EVOLUTION-V2.md §9.6)
 - No bundled Postgres or Redis sub-charts
-- Migrations run with the official `migrate/migrate` image; the database
+- Migrations run with the official `migrate/migrate`` image; the database
   must exist before the chart is installed (`CREATE DATABASE` is not run)
 - The API service does not yet support TLS at the API level (use an Ingress
   with TLS termination)
+
+## Monitoring
+
+The chart optionally deploys Grafana dashboards, Prometheus alerting rules,
+and ServiceMonitor resources. All are gated by `monitoring.enabled` (off by
+default) with independent sub-toggles.
+
+### Prerequisites
+
+- **Grafana** with the [sidecar dashboard
+  importer](https://github.com/grafana/helm-charts/tree/main/charts/grafana#sidecar-dashboard-provider)
+  (the dashboard ConfigMap uses the `grafana_dashboard: "1"` label)
+- **Prometheus Operator** (for `PrometheusRule` and `ServiceMonitor` CRDs)
+
+### Enabling
+
+```sh
+helm install llmsafespace ./charts/llmsafespace \
+    --set monitoring.enabled=true \
+    -n llmsafespace
+```
+
+### What is deployed
+
+| Resource | Count | Toggle |
+|----------|-------|--------|
+| Grafana dashboard ConfigMap | 1 (2 dashboards) | `monitoring.dashboards.enabled` |
+| PrometheusRule | 1 (19 alert rules) | `monitoring.prometheusRules.enabled` |
+| ServiceMonitor | 2 (API + controller) | `monitoring.serviceMonitors.enabled` |
+
+### Dashboards
+
+- **LLMSafeSpace - Operational**: request overview, connections, workspace
+  lifecycle, reconciliation, recovery, agent operations, SSE/relay, billing
+  at a glance
+- **LLMSafeSpace - Billing & Metering**: inference cost/token breakdown,
+  per-user metering (active seconds, CPU, LLM calls), per-workspace resource
+  consumption (storage, memory, CPU, proxy bytes)
+
+### Alerting rules
+
+19 alert rules across 4 groups (`llmsafespace.api`,
+`llmsafespace.controller`, `llmsafespace.agentd`, `llmsafespace.billing`).
+Key alerts:
+
+- API error rate >5% (warning) / >15% (critical)
+- API p99 latency >5s
+- Workspace creation >120s at p99
+- Consecutive workspace failures >3 (critical)
+- Agentd startup >60s at p95
+- Inference cost rate >$10/hour
+- Workspace disk usage >90%
+
+### Controller metrics endpoint
+
+When `monitoring.serviceMonitors.enabled=true`, the controller deployment
+automatically overrides `controller.metricsAddr` to `0.0.0.0:8080` so the
+ServiceMonitor can reach the metrics endpoint through the Kubernetes
+Service. Without this, the default loopback binding (`127.0.0.1:8080`)
+rejects connections from other pods.
+
+### API metrics authentication
+
+The API `/metrics` endpoint requires `Authorization: Bearer <token>` when
+the `LLMSAFESPACE_METRICS_TOKEN` env var is set. If you use this env var,
+configure the ServiceMonitor's bearer token:
+
+```yaml
+monitoring:
+  enabled: true
+  serviceMonitors:
+    api:
+      bearerTokenSecret:
+        name: llmsafespace-metrics-token
+        key: token
+```
+
+If `LLMSAFESPACE_METRICS_TOKEN` is not set, the endpoint is unauthenticated
+and no `bearerTokenSecret` configuration is needed.
+
+### Configuration reference
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `monitoring.enabled` | `false` | Master toggle for all monitoring resources |
+| `monitoring.dashboards.enabled` | `true` | Deploy Grafana dashboard ConfigMap |
+| `monitoring.dashboards.namespace` | `""` | Override namespace (defaults to release namespace) |
+| `monitoring.dashboards.labels` | `{grafana_dashboard: "1"}` | Labels for dashboard ConfigMap |
+| `monitoring.prometheusRules.enabled` | `true` | Deploy PrometheusRule alerts |
+| `monitoring.prometheusRules.namespace` | `""` | Override namespace |
+| `monitoring.prometheusRules.labels` | `{}` | Additional labels (e.g. `role: alert-rules`) |
+| `monitoring.serviceMonitors.enabled` | `true` | Deploy ServiceMonitor for API + controller |
+| `monitoring.serviceMonitors.namespace` | `""` | Override namespace |
+| `monitoring.serviceMonitors.interval` | `30s` | Scrape interval |
+| `monitoring.serviceMonitors.scrapeTimeout` | `10s` | Scrape timeout |
+| `monitoring.serviceMonitors.api.bearerTokenSecret` | `{}` | Optional bearer token for API metrics auth |
