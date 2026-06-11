@@ -102,4 +102,4 @@ context.md → core-rules.md → <command>.md → [code-change-workflow.md] → 
 - .github/workflows/ai-comment.yml (modified)
 - .github/workflows/issue-opened.yml (modified)
 - .github/workflows/pr-review.yml (modified)
-- worklogs/0219_2026-06-11_ai-command-routing.md (new)
+- worklogs/0225_2026-06-11_ai-command-routing.md (new)
