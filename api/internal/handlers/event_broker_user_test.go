@@ -454,7 +454,7 @@ func TestUserBroker_PublishToUserSetsEventIDOnDeliveredEvent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out")
 	}
-	}
+}
 
 func TestUserBroker_UnsubscribeReleasesSlot(t *testing.T) {
 	b := NewUserEventBroker()

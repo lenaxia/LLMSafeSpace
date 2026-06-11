@@ -283,8 +283,12 @@ func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {
 		case "/session":
 			json.NewEncoder(w).Encode([]struct {
 				ID    string `json:"id"`
-				Model *struct{ ID string `json:"id"` } `json:"model"`
-			}{{ID: "ses_1", Model: &struct{ ID string `json:"id"` }{ID: "glm-5.1"}}})
+				Model *struct {
+					ID string `json:"id"`
+				} `json:"model"`
+			}{{ID: "ses_1", Model: &struct {
+				ID string `json:"id"`
+			}{ID: "glm-5.1"}}})
 		case "/session/ses_1":
 			json.NewEncoder(w).Encode(map[string]string{"title": ""})
 		}
@@ -315,7 +319,9 @@ func TestStatuszEndpoint_OldFieldsUnchanged(t *testing.T) {
 		case "/config/providers":
 			json.NewEncoder(w).Encode(map[string][]struct{}{"providers": {{}}})
 		case "/session":
-			json.NewEncoder(w).Encode([]struct{ ID string `json:"id"` }{{ID: "ses_1"}})
+			json.NewEncoder(w).Encode([]struct {
+				ID string `json:"id"`
+			}{{ID: "ses_1"}})
 		case "/session/ses_1":
 			json.NewEncoder(w).Encode(map[string]string{"id": "ses_1", "title": "Test"})
 		}
@@ -376,9 +382,13 @@ func newOpenCodeTestServer() *httptest.Server {
 		case "/session":
 			json.NewEncoder(w).Encode([]struct {
 				ID    string `json:"id"`
-				Model *struct{ ID string `json:"id"` } `json:"model"`
+				Model *struct {
+					ID string `json:"id"`
+				} `json:"model"`
 			}{
-				{ID: "ses_1", Model: &struct{ ID string `json:"id"` }{ID: "claude-sonnet-4-20250514"}},
+				{ID: "ses_1", Model: &struct {
+					ID string `json:"id"`
+				}{ID: "claude-sonnet-4-20250514"}},
 				{ID: "ses_2"},
 			})
 		case "/session/ses_1", "/session/ses_2":
