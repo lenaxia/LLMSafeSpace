@@ -182,8 +182,8 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await setupBase(page, {
       sessALastSeenAt: lastSeenAt,
       sessAMessages: [
-        { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], createdAt: "2026-06-10T09:59:00Z" },
-        { id: "msg-new", role: "user", parts: [{ type: "text", text: "New question" }], createdAt: "2026-06-10T10:01:00Z" },
+        { id: "msg-old", role: "user", parts: [{ type: "text", text: "Old question" }], info: { role: "user", id: "msg-old", time: { created: new Date("2026-06-10T09:59:00Z").getTime() } } },
+        { id: "msg-new", role: "user", parts: [{ type: "text", text: "New question" }], info: { role: "user", id: "msg-new", time: { created: new Date("2026-06-10T10:01:00Z").getTime() } } },
       ],
     });
 
