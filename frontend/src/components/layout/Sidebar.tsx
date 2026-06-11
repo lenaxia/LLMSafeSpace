@@ -733,7 +733,7 @@ function SessionTreeRow({
           ) : (
             <MessageSquare className={cn("h-3.5 w-3.5 flex-shrink-0", showPulse && "animate-unread-pulse")} />
           )}
-          <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse")}>{title}</span>
+          <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse font-bold")}>{title}</span>
           {contextUsed != null && (
             <span
               className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50"
