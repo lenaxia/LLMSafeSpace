@@ -184,7 +184,7 @@ Frontend:                          94 files, 897 tests passed
 - `api/migrations/000022_session_index_context.down.sql`
 - `charts/llmsafespace/migrations/000022_session_index_context.up.sql`
 - `charts/llmsafespace/migrations/000022_session_index_context.down.sql`
-- `worklogs/0225_2026-06-11_epic37-context-used-persistence-design.md`
+- `worklogs/0224_2026-06-11_epic37-context-used-persistence-design.md`
 - `worklogs/0218_2026-06-10_opencode-infinite-retry-on-context-overflow.md` (renamed from erroneous 0200)
 
 **Modified:**
