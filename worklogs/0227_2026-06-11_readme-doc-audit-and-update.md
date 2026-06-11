@@ -15,7 +15,8 @@ Update README.md and README-LLM.md to accurately reflect the current codebase. O
 ## Work Completed
 
 ### 1. Worklog 0209 Collision Fix
-- `worklogs/0209_2026-06-11_epic37-comprehensive-test-coverage.md` was renamed to `0218_2026-06-11_epic37-comprehensive-test-coverage.md`
+- `worklogs/0209_2026-06-11_epic37-comprehensive-test-coverage.md` was renamed to `0223_2026-06-11_epic37-comprehensive-test-coverage.md` (main had already renumbered it during rebase)
+- This worklog was renumbered from 0219 to 0227 to avoid collision with `0219_2026-06-11_ai-command-routing.md` on main
 - `pkg/repolint` test `TestLive_Worklogs_NoCollisionsOrGaps` now passes
 - Verified: `go test ./pkg/repolint/...` passes
 
@@ -187,8 +188,8 @@ Update README.md and README-LLM.md to accurately reflect the current codebase. O
 
 - `README.md` — Major update: lifecycle, routes, quickstart, repo layout
 - `README-LLM.md` — Major update: repo structure, CRDs, architecture, lifecycle, API sections, version
-- `worklogs/0209_2026-06-11_epic37-comprehensive-test-coverage.md` → `worklogs/0218_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed)
-- `worklogs/0219_2026-06-11_readme-doc-audit-and-update.md` (this file, new)
+- `worklogs/0209_2026-06-11_epic37-comprehensive-test-coverage.md` → `worklogs/0223_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed, renumbered during rebase)
+- `worklogs/0227_2026-06-11_readme-doc-audit-and-update.md` (this file, renumbered from 0219)
 - `pkg/types/types.go` — Comment fix: Sandbox → Workspace, SandboxProfile → RuntimeEnvironment
 - `pkg/kubernetes/client_test.go` — Comment fix: 5× Sandbox → Workspace
 - `pkg/kubernetes/client.go` — Comment fix: SandboxWatcher → WorkspaceWatcher
