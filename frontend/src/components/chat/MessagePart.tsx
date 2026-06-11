@@ -53,7 +53,7 @@ function ToolDetails({ borderColor, textColor, statusIcon, toolName, filePath, c
 function ToolDiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   return (
     <Suspense fallback={<pre className="px-3 text-xs text-muted-foreground">Loading diff...</pre>}>
-      <div className="text-xs overflow-auto max-h-60">
+      <div className="text-xs overflow-auto touch-manipulation max-h-60">
         <ReactDiffViewer
           oldValue={oldStr}
           newValue={newStr}
