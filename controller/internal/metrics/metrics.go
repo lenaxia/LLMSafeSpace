@@ -174,3 +174,12 @@ func RegisterWith(reg prometheus.Registerer) error {
 	}
 	return nil
 }
+
+// SeedWorkspacesRunning resets the WorkspacesRunning gauge to match
+// the provided count of currently-active workspaces. Called once at
+// controller startup after the informer cache syncs, so the gauge
+// reflects reality even though existing Active workspaces never
+// trigger the Creating→Active transition that normally calls .Inc().
+func SeedWorkspacesRunning(runtime, secLevel string, count int) {
+	WorkspacesRunning.WithLabelValues(runtime, secLevel).Set(float64(count))
+}

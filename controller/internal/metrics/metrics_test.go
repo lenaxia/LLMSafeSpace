@@ -168,6 +168,73 @@ func TestBucketCoverage(t *testing.T) {
 	_ = infCount
 }
 
+func TestSeedWorkspacesRunningOverrides(t *testing.T) {
+	reg := isolatedRegistry(t)
+
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Inc()
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Inc()
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Inc()
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Dec()
+
+	metrics.SeedWorkspacesRunning("base", "standard", 6)
+
+	mf := gatherFamily(t, reg, "llmsafespace_workspaces_running")
+	require.NotNil(t, mf)
+	m := findMetricByLabels(t, mf, map[string]string{
+		"runtime": "base", "security_level": "standard",
+	})
+	require.NotNil(t, m)
+	assert.EqualValues(t, 6.0, m.GetGauge().GetValue(),
+		"SeedWorkspacesRunning must Set (absolute), not Add (relative)")
+}
+
+func TestSeedWorkspacesRunningZeroActiveWorkspaces(t *testing.T) {
+	reg := isolatedRegistry(t)
+
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Inc()
+	metrics.WorkspacesRunning.WithLabelValues("base", "standard").Inc()
+
+	metrics.SeedWorkspacesRunning("base", "standard", 0)
+
+	mf := gatherFamily(t, reg, "llmsafespace_workspaces_running")
+	require.NotNil(t, mf)
+	m := findMetricByLabels(t, mf, map[string]string{
+		"runtime": "base", "security_level": "standard",
+	})
+	require.NotNil(t, m)
+	assert.EqualValues(t, 0.0, m.GetGauge().GetValue(),
+		"Seeding with 0 must reset the gauge to 0")
+}
+
+func TestCountActiveByLabels(t *testing.T) {
+	_ = isolatedRegistry(t)
+
+	ws := []struct {
+		phase    string
+		runtime  string
+		secLevel string
+	}{
+		{"Active", "base", "standard"},
+		{"Active", "base", "standard"},
+		{"Suspended", "base", "standard"},
+		{"Active", "python:3.11", "hardened"},
+		{"Creating", "base", "standard"},
+	}
+
+	counts := map[[2]string]int{}
+	for _, w := range ws {
+		if w.phase == "Active" {
+			counts[[2]string{w.runtime, w.secLevel}]++
+		}
+	}
+
+	assert.Equal(t, 2, counts[[2]string{"base", "standard"}])
+	assert.Equal(t, 1, counts[[2]string{"python:3.11", "hardened"}])
+	_, hasSuspended := counts[[2]string{"base", "suspended"}]
+	assert.False(t, hasSuspended, "Suspended workspaces must not be counted")
+	assert.Len(t, counts, 2, "Only Active workspaces produce entries")
+}
+
 // ---- helpers ----
 
 func gatherFamily(t *testing.T, reg *prometheus.Registry, name string) *dto.MetricFamily {
