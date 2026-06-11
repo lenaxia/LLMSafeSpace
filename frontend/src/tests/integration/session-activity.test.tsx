@@ -3,7 +3,7 @@ import { screen, act } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread } from "../../providers/SessionActivityProvider";
+import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useClearPendingUnread } from "../../providers/SessionActivityProvider";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
 
@@ -199,5 +199,88 @@ describe("Integration: SSE → SessionActivityProvider → UI (#36-39)", () => {
       capturedOnEvent!({ type: "workspace.phase", workspace_id: "ws-1", phase: "Suspended" });
     });
     expect(screen.getByTestId("unread-sess-1").textContent).toBe("read");
+  });
+
+  // Test 37 (full): navigate-to clears unread, divider gone on revisit — full flow via REST init + clearPendingUnread.
+  it("#37 full: REST-seeded unread cleared by clearPendingUnread (navigate-to)", async () => {
+    function Scene() {
+      const isUnread = useIsSessionUnread("sess-1");
+      const clear = useClearPendingUnread();
+      return (
+        <>
+          <span data-testid="unread">{isUnread ? "yes" : "no"}</span>
+          <button data-testid="nav" onClick={() => clear("sess-1")} />
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Unread session", status: "idle", hasUnread: true, messageCount: 5 },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Scene />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    await act(async () => {
+      screen.getByTestId("nav").click();
+    });
+
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+  });
+
+  // Test 38 (real REST init): page refresh — REST status:active seeds spinner immediately on mount.
+  it("#38 real: REST status:active seeds busySessions on mount", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-active", title: "Active", status: "active", hasUnread: false, messageCount: 2 },
+      { id: "sess-idle",   title: "Idle",   status: "idle",   hasUnread: false, messageCount: 1 },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyIndicator sessionId="sess-active" />
+            <BusyIndicator sessionId="sess-idle" />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy-sess-active").textContent).toBe("busy");
+    expect(screen.getByTestId("busy-sess-idle").textContent).toBe("idle");
+  });
+
+  // Test 39 (real REST init): page refresh — REST hasUnread:true seeds pendingUnread immediately on mount.
+  it("#39 real: REST hasUnread:true seeds pendingUnread on mount", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-unread", title: "Unread", status: "idle", hasUnread: true,  messageCount: 3 },
+      { id: "sess-read",   title: "Read",   status: "idle", hasUnread: false, messageCount: 1 },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <UnreadIndicator sessionId="sess-unread" />
+            <UnreadIndicator sessionId="sess-read" />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread-sess-unread").textContent).toBe("unread");
+    expect(screen.getByTestId("unread-sess-read").textContent).toBe("read");
   });
 });
