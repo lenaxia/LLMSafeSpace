@@ -328,4 +328,47 @@ describe("SessionActivityProvider", () => {
 
     expect(screen.getByTestId("unread").textContent).toBe("no");
   });
+
+  // Multi-workspace REST init: exercises the full loop (lines 31-41 of provider).
+  it("initializes state from multiple workspaces' caches on mount", () => {
+    function MultiDisplay() {
+      const busyA  = useIsSessionBusy("sess-a");
+      const busyB  = useIsSessionBusy("sess-b");
+      const unreadC = useIsSessionUnread("sess-c");
+      const unreadD = useIsSessionUnread("sess-d");
+      return (
+        <>
+          <span data-testid="busyA">{busyA ? "yes" : "no"}</span>
+          <span data-testid="busyB">{busyB ? "yes" : "no"}</span>
+          <span data-testid="unreadC">{unreadC ? "yes" : "no"}</span>
+          <span data-testid="unreadD">{unreadD ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-a", status: "active", hasUnread: false, messageCount: 1 },
+      { id: "sess-c", status: "idle",   hasUnread: true,  messageCount: 2 },
+    ]);
+    qc.setQueryData(["sessions", "ws-2"], [
+      { id: "sess-b", status: "active", hasUnread: false, messageCount: 3 },
+      { id: "sess-d", status: "idle",   hasUnread: true,  messageCount: 1 },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <MultiDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busyA").textContent).toBe("yes");
+    expect(screen.getByTestId("busyB").textContent).toBe("yes");
+    expect(screen.getByTestId("unreadC").textContent).toBe("yes");
+    expect(screen.getByTestId("unreadD").textContent).toBe("yes");
+  });
 });
