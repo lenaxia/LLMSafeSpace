@@ -17,6 +17,7 @@
 package repolint
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -656,7 +658,10 @@ func scanWorklogGit(dir string) (map[int]bool, map[int][]string, int, error) {
 	files := map[int][]string{}
 	maxVer := 0
 
-	cmd := exec.Command("git", "ls-tree", "--name-only", mainlineRef, "--", "worklogs/")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "ls-tree", "--name-only", mainlineRef, "--", "worklogs/")
 	cmd.Dir = filepath.Dir(dir)
 	out, err := cmd.Output()
 	if err != nil {
