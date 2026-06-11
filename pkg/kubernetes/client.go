@@ -202,7 +202,7 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 //
 // Without these ContentConfig fields rest.RESTClientFor returns an error
 // (or returns a partially-initialized client that nil-panics on Watch),
-// which silently breaks the SandboxWatcher and the proxy ownership middleware.
+// which silently breaks the WorkspaceWatcher and the proxy ownership middleware.
 func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
 	client, err := newLLMSafespaceV1Client(c.restConfig)
 	if err != nil {

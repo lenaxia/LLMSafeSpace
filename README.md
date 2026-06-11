@@ -16,21 +16,23 @@ Repository: `github.com/lenaxia/llmsafespace`
 │         │                                                            │
 │         ▼                                                            │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  LLMSafeSpace API (Gin, stateless, horizontally scalable)    │   │
-│  │  - Auth (JWT + API keys)                                     │   │
-│  │  - Workspace CRUD + lifecycle (activate/suspend/resume)       │   │
-│  │  - Reverse proxy to workspace pods (basic auth, IP refresh)  │   │
-│  │  - Secrets management (zero-knowledge encrypted store)        │   │
-│  │  - Settings (admin instance + user preferences)               │   │
-│  │  - Patch-part filtering (?verbose=true to keep)              │   │
+  │  │  LLMSafeSpace API (Gin, stateless, horizontally scalable)    │   │
+  │  │  - Auth (JWT + API keys + HttpOnly cookies)                   │   │
+  │  │  - Workspace CRUD + lifecycle (activate/suspend/restart)      │   │
+  │  │  - Reverse proxy to workspace pods (basic auth, IP refresh)   │   │
+  │  │  - Secrets management (zero-knowledge encrypted store)        │   │
+  │  │  - Provider credentials (admin + user, auto-apply rules)     │   │
+  │  │  - Settings (admin instance + user preferences)              │   │
+  │  │  - Session management, SSE events, terminal proxy            │   │
+  │  │  - Patch-part filtering (?verbose=true to keep)              │   │
 │  └─────────────────────┬────────────────────────────────────────┘   │
 │                        │ K8s API                                     │
 │                        ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  Controller (controller-runtime)                              │   │
-│  │  - Reconciles Workspace, RuntimeEnvironment CRDs              │   │
-│  │  - Manages pod lifecycle, PVC, credential secrets             │   │
-│  │  - Health monitoring via workspace-agentd sidecar             │   │
+  │  │  Controller (controller-runtime)                              │   │
+  │  │  - Reconciles Workspace CRD (pod lifecycle, PVC, credentials) │   │
+  │  │  - Validating webhooks for Workspace + RuntimeEnvironment     │   │
+  │  │  - Health monitoring via workspace-agentd sidecar             │   │
 │  └─────────────────────┬────────────────────────────────────────┘   │
 │                        │                                             │
 │                        ▼                                             │
@@ -63,12 +65,16 @@ Two CRDs in the `llmsafespace.dev/v1` API group:
 ### Lifecycle
 
 ```
-Workspace: Pending → Active → Suspending → Suspended → Resuming → Active
-                              ↘
-                                Terminating → Terminated
+Workspace: Pending → Creating → Active → Suspending → Suspended → Resuming → Active
+                       │                   ↘           ↘           ↘
+                       │                     Terminating            Terminating
+                       │                         ↘                     ↘
+                       └──→ Failed            Terminated             Terminated
 ```
 
-Suspending a workspace deletes the pod but retains the PVC. Resuming creates a fresh pod that reattaches to the existing PVC, so opencode session history (stored in `/workspace/.local/opencode`) survives suspend/resume.
+Nine phases: `Pending`, `Creating`, `Active`, `Suspending`, `Suspended`, `Resuming`, `Terminating`, `Terminated`, `Failed`.
+
+Suspending a workspace deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod, which reattaches to the existing PVC so opencode session history (stored in `/workspace/.local/opencode`) survives suspend/activate.
 
 ---
 
@@ -80,8 +86,11 @@ All endpoints are JSON. Authentication is via `Authorization: Bearer <jwt-or-api
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/api/v1/auth/config` | Feature flags (registration enabled, OIDC, instance name, MOTD) |
 | `POST` | `/api/v1/auth/register` | Create a user, returns `{token, user}` |
 | `POST` | `/api/v1/auth/login` | Returns `{token, user}` on valid credentials |
+| `POST` | `/api/v1/auth/logout` | Revoke JWT, clear cookie |
+| `GET` | `/api/v1/auth/me` | Current user info |
 | `POST` | `/api/v1/auth/api-keys` | Create a new `lsp_…` API key |
 | `GET` | `/api/v1/auth/api-keys` | List the caller's API keys (secret stripped) |
 | `DELETE` | `/api/v1/auth/api-keys/:id` | Revoke an API key |
@@ -96,11 +105,20 @@ All endpoints are JSON. Authentication is via `Authorization: Bearer <jwt-or-api
 | `PUT` | `/api/v1/workspaces/:id` | Rename a workspace |
 | `DELETE` | `/api/v1/workspaces/:id` | Delete (and its PVC) |
 | `POST` | `/api/v1/workspaces/:id/suspend` | Suspend (retain PVC, delete pod) |
-| `POST` | `/api/v1/workspaces/:id/resume` | Resume (re-create pod) |
 | `POST` | `/api/v1/workspaces/:id/activate` | Activate (resume if suspended, auto-suspend oldest if at cap) |
+| `POST` | `/api/v1/workspaces/:id/restart` | Restart the workspace pod |
 | `GET` | `/api/v1/workspaces/:id/status` | Get phase + conditions + credential state + agent health |
-| `PUT` | `/api/v1/workspaces/:id/credentials` | Set the LLM provider config *(deprecated — use secrets API)* |
-| `DELETE` | `/api/v1/workspaces/:id/credentials` | Remove provider config *(deprecated)* |
+| `POST` | `/api/v1/workspaces/:id/agent/reload` | Hot-reload agent credentials without pod restart |
+
+### Session Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/workspaces/:id/sessions` | List sessions (with backfill from agent) |
+| `POST` | `/api/v1/workspaces/:id/sessions/new` | Ensure an active session exists |
+| `PUT` | `/api/v1/workspaces/:id/sessions/:sessionId/title` | Rename a session |
+| `PUT` | `/api/v1/workspaces/:id/sessions/:sessionId/seen` | Mark session as seen |
+| `GET` | `/api/v1/workspaces/:id/sessions/active` | List active session IDs + max capacity |
 
 ### Sessions (proxied to opencode)
 
@@ -111,8 +129,27 @@ These endpoints are reverse-proxied to the workspace pod's `opencode serve` inst
 | `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/message` | Send a message; wait for the assistant reply |
 | `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/prompt` | Send a message asynchronously (`204 No Content`) |
 | `GET` | `/api/v1/workspaces/:id/sessions/:sessionId/message` | Fetch session history |
+| `GET` | `/api/v1/workspaces/:id/sessions/:sessionId` | Get a single session |
 | `POST` | `/api/v1/workspaces/:id/sessions/:sessionId/abort` | Abort a running session |
-| `GET` | `/api/v1/workspaces/:id/events` | SSE event stream |
+| `DELETE` | `/api/v1/workspaces/:id/sessions/:sessionId` | Delete a session |
+| `GET` | `/api/v1/workspaces/:id/session-events` | SSE event stream (session-scoped) |
+
+### Questions & Permissions (proxied to opencode)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/workspaces/:id/question` | List pending agent questions |
+| `POST` | `/api/v1/workspaces/:id/question/:requestID/reply` | Answer a question |
+| `POST` | `/api/v1/workspaces/:id/question/:requestID/reject` | Reject a question |
+| `GET` | `/api/v1/workspaces/:id/permission` | List pending permission requests |
+| `POST` | `/api/v1/workspaces/:id/permission/:requestID/reply` | Reply to a permission request |
+
+### Events
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/events` | User-scoped SSE event stream |
+| `POST` | `/api/v1/users/me/agents/reload` | Bulk reload agent credentials |
 
 ### Secrets
 
@@ -120,19 +157,76 @@ These endpoints are reverse-proxied to the workspace pod's `opencode serve` inst
 |--------|------|-------------|
 | `POST` | `/api/v1/secrets` | Create an encrypted secret |
 | `GET` | `/api/v1/secrets` | List secrets (metadata only, never values) |
+| `GET` | `/api/v1/secrets/audit` | Get audit log |
+| `GET` | `/api/v1/secrets/:id` | Get secret metadata |
 | `PUT` | `/api/v1/secrets/:id` | Update secret value |
 | `DELETE` | `/api/v1/secrets/:id` | Delete a secret |
+| `POST` | `/api/v1/secrets/:id/reveal` | Decrypt and reveal secret value |
+| `GET` | `/api/v1/secrets/:id/bindings` | Get secret's workspace bindings |
 | `PUT` | `/api/v1/workspaces/:id/bindings` | Set which secrets are bound to a workspace |
 | `GET` | `/api/v1/workspaces/:id/bindings` | List bound secrets |
+| `POST` | `/api/v1/workspaces/:id/reload-secrets` | Live-reload secrets into workspace pod |
+
+### Workspace Environment
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `PUT` | `/api/v1/workspaces/:id/env` | Set workspace environment variables |
+| `GET` | `/api/v1/workspaces/:id/env` | Get workspace environment variables |
+| `DELETE` | `/api/v1/workspaces/:id/env/:name` | Delete a workspace environment variable |
+| `GET` | `/api/v1/workspaces/:id/models` | List available models for workspace |
+| `PUT` | `/api/v1/workspaces/:id/model` | Set default model for workspace |
+
+### Terminal
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/workspaces/:id/terminal/ticket` | Get a terminal ticket (JWT) |
+| `GET` | `/api/v1/workspaces/:id/terminal` | WebSocket terminal proxy |
+
+### Admin Provider Credentials
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/admin/provider-credentials` | Create admin credential set |
+| `GET` | `/api/v1/admin/provider-credentials` | List admin credential sets |
+| `GET` | `/api/v1/admin/provider-credentials/:id` | Get one admin credential set |
+| `PUT` | `/api/v1/admin/provider-credentials/:id` | Update an admin credential set |
+| `DELETE` | `/api/v1/admin/provider-credentials/:id` | Delete an admin credential set |
+| `POST` | `/api/v1/admin/provider-credentials/:id/auto-apply` | Create auto-apply rule |
+| `GET` | `/api/v1/admin/provider-credentials/:id/auto-apply` | List auto-apply rules |
+| `DELETE` | `/api/v1/admin/provider-credentials/:id/auto-apply/:targetType/:targetId` | Delete auto-apply rule |
+
+### User Provider Credentials
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/provider-credentials` | Create a user credential |
+| `GET` | `/api/v1/provider-credentials` | List user credentials |
+| `GET` | `/api/v1/provider-credentials/:id` | Get one user credential |
+| `DELETE` | `/api/v1/provider-credentials/:id` | Delete a user credential |
+| `GET` | `/api/v1/provider-credentials/:id/bindings` | List credential's workspace bindings |
+| `POST` | `/api/v1/provider-credentials/:id/bind/:workspaceId` | Bind credential to workspace |
+| `DELETE` | `/api/v1/provider-credentials/:id/bind/:workspaceId` | Unbind credential from workspace |
 
 ### Settings
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/admin/settings` | Get all instance settings (admin only) |
+| `GET` | `/api/v1/admin/settings/schema` | Get settings schema (admin only) |
 | `PUT` | `/api/v1/admin/settings/:key` | Update an instance setting |
 | `GET` | `/api/v1/users/me/settings` | Get current user's settings |
+| `GET` | `/api/v1/users/me/settings/schema` | Get user settings schema |
 | `PUT` | `/api/v1/users/me/settings/:key` | Update a user setting |
+
+### Account
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/account/rotate-key` | Rotate encryption key |
+| `POST` | `/api/v1/account/change-password` | Change password |
+| `POST` | `/api/v1/account/recover` | Recover account |
 
 #### `?verbose=true` flag
 
@@ -178,35 +272,27 @@ WS=$(curl -sX POST "$API/api/v1/workspaces" \
 echo "workspace: $WS"
 ```
 
-### 3. Set the LLM provider on the workspace
+### 3. Store an LLM provider credential
 
-The `config` field is an opencode config document. The model and provider you declare here is what the workspace will use.
+Create a secret with your LLM provider API key, then bind it to the workspace:
 
 ```bash
-curl -X PUT "$API/api/v1/workspaces/$WS/credentials" \
+SECRET_ID=$(curl -sX POST "$API/api/v1/secrets" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "provider": "litellm",
-    "config": {
-      "$schema": "https://opencode.ai/config.json",
-      "provider": {
-        "litellm": {
-          "npm": "@ai-sdk/openai-compatible",
-          "name": "LiteLLM",
-          "options": {
-            "baseURL": "https://your-llm-gateway/v1",
-            "apiKey": "sk-..."
-          },
-          "models": { "default": { "name": "default" } }
-        }
-      },
-      "model": "litellm/default"
-    }
-  }'
+    "name": "my-llm-key",
+    "type": "llm-provider",
+    "value": "{\"providerID\":\"litellm\",\"apiKey\":\"sk-...\",\"baseURL\":\"https://your-llm-gateway/v1\"}"
+  }' | jq -r '.id')
+
+curl -sX PUT "$API/api/v1/workspaces/$WS/bindings" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"secretIds\":[\"$SECRET_ID\"]}"
 ```
 
-Any OpenAI-compatible base URL works. Model id format is `<provider-id>/<model-id>`.
+See the Secrets API above for full credential management.
 
 ### 4. Activate the workspace
 
@@ -243,15 +329,15 @@ curl -X POST "$API/api/v1/workspaces/$WS/sessions/$SID/message" \
 # → "PONG"
 ```
 
-### 6. Suspend / resume
+### 6. Suspend / activate
 
-Suspending the workspace deletes the pod but keeps the PVC. Resuming re-creates the pod. Session history (stored in the PVC) survives.
+Suspending the workspace deletes the pod but keeps the PVC. Activating re-creates the pod. Session history (stored in the PVC) survives.
 
 ```bash
 curl -X POST "$API/api/v1/workspaces/$WS/suspend" \
   -H "Authorization: Bearer $TOKEN"
 
-curl -X POST "$API/api/v1/workspaces/$WS/resume" \
+curl -X POST "$API/api/v1/workspaces/$WS/activate" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -270,9 +356,11 @@ api/                     # Go API service (Gin) + MCP server
     mocks/               # Service mocks for tests
 
 cmd/
-  workspace-agentd/      # Sidecar binary for workspace pods (health probes, session metadata)
-  mcp/                   # MCP server entrypoint
-  redact/                # Redact binary entrypoint
+  workspace-agentd/      # Sidecar binary for workspace pods (health probes, session metadata, secret reload)
+  mcp/                   # MCP server entrypoint (imports pkg/mcp)
+  redact/                # Redact binary entrypoint (imports pkg/redact)
+  repolint/              # Repository layout linter (imports pkg/repolint)
+  seal-key/              # Key sealing utility (AES-256-GCM passphrase wrapping)
 
 controller/              # Kubernetes operator (controller-runtime)
   internal/
@@ -288,16 +376,20 @@ runtimes/                # Container images
 
 pkg/                     # Shared Go packages
   apis/llmsafespace/v1/  # CRD Go types (Workspace, RuntimeEnvironment)
-  agentd/                # Workspace-agentd sidecar types
-  credentials/           # Credential set encryption service
+  agent/                 # Agent runtime abstraction and registry (opencode, claude-code, codex)
+  agentd/                # Workspace-agentd sidecar types and in-pod secret materializer
   secrets/               # Zero-knowledge secret store (key wrapping, encryption, audit)
   settings/              # Declarative settings schema + services
   kubernetes/            # K8s client with leader election + typed CRD access
   mcp/                   # MCP server + client
   redact/                # Secret redaction pipeline
+  repolint/              # Repository layout linter (migration numbering, CRD drift)
+  validation/            # Shared validation (secret names)
   types/                 # API DTOs
 
 charts/llmsafespace/     # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks)
+sdks/                    # Client SDKs (Go, TypeScript, Python, Java, VS Code extension)
+workers/inference-relay/ # Cloudflare Worker for free-tier inference relay
 local/                   # bootstrap.sh, test.sh, teardown.sh for kind
 design/                  # Architecture and design docs (EVOLUTION-V2.md is authoritative)
 ```

@@ -24,7 +24,7 @@ const maxLabelValueLength = 63
 // API server rejects the CRD with HTTP 500 at creation time; this is
 // exactly the bug surfaced by the worklog 0035 cluster validation:
 //
-//	"Sandbox.llmsafespace.dev is invalid: metadata.labels: Invalid value:
+//	"Workspace.llmsafespace.dev is invalid: metadata.labels: Invalid value:
 //	 \"python:3.11\": a valid label must be an empty string or consist of
 //	 alphanumeric characters, '-', '_' or '.', and must start and end with
 //	 an alphanumeric character"

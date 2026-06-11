@@ -620,7 +620,7 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 	return admission.Allowed("workspace is valid")
 }
 
-// InjectDecoder retained for backwards compatibility (see SandboxValidator).
+// InjectDecoder retained for backwards compatibility (see WorkspaceValidator).
 func (v *WorkspaceValidator) InjectDecoder(d admission.Decoder) error {
 	v.Decoder = d
 	return nil

@@ -145,7 +145,7 @@ func WebSocketMetricsMiddleware(metricsService interfaces.MetricsService) gin.Ha
 // getNormalizedPath returns a normalized path to reduce cardinality
 func getNormalizedPath(path string) string {
 	// Replace path parameters with placeholders
-	// Example: /api/v1/sandboxes/:id/execute -> /api/v1/sandboxes/{id}/execute
+	// Example: /api/v1/workspaces/:id/sessions/:sessionId/message -> /api/v1/workspaces/{id}/sessions/{sessionId}/message
 	re := regexp.MustCompile(`:[^/]+`)
 	return re.ReplaceAllString(path, "{id}")
 }

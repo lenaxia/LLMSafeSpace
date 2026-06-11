@@ -152,12 +152,6 @@ func TestWorkspacePhase_Constants(t *testing.T) {
 	}
 }
 
-// TestSandbox_JSONRoundTrip verifies a fully-populated Sandbox round-trips
-// through JSON without losing any field.
-
-// TestSandbox_JSONUsesSecurityContextKey ensures the JSON tag survived the
-// SecurityCtx → SecurityContext field rename.
-
 // TestRuntimeEnvironment_JSONRoundTrip verifies the unified RuntimeEnvironment
 // round-trips correctly with the ctrl-side field names.
 func TestRuntimeEnvironment_JSONRoundTrip(t *testing.T) {
@@ -209,8 +203,6 @@ func TestRuntimeEnvironment_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, original.Spec.PreInstalledPackages, roundTrip.Spec.PreInstalledPackages)
 	assert.Equal(t, original.Status.Available, roundTrip.Status.Available)
 }
-
-// TestSandboxProfile_JSONRoundTrip verifies the unified SandboxProfile shape.
 
 // TestWorkspace_JSONRoundTrip verifies the Workspace round-trips and that
 // WorkspaceCondition.Status is rendered as a plain string enum.
@@ -275,7 +267,7 @@ func TestWorkspace_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, WorkspaceConditionReady, roundTrip.Status.Conditions[0].Type)
 }
 
-// TestSandbox_DeepCopy verifies generated DeepCopy creates an independent copy.
+// TestWorkspace_DeepCopy verifies generated DeepCopy creates an independent copy.
 
 func TestWorkspace_DeepCopy(t *testing.T) {
 	original := &Workspace{

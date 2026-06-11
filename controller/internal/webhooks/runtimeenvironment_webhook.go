@@ -100,7 +100,7 @@ func (v *RuntimeEnvironmentValidator) Handle(ctx context.Context, req admission.
 	return admission.Allowed("runtime environment is valid")
 }
 
-// InjectDecoder retained for backwards compatibility (see SandboxValidator).
+// InjectDecoder retained for backwards compatibility (see RuntimeEnvironmentValidator).
 func (v *RuntimeEnvironmentValidator) InjectDecoder(d admission.Decoder) error {
 	v.Decoder = d
 	return nil
