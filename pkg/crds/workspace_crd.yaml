@@ -261,14 +261,6 @@ spec:
                         type: string
                       title:
                         type: string
-                      status:
-                        type: string
-                        enum: ["idle", "busy"]
-                        description: "Activity status of the session as reported by agentd."
-                      contextUsed:
-                        type: integer
-                        format: int64
-                        description: "LLM prompt tokens consumed by this session in the last completed step."
                       lastActivityAt:
                         type: string
                         format: date-time
