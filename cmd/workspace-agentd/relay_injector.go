@@ -376,6 +376,9 @@ func startRelayInjector(cfg relayInjectorConfig) {
 	if cfg.RelayURL == "" {
 		return
 	}
+	// Capture the logger at call-site so the goroutine does not race with
+	// test code that reassigns the package-level log variable.
+	lg := log
 	go func() {
 		// Wait up to 5 minutes for opencode to be healthy.
 		deadline := time.Now().Add(5 * time.Minute)
@@ -386,14 +389,14 @@ func startRelayInjector(cfg relayInjectorConfig) {
 			time.Sleep(2 * time.Second)
 		}
 		if !cfg.HealthCheck() {
-			log.Warn("relay injector: opencode did not become healthy in time, skipping relay config")
+			lg.Warn("relay injector: opencode did not become healthy in time, skipping relay config")
 			relayInjectorOutcomes.WithLabelValues("unhealthy_timeout").Inc()
 			return
 		}
 
 		// Check whether to skip relay.
 		if skip, reason := shouldSkipRelay(cfg.AuthJSONPath); skip {
-			log.Info("relay injector: skipping relay injection", zap.String("reason", reason))
+			lg.Info("relay injector: skipping relay injection", zap.String("reason", reason))
 			relayInjectorOutcomes.WithLabelValues("skipped_personal_key").Inc()
 			return
 		}
@@ -410,45 +413,45 @@ func startRelayInjector(cfg relayInjectorConfig) {
 			var fetchErr error
 			models, fetchErr = fetchFreeModels(cfg.OpenCodeBaseURL, cfg.OpenCodePassword)
 			if fetchErr != nil {
-				log.Warn("relay injector: failed to fetch free models, skipping", zap.Error(fetchErr))
+				lg.Warn("relay injector: failed to fetch free models, skipping", zap.Error(fetchErr))
 				return
 			}
 			if len(models) > 0 {
 				break
 			}
 			if time.Now().After(fetchDeadline) {
-				log.Warn("relay injector: no free opencode models found after 30s wait, skipping relay config")
+				lg.Warn("relay injector: no free opencode models found after 30s wait, skipping relay config")
 				relayInjectorOutcomes.WithLabelValues("no_free_models").Inc()
 				return
 			}
-			log.Info("relay injector: no free models yet (catalog still initializing), retrying in 5s")
+			lg.Info("relay injector: no free models yet (catalog still initializing), retrying in 5s")
 			time.Sleep(5 * time.Second)
 		}
-		log.Info("relay injector: fetched free models", zap.Int("count", len(models)))
+		lg.Info("relay injector: fetched free models", zap.Int("count", len(models)))
 
 		// Build and write the relay config.
 		cfgBytes, err := buildRelayConfig(cfg.AgentConfigPath, cfg.RelayURL, models)
 		if err != nil {
-			log.Warn("relay injector: failed to build relay config", zap.Error(err))
+			lg.Warn("relay injector: failed to build relay config", zap.Error(err))
 			return
 		}
 		if err := os.WriteFile(cfg.AgentConfigPath, cfgBytes, 0o600); err != nil {
-			log.Warn("relay injector: failed to write agent config", zap.Error(err))
+			lg.Warn("relay injector: failed to write agent config", zap.Error(err))
 			relayInjectorOutcomes.WithLabelValues("config_write_failed").Inc()
 			return
 		}
-		log.Info("relay injector: wrote relay config",
+		lg.Info("relay injector: wrote relay config",
 			zap.String("path", cfg.AgentConfigPath),
 			zap.Int("models", len(models)),
 			zap.String("relayHost", relayURLHost(cfg.RelayURL)))
 
 		// Update auth.json with the opencode-relay entry.
 		if err := updateAuthJSONForRelay(cfg.AuthJSONPath); err != nil {
-			log.Warn("relay injector: failed to update auth.json", zap.Error(err))
+			lg.Warn("relay injector: failed to update auth.json", zap.Error(err))
 			relayInjectorOutcomes.WithLabelValues("auth_write_failed").Inc()
 			return
 		}
-		log.Info("relay injector: updated auth.json with opencode-relay entry")
+		lg.Info("relay injector: updated auth.json with opencode-relay entry")
 
 		// Store the model list so reloadSecretsHandler can re-merge relay config
 		// after any subsequent FlushProviders call (credential bind) overwrites
@@ -459,6 +462,6 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		// Kill opencode — the supervisor restarts it and reads the new config.
 		cfg.KillOpenCode()
 		relayInjectorOutcomes.WithLabelValues("success").Inc()
-		log.Info("relay injector: triggered opencode restart to apply relay config")
+		lg.Info("relay injector: triggered opencode restart to apply relay config")
 	}()
 }

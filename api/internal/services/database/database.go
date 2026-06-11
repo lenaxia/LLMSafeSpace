@@ -15,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lib/pq"
 )
 
 // Service handles database operations
@@ -584,8 +585,8 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
         INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy,
-                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, allowed_cidrs)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     `
 	var expiresAt interface{}
 	if apiKey.ExpiresAt != nil {
@@ -610,6 +611,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 		apiKey.WrappedDEK,
 		apiKey.DekSynced,
 		apiKey.KeyCiphertext,
+		toNullableStringArray(apiKey.AllowedCIDRs),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create api key: %w", err)
@@ -619,7 +621,8 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	query := `
         SELECT id, user_id, key, name, active, created_at, expires_at,
-               COALESCE(decrypt_access, false), COALESCE(dek_synced, false)
+               COALESCE(decrypt_access, false), COALESCE(dek_synced, false),
+               allowed_cidrs
         FROM api_keys
         WHERE user_id = $1
         ORDER BY created_at DESC
@@ -635,7 +638,7 @@ func (s *Service) ListAPIKeys(ctx context.Context, userID string) ([]*types.APIK
 		var k types.APIKey
 		var keyStr string
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt, &k.DecryptAccess, &k.DekSynced); err != nil {
+		if err := rows.Scan(&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt, &k.DecryptAccess, &k.DekSynced, pq.Array(&k.AllowedCIDRs)); err != nil {
 			return nil, fmt.Errorf("failed to scan api key: %w", err)
 		}
 		k.Prefix = "lsp_"
@@ -686,7 +689,8 @@ func (s *Service) DeleteAPIKey(ctx context.Context, userID, keyID string) error 
 func (s *Service) GetAPIKeyRecordByHash(ctx context.Context, keyHash string) (*types.APIKey, error) {
 	query := `
 		SELECT id, user_id, key, name, active, created_at, expires_at,
-		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext
+		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext,
+		       allowed_cidrs
 		FROM api_keys
 		WHERE key = $1 AND active = true
 	`
@@ -699,6 +703,7 @@ func (s *Service) GetAPIKeyRecordByHash(ctx context.Context, keyHash string) (*t
 	err := s.DB.QueryRowContext(ctx, query, keyHash).Scan(
 		&k.ID, &k.UserID, new(string), &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
 		&decryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext,
+		pq.Array(&k.AllowedCIDRs),
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1004,4 +1009,11 @@ func (s *Service) ListPendingReloadWorkspaces(ctx context.Context, userID string
 		return nil, fmt.Errorf("iterate pending reload workspaces: %w", err)
 	}
 	return items, nil
+}
+
+func toNullableStringArray(s []string) interface{} {
+	if len(s) == 0 {
+		return nil
+	}
+	return pq.Array(s)
 }

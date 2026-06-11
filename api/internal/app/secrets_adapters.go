@@ -14,7 +14,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
@@ -437,6 +439,40 @@ func (u *bcryptPasswordUpdater) UpdatePasswordHash(ctx context.Context, userID s
 	}
 	hashStr := string(hash)
 	return u.db.UpdateUser(ctx, userID, types.UserUpdates{PasswordHash: &hashStr})
+}
+
+func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyProvider {
+	provider := cfg.Security.RootKeyProvider
+	switch provider {
+	case "sealed":
+		if cfg.Security.SealedKeyPath == "" || cfg.Security.PassphrasePath == "" {
+			log.Error("sealed root key provider requires both sealedKeyPath and passphrasePath", nil)
+			return nil
+		}
+		p, err := secrets.NewSealedKeyProvider(cfg.Security.SealedKeyPath, cfg.Security.PassphrasePath)
+		if err != nil {
+			log.Error("failed to initialize sealed root key provider", err)
+			return nil
+		}
+		return p
+	case "static", "":
+		mk := dekMasterKey()
+		if mk == nil {
+			return nil
+		}
+		p, err := secrets.NewStaticKeyProvider(mk)
+		if err != nil {
+			log.Error("failed to initialize static root key provider", err)
+			return nil
+		}
+		if provider == "static" {
+			log.Warn("using static root key provider — intended for development only; use sealed/kms/vault in production")
+		}
+		return p
+	default:
+		log.Error("unknown root key provider", nil, "provider", provider)
+		return nil
+	}
 }
 
 // dekMasterKey derives the DEK cache encryption key from the master secret.

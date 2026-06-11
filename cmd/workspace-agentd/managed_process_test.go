@@ -46,7 +46,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // TestHelperProcess is the entry point used when the test binary is
@@ -302,9 +301,6 @@ func newTestManagedProcess(t *testing.T, port int, sigtermDelayMS int) *managedP
 // lines about start/exit.
 func withTestLogger(t *testing.T) {
 	t.Helper()
-	prev := log
-	log = zap.NewNop()
-	t.Cleanup(func() { log = prev })
 }
 
 // freeTCPPort returns a TCP port number that is currently free on

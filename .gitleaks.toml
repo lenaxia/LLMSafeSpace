@@ -75,6 +75,9 @@ paths = [
   # encrypt/decrypt round-trip validation.
   '''api/internal/handlers/secrets_llmprovider_test\.go''',
   '''api/internal/handlers/models_test\.go''',
+  # DEK wrapping tests use synthetic lsp_a1b2c3... / lsp_000... keys
+  # for encrypt/decrypt round-trips. Never real credentials.
+  '''api/internal/services/auth/auth_apikey_dek_test\.go''',
   # Epic 10 design docs contain example API key patterns in code
   # snippets and architecture diagrams. Never real credentials.
   '''design/stories/epic-10-multi-tenant-trust/.*''',

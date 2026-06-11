@@ -23,8 +23,8 @@ const (
 
 	labelUserID = "user-id"
 
-	sseConnRateLimit   = 10
-	sseConnRateWindow  = time.Minute
+	sseConnRateLimit  = 10
+	sseConnRateWindow = time.Minute
 )
 
 type sseConnAttempt struct {

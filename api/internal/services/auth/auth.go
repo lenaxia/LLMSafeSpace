@@ -7,9 +7,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"runtime"
 	"strings"
 	"time"
 
@@ -51,7 +54,16 @@ func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
 // SetMasterKey sets the server master key used for encrypting API key ciphertext
 // (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACE_MASTER_SECRET.
 func (s *Service) SetMasterKey(key []byte) {
-	s.masterKey = key
+	provider, err := secrets.NewStaticKeyProvider(key)
+	if err != nil {
+		return
+	}
+	s.rootKeyProvider = provider
+}
+
+// SetRootKeyProvider sets the RootKeyProvider for API key at-rest encryption.
+func (s *Service) SetRootKeyProvider(provider secrets.RootKeyProvider) {
+	s.rootKeyProvider = provider
 }
 
 const defaultAPIKeyDEKTTL = 24 * time.Hour
@@ -103,7 +115,7 @@ type Service struct {
 	tokenDuration      time.Duration
 	keyService         KeyServiceInterface
 	instanceSettings   *settings.InstanceService
-	masterKey          []byte
+	rootKeyProvider    secrets.RootKeyProvider
 }
 
 // Start initializes the auth service
@@ -339,9 +351,14 @@ func (s *Service) GenerateTokenWithDuration(userID string, duration time.Duratio
 
 // ValidateToken validates a JWT token or API key
 func (s *Service) ValidateToken(tokenString string) (string, error) {
-	// Check if token is an API key
+	return s.ValidateTokenWithClientIP(tokenString, "")
+}
+
+// ValidateTokenWithClientIP validates a JWT token or API key, enforcing
+// allowed_cidrs when clientIP is non-empty.
+func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (string, error) {
 	if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-		return s.validateAPIKey(tokenString)
+		return s.validateAPIKey(tokenString, clientIP)
 	}
 
 	// Check if token is cached
@@ -420,8 +437,9 @@ func (s *Service) ValidateToken(tokenString string) (string, error) {
 	return userID, nil
 }
 
-// validateAPIKey validates an API key (internal method)
-func (s *Service) validateAPIKey(apiKey string) (string, error) {
+// validateAPIKey validates an API key (internal method).
+// clientIP is optional; when provided, allowed_cidrs is enforced.
+func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
@@ -429,6 +447,16 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		if cachedUserID == "revoked" {
 			return "", errors.New("token has been revoked")
+		}
+		if clientIP != "" && s.rootKeyProvider != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
+			h := sha256.Sum256([]byte(apiKey))
+			keyHash := hex.EncodeToString(h[:])
+			keyRec, dbErr := s.dbService.GetAPIKeyRecordByHash(ctx, keyHash)
+			if dbErr == nil && keyRec != nil && len(keyRec.AllowedCIDRs) > 0 {
+				if !ipInAnyCIDR(clientIP, keyRec.AllowedCIDRs) {
+					return "", errors.New("request source IP not in allowed ranges for this key")
+				}
+			}
 		}
 		return cachedUserID, nil
 	}
@@ -450,7 +478,52 @@ func (s *Service) validateAPIKey(apiKey string) (string, error) {
 		return "", errors.New("invalid API key")
 	}
 
-	if s.keyService != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
+	if s.rootKeyProvider != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
+		keyRec, dbErr := s.dbService.GetAPIKeyRecordByHash(ctx, keyHash)
+		if dbErr != nil {
+			s.logger.Error("Failed to get API key record", dbErr, "key_hash", keyHash)
+		} else if keyRec != nil {
+			if len(keyRec.AllowedCIDRs) > 0 && clientIP != "" {
+				if !ipInAnyCIDR(clientIP, keyRec.AllowedCIDRs) {
+					return "", errors.New("request source IP not in allowed ranges for this key")
+				}
+			}
+
+			if len(keyRec.KeyCiphertext) > 0 {
+				storedRaw, decErr := s.rootKeyProvider.Decrypt(ctx, keyRec.KeyCiphertext)
+				if decErr != nil {
+					s.logger.Error("Failed to decrypt key_ciphertext", decErr, "key_id", keyRec.ID)
+				} else {
+					if subtle.ConstantTimeCompare(storedRaw, []byte(apiKey)) != 1 {
+						zeroBytes(storedRaw)
+						return "", errors.New("invalid API key")
+					}
+					zeroBytes(storedRaw)
+				}
+			}
+
+			if keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
+				if !keyRec.DekSynced {
+					s.logger.Warn("API key DEK re-sync in progress", "key_id", keyRec.ID)
+				} else {
+					apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+					if deriveErr != nil {
+						s.logger.Error("Failed to derive API KEK", deriveErr)
+					} else {
+						dek, decErr := secrets.DecryptSecret(apiKEK, keyRec.WrappedDEK)
+						if decErr != nil {
+							s.logger.Error("Failed to unwrap DEK for API key", decErr, "key_id", keyRec.ID)
+						} else {
+							sessionID := "apikey:" + pkgutil.HashString(apiKey)
+							if cacheErr := s.keyService.CacheDEK(ctx, sessionID, dek, s.apiKeyDEKTTL()); cacheErr != nil {
+								s.logger.Error("Failed to cache DEK for API key session", cacheErr, "session_id", sessionID)
+							}
+						}
+					}
+				}
+			}
+		}
+	} else if s.keyService != nil && utilities.IsAPIKey(apiKey, s.config.Auth.APIKeyPrefix) {
 		keyRec, dbErr := s.dbService.GetAPIKeyRecordByHash(ctx, keyHash)
 		if dbErr != nil {
 			s.logger.Error("Failed to get API key record for DEK check", dbErr, "key_hash", keyHash)
@@ -726,19 +799,20 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 	}
 
 	apiKey := &types.APIKey{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Name:      req.Name,
-		Key:       keyHash,
-		Prefix:    keyPrefix,
-		Active:    true,
-		CreatedAt: time.Now(),
-		Legacy:    false,
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		Name:         req.Name,
+		Key:          keyHash,
+		Prefix:       keyPrefix,
+		Active:       true,
+		CreatedAt:    time.Now(),
+		Legacy:       false,
+		AllowedCIDRs: req.AllowedCIDRs,
 	}
 
 	if req.DecryptAccess {
-		if s.masterKey == nil {
-			return nil, errors.New("server master key not configured; decrypt_access keys unavailable")
+		if s.rootKeyProvider == nil {
+			return nil, errors.New("server root key not configured; decrypt_access keys unavailable")
 		}
 		if sessionID == "" {
 			return nil, errors.New("JWT session required to create a key with decrypt_access=true")
@@ -767,15 +841,17 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, fmt.Errorf("failed to wrap DEK: %w", err)
 		}
 
-		keyCiphertext, err := secrets.EncryptSecret(s.masterKey, []byte(keyStr))
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt key ciphertext: %w", err)
-		}
-
 		apiKey.DecryptAccess = true
 		apiKey.KekSalt = kekSalt
 		apiKey.WrappedDEK = wrappedDEK
 		apiKey.DekSynced = true
+	}
+
+	if s.rootKeyProvider != nil {
+		keyCiphertext, err := s.rootKeyProvider.Encrypt(ctx, []byte(keyStr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt key ciphertext: %w", err)
+		}
 		apiKey.KeyCiphertext = keyCiphertext
 	}
 
@@ -835,7 +911,7 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate token
-		userID, err := s.ValidateToken(tokenString)
+		userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 		if err != nil {
 			c.JSON(401, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
@@ -871,7 +947,7 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
-			userID, err := s.ValidateToken(tokenString)
+			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				c.Set("userID", userID)
 				if jti := utilities.ExtractJTI(tokenString); jti != "" {
@@ -933,4 +1009,28 @@ func (s *Service) parseTokenAcceptingRotatedKeys(token string) (*jwt.Token, erro
 		return nil, lastErr
 	}
 	return nil, errors.New("token signature does not verify against any active or previous key")
+}
+
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+	runtime.KeepAlive(b)
+}
+
+func ipInAnyCIDR(clientIP string, cidrs []string) bool {
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

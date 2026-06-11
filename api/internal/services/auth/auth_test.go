@@ -383,7 +383,7 @@ func TestValidateAPIKey(t *testing.T) {
 	// Test case: Valid API key (cached) — cache hit before hash lookup
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_valid").Return("user123", nil).Once()
 
-	userID, err := service.validateAPIKey("api_valid")
+	userID, err := service.validateAPIKey("api_valid", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
@@ -399,7 +399,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_new").Return(user, nil).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_new", "user456", mock.Anything).Return(nil).Once()
 
-	userID, err = service.validateAPIKey("api_new")
+	userID, err = service.validateAPIKey("api_new", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "user456", userID)
 
@@ -409,7 +409,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiInvalidHash).Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_invalid").Return((*types.User)(nil), nil).Once()
 
-	userID, err = service.validateAPIKey("api_invalid")
+	userID, err = service.validateAPIKey("api_invalid", "")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "invalid API key")
@@ -419,7 +419,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:api_error").Return("", errors.New("not found")).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiErrorHash).Return((*types.User)(nil), errors.New("database error")).Once()
 
-	userID, err = service.validateAPIKey("api_error")
+	userID, err = service.validateAPIKey("api_error", "")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "database error")

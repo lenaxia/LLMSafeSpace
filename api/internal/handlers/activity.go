@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 
@@ -87,7 +88,13 @@ func (t *ActivityTracker) Flush() {
 
 	for _, item := range toFlush {
 		if err := t.flushOne(context.Background(), item.id, item.time); err != nil {
-			t.logger.Error("Failed to flush activity", err, "workspaceID", item.id)
+			if apierrors.IsNotFound(err) {
+				// Workspace has been deleted — remove its entry from the tracker
+				// so it does not accumulate unboundedly across workspace lifecycles.
+				t.Delete(item.id)
+			} else {
+				t.logger.Error("Failed to flush activity", err, "workspaceID", item.id)
+			}
 		}
 	}
 }
@@ -96,6 +103,16 @@ func (t *ActivityTracker) PendingCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.activity)
+}
+
+// Delete removes a workspace from both the activity and lastFlush maps.
+// Called when a workspace is permanently deleted (Terminated phase) so the
+// tracker does not accumulate entries for gone workspaces indefinitely.
+func (t *ActivityTracker) Delete(workspaceID string) {
+	t.mu.Lock()
+	delete(t.activity, workspaceID)
+	delete(t.lastFlush, workspaceID)
+	t.mu.Unlock()
 }
 
 func (t *ActivityTracker) runFlushLoop() {
