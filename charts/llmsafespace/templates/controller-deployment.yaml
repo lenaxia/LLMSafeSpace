@@ -31,13 +31,17 @@ spec:
       securityContext:
         {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
       containers:
+        {{- $metricsAddr := .Values.controller.metricsAddr }}
+        {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
+        {{- $metricsAddr = "0.0.0.0:8080" }}
+        {{- end }}
         - name: manager
           image: {{ include "llmsafespace.controller.image" . }}
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.controller.containerSecurityContext | nindent 12 }}
           args:
-            - --metrics-addr={{ .Values.controller.metricsAddr }}
+            - --metrics-addr={{ $metricsAddr }}
             - --health-probe-bind-address={{ .Values.controller.probeAddr }}
             {{- if .Values.controller.leaderElection.enabled }}
             - --enable-leader-election=true
@@ -83,7 +87,7 @@ spec:
             {{- end }}
           ports:
             - name: metrics
-              containerPort: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}
+              containerPort: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}
               protocol: TCP
             - name: probe
               containerPort: {{ .Values.controller.probeAddr | regexFind "[0-9]+$" | atoi }}

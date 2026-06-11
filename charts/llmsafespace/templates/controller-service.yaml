@@ -1,4 +1,8 @@
 {{- if .Values.controller.enabled }}
+{{- $metricsAddr := .Values.controller.metricsAddr }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
+{{- $metricsAddr = "0.0.0.0:8080" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,7 +14,7 @@ spec:
   type: ClusterIP
   ports:
     - name: metrics
-      port: {{ .Values.controller.metricsAddr | regexFind "[0-9]+$" | atoi }}
+      port: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}
       targetPort: metrics
       protocol: TCP
   selector:

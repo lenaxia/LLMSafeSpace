@@ -1453,3 +1453,254 @@ func TestF133_ControllerSecretsAreNamespaceScoped(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Monitoring — Grafana dashboards, PrometheusRule, ServiceMonitor
+// =============================================================================
+
+// TestMonitoring_DisabledByDefault_NoResourcesRendered verifies the master
+// toggle defaults to false and no monitoring resources are rendered.
+func TestMonitoring_DisabledByDefault_NoResourcesRendered(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		require.NotEqual(t, "PrometheusRule", k,
+			"PrometheusRule must NOT render when monitoring.enabled is false (default)")
+	}
+	for _, d := range docs {
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		require.False(t, strings.Contains(name, "grafana-dashboards"),
+			"dashboard ConfigMap must NOT render when monitoring is disabled")
+	}
+}
+
+// TestMonitoring_Enabled_RendersAllResources verifies all monitoring resources
+// appear when the master toggle is on.
+func TestMonitoring_Enabled_RendersAllResources(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+
+	var sawDashboards, sawPrometheusRule, sawAPIServMon, sawCtrlServMon bool
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+
+		if k == "ConfigMap" && strings.Contains(name, "grafana-dashboards") {
+			sawDashboards = true
+		}
+		if k == "PrometheusRule" {
+			sawPrometheusRule = true
+		}
+		if k == "ServiceMonitor" && strings.Contains(name, "-api") {
+			sawAPIServMon = true
+		}
+		if k == "ServiceMonitor" && strings.Contains(name, "-controller") {
+			sawCtrlServMon = true
+		}
+	}
+	require.True(t, sawDashboards, "dashboard ConfigMap must render")
+	require.True(t, sawPrometheusRule, "PrometheusRule must render")
+	require.True(t, sawAPIServMon, "API ServiceMonitor must render")
+	require.True(t, sawCtrlServMon, "controller ServiceMonitor must render")
+}
+
+// TestMonitoring_DashboardsDisabled_NoConfigMap verifies the sub-toggle
+// can independently disable dashboards while keeping alerts and monitors.
+func TestMonitoring_DashboardsDisabled_NoConfigMap(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n  dashboards:\n    enabled: false\n")
+	for _, d := range docs {
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		require.False(t, strings.Contains(name, "grafana-dashboards"),
+			"dashboard ConfigMap must NOT render when dashboards.enabled=false")
+	}
+	var sawPrometheusRule bool
+	for _, d := range docs {
+		if d["kind"] == "PrometheusRule" {
+			sawPrometheusRule = true
+		}
+	}
+	require.True(t, sawPrometheusRule, "PrometheusRule must still render when only dashboards disabled")
+}
+
+// TestMonitoring_ServiceMonitorsDisabled_NoServiceMonitors verifies the
+// sub-toggle can independently disable ServiceMonitors.
+func TestMonitoring_ServiceMonitorsDisabled_NoServiceMonitors(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n  serviceMonitors:\n    enabled: false\n")
+	for _, d := range docs {
+		require.NotEqual(t, "ServiceMonitor", d["kind"],
+			"ServiceMonitor must NOT render when serviceMonitors.enabled=false")
+	}
+}
+
+// TestMonitoring_ControllerMetricsAddrOverride verifies the controller
+// deployment uses 0.0.0.0:8080 for metrics when ServiceMonitors are enabled.
+func TestMonitoring_ControllerMetricsAddrOverride(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args)
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--metrics-addr=") {
+			found = a
+			break
+		}
+	}
+	require.Equal(t, "--metrics-addr=0.0.0.0:8080", found,
+		"controller must override metricsAddr to 0.0.0.0:8080 when ServiceMonitors enabled")
+}
+
+// TestMonitoring_ControllerMetricsAddrDefault_NoOverride verifies the
+// controller keeps loopback binding when monitoring is off.
+func TestMonitoring_ControllerMetricsAddrDefault_NoOverride(t *testing.T) {
+	docs := helmTemplate(t, "")
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args)
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--metrics-addr=") {
+			found = a
+			break
+		}
+	}
+	require.Equal(t, "--metrics-addr=127.0.0.1:8080", found,
+		"controller must keep default loopback binding when monitoring is off")
+}
+
+// TestMonitoring_PrometheusRulesDisabled_NoRules verifies the sub-toggle
+// can independently disable PrometheusRules.
+func TestMonitoring_PrometheusRulesDisabled_NoRules(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n  prometheusRules:\n    enabled: false\n")
+	for _, d := range docs {
+		require.NotEqual(t, "PrometheusRule", d["kind"],
+			"PrometheusRule must NOT render when prometheusRules.enabled=false")
+	}
+}
+
+// TestMonitoring_DashboardConfigMap_ContainsJSON verifies the dashboard
+// ConfigMap data keys include the expected dashboard files.
+func TestMonitoring_DashboardConfigMap_ContainsJSON(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" {
+			_, _ = d["metadata"].(map[string]any)
+			if strings.Contains(metaName(d), "grafana-dashboards") {
+				cm = d
+				break
+			}
+		}
+	}
+	require.NotNil(t, cm, "dashboard ConfigMap must exist")
+	data, _ := cm["data"].(map[string]any)
+	require.Contains(t, data, "operational.json", "ConfigMap must contain operational.json")
+	require.Contains(t, data, "billing.json", "ConfigMap must contain billing.json")
+}
+
+// TestMonitoring_DashboardConfigMap_HasGrafanaLabel verifies the
+// grafana_dashboard label is present for the sidecar importer.
+func TestMonitoring_DashboardConfigMap_HasGrafanaLabel(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" {
+			if strings.Contains(metaName(d), "grafana-dashboards") {
+				cm = d
+				break
+			}
+		}
+	}
+	require.NotNil(t, cm)
+	meta, _ := cm["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	require.Equal(t, "1", labels["grafana_dashboard"],
+		"dashboard ConfigMap must have grafana_dashboard=1 label for sidecar import")
+}
+
+// TestMonitoring_NamespaceOverride verifies all monitoring resources respect
+// the namespace override.
+func TestMonitoring_NamespaceOverride(t *testing.T) {
+	docs := helmTemplate(t, `monitoring:
+  enabled: true
+  dashboards:
+    namespace: monitoring
+  prometheusRules:
+    namespace: monitoring
+  serviceMonitors:
+    namespace: monitoring
+`)
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		if k == "PrometheusRule" || k == "ServiceMonitor" {
+			meta, _ := d["metadata"].(map[string]any)
+			ns, _ := meta["namespace"].(string)
+			require.Equal(t, "monitoring", ns,
+				"%s namespace must match override", k)
+		}
+		if k == "ConfigMap" {
+			meta, _ := d["metadata"].(map[string]any)
+			name, _ := meta["name"].(string)
+			if strings.Contains(name, "grafana-dashboards") {
+				ns, _ := meta["namespace"].(string)
+				require.Equal(t, "monitoring", ns,
+					"dashboard ConfigMap namespace must match override")
+			}
+		}
+	}
+}
+
+// TestMonitoring_PrometheusRule_ContainsAllAlerts verifies all expected
+// alert names are present in the rendered PrometheusRule.
+func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var rule map[string]any
+	for _, d := range docs {
+		if d["kind"] == "PrometheusRule" {
+			rule = d
+			break
+		}
+	}
+	require.NotNil(t, rule, "PrometheusRule must be rendered")
+
+	spec, _ := rule["spec"].(map[string]any)
+	groups, _ := spec["groups"].([]any)
+
+	alertNames := map[string]bool{}
+	for _, g := range groups {
+		gm, _ := g.(map[string]any)
+		rules, _ := gm["rules"].([]any)
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if name, ok := rm["alert"].(string); ok {
+				alertNames[name] = true
+			}
+		}
+	}
+
+	expected := []string{
+		"LLMSafeSpaceHighAPIErrorRate",
+		"LLMSafeSpaceHighAPIErrorRateCritical",
+		"LLMSafeSpaceHighLatency",
+		"LLMSafeSpaceHighAuthFailures",
+		"LLMSafeSpaceSSEBrokerDroppingEvents",
+		"LLMSafeSpaceReconciliationErrors",
+		"LLMSafeSpaceWorkspaceFailures",
+		"LLMSafeSpaceWorkspaceCreationSlow",
+		"LLMSafeSpaceRecoveryBackoffHigh",
+		"LLMSafeSpaceSafeModeActive",
+		"LLMSafeSpaceHighConsecutiveFailures",
+		"LLMSafeSpaceStatusUpdateConflicts",
+		"LLMSafeSpaceInitContainerSlow",
+		"LLMSafeSpaceAgentReloadFailures",
+		"LLMSafeSpaceAgentdSlowStartup",
+		"LLMSafeSpaceRelayInjectorFailures",
+		"LLMSafeSpaceHighInferenceCostRate",
+		"LLMSafeSpaceWorkspaceDiskUsageHigh",
+		"LLMSafeSpaceLegacyAPIKeysRemaining",
+	}
+	for _, expectedName := range expected {
+		require.True(t, alertNames[expectedName],
+			"PrometheusRule must contain alert %q", expectedName)
+	}
+}

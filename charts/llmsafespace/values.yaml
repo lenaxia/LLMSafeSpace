@@ -660,3 +660,65 @@ cloudflare:
   accountId: ""
   # Name of the CF Worker script to push the secret to.
   workerName: "llmsafespace-inference-relay"
+
+# ----------------------------------------------------------------------------
+# Monitoring (Grafana dashboards, Prometheus alerts, ServiceMonitors)
+# ----------------------------------------------------------------------------
+# When enabled, the chart deploys Grafana dashboard ConfigMaps (picked up by
+# the Grafana sidecar via the grafana_dashboard label), PrometheusRule
+# resources (alerting rules for Alertmanager), and ServiceMonitor resources
+# for Prometheus scraping.
+#
+# Requires:
+#   - Grafana with the sidecar dashboard importer (grafana_dashboard: "1" label)
+#   - Prometheus Operator (for PrometheusRule and ServiceMonitor CRDs)
+#
+# All sub-sections can be enabled/disabled independently.
+monitoring:
+  enabled: false
+
+  # Grafana dashboard ConfigMaps.
+  dashboards:
+    enabled: true
+    # Namespace to deploy dashboard ConfigMaps into. Defaults to the release
+    # namespace. Override to deploy into Grafana's watching namespace.
+    namespace: ""
+    # Labels applied to the dashboard ConfigMap. The grafana_dashboard label
+    # is required for the Grafana sidecar to import the dashboard.
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}
+
+  # PrometheusRule resources (alerting rules).
+  prometheusRules:
+    enabled: true
+    # Namespace for PrometheusRule resources. Defaults to the release namespace.
+    # Override to match where the Prometheus Operator is watching.
+    namespace: ""
+    # Additional labels for PrometheusRule resources (e.g. to match a
+    # Prometheus Operator selector like `role: alert-rules`).
+    labels: {}
+    annotations: {}
+
+  # ServiceMonitor resources for Prometheus scraping of API and controller.
+  serviceMonitors:
+    enabled: true
+    # Namespace for ServiceMonitor resources. Defaults to the release namespace.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # Additional labels for ServiceMonitor resources (e.g. to match a
+    # Prometheus Operator serviceMonitorSelector).
+    labels: {}
+    annotations: {}
+    api:
+      # Optional bearerTokenSecret for the API /metrics endpoint.
+      # The API requires `Authorization: Bearer <token>` when the env var
+      # LLMSAFESPACE_METRICS_TOKEN is set. If you use that env var, set
+      # this to a Secret reference containing the same token under the
+      # "token" key. If LLMSAFESPACE_METRICS_TOKEN is not set, leave this
+      # empty (scrapes are unauthenticated).
+      bearerTokenSecret: {}
+      # Example:
+      #   name: llmsafespace-metrics-token
+      #   key: token

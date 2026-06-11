@@ -1,0 +1,62 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api
+  namespace: {{ default .Release.Namespace .Values.monitoring.serviceMonitors.namespace }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    {{- with .Values.monitoring.serviceMonitors.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitors.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "llmsafespace.api.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitors.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitors.scrapeTimeout }}
+      {{- with .Values.monitoring.serviceMonitors.api.bearerTokenSecret }}
+      bearerTokenSecret:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-controller
+  namespace: {{ default .Release.Namespace .Values.monitoring.serviceMonitors.namespace }}
+  labels:
+    {{- include "llmsafespace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+    {{- with .Values.monitoring.serviceMonitors.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitors.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "llmsafespace.controller.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitors.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitors.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}
