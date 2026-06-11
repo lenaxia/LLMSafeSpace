@@ -4,7 +4,9 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -161,6 +164,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Seed the WorkspacesRunning gauge from current cluster state.
+	// Without this, the gauge drifts negative on controller restart
+	// because existing Active workspaces don't re-trigger the
+	// Creating→Active transition that calls .Inc(), but Suspend
+	// unconditionally calls .Dec().
+	if err := mgr.Add(&workspaceGaugeSeeder{Client: mgr.GetClient()}); err != nil {
+		setupLog.Error(err, "unable to add workspace gauge seeder")
+		os.Exit(1)
+	}
+
 	// Add health check endpoints
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
@@ -176,4 +189,29 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+type workspaceGaugeSeeder struct {
+	client.Client
+}
+
+func (s *workspaceGaugeSeeder) Start(ctx context.Context) error {
+	logger := ctrl.Log.WithName("workspace-gauge-seeder")
+	wsList := &v1.WorkspaceList{}
+	if err := s.List(ctx, wsList); err != nil {
+		return fmt.Errorf("seed workspaces running gauge: %w", err)
+	}
+	counts := map[[2]string]int{}
+	for _, ws := range wsList.Items {
+		if ws.Status.Phase == v1.WorkspacePhaseActive {
+			runtime := ws.Spec.Runtime
+			secLevel := string(ws.Spec.SecurityLevel)
+			counts[[2]string{runtime, secLevel}]++
+		}
+	}
+	for k, n := range counts {
+		metrics.SeedWorkspacesRunning(k[0], k[1], n)
+		logger.Info("seeded WorkspacesRunning gauge", "runtime", k[0], "security_level", k[1], "count", n)
+	}
+	return nil
 }
