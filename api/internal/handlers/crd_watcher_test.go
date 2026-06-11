@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -200,4 +202,88 @@ func TestWorkspaceWatcher_GetAllKnownPhases(t *testing.T) {
 	phases["ws-a"] = "Terminated"
 	realPhase, _ := w.GetKnownPhase("ws-a")
 	assert.Equal(t, "Active", realPhase)
+}
+
+func TestWorkspaceWatcher_HandleEvent_PhaseTransitionMetricRecorded(t *testing.T) {
+	k8s, _, fakeWatch := setupWatcherMocks(t)
+	noop := func(*v1.Workspace) {}
+
+	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	require.NoError(t, err)
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	// Seed initial phase via a first Add event.
+	ws := &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws-metric", ResourceVersion: "1"},
+		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+	}
+	fakeWatch.Add(ws)
+	assert.Eventually(t, func() bool {
+		_, ok := w.GetKnownPhase("ws-metric")
+		return ok
+	}, testTimeout, testPollInterval)
+
+	before := gatherPhaseTransitionCount(t, "Creating", "Active")
+
+	// Modify to Active — should fire the metric.
+	ws2 := ws.DeepCopy()
+	ws2.Status.Phase = v1.WorkspacePhaseActive
+	ws2.ResourceVersion = "2"
+	fakeWatch.Modify(ws2)
+
+	assert.Eventually(t, func() bool {
+		return gatherPhaseTransitionCount(t, "Creating", "Active") > before
+	}, testTimeout, testPollInterval)
+}
+
+func TestWorkspaceWatcher_HandleEvent_SamePhase_NoMetric(t *testing.T) {
+	k8s, _, fakeWatch := setupWatcherMocks(t)
+	noop := func(*v1.Workspace) {}
+
+	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	require.NoError(t, err)
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	ws := &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws-same", ResourceVersion: "1"},
+		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+	}
+	fakeWatch.Add(ws)
+	assert.Eventually(t, func() bool {
+		_, ok := w.GetKnownPhase("ws-same")
+		return ok
+	}, testTimeout, testPollInterval)
+
+	before := gatherPhaseTransitionCount(t, "Active", "Active")
+
+	// Modify with the same phase — must not increment the metric.
+	ws2 := ws.DeepCopy()
+	ws2.ResourceVersion = "2" // different RV, same phase
+	fakeWatch.Modify(ws2)
+	time.Sleep(100 * time.Millisecond)
+
+	assert.Equal(t, before, gatherPhaseTransitionCount(t, "Active", "Active"))
+}
+
+func gatherPhaseTransitionCount(t *testing.T, from, to string) float64 {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, mf := range mfs {
+		if mf.GetName() != "llmsafespace_workspace_phase_transitions_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			labels := make(map[string]string)
+			for _, lp := range m.GetLabel() {
+				labels[lp.GetName()] = lp.GetValue()
+			}
+			if labels["from_phase"] == from && labels["to_phase"] == to {
+				return m.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
 }

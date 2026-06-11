@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
@@ -267,6 +268,7 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	w.knownPhasesMu.Unlock()
 
 	if existed && oldPhase != newPhase {
+		metrics.RecordWorkspacePhaseTransition(oldPhase, newPhase)
 		w.onPhaseChange(workspace)
 	}
 }

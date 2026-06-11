@@ -224,14 +224,9 @@ var (
 		Help: "Model selection events (PUT /model calls that succeeded).",
 	}, []string{"model_id", "provider_id", "tier"})
 
-	relayInjectorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_relay_injector_total",
-		Help: "Phase-2 relay injector outcomes per agentd boot.",
-	}, []string{"outcome"})
-
 	workspacePhaseTotalTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "llmsafespace_workspace_phase_transitions_total",
-		Help: "Workspace phase transitions.",
+		Help: "Workspace phase transitions observed by the API server CRD watcher.",
 	}, []string{"from_phase", "to_phase"})
 )
 
@@ -268,14 +263,8 @@ func (s *Service) RecordModelSelection(modelID, providerID string) {
 	modelSelectionsTotal.WithLabelValues(modelID, providerID, tier).Inc()
 }
 
-// RecordRelayInjector records a phase-2 relay injector outcome.
-// Outcomes: "success", "skipped_personal_key", "no_free_models",
-// "unhealthy_timeout", "config_write_failed", "auth_write_failed".
-func RecordRelayInjector(outcome string) {
-	relayInjectorTotal.WithLabelValues(outcome).Inc()
-}
-
-// RecordWorkspacePhaseTransition records a workspace phase change.
+// RecordWorkspacePhaseTransition records a workspace phase change observed by
+// the CRD watcher. from_phase is the previous phase; to_phase is the new phase.
 func RecordWorkspacePhaseTransition(fromPhase, toPhase string) {
 	workspacePhaseTotalTransitions.WithLabelValues(fromPhase, toPhase).Inc()
 }

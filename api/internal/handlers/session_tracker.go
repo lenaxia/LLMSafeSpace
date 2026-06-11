@@ -377,36 +377,58 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 }
 
 // handleSessionUpdated fires the inference callback when a session.updated event
-// carries new token output. Uses per-session cumulative tracking to emit deltas.
+// carries new token output. Uses per-session cumulative output tracking to emit deltas.
+//
+// Real wire format from opencode 1.15.12 (validated against live pod 2026-06-11):
+//
+//	{"type":"session.updated","properties":{
+//	  "sessionID":"ses_...",
+//	  "info":{
+//	    "id":"ses_...",
+//	    "cost":0,
+//	    "tokens":{"input":509911,"output":20861,"reasoning":41,"cache":{"read":9229154,"write":0}},
+//	    "model":{"id":"glm-5.1","providerID":"thekao cloud","variant":"default"}
+//	  }
+//	}}
+//
+// Fields are under properties.info, NOT at properties top-level.
+// Delta tracking uses cumulative output only — input varies due to cache reads.
 func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
 	var p struct {
-		ID    string `json:"id"`
-		Model struct {
-			ID         string `json:"id"`
-			ProviderID string `json:"providerID"`
-		} `json:"model"`
-		Tokens struct {
-			Input  int64 `json:"input"`
-			Output int64 `json:"output"`
-		} `json:"tokens"`
-		Cost float64 `json:"cost"`
+		SessionID string `json:"sessionID"`
+		Info      struct {
+			ID    string `json:"id"`
+			Model struct {
+				ID         string `json:"id"`
+				ProviderID string `json:"providerID"`
+			} `json:"model"`
+			Tokens struct {
+				Input  int64 `json:"input"`
+				Output int64 `json:"output"`
+			} `json:"tokens"`
+			Cost float64 `json:"cost"`
+		} `json:"info"`
 	}
-	if json.Unmarshal(props, &p) != nil || p.ID == "" || p.Tokens.Output == 0 || p.Model.ID == "" {
+	if json.Unmarshal(props, &p) != nil || p.Info.ID == "" || p.Info.Tokens.Output == 0 || p.Info.Model.ID == "" {
 		return
 	}
-	key := workspaceID + ":" + p.ID
-	totalNow := p.Tokens.Input + p.Tokens.Output
+	key := workspaceID + ":" + p.Info.ID
 	t.tokensMu.Lock()
 	prev := t.sessionTokenSeen[key]
-	if totalNow <= prev {
+	if p.Info.Tokens.Output <= prev {
 		t.tokensMu.Unlock()
 		return
 	}
-	t.sessionTokenSeen[key] = totalNow
+	t.sessionTokenSeen[key] = p.Info.Tokens.Output
 	t.tokensMu.Unlock()
-	inputDelta, outputDelta := p.Tokens.Input, p.Tokens.Output
+
+	outputDelta := p.Info.Tokens.Output - prev
+	// On first observation prev==0: report the full input count alongside
+	// the full output count. On subsequent events: only the output delta
+	// is meaningful; input varies due to cache reads and is not delta-trackable.
+	inputTokens := p.Info.Tokens.Input
 	if prev > 0 {
-		inputDelta, outputDelta = 0, totalNow-prev
+		inputTokens = 0
 	}
-	t.onInference(workspaceID, p.Model.ID, p.Model.ProviderID, inputDelta, outputDelta, p.Cost)
+	t.onInference(workspaceID, p.Info.Model.ID, p.Info.Model.ProviderID, inputTokens, outputDelta, p.Info.Cost)
 }

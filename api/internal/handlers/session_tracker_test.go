@@ -665,3 +665,186 @@ func TestSSETracker_Subscribe_ReceivesIdleEvent(t *testing.T) {
 
 	tracker.Stop()
 }
+
+// --- Inference callback tests (session.updated wire format validated against opencode 1.15.12) ---
+//
+// Real wire format from opencode 1.15.12 /event stream (validated 2026-06-11):
+//   {"id":"evt_...","type":"session.updated","properties":{
+//     "sessionID":"ses_...",
+//     "info":{
+//       "id":"ses_...",
+//       "cost":0,
+//       "tokens":{"input":509911,"output":20861,"reasoning":41,"cache":{"read":9229154,"write":0}},
+//       "model":{"id":"glm-5.1","providerID":"thekao cloud","variant":"default"}
+//     }
+//   }}
+//
+// NOTE: tokens and model are under properties.info, NOT at properties top-level.
+// The previous implementation parsed properties.{id,model,tokens,cost} and always
+// silently returned — the guard `p.ID == ""` was always true.
+
+func makeSessionUpdatedEvent(sessionID string, info map[string]interface{}) string {
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":   "evt_test",
+		"type": "session.updated",
+		"properties": map[string]interface{}{
+			"sessionID": sessionID,
+			"info":      info,
+		},
+	})
+	return string(data)
+}
+
+func TestSSETracker_Inference_FiredOnSessionUpdatedWithOutputTokens(t *testing.T) {
+	var mu sync.Mutex
+	type call struct {
+		workspaceID  string
+		modelID      string
+		providerID   string
+		inputTokens  int64
+		outputTokens int64
+		cost         float64
+	}
+	var calls []call
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
+		mu.Lock()
+		calls = append(calls, call{workspaceID, modelID, providerID, inputTokens, outputTokens, costDollars})
+		mu.Unlock()
+	})
+
+	// First event: cumulative tokens from a session in progress
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+		"id":   "ses_abc",
+		"cost": 0.0,
+		"tokens": map[string]interface{}{
+			"input": 1000, "output": 500,
+			"reasoning": 0,
+			"cache":     map[string]interface{}{"read": 0, "write": 0},
+		},
+		"model": map[string]interface{}{"id": "gpt-4o", "providerID": "openai", "variant": "default"},
+	}))
+
+	mu.Lock()
+	require.Len(t, calls, 1, "first session.updated should fire inference callback")
+	assert.Equal(t, "ws-1", calls[0].workspaceID)
+	assert.Equal(t, "gpt-4o", calls[0].modelID)
+	assert.Equal(t, "openai", calls[0].providerID)
+	assert.Equal(t, int64(500), calls[0].outputTokens)
+	mu.Unlock()
+}
+
+func TestSSETracker_Inference_DeltaOnSubsequentEvent(t *testing.T) {
+	var mu sync.Mutex
+	type call struct{ outputTokens int64 }
+	var calls []call
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, outputTokens int64, _ float64) {
+		mu.Lock()
+		calls = append(calls, call{outputTokens})
+		mu.Unlock()
+	})
+
+	// First event: 500 cumulative output tokens
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+		"id": "ses_abc", "cost": 0.0,
+		"tokens": map[string]interface{}{"input": 1000, "output": 500, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+
+	// Second event: 700 cumulative output tokens — delta is 200
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+		"id": "ses_abc", "cost": 0.0,
+		"tokens": map[string]interface{}{"input": 1400, "output": 700, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+
+	mu.Lock()
+	require.Len(t, calls, 2)
+	assert.Equal(t, int64(500), calls[0].outputTokens, "first event: full output count")
+	assert.Equal(t, int64(200), calls[1].outputTokens, "second event: delta only")
+	mu.Unlock()
+}
+
+func TestSSETracker_Inference_NoFiredWhenOutputTokensZero(t *testing.T) {
+	var fired int32
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, _ int64, _ float64) {
+		atomic.AddInt32(&fired, 1)
+	})
+
+	// output=0 must not fire
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+		"id": "ses_abc", "cost": 0.0,
+		"tokens": map[string]interface{}{"input": 100, "output": 0, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&fired))
+}
+
+func TestSSETracker_Inference_NoFiredWhenNoNewTokens(t *testing.T) {
+	var calls int32
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, _ int64, _ float64) {
+		atomic.AddInt32(&calls, 1)
+	})
+
+	// Same cumulative output twice — second must not fire
+	for i := 0; i < 2; i++ {
+		tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+			"id": "ses_abc", "cost": 0.0,
+			"tokens": map[string]interface{}{"input": 1000, "output": 500, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+			"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+		}))
+	}
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "duplicate event must fire only once")
+}
+
+func TestSSETracker_Inference_NoFiredWhenMissingSessionID(t *testing.T) {
+	var fired int32
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, _ int64, _ float64) {
+		atomic.AddInt32(&fired, 1)
+	})
+
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("", map[string]interface{}{
+		"id": "", "cost": 0.0,
+		"tokens": map[string]interface{}{"input": 100, "output": 200, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&fired))
+}
+
+func TestSSETracker_Inference_CacheTokensIncludedInInputDelta(t *testing.T) {
+	var mu sync.Mutex
+	type call struct {
+		inputTokens  int64
+		outputTokens int64
+	}
+	var calls []call
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, inputTokens, outputTokens int64, _ float64) {
+		mu.Lock()
+		calls = append(calls, call{inputTokens, outputTokens})
+		mu.Unlock()
+	})
+
+	// Real opencode event: large cache.read component
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_abc", map[string]interface{}{
+		"id": "ses_abc", "cost": 0.0,
+		"tokens": map[string]interface{}{
+			"input": 509911, "output": 20861, "reasoning": 41,
+			"cache": map[string]interface{}{"read": 9229154, "write": 0},
+		},
+		"model": map[string]interface{}{"id": "glm-5.1", "providerID": "thekao cloud"},
+	}))
+
+	mu.Lock()
+	require.Len(t, calls, 1)
+	assert.Equal(t, int64(509911), calls[0].inputTokens)
+	assert.Equal(t, int64(20861), calls[0].outputTokens)
+	mu.Unlock()
+}

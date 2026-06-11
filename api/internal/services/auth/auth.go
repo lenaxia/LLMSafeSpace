@@ -25,6 +25,7 @@ import (
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -702,6 +703,7 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	}
 	if user == nil {
 		s.recordFailedAttempt(ctx, email)
+		metrics.RecordAuthFailure("user_not_found")
 		// G27: same as VerifyPassword — burn the bcrypt cycles so
 		// no-such-user takes ~226ms instead of ~16ms.
 		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
@@ -710,11 +712,13 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		s.recordFailedAttempt(ctx, email)
+		metrics.RecordAuthFailure("wrong_password")
 		return nil, errors.New("invalid email or password")
 	}
 
 	if !user.Active {
 		s.recordFailedAttempt(ctx, email)
+		metrics.RecordAuthFailure("account_inactive")
 		return nil, errors.New("invalid email or password")
 	}
 

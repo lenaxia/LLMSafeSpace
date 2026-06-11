@@ -19,6 +19,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/api/internal/utilities"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -1432,4 +1433,73 @@ func TestNew_RememberMeLongerThanToken_NoWarning(t *testing.T) {
 	if logs.Len() != 0 {
 		t.Errorf("expected no Warn for normal config, got %d entries", logs.Len())
 	}
+}
+
+// ---- Auth failure metric wiring tests ----
+
+func TestLogin_WrongPassword_RecordsAuthFailureMetric(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("correct"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
+		ID:           "u1",
+		PasswordHash: string(hash),
+		Active:       true,
+	}, nil)
+
+	before := gatherAuthFailureCount(t, "wrong_password")
+	_, _ = svc.Login(ctx, types.LoginRequest{Email: "user@example.com", Password: "wrong"})
+	after := gatherAuthFailureCount(t, "wrong_password")
+	assert.Equal(t, before+1, after)
+}
+
+func TestLogin_UserNotFound_RecordsAuthFailureMetric(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	mockDb.On("GetUserByEmail", ctx, "noone@example.com").Return(nil, nil)
+
+	before := gatherAuthFailureCount(t, "user_not_found")
+	_, _ = svc.Login(ctx, types.LoginRequest{Email: "noone@example.com", Password: "pw"})
+	after := gatherAuthFailureCount(t, "user_not_found")
+	assert.Equal(t, before+1, after)
+}
+
+func TestLogin_InactiveUser_RecordsAuthFailureMetric(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "disabled@example.com").Return(&types.User{
+		ID:           "u2",
+		PasswordHash: string(hash),
+		Active:       false,
+	}, nil)
+
+	before := gatherAuthFailureCount(t, "account_inactive")
+	_, _ = svc.Login(ctx, types.LoginRequest{Email: "disabled@example.com", Password: "pw"})
+	after := gatherAuthFailureCount(t, "account_inactive")
+	assert.Equal(t, before+1, after)
+}
+
+// gatherAuthFailureCount reads the current value of llmsafespace_auth_failures_total
+// for a specific reason label from the default Prometheus registry.
+func gatherAuthFailureCount(t *testing.T, reason string) float64 {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, mf := range mfs {
+		if mf.GetName() != "llmsafespace_auth_failures_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "reason" && lp.GetValue() == reason {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
 }

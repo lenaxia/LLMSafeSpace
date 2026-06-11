@@ -100,6 +100,18 @@ func (h *AgentReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = 
 func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	start := time.Now()
 	workspaceID := c.Param("id")
+	succeeded := false
+	drain := false // set below before the defer reads it
+	defer func() {
+		if h.metricsService != nil {
+			result := "error"
+			if succeeded {
+				result = "success"
+			}
+			h.metricsService.RecordAgentReload(result, time.Since(start).Milliseconds(), drain)
+		}
+	}()
+
 	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -128,7 +140,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	}
 
 	// Drain mode: wait for all sessions to become idle before disposing.
-	drain := c.Query("drain") == "true"
+	drain = c.Query("drain") == "true"
 	drainTimeout := 5 * time.Minute
 	if v := c.Query("drainTimeoutSeconds"); v != "" {
 		var secs int
@@ -240,10 +252,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		return
 	}
 
-	if h.metricsService != nil {
-		h.metricsService.RecordAgentReload("success", time.Since(start).Milliseconds(), drain)
-	}
-
+	succeeded = true
 	c.JSON(http.StatusOK, gin.H{
 		"disposed":       true,
 		"lastDisposedAt": disposedAt.Format(time.RFC3339),
