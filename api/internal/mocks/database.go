@@ -191,6 +191,10 @@ func (m *MockDatabaseService) UpsertSessionParent(ctx context.Context, workspace
 	return m.Called(ctx, workspaceID, sessionID, parentID).Error(0)
 }
 
+func (m *MockDatabaseService) UpsertSessionContextUsed(ctx context.Context, workspaceID, sessionID string, contextUsed int64) error {
+	return m.Called(ctx, workspaceID, sessionID, contextUsed).Error(0)
+}
+
 func (m *MockDatabaseService) UpdateSessionLastSeen(ctx context.Context, workspaceID, sessionID string) error {
 	return m.Called(ctx, workspaceID, sessionID).Error(0)
 }

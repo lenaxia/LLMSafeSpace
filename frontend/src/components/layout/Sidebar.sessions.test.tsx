@@ -195,15 +195,13 @@ describe("S36.5 — per-session context usage indicator in sidebar", () => {
   }
 
   it("shows context token count next to a session when workspace status has contextUsed", async () => {
-    // Pre-populate workspace status cache with per-session context data
-    qc.setQueryData(["workspace-status", "ws-1"], {
-      phase: "Active",
-      contextTotal: 200000,
-      sessions: [
-        { id: "sess-1", status: "idle", contextUsed: 42000 },
-        { id: "sess-2", status: "idle", contextUsed: 0 },
-      ],
-    });
+    // Pre-populate sessions cache with per-session context data.
+    // context_used is now read from the sessions list (session_index via API),
+    // not from the workspace-status sessions array.
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Debug session", messageCount: 3, status: "idle", hasUnread: false, contextUsed: 42000 },
+      { id: "sess-2", title: "Refactor session", messageCount: 1, status: "idle", hasUnread: false },
+    ]);
 
     renderSidebar();
 
@@ -231,10 +229,9 @@ describe("S36.5 — per-session context usage indicator in sidebar", () => {
   });
 
   it("updates context indicator when workspace status cache is updated", async () => {
-    qc.setQueryData(["workspace-status", "ws-1"], {
-      phase: "Active",
-      sessions: [{ id: "sess-1", status: "idle", contextUsed: 10000 }],
-    });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Debug session", messageCount: 2, status: "idle", hasUnread: false, contextUsed: 10000 },
+    ]);
 
     renderSidebar();
 
@@ -242,11 +239,10 @@ describe("S36.5 — per-session context usage indicator in sidebar", () => {
       expect(screen.getAllByText("10K").length).toBeGreaterThan(0);
     });
 
-    // Update cache — simulates a status poll refreshing context
-    qc.setQueryData(["workspace-status", "ws-1"], {
-      phase: "Active",
-      sessions: [{ id: "sess-1", status: "idle", contextUsed: 75000 }],
-    });
+    // Update sessions cache — simulates a sessions-list poll refreshing context
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Debug session", messageCount: 3, status: "idle", hasUnread: false, contextUsed: 75000 },
+    ]);
 
     await waitFor(() => {
       expect(screen.getAllByText("75K").length).toBeGreaterThan(0);

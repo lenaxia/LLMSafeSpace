@@ -590,6 +590,10 @@ type EnsureSessionResponse struct {
 // session — typically populated for opencode subagent (subtask) sessions
 // spawned via the `task` tool. The sidebar nests children under their
 // parent for navigation. NULL/empty means the session is top-level.
+//
+// ContextUsed, when non-nil, is the prompt token count from the last
+// session.next.step.ended SSE event persisted by the API proxy. nil means
+// no LLM step has completed yet for this session (distinguishable from 0).
 type SessionListItem struct {
 	ID            string     `json:"id"`
 	Title         string     `json:"title,omitempty"`
@@ -599,6 +603,7 @@ type SessionListItem struct {
 	Status        string     `json:"status"` // "active" | "idle"
 	LastSeenAt    *time.Time `json:"lastSeenAt,omitempty"`
 	HasUnread     bool       `json:"hasUnread"`
+	ContextUsed   *int64     `json:"contextUsed,omitempty"`
 }
 
 // ActiveSessionsResponse is returned by GET /workspaces/:id/sessions/active.

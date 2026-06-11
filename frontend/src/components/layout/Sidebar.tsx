@@ -441,21 +441,18 @@ function WorkspaceSessionList({
   // S36.5: Subscribe to workspace status cache (populated by ChatPage poller)
   // to show per-session context usage indicators. staleTime:Infinity + enabled:false
   // means: read from cache only, never trigger a fetch from here.
-  const { data: wsStatus } = useQuery({
-    queryKey: ["workspace-status", workspaceId],
-    queryFn: () => workspacesApi.getStatus(workspaceId!),
-    enabled: false,
-    staleTime: Infinity,
-  });
+  // Build contextBySessionId from the sessions list (already fetched, no extra query needed).
+  // context_used is persisted to session_index by the proxy on every step.ended event,
+  // so it is available for all sessions regardless of workspace pod state.
   const contextBySessionId = useMemo(() => {
     const m = new Map<string, number>();
-    for (const s of wsStatus?.sessions ?? []) {
-      if (s.contextUsed != null && s.contextUsed > 0) {
+    for (const s of sessions ?? []) {
+      if (s.contextUsed != null) {
         m.set(s.id, s.contextUsed);
       }
     }
     return m;
-  }, [wsStatus?.sessions]);
+  }, [sessions]);
 
   // Tree shape: roots + orphans, where roots/orphans contain children of
   // arbitrary depth. Recomputed only when the session list changes.

@@ -142,6 +142,9 @@ func (m *mockDB) UpsertSessionTitle(context.Context, string, string, string) err
 func (m *mockDB) UpsertSessionParent(context.Context, string, string, string) error {
 	return nil
 }
+func (m *mockDB) UpsertSessionContextUsed(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 func (m *mockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { return nil }
 func (m *mockDB) Ping(context.Context) error                                 { return nil }
 func (m *mockDB) Start() error                                               { return nil }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
@@ -50,6 +50,11 @@ export function ChatPage() {
     sseHasDrivenBusy.current = false;
     setPendingQuestions([]);
     setPendingPermissions([]);
+    // Reset compaction state on session switch to prevent false positives:
+    // prevContextUsedRef from the old session would otherwise be compared against
+    // the new session's first contextUsed value, triggering spurious compaction banners.
+    prevContextUsedRef.current = undefined;
+    setCompactionDetected(false);
   }, [sessionId]);
 
   const { data: status } = useWorkspaceStatus(workspaceId);
@@ -106,6 +111,21 @@ export function ChatPage() {
   const sessionsData = queryClient.getQueryData<SessionListItem[]>(["sessions", workspaceId]);
   const currentSession = sessionsData?.find((s) => s.id === sessionId);
   const lastSeenAt = currentSession?.lastSeenAt;
+
+  // Reactive subscription to sessions list for context_used.
+  // Uses the same query key as the Sidebar's sessions query so no extra fetch is made.
+  // staleTime:Infinity prevents re-fetching (Sidebar/useSessions owns the fetch lifecycle).
+  // notifyOnChangeProps:["data"] limits re-renders to data changes only.
+  // We find the active session from the full list in the render body (not via `select`)
+  // to avoid TanStack Query's structural-sharing optimisation dropping updates.
+  const { data: sessionsListData } = useQuery({
+    queryKey: ["sessions", workspaceId],
+    queryFn: () => workspacesApi.getSessions(workspaceId!),
+    enabled: !!workspaceId,
+    staleTime: Infinity,
+    notifyOnChangeProps: ["data"],
+  });
+  const activeSessionData = sessionsListData?.find((s) => s.id === sessionId);
 
   // Current model for prompt injection — subscribes to the same cache key that
   // ModelSelector populates. enabled:!!workspaceId (not gated on isReady) so
@@ -176,11 +196,29 @@ export function ChatPage() {
   // Track whether SSE has taken over serverBusy (to avoid status poll overriding SSE)
   const sseHasDrivenBusy = useRef(false);
 
-  // S36.4: Compaction indicator — detect when contextUsed drops >50% (opencode auto-compact)
+  // Real-time context_used from session.next.step.ended SSE events.
+  // The ref map is updated synchronously on each event; setContextVersion triggers
+  // a re-render so contextUsedForDisplay reads the new ref value.
+  const contextBySessionRef = useRef<Map<string, number>>(new Map());
+  const [contextVersion, setContextVersion] = useState(0);
+
+  // Derive the current session's context_used: SSE real-time value takes precedence
+  // over the durable DB value from the sessions list query (cold-start fallback).
+  // contextVersion is intentionally read to make this block reactive when SSE fires.
+  const contextUsedForDisplay: number | undefined = (() => {
+    void contextVersion; // consumed to trigger re-evaluation when SSE updates the ref
+    const realtimeValue = contextBySessionRef.current.get(sessionId ?? "");
+    if (realtimeValue !== undefined) return realtimeValue;
+    return activeSessionData?.contextUsed ?? undefined;
+  })();
+
+  // Compaction indicator — detect when contextUsed drops >50% (opencode auto-compact).
+  // Uses useLayoutEffect (runs synchronously after DOM update, before paint) so that
+  // prevContextUsedRef is always up-to-date before the next render's comparison.
   const prevContextUsedRef = useRef<number | undefined>(undefined);
   const [compactionDetected, setCompactionDetected] = useState(false);
-  useEffect(() => {
-    const cur = sessionStatus?.contextUsed;
+  useLayoutEffect(() => {
+    const cur = contextUsedForDisplay;
     const prev = prevContextUsedRef.current;
     if (prev != null && cur != null && prev > 0 && cur < prev * 0.5) {
       setCompactionDetected(true);
@@ -188,7 +226,7 @@ export function ChatPage() {
     if (cur != null) {
       prevContextUsedRef.current = cur;
     }
-  }, [sessionStatus?.contextUsed]);
+  }, [contextUsedForDisplay]);
 
   // US-16.11: Pending input requests from the agent
   const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
@@ -556,6 +594,25 @@ export function ChatPage() {
           }
         }
       }
+      // Handle session.next.step.ended — update context_used in real time.
+      // The proxy also persists this to session_index (DB) for cold-start.
+      // Here we update the in-memory ref map so the DiskUsageBar reflects the
+      // new value immediately without waiting for the next sessions poll.
+      if (oe.event_type === "session.next.step.ended") {
+        const payload = oe.data as Record<string, unknown> | undefined;
+        const props = (payload?.properties ?? (payload?.payload && (payload.payload as Record<string, unknown>)?.properties)) as Record<string, unknown> | undefined;
+        const sid = props?.sessionID as string | undefined;
+        const tokens = props?.tokens as Record<string, unknown> | undefined;
+        if (sid && tokens) {
+          const input = typeof tokens.input === "number" ? tokens.input : 0;
+          const cache = tokens.cache as Record<string, unknown> | undefined;
+          const cacheRead = typeof cache?.read === "number" ? cache.read : 0;
+          const cacheWrite = typeof cache?.write === "number" ? cache.write : 0;
+          const promptTokens = input + cacheRead + cacheWrite;
+          contextBySessionRef.current.set(sid, promptTokens);
+          setContextVersion((v) => v + 1);
+        }
+      }
       // Handle session.error — surface LLM/provider errors as a message bubble.
       // Written to sessionErrors (not localMessages) so reconcileOnIdle's
       // setLocalMessages([]) cannot wipe the error before the user sees it.
@@ -821,7 +878,7 @@ export function ChatPage() {
           diskTotalBytes={status?.diskTotalBytes}
           memoryUsedBytes={status?.memoryUsedBytes}
           memoryTotalBytes={status?.memoryTotalBytes}
-          contextUsed={sessionStatus?.contextUsed}
+          contextUsed={contextUsedForDisplay}
           contextTotal={status?.contextTotal}
         />
       )}

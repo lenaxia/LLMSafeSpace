@@ -114,3 +114,35 @@ func TestDeleteSession_DBError(t *testing.T) {
 
 	assert.Error(t, err)
 }
+
+func TestUpsertContextUsed_DelegatesToDB(t *testing.T) {
+	db := &mocks.MockDatabaseService{}
+	db.On("UpsertSessionContextUsed", mock.Anything, "ws-1", "ses_abc", int64(12500)).Return(nil)
+
+	svc := &Service{db: db}
+	err := svc.UpsertContextUsed(context.Background(), "ws-1", "ses_abc", 12500)
+
+	assert.NoError(t, err)
+	db.AssertCalled(t, "UpsertSessionContextUsed", mock.Anything, "ws-1", "ses_abc", int64(12500))
+}
+
+func TestUpsertContextUsed_DBError(t *testing.T) {
+	db := &mocks.MockDatabaseService{}
+	db.On("UpsertSessionContextUsed", mock.Anything, "ws-1", "ses_abc", int64(5000)).Return(assert.AnError)
+
+	svc := &Service{db: db}
+	err := svc.UpsertContextUsed(context.Background(), "ws-1", "ses_abc", 5000)
+
+	assert.Error(t, err)
+}
+
+func TestUpsertContextUsed_ZeroValue(t *testing.T) {
+	db := &mocks.MockDatabaseService{}
+	db.On("UpsertSessionContextUsed", mock.Anything, "ws-1", "ses_abc", int64(0)).Return(nil)
+
+	svc := &Service{db: db}
+	err := svc.UpsertContextUsed(context.Background(), "ws-1", "ses_abc", 0)
+
+	assert.NoError(t, err)
+	db.AssertCalled(t, "UpsertSessionContextUsed", mock.Anything, "ws-1", "ses_abc", int64(0))
+}

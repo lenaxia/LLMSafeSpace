@@ -1948,6 +1948,9 @@ func (r *recordingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ str
 func (r *recordingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error {
 	return nil
 }
+func (r *recordingDeleteSessionIndex) UpsertContextUsed(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
 func (r *recordingDeleteSessionIndex) Start() error { return nil }
 func (r *recordingDeleteSessionIndex) Stop() error  { return nil }
 
@@ -1966,8 +1969,11 @@ func (f *failingDeleteSessionIndex) UpdateLastSeen(_ context.Context, _, _ strin
 }
 func (f *failingDeleteSessionIndex) UpsertTitle(_ context.Context, _, _, _ string) error  { return nil }
 func (f *failingDeleteSessionIndex) UpsertParent(_ context.Context, _, _, _ string) error { return nil }
-func (f *failingDeleteSessionIndex) Start() error                                         { return nil }
-func (f *failingDeleteSessionIndex) Stop() error                                          { return nil }
+func (f *failingDeleteSessionIndex) UpsertContextUsed(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+func (f *failingDeleteSessionIndex) Start() error { return nil }
+func (f *failingDeleteSessionIndex) Stop() error  { return nil }
 
 func TestProxy_DeleteSession_RemovesActiveSession(t *testing.T) {
 	si := &recordingDeleteSessionIndex{}
