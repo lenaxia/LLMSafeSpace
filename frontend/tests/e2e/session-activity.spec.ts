@@ -247,8 +247,10 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
     await page.goto(`/chat/${WS_B}/${SESS_B1}`);
     await expect(page.getByText("Alpha")).toBeVisible({ timeout: 10_000 });
 
-    // Click Alpha to collapse it (it auto-expands on load, collapse it)
-    await page.getByText("Alpha").click();
+    // Click the workspace header button (not the session row) to collapse it.
+    // Use getByRole to target the workspace group button specifically, avoiding
+    // strict-mode violation from "Task Alpha" also matching "Alpha".
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
 
     // Collapsed Alpha workspace should show the blue spinner (text-blue-500)
     await expect(page.locator(".animate-spin.text-blue-500").first()).toBeVisible({ timeout: 3_000 });
@@ -264,9 +266,9 @@ test.describe("Epic 37: Session Activity & Unread State UX", () => {
 
     await page.goto(`/chat/${WS_A}/${SESS_A1}`);
 
-    // On mobile, sidebar starts closed (no session param or initial mount)
-    // Swipe right from left edge to open sidebar
-    await page.touchscreen.tap(10, 400);
+    // On mobile, sidebar starts closed. Simulate a left-edge swipe using
+    // mouse events only — touchscreen.tap requires hasTouch on the context
+    // which is not set in the default Playwright project config.
     await page.mouse.move(10, 400);
     await page.mouse.down();
     await page.mouse.move(200, 400, { steps: 10 });
