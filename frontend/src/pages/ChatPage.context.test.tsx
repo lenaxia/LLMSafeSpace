@@ -26,6 +26,7 @@ vi.mock("../api/workspaces", () => ({
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
     abortSession: vi.fn().mockResolvedValue({}),
+    markSessionSeen: vi.fn().mockResolvedValue({}),
   },
 }));
 vi.mock("../api/messages", () => {
