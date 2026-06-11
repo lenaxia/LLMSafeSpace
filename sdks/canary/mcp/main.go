@@ -41,6 +41,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	llm "github.com/lenaxia/llmsafespace/sdk/go"
+	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
 )
 
 // ── JSON-RPC types ─────────────────────────────────────────────────────────
@@ -190,6 +193,10 @@ func newStdioClient(binary, apiURL, apiKey string) (*stdioClient, error) {
 }
 
 func (c *stdioClient) send(method string, params any) (json.RawMessage, error) {
+	return c.sendWithTimeout(method, params, 15*time.Second)
+}
+
+func (c *stdioClient) sendWithTimeout(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -207,8 +214,7 @@ func (c *stdioClient) send(method string, params any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
-	// Read response lines until we find one with matching id
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if !c.stdout.Scan() {
 			return nil, fmt.Errorf("EOF reading response")
@@ -237,6 +243,21 @@ func (c *stdioClient) callTool(name string, args map[string]any) (*toolResult, e
 		"name":      name,
 		"arguments": args,
 	})
+	if err != nil {
+		return nil, err
+	}
+	var tr toolResult
+	if err := json.Unmarshal(result, &tr); err != nil {
+		return nil, fmt.Errorf("decode tool result: %w", err)
+	}
+	return &tr, nil
+}
+
+func (c *stdioClient) callToolWithTimeout(name string, args map[string]any, timeout time.Duration) (*toolResult, error) {
+	result, err := c.sendWithTimeout("tools/call", map[string]any{
+		"name":      name,
+		"arguments": args,
+	}, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -457,6 +478,267 @@ func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
 	}
 }
 
+func runDeepWorkspace(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
+	sdkClient := llm.New(apiURL, llm.WithAPIKey(apiKey), llm.WithTimeout(60*time.Second))
+
+	tr, err := client.callTool("workspace_create", map[string]any{"runtime": "base"})
+	if err != nil {
+		r.fail("ws-create: call failed", err.Error())
+		return
+	}
+	r.assert(!tr.IsError, "ws-create: isError=false", toolResultText(tr))
+	text := toolResultText(tr)
+	var wsResp map[string]any
+	wsID := ""
+	if jsonErr := json.Unmarshal([]byte(text), &wsResp); jsonErr == nil {
+		wsID, _ = wsResp["id"].(string)
+	}
+	r.assert(wsID != "", "ws-create: id in result", text[:min(len(text), 100)])
+	if wsID == "" {
+		return
+	}
+	defer func() { _ = sdkClient.Workspaces.Delete(context.Background(), wsID) }()
+
+	phase := canary.WaitActive(ctx, sdkClient, wsID)
+	r.assert(phase == "Active", "ws-wait-active", fmt.Sprintf("got %q", phase))
+	if phase != "Active" {
+		return
+	}
+
+	tr3, err3 := client.callTool("workspace_activate", map[string]any{"workspace_id": wsID})
+	if err3 != nil {
+		r.fail("ws-activate: call failed", err3.Error())
+	} else {
+		r.assert(!tr3.IsError, "ws-activate: isError=false", toolResultText(tr3))
+		text3 := toolResultText(tr3)
+		r.assert(strings.Contains(text3, "resumed"), "ws-activate: has resumed field", text3[:min(len(text3), 100)])
+	}
+
+	tr4, err4 := client.callTool("workspace_stop", map[string]any{"workspace_id": wsID})
+	if err4 != nil {
+		r.fail("ws-stop: call failed", err4.Error())
+	} else {
+		r.assert(!tr4.IsError, "ws-stop: isError=false", toolResultText(tr4))
+		text4 := toolResultText(tr4)
+		r.assert(strings.Contains(text4, wsID), "ws-stop: contains workspace ID", text4[:min(len(text4), 200)])
+	}
+
+	trN1, _ := client.callTool("workspace_create", map[string]any{})
+	if trN1 != nil {
+		r.assert(trN1.IsError, "ws-create-no-runtime: isError=true", "")
+	}
+
+	trN2, _ := client.callTool("workspace_activate", map[string]any{"workspace_id": "00000000-0000-0000-0000-000000009999"})
+	if trN2 != nil {
+		r.assert(trN2.IsError, "ws-activate-nonexistent: isError=true", "")
+	}
+
+	trN3, _ := client.callTool("workspace_stop", map[string]any{"workspace_id": "00000000-0000-0000-0000-000000009999"})
+	if trN3 != nil {
+		r.assert(trN3.IsError, "ws-stop-nonexistent: isError=true", "")
+	}
+}
+
+func runDeepSession(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
+	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+		r.ok("session: skipped (no LLM API key)")
+		return
+	}
+
+	sdkClient := llm.New(apiURL, llm.WithAPIKey(apiKey), llm.WithTimeout(60*time.Second))
+
+	ws, err := sdkClient.Workspaces.Create(ctx, llm.CreateWorkspaceRequest{
+		Name: "canary-mcp-session", Runtime: "base", StorageSize: "1Gi",
+	})
+	if err != nil {
+		r.fail("sdk-create-ws: no error", err.Error())
+		return
+	}
+	wsID := ws.ID
+	defer func() { _ = sdkClient.Workspaces.Delete(context.Background(), wsID) }()
+
+	phase := canary.WaitActive(ctx, sdkClient, wsID)
+	r.assert(phase == "Active", "session-ws-active", fmt.Sprintf("got %q", phase))
+	if phase != "Active" {
+		return
+	}
+
+	tr2, err2 := client.callTool("session_create", map[string]any{"workspace_id": wsID})
+	if err2 != nil {
+		r.fail("session-create: call failed", err2.Error())
+		return
+	}
+	r.assert(!tr2.IsError, "session-create: isError=false", toolResultText(tr2))
+	text2 := toolResultText(tr2)
+	var sessResp map[string]any
+	sessionID := ""
+	if jsonErr := json.Unmarshal([]byte(text2), &sessResp); jsonErr == nil {
+		sessionID, _ = sessResp["id"].(string)
+		if sessionID == "" {
+			sessionID, _ = sessResp["sessionId"].(string)
+		}
+	}
+	r.assert(sessionID != "", "session-create: id in result", text2[:min(len(text2), 100)])
+	if sessionID == "" {
+		return
+	}
+
+	tr3, err3 := client.callToolWithTimeout("session_message", map[string]any{
+		"workspace_id": wsID,
+		"session_id":   sessionID,
+		"message":      "Reply with exactly: MCP-OK",
+	}, 120*time.Second)
+	if err3 != nil {
+		r.fail("session-message: call failed", err3.Error())
+	} else {
+		r.assert(!tr3.IsError, "session-message: isError=false", toolResultText(tr3))
+		text3 := toolResultText(tr3)
+		r.assert(len(text3) > 0, "session-message: non-empty result", "")
+	}
+
+	tr4, err4 := client.callTool("session_history", map[string]any{
+		"workspace_id": wsID,
+		"session_id":   sessionID,
+	})
+	if err4 != nil {
+		r.fail("session-history: call failed", err4.Error())
+	} else {
+		r.assert(!tr4.IsError, "session-history: isError=false", toolResultText(tr4))
+		text4 := toolResultText(tr4)
+		var histArr []any
+		if jsonErr := json.Unmarshal([]byte(text4), &histArr); jsonErr == nil {
+			r.assert(len(histArr) >= 1, "session-history: >=1 entry", fmt.Sprintf("got %d", len(histArr)))
+		} else {
+			r.fail("session-history: valid JSON array", jsonErr.Error())
+		}
+	}
+}
+
+func runDeepPromptAsync(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
+	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+		r.ok("prompt-async: skipped (no LLM API key)")
+		return
+	}
+
+	sdkClient := llm.New(apiURL, llm.WithAPIKey(apiKey), llm.WithTimeout(60*time.Second))
+
+	ws, err := sdkClient.Workspaces.Create(ctx, llm.CreateWorkspaceRequest{
+		Name: "canary-mcp-prompt", Runtime: "base", StorageSize: "1Gi",
+	})
+	if err != nil {
+		r.fail("sdk-create-ws: no error", err.Error())
+		return
+	}
+	wsID := ws.ID
+	defer func() { _ = sdkClient.Workspaces.Delete(context.Background(), wsID) }()
+
+	phase := canary.WaitActive(ctx, sdkClient, wsID)
+	r.assert(phase == "Active", "prompt-ws-active", fmt.Sprintf("got %q", phase))
+	if phase != "Active" {
+		return
+	}
+
+	sess, err := canary.EnsureSessionWithRetry(ctx, sdkClient, wsID, 5)
+	if err != nil {
+		r.fail("ensure-session: no error", err.Error())
+		return
+	}
+	sessionID := sess.SessionID
+	r.assert(sessionID != "", "ensure-session: sessionId", "")
+	if sessionID == "" {
+		return
+	}
+
+	tr2, err2 := client.callToolWithTimeout("session_message", map[string]any{
+		"workspace_id": wsID,
+		"session_id":   sessionID,
+		"message":      "Reply with exactly: PROMPT-ASYNC-OK",
+	}, 120*time.Second)
+	if err2 != nil {
+		r.fail("prompt-session-message: call failed", err2.Error())
+	} else {
+		r.assert(!tr2.IsError, "prompt-session-message: isError=false", toolResultText(tr2))
+		text2 := toolResultText(tr2)
+		r.assert(len(text2) > 0, "prompt-session-message: non-empty text", "")
+	}
+
+	history, histErr := sdkClient.Sessions.GetHistory(ctx, wsID, sessionID)
+	if histErr != nil {
+		r.fail("prompt-history: no error", histErr.Error())
+	} else {
+		r.assert(len(history) >= 1, "prompt-history: >=1 entry", fmt.Sprintf("got %d", len(history)))
+	}
+}
+
+func runDeepModel(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
+	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+		r.ok("model: skipped (no LLM API key)")
+		return
+	}
+
+	sdkClient := llm.New(apiURL, llm.WithAPIKey(apiKey), llm.WithTimeout(60*time.Second))
+
+	ws, err := sdkClient.Workspaces.Create(ctx, llm.CreateWorkspaceRequest{
+		Name: "canary-mcp-model", Runtime: "base", StorageSize: "1Gi",
+	})
+	if err != nil {
+		r.fail("sdk-create-ws: no error", err.Error())
+		return
+	}
+	wsID := ws.ID
+	defer func() { _ = sdkClient.Workspaces.Delete(context.Background(), wsID) }()
+
+	phase := canary.WaitActive(ctx, sdkClient, wsID)
+	r.assert(phase == "Active", "model-ws-active", fmt.Sprintf("got %q", phase))
+	if phase != "Active" {
+		return
+	}
+
+	tr1, err1 := client.callTool("model_list", map[string]any{"workspace_id": wsID})
+	if err1 != nil {
+		r.fail("model-list: call failed", err1.Error())
+	} else {
+		r.assert(!tr1.IsError, "model-list: isError=false", toolResultText(tr1))
+		text1 := toolResultText(tr1)
+		r.assert(len(text1) > 0, "model-list: non-empty result", "")
+		var modelResp map[string]any
+		if jsonErr := json.Unmarshal([]byte(text1), &modelResp); jsonErr == nil {
+			_, hasModels := modelResp["models"]
+			r.assert(hasModels, "model-list: has models field", "")
+		}
+	}
+
+	llmModel := os.Getenv("LLMSAFESPACE_LLM_MODEL")
+	if llmModel == "" {
+		r.ok("model-set: skipped (no LLMSAFESPACE_LLM_MODEL)")
+	} else {
+		tr2, err2 := client.callTool("model_set", map[string]any{
+			"workspace_id": wsID,
+			"model":        llmModel,
+		})
+		if err2 != nil {
+			r.fail("model-set: call failed", err2.Error())
+		} else {
+			r.assert(!tr2.IsError, "model-set: isError=false", toolResultText(tr2))
+			text2 := toolResultText(tr2)
+			r.assert(strings.Contains(text2, llmModel), "model-set: contains model name", text2[:min(len(text2), 100)])
+		}
+	}
+
+	trN1, _ := client.callTool("model_list", map[string]any{"workspace_id": "00000000-0000-0000-0000-000000009999"})
+	if trN1 != nil {
+		r.assert(trN1.IsError, "model-list-nonexistent: isError=true", "")
+	}
+
+	trN2, _ := client.callTool("model_set", map[string]any{
+		"workspace_id": "00000000-0000-0000-0000-000000009999",
+		"model":        "test-model",
+	})
+	if trN2 != nil {
+		r.assert(trN2.IsError, "model-set-nonexistent: isError=true", "")
+	}
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 func main() {
@@ -521,6 +803,74 @@ func main() {
 		} else {
 			runMCPCredCRUD(ctx, r, client)
 			runMCPInputNeg(ctx, r, client)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── D-MCP-WORKSPACE ──
+	{
+		deepCtx, deepCancel := context.WithTimeout(context.Background(), 300*time.Second)
+		defer deepCancel()
+		r := NewRunner("d-mcp-workspace")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runDeepWorkspace(deepCtx, r, client, apiURL, apiKey)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── D-MCP-SESSION ──
+	{
+		deepCtx, deepCancel := context.WithTimeout(context.Background(), 480*time.Second)
+		defer deepCancel()
+		r := NewRunner("d-mcp-session")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runDeepSession(deepCtx, r, client, apiURL, apiKey)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── D-MCP-PROMPT-ASYNC ──
+	{
+		deepCtx, deepCancel := context.WithTimeout(context.Background(), 480*time.Second)
+		defer deepCancel()
+		r := NewRunner("d-mcp-prompt-async")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runDeepPromptAsync(deepCtx, r, client, apiURL, apiKey)
+			client.close()
+		}
+		res := r.print()
+		totalPassed += res.Passed
+		totalFailed += res.Failed
+	}
+
+	// ── D-MCP-MODEL ──
+	{
+		deepCtx, deepCancel := context.WithTimeout(context.Background(), 300*time.Second)
+		defer deepCancel()
+		r := NewRunner("d-mcp-model")
+		client, err := newStdioClient(binary, apiURL, apiKey)
+		if err != nil {
+			r.fail("start-mcp-server", err.Error())
+		} else {
+			runDeepModel(deepCtx, r, client, apiURL, apiKey)
 			client.close()
 		}
 		res := r.print()

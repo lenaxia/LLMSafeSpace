@@ -50,6 +50,7 @@ class LLMSafeSpace:
         self.workspaces = _WorkspacesAPI(self)
         self.sessions = _SessionsAPI(self)
         self.auth = _AuthAPI(self)
+        self.account = _AccountAPI(self)
         self.secrets = _SecretsAPI(self)
         self.terminal = _TerminalAPI(self)
 
@@ -274,6 +275,28 @@ class _AuthAPI:
 
     def delete_api_key(self, key_id: str) -> None:
         self._c._request("DELETE", f"/auth/api-keys/{key_id}")
+
+
+class _AccountAPI:
+    def __init__(self, client: LLMSafeSpace):
+        self._c = client
+
+    def rotate_key(self, password: str) -> dict[str, Any]:
+        return self._c._request("POST", "/account/rotate-key", json={"password": password})
+
+    def change_password(self, old_password: str, new_password: str) -> None:
+        self._c._request(
+            "POST",
+            "/account/change-password",
+            json={"oldPassword": old_password, "newPassword": new_password},
+        )
+
+    def recover(self, user_id: str, recovery_key: str, new_password: str) -> dict[str, Any]:
+        return self._c._request(
+            "POST",
+            "/account/recover",
+            json={"userId": user_id, "recoveryKey": recovery_key, "newPassword": new_password},
+        )
 
 
 class _SecretsAPI:
