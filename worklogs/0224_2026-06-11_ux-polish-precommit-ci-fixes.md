@@ -1,4 +1,4 @@
-# Worklog 0220: UX polish + comprehensive test coverage + CI fixes
+# Worklog 0224: UX polish + comprehensive test coverage + CI fixes
 
 **Date:** 2026-06-11
 **Session:** Spinner icon replacement, pulse visibility, test coverage completion, CI failures
@@ -127,4 +127,4 @@ None. PR #103 should merge before PR #101 to avoid worklog number conflicts.
 - `frontend/src/components/layout/AppShell.test.tsx` — SessionActivityProvider mock fix
 - `frontend/src/pages/ChatPage.context.test.tsx` — missing mock fixes
 - `api/internal/handlers/stream_user_events_test.go` — test 16
-- `worklogs/0218_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed from 0209)
+- `worklogs/0222_2026-06-11_epic37-comprehensive-test-coverage.md` (renamed from 0209)
