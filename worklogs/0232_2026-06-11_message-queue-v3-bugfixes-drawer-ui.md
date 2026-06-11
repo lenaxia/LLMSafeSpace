@@ -10,6 +10,8 @@
 
 Pick up PR #93 (`fix/message-queue-serialize-on-idle-v2`) which implements TUI-matching serialized message queue behavior. The user reported 4 bugs and requested a UI redesign. Additionally, the automated PR reviewer flagged 2 blocking findings.
 
+A follow-up session performed a thorough adversarial review which found a critical deadlock bug and a structural issue with side effects in React state updaters. The hook was refactored to `useReducer` to address both correctly.
+
 ---
 
 ## Assumptions Stated & Validated
@@ -74,19 +76,31 @@ Additional review findings addressed:
 - Removed `queuedCount` from `Composer` (was the old "N messages queued" text above the input). Moved count to QueueSection toggle button.
 - `ChatView` passes `isMobile` (from `useIsMobile` hook) to `QueueSection`.
 
+### Follow-up: useReducer refactor + deadlock fix
+
+**Adversarial review findings (commit `6a4fd5d9`):**
+
+1. **Critical: `drainingRef` not reset on timeout → permanent queue deadlock.** When the 10s interval marked a stuck `sending` message as `error`, `drainingRef.current` remained `true`. Any subsequent `notifyIdle` call hit the guard and returned early — the queue was permanently stuck. **Fix:** The interval now resets `drainingRef.current = false` when it detects a timeout. Regression test added: `after sending timeout, subsequent notifyIdle can send again (no deadlock)`.
+
+2. **Structural: Side effects inside React state updater.** `notifyIdle` wrapped `drainOne` in `setQueuedMessages(prev => { drainOne(prev); return prev; })`. `drainOne` fires async API calls, calls `dispatch`, and mutates `drainingRef` — all inside an updater function. React docs specify updaters should be pure. While the `drainingRef` guard prevented double execution in practice, the pattern was fragile. **Fix:** Refactored from `useState` to `useReducer`. All state transitions are now pure functions in the reducer. `notifyIdle` reads current state from `stateRef.current` (synced inline during render) and calls `drainOne` directly — no updater wrapping needed.
+
+3. **Stale promise resolution after timeout.** After timeout marked a message as `error`, the original hung promise's `.then()` handler still ran on resolution, dispatching `remove` and silently deleting the error pill. **Fix:** Added `send_success` action that only removes the message if it's still in `sending` status. If the message has already been transitioned to `error` (by timeout or phase change), the stale resolution is a no-op.
+
+4. **Dead code: `remove` and `dismiss` were identical.** Removed `remove` from the return value. All consumers use `dismiss`.
+
+**Reducer design:** 11 action types covering all state transitions. Each action is a pure transformation — no side effects, no API calls, no ref mutations. Side effects (API calls, `drainingRef` updates) live exclusively in `drainOne` and `onPhaseChange` callbacks.
+
 ---
 
 ## Tests Run
 
 ```
-npx vitest run   # 93 test files, 881 tests passing
+npx vitest run   # 94 test files, 916 tests passing
 npx tsc --noEmit  # 0 errors
 ```
 
-New test cases added:
-- `useMessageQueue.test.ts`: 5 new tests (double notifyIdle, sending-is-no-op, per-session isolation, sending timeout, sessionId tracking). Total: 29 tests.
-- `QueueSection.test.tsx`: Rewritten for new component API. 10 tests.
-- `Composer.test.tsx`: Removed 3 queued-count tests (feature moved to QueueSection).
+New test cases added (follow-up):
+- `useMessageQueue.test.ts`: 1 new test (deadlock regression after timeout). Removed 1 dead test (remove function). Total: 29 tests.
 
 ---
 
@@ -94,8 +108,8 @@ New test cases added:
 
 | File | Change |
 |------|--------|
-| `frontend/src/hooks/useMessageQueue.ts` | Per-session isolation, drainingRef guard, sending timeout, useCallback on all functions, sessionId tracking |
-| `frontend/src/hooks/useMessageQueue.test.ts` | 5 new test cases, fake timers for timeout test |
+| `frontend/src/hooks/useMessageQueue.ts` | Refactored to useReducer (11 action types), fix drainingRef deadlock, add send_success guard, remove dead `remove` export |
+| `frontend/src/hooks/useMessageQueue.test.ts` | Add deadlock regression test, remove dead `remove` test, fix act warning in onPhaseChange test |
 | `frontend/src/components/chat/QueueSection.tsx` | Complete rewrite: drawer UI, chat bubbles, toggle button, mobile/desktop, auto-close |
 | `frontend/src/components/chat/QueueSection.test.tsx` | Rewritten for new component API (10 tests) |
 | `frontend/src/components/chat/ChatView.tsx` | Pass isMobile to QueueSection, remove queuedCount prop |
@@ -107,7 +121,5 @@ New test cases added:
 
 ## Next Steps
 
-- Push this branch and update PR #93 with the bug fixes
-- Run automated PR reviewer on the updated diff
+- Push this branch and update PR #93
 - Verify on live cluster that queue drawer renders correctly on mobile and desktop viewports
-- Consider worklog for the PR as part of the merge
