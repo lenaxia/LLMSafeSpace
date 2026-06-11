@@ -76,19 +76,21 @@ jobs:
           WORKFLOW_FILE=".github/prompts/code-change-workflow.md"
           OUT="/tmp/opencode_prompt.txt"
 
-          # Detect which command was used (check start of comment first, then inline)
+          # Detect which command was used (check start of comment first, then inline).
+          # Each pattern requires the command keyword followed by end-of-string or
+          # a space — this prevents false matches like /testing → /test or /fixing → /fix.
           COMMAND=""
           case "$COMMENT_BODY" in
-            /implement*) COMMAND="/implement" ;;
-            /security*)  COMMAND="/security" ;;
-            /analyze*)   COMMAND="/analyze" ;;
-            /review*)    COMMAND="/review" ;;
-            /explain*)   COMMAND="/explain" ;;
-            /triage*)    COMMAND="/triage" ;;
-            /test*)      COMMAND="/test" ;;
-            /fix*)       COMMAND="/fix" ;;
-            /help*)      COMMAND="/help" ;;
-            /ai*)        COMMAND="/ai" ;;
+            /implement\ *|/implement) COMMAND="/implement" ;;
+            /security\ *|/security)   COMMAND="/security" ;;
+            /analyze\ *|/analyze)     COMMAND="/analyze" ;;
+            /review\ *|/review)       COMMAND="/review" ;;
+            /explain\ *|/explain)     COMMAND="/explain" ;;
+            /triage\ *|/triage)       COMMAND="/triage" ;;
+            /test\ *|/test)           COMMAND="/test" ;;
+            /fix\ *|/fix)             COMMAND="/fix" ;;
+            /help\ *|/help)           COMMAND="/help" ;;
+            /ai\ *|/ai)               COMMAND="/ai" ;;
             *" /implement"*) COMMAND="/implement" ;;
             *" /security"*)  COMMAND="/security" ;;
             *" /analyze"*)   COMMAND="/analyze" ;;
