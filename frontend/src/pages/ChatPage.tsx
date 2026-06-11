@@ -943,7 +943,6 @@ export function ChatPage() {
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}
             loadingOlder={isFetchingNextPage}
-            queuedCount={queue.queuedMessages.length}
             queuedMessages={queue.queuedMessages}
             onQueueRetry={queue.retry}
             onQueueDismiss={queue.dismiss}

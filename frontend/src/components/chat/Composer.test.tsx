@@ -122,21 +122,6 @@ describe("Composer", () => {
     expect(onSend).toHaveBeenCalledWith("hello");
   });
 
-  it("shows queued count indicator when > 0", () => {
-    render(<Composer onSend={vi.fn()} queuedCount={3} />);
-    expect(screen.getByText("3 messages queued")).toBeInTheDocument();
-  });
-
-  it("shows singular queued count for 1 message", () => {
-    render(<Composer onSend={vi.fn()} queuedCount={1} />);
-    expect(screen.getByText("1 message queued")).toBeInTheDocument();
-  });
-
-  it("does not show queued indicator when count is 0", () => {
-    render(<Composer onSend={vi.fn()} queuedCount={0} />);
-    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
-  });
-
   it("does not show queued indicator by default", () => {
     render(<Composer onSend={vi.fn()} />);
     expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
