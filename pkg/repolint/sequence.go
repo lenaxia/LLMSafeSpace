@@ -490,7 +490,7 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			if data, err := os.ReadFile(newPath); err == nil {
 				updated := strings.ReplaceAll(string(data), newcomer, newName)
 				if updated != string(data) {
-					_ = os.WriteFile(newPath, []byte(updated), 0o644)
+					_ = os.WriteFile(newPath, []byte(updated), 0o644) //nolint:gosec // markdown docs are not sensitive; 0644 is intentional
 				}
 			}
 
@@ -587,10 +587,6 @@ func MainlineCheck(dir string) (MainlineReport, error) {
 		sort.Strings(localNames)
 		sort.Strings(remoteNames)
 
-		localSet := map[string]bool{}
-		for _, f := range localNames {
-			localSet[f] = true
-		}
 		var newLocal []string
 		for _, f := range localNames {
 			if !fileInList(f, remoteNames) {

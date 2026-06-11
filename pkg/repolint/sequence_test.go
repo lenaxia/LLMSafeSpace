@@ -6,6 +6,7 @@ package repolint
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -702,6 +703,110 @@ func TestMainlineCheck_NotOKReport(t *testing.T) {
 	}
 	if rep.OK() {
 		t.Error("collision present should not be OK")
+	}
+}
+
+func TestMainlineCheck_CollisionDetection(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0210_2026-06-11_shared.md"), "")
+	mustWrite(t, filepath.Join(dir, "0215_2026-06-11_new-branch-worklog.md"), "")
+
+	localVersions, localFiles, localMax, err := scanWorklogDir(dir)
+	if err != nil {
+		t.Fatalf("scanWorklogDir: %v", err)
+	}
+	if localMax != 215 {
+		t.Fatalf("expected localMax=215, got %d", localMax)
+	}
+	if len(localVersions) != 2 {
+		t.Fatalf("expected 2 versions, got %d", len(localVersions))
+	}
+
+	_ = map[int]bool{210: true, 215: true} // remote versions
+	remoteFiles := map[int][]string{
+		210: {"0210_2026-06-11_shared.md"},
+		215: {"0215_2026-06-11_different-main-worklog.md"},
+	}
+
+	sort.Strings(localFiles[210])
+	sort.Strings(localFiles[215])
+
+	var collisions []MainlineCollision
+	for v, localNames := range localFiles {
+		remoteNames, existsOnRemote := remoteFiles[v]
+		if !existsOnRemote {
+			continue
+		}
+		sort.Strings(remoteNames)
+		var newLocal []string
+		for _, f := range localNames {
+			if !fileInList(f, remoteNames) {
+				newLocal = append(newLocal, f)
+			}
+		}
+		if len(newLocal) == 0 {
+			continue
+		}
+		collisions = append(collisions, MainlineCollision{
+			Version:     v,
+			LocalFiles:  newLocal,
+			RemoteFiles: remoteNames,
+		})
+	}
+
+	if len(collisions) != 1 {
+		t.Fatalf("expected 1 collision, got %d: %+v", len(collisions), collisions)
+	}
+	if collisions[0].Version != 215 {
+		t.Fatalf("expected collision at version 215, got %d", collisions[0].Version)
+	}
+	if collisions[0].LocalFiles[0] != "0215_2026-06-11_new-branch-worklog.md" {
+		t.Fatalf("expected local file new-branch-worklog.md, got %s", collisions[0].LocalFiles[0])
+	}
+	if collisions[0].RemoteFiles[0] != "0215_2026-06-11_different-main-worklog.md" {
+		t.Fatalf("expected remote file different-main-worklog.md, got %s", collisions[0].RemoteFiles[0])
+	}
+}
+
+func TestMainlineCheck_SharedAncestryNotCollision(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0210_2026-06-11_shared.md"), "")
+
+	_, localFiles, _, err := scanWorklogDir(dir)
+	if err != nil {
+		t.Fatalf("scanWorklogDir: %v", err)
+	}
+
+	remoteFiles := map[int][]string{
+		210: {"0210_2026-06-11_shared.md"},
+	}
+
+	var collisions []MainlineCollision
+	for v, localNames := range localFiles {
+		remoteNames, existsOnRemote := remoteFiles[v]
+		if !existsOnRemote {
+			continue
+		}
+		sort.Strings(localNames)
+		sort.Strings(remoteNames)
+		var newLocal []string
+		for _, f := range localNames {
+			if !fileInList(f, remoteNames) {
+				newLocal = append(newLocal, f)
+			}
+		}
+		if len(newLocal) == 0 {
+			continue
+		}
+		collisions = append(collisions, MainlineCollision{
+			Version:     v,
+			LocalFiles:  newLocal,
+			RemoteFiles: remoteNames,
+		})
+	}
+
+	if len(collisions) != 0 {
+		t.Fatalf("identical file should not be a collision, got %d: %+v", len(collisions), collisions)
 	}
 }
 
