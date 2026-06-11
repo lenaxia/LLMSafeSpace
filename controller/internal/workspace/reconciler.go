@@ -49,41 +49,57 @@ type WorkspaceReconciler struct {
 }
 
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	start := time.Now()
 	logger := log.FromContext(ctx).WithValues("workspace", req.NamespacedName)
 
 	workspace := &v1.Workspace{}
 	if err := r.Get(ctx, req.NamespacedName, workspace); err != nil {
 		if errors.IsNotFound(err) {
+			observeReconcileDuration("Workspace", "ok", time.Since(start))
 			return ctrl.Result{}, nil
 		}
+		countReconcileError("Workspace", "get_failed")
+		observeReconcileDuration("Workspace", "error", time.Since(start))
 		return ctrl.Result{}, err
 	}
 
+	var result ctrl.Result
+	var err error
+
 	if !workspace.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, workspace)
+		result, err = r.handleDeletion(ctx, workspace)
+	} else {
+		switch workspace.Status.Phase {
+		case "", v1.WorkspacePhasePending:
+			result, err = r.handlePending(ctx, workspace)
+		case v1.WorkspacePhaseCreating:
+			result, err = r.handleCreating(ctx, workspace)
+		case v1.WorkspacePhaseActive:
+			result, err = r.handleActive(ctx, workspace)
+		case v1.WorkspacePhaseSuspending:
+			result, err = r.handleSuspending(ctx, workspace)
+		case v1.WorkspacePhaseSuspended:
+			result, err = r.handleSuspended(ctx, workspace)
+		case v1.WorkspacePhaseResuming:
+			result, err = r.handleResuming(ctx, workspace)
+		case v1.WorkspacePhaseTerminating:
+			result, err = r.handleTerminating(ctx, workspace)
+		case v1.WorkspacePhaseFailed:
+			result, err = r.handleFailed(ctx, workspace)
+		default:
+			logger.Info("Unknown workspace phase", "phase", workspace.Status.Phase)
+			observeReconcileDuration("Workspace", "ok", time.Since(start))
+			return ctrl.Result{}, nil
+		}
 	}
 
-	switch workspace.Status.Phase {
-	case "", v1.WorkspacePhasePending:
-		return r.handlePending(ctx, workspace)
-	case v1.WorkspacePhaseCreating:
-		return r.handleCreating(ctx, workspace)
-	case v1.WorkspacePhaseActive:
-		return r.handleActive(ctx, workspace)
-	case v1.WorkspacePhaseSuspending:
-		return r.handleSuspending(ctx, workspace)
-	case v1.WorkspacePhaseSuspended:
-		return r.handleSuspended(ctx, workspace)
-	case v1.WorkspacePhaseResuming:
-		return r.handleResuming(ctx, workspace)
-	case v1.WorkspacePhaseTerminating:
-		return r.handleTerminating(ctx, workspace)
-	case v1.WorkspacePhaseFailed:
-		return r.handleFailed(ctx, workspace)
-	default:
-		logger.Info("Unknown workspace phase", "phase", workspace.Status.Phase)
-		return ctrl.Result{}, nil
+	if err != nil {
+		countReconcileError("Workspace", "phase_handler")
+		observeReconcileDuration("Workspace", "error", time.Since(start))
+	} else {
+		observeReconcileDuration("Workspace", "ok", time.Since(start))
 	}
+	return result, err
 }
 
 func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {

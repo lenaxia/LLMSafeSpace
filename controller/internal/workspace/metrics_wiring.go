@@ -1,0 +1,125 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package workspace
+
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+)
+
+// observeReconcileDurationInto records a single reconcile loop duration.
+// Injected histogram enables isolated unit tests.
+func observeReconcileDurationInto(hist *prometheus.HistogramVec, resource, status string, d time.Duration) {
+	hist.WithLabelValues(resource, status).Observe(d.Seconds())
+}
+
+// observeReconcileDuration records into the package-level metric.
+func observeReconcileDuration(resource, status string, d time.Duration) {
+	observeReconcileDurationInto(metrics.ReconciliationDurationSeconds, resource, status, d)
+}
+
+// countReconcileErrorInto increments a reconciliation error counter.
+func countReconcileErrorInto(ctr *prometheus.CounterVec, resource, errorType string) {
+	ctr.WithLabelValues(resource, errorType).Inc()
+}
+
+// countReconcileError increments into the package-level metric.
+func countReconcileError(resource, errorType string) {
+	countReconcileErrorInto(metrics.ReconciliationErrorsTotal, resource, errorType)
+}
+
+// incrementWorkspacesDeletedInto increments the deleted counter.
+func incrementWorkspacesDeletedInto(ctr *prometheus.CounterVec, ws *v1.Workspace) {
+	ctr.WithLabelValues(ws.Spec.Runtime, ws.Spec.SecurityLevel).Inc()
+}
+
+// incrementWorkspacesDeleted increments into the package-level metric.
+func incrementWorkspacesDeleted(ws *v1.Workspace) {
+	incrementWorkspacesDeletedInto(metrics.WorkspacesDeletedTotal, ws)
+}
+
+// recordRecoveryMetricsInto records recovery-related metrics after enterRecovery
+// updates workspace status. Called with the post-increment ConsecutiveFailures and
+// the resolved NextRetryAt / SafeMode values.
+func recordRecoveryMetricsInto(
+	ws *v1.Workspace,
+	class FailureClass,
+	attempts *prometheus.CounterVec,
+	backoffHist *prometheus.HistogramVec,
+	safeModeGauge prometheus.Gauge,
+	_ *prometheus.CounterVec, // failedCtr reserved — WorkspacesFailedTotal is for terminal phase
+) {
+	attempts.WithLabelValues(string(class)).Inc()
+
+	if ws.Status.NextRetryAt != nil {
+		backoff := time.Until(ws.Status.NextRetryAt.Time)
+		if backoff < 0 {
+			backoff = 0
+		}
+		backoffHist.WithLabelValues(string(class)).Observe(backoff.Seconds())
+	}
+
+	if ws.Status.SafeMode {
+		safeModeGauge.Set(1)
+	} else {
+		safeModeGauge.Set(0)
+	}
+}
+
+// recordRecoveryMetrics records into package-level metrics.
+func recordRecoveryMetrics(ws *v1.Workspace, class FailureClass) {
+	recordRecoveryMetricsInto(
+		ws, class,
+		metrics.WorkspaceRecoveryAttemptsTotal,
+		metrics.WorkspaceRecoveryBackoffDurationSeconds,
+		metrics.WorkspaceSafeModeActive,
+		metrics.WorkspacesFailedTotal,
+	)
+}
+
+// accumulateActiveSecondsInto adds elapsed active time to per-workspace and
+// per-user counters. elapsed must be > 0 and ws.Status.StartTime must be set.
+func accumulateActiveSecondsInto(
+	ws *v1.Workspace,
+	elapsed time.Duration,
+	wsActive *prometheus.CounterVec,
+	userActive *prometheus.CounterVec,
+) {
+	if elapsed <= 0 || ws.Status.StartTime == nil {
+		return
+	}
+	userID := ws.Labels["user-id"]
+	secs := elapsed.Seconds()
+	wsActive.WithLabelValues(ws.Name, userID, ws.Spec.Runtime, ws.Spec.SecurityLevel).Add(secs)
+	userActive.WithLabelValues(userID, ws.Spec.Runtime, ws.Spec.SecurityLevel).Add(secs)
+}
+
+// accumulateActiveSeconds accumulates into package-level metrics.
+func accumulateActiveSeconds(ws *v1.Workspace, elapsed time.Duration) {
+	accumulateActiveSecondsInto(ws, elapsed, metrics.WorkspaceActiveSecondsTotal, metrics.UserActiveSecondsTotal)
+}
+
+// setStorageBytesInto sets the PVC-allocated storage gauge for a workspace.
+// Parses ws.Spec.Storage.Size; silently no-ops on empty or unparseable size.
+func setStorageBytesInto(ws *v1.Workspace, storageVec *prometheus.GaugeVec) {
+	if ws.Spec.Storage.Size == "" {
+		return
+	}
+	q, err := resource.ParseQuantity(ws.Spec.Storage.Size)
+	if err != nil {
+		return
+	}
+	userID := ws.Labels["user-id"]
+	storageVec.WithLabelValues(ws.Name, userID).Set(float64(q.Value()))
+}
+
+// setStorageBytes sets into the package-level metric.
+func setStorageBytes(ws *v1.Workspace) {
+	setStorageBytesInto(ws, metrics.WorkspaceStorageBytes)
+}

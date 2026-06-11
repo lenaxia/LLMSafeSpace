@@ -148,6 +148,10 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 
 	// Reset failure counter if stable long enough (2 min).
 	maybeResetConsecutiveFailures(workspace)
+	// Accumulate active compute seconds for billing metrics (requeueActive is the elapsed window).
+	accumulateActiveSeconds(workspace, requeueActive)
+	// Set PVC-allocated storage gauge (idempotent set; cheap).
+	setStorageBytes(workspace)
 	// Check agent liveness (HTTP to /v1/healthz — rate-limited, cheap).
 	r.checkAgentHealth(ctx, workspace)
 	// US-22.6: Deep-status enrichment on a slower cadence (60s).

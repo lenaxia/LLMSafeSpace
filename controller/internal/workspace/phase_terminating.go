@@ -39,6 +39,9 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 
 	workspace.Status.Phase = v1.WorkspacePhaseTerminated
 
+	// Record deletion metric.
+	incrementWorkspacesDeleted(workspace)
+
 	// Clean up in-memory state for this workspace.
 	r.lastDeepStatusMu.Lock()
 	delete(r.lastDeepStatus, workspace.Name)

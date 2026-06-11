@@ -101,18 +101,6 @@ var (
 		prometheus.CounterOpts{Name: "llmsafespace_workspace_cpu_milliseconds_total", Help: "Cumulative CPU milliseconds consumed by the workspace pod cgroup"},
 		[]string{"workspace_id", "user_id"},
 	)
-	WorkspaceLLMRequestsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Name: "llmsafespace_workspace_llm_requests_total", Help: "Total LLM API calls proxied per workspace"},
-		[]string{"workspace_id", "user_id", "provider", "model", "credential_source"},
-	)
-	WorkspaceLLMRequestDurationSeconds = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{Name: "llmsafespace_workspace_llm_request_duration_seconds", Help: "Round-trip latency for proxied LLM calls", Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60}},
-		[]string{"workspace_id", "provider", "model"},
-	)
-	WorkspaceProxyBytesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Name: "llmsafespace_workspace_proxy_bytes_total", Help: "Total bytes proxied per workspace"},
-		[]string{"workspace_id", "user_id", "direction"},
-	)
 
 	// BILLING — per user aggregates
 
@@ -132,10 +120,6 @@ var (
 		prometheus.CounterOpts{Name: "llmsafespace_user_memory_bytes_seconds_total", Help: "Cumulative (memory_used_bytes x elapsed_seconds) per user"},
 		[]string{"user_id"},
 	)
-	UserLLMCallsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Name: "llmsafespace_user_llm_calls_total", Help: "Total LLM API calls per user"},
-		[]string{"user_id", "provider", "credential_source"},
-	)
 	APIKeyLegacyTotal = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "llmsafespace_api_key_legacy_total", Help: "API keys using plaintext storage (pre-migration 000017, target: 0)"},
 	)
@@ -153,10 +137,9 @@ func collectors() []prometheus.Collector {
 		WorkspaceActiveSecondsTotal, WorkspaceCPUMillisecondsTotal,
 		WorkspaceStorageBytes, WorkspaceDiskUsedBytesSecondsTotal, WorkspaceDiskUsedBytes,
 		WorkspaceMemoryUsedBytesSecondsTotal, WorkspaceMemoryUsedBytes,
-		WorkspaceLLMRequestsTotal, WorkspaceLLMRequestDurationSeconds, WorkspaceProxyBytesTotal,
 		UserActiveSecondsTotal, UserCPUMillisecondsTotal,
 		UserDiskBytesSecondsTotal, UserMemoryBytesSecondsTotal,
-		UserLLMCallsTotal, APIKeyLegacyTotal,
+		APIKeyLegacyTotal,
 	}
 }
 
