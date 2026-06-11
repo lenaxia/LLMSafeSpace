@@ -1,4 +1,4 @@
-# 0218 — Message Queue v3: Bug Fixes, Per-Session Isolation, Drawer UI
+# 0232 — Message Queue v3: Bug Fixes, Per-Session Isolation, Drawer UI
 
 **Date:** 2026-06-11
 **Session:** Resume PR #93 (serialize-on-idle v2), fix 4 reported bugs, address automated review findings, redesign queue UI
