@@ -69,6 +69,29 @@ func TestClient_AuthError(t *testing.T) {
 	}
 }
 
+func TestClient_RateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	_, err := c.Auth.Me(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsRateLimit(err) {
+		t.Errorf("expected RateLimit error, got: %v", err)
+	}
+	if IsAuth(err) {
+		t.Errorf("IsAuth should be false for 429")
+	}
+	if IsRateLimit(nil) {
+		t.Errorf("IsRateLimit(nil) should be false")
+	}
+}
+
 func TestClient_SendMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

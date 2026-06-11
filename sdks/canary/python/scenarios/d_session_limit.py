@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import sys
 import os
-import time
+import json
 import threading
+
+import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -24,6 +26,10 @@ from llmsafespace import LLMSafeSpace, RateLimitError
 
 
 def run(r: Runner, cfg: Config) -> None:
+    if not cfg.llm_api_key:
+        r.ok("skipped: no LLM key")
+        return
+
     c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=60.0)
     ws_id = None
     try:
@@ -42,41 +48,87 @@ def run(r: Runner, cfg: Config) -> None:
         if phase != "Active":
             return
 
-        try:
-            sess = ensure_session_with_retry(c, ws_id, 5)
-        except Exception as e:
-            r.fail("ensure-session: no error", str(e))
-            return
-        r.ok("ensure-session: no error")
-        sid = sess.sessionId
+        active_info = c.sessions.get_active(ws_id)
+        max_active = active_info.get("maxActive", 0)
+        r.assert_(max_active > 0, "max-active-positive", f"got {max_active}")
 
-        results = [None] * 8
-        barrier = threading.Barrier(8, timeout=30)
-        def send_concurrent(idx):
+        session_ids = []
+        for i in range(max_active + 2):
+            try:
+                sess = c.sessions.ensure(ws_id)
+                if hasattr(sess, "session_id") and sess.session_id:
+                    session_ids.append(sess.session_id)
+                elif isinstance(sess, dict) and sess.get("sessionId"):
+                    session_ids.append(sess["sessionId"])
+            except Exception:
+                break
+        r.assert_(
+            len(session_ids) >= max_active + 1,
+            "enough-sessions",
+            f"need {max_active + 1} got {len(session_ids)}",
+        )
+
+        errors = []
+        barrier = threading.Barrier(min(max_active, len(session_ids)), timeout=30)
+
+        def send_async(idx):
             try:
                 barrier.wait()
-                c.sessions.send_message(ws_id, sid, f"Concurrent message {idx}")
-                results[idx] = "ok"
-            except RateLimitError:
-                results[idx] = "429"
+                c.sessions.send_prompt_async(ws_id, session_ids[idx], f"Count slowly from {idx}")
             except Exception as e:
-                results[idx] = f"err:{e}"
+                errors.append(e)
 
         threads = []
-        for i in range(8):
-            t = threading.Thread(target=send_concurrent, args=(i,))
+        for i in range(min(max_active, len(session_ids))):
+            t = threading.Thread(target=send_async, args=(i,))
             t.start()
             threads.append(t)
         for t in threads:
             t.join(timeout=60)
+        r.assert_(len(errors) == 0, "p1-fill-slots", f"{len(errors)} errors")
 
-        hit_429 = any(r == "429" for r in results)
-        r.assert_(hit_429, "session-limit: 429 on concurrent messages", f"results={results}")
+        import time
+        time.sleep(2)
+
+        if len(session_ids) > max_active:
+            extra_idx = max_active
+            status, body, raw_err = raw_do(
+                "POST",
+                f"{cfg.api_url}/api/v1/workspaces/{ws_id}/sessions/{session_ids[extra_idx]}/prompt",
+                cfg.api_key,
+                json.dumps({"message": "hello"}).encode(),
+            )
+            if raw_err:
+                r.fail("p2-over-limit", str(raw_err))
+            else:
+                r.assert_(status == 429, "p2-429-active-limit", f"got {status}")
+                if status == 429:
+                    body_obj = json.loads(body) if body else {}
+                    r.assert_("error" in body_obj, "p2-has-error-field", "")
+                    r.assert_("retryAfter" in body_obj or "maxActiveSessions" in body_obj,
+                              "p2-has-limit-fields", f"keys={list(body_obj.keys())}")
+
+        for sid in session_ids[:max_active]:
+            try:
+                c.sessions.abort(ws_id, sid)
+            except Exception:
+                pass
+
+        try:
+            sess2 = c.sessions.ensure(ws_id)
+            sid2 = sess2.session_id if hasattr(sess2, "session_id") else sess2["sessionId"]
+        except RateLimitError:
+            r.ok("p3-post-abort-still-limited")
+            sid2 = None
+        except Exception as e:
+            r.fail("p3-post-abort", str(e))
+            sid2 = None
+
+        if sid2:
+            r.ok("p3-post-abort-new-msg-succeeds")
 
         streams = []
         for i in range(11):
-            import httpx
-
             try:
                 resp = httpx.stream(
                     "GET",
@@ -94,9 +146,7 @@ def run(r: Runner, cfg: Config) -> None:
 
         sse_429 = False
         try:
-            import httpx as _httpx
-
-            check = _httpx.get(
+            check = httpx.get(
                 f"{cfg.api_url}/api/v1/workspaces/{ws_id}/events",
                 headers={
                     "Authorization": f"Bearer {cfg.api_key}",
