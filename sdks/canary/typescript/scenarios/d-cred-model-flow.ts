@@ -59,6 +59,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     }
 
 
+
     // Step 5: Ensure session
     let sess: any;
     try {
