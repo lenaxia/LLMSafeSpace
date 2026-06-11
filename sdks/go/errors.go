@@ -38,3 +38,11 @@ func IsConflict(err error) bool {
 	}
 	return false
 }
+
+// IsRateLimit returns true if the error is a 429.
+func IsRateLimit(err error) bool {
+	if e, ok := err.(*APIError); ok {
+		return e.Status == 429
+	}
+	return false
+}
