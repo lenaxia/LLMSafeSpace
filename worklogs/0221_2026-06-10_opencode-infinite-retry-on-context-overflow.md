@@ -1,4 +1,4 @@
-# Worklog 0200 — opencode infinite retry loop on context-window overflow
+# Worklog 0221 — opencode infinite retry loop on context-window overflow
 
 **Date:** 2026-06-10
 
