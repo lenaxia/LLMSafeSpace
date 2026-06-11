@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package main
 
 import (
@@ -5,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	llm "github.com/lenaxia/llmsafespace/sdk/go"
@@ -113,6 +115,4 @@ func runModelSet(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	} else {
 		run.OK("n3-ws-get-failed-after-bad-model")
 	}
-
-	_ = strings.TrimSpace
 }

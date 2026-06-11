@@ -50,14 +50,28 @@ def run(r: Runner, cfg: Config) -> None:
         r.ok("ensure-session: no error")
         sid = sess.sessionId
 
-        hit_429 = False
-        for i in range(8):
+        results = [None] * 8
+        barrier = threading.Barrier(8, timeout=30)
+        def send_concurrent(idx):
             try:
-                c.sessions.send_message(ws_id, sid, f"Concurrent message {i}")
+                barrier.wait()
+                c.sessions.send_message(ws_id, sid, f"Concurrent message {idx}")
+                results[idx] = "ok"
             except RateLimitError:
-                hit_429 = True
-                break
-        r.assert_(hit_429, "session-limit: 429 on rapid messages", "no rate limit hit")
+                results[idx] = "429"
+            except Exception as e:
+                results[idx] = f"err:{e}"
+
+        threads = []
+        for i in range(8):
+            t = threading.Thread(target=send_concurrent, args=(i,))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join(timeout=60)
+
+        hit_429 = any(r == "429" for r in results)
+        r.assert_(hit_429, "session-limit: 429 on concurrent messages", f"results={results}")
 
         streams = []
         for i in range(11):

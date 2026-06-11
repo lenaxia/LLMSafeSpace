@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package main
 
 import (
@@ -149,11 +152,4 @@ func runActivateEviction(ctx context.Context, run *canary.Runner, cfg canary.Con
 				fmt.Sprintf("got %d body=%s", status, string(body)[:min(len(body), 200)]))
 		}
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

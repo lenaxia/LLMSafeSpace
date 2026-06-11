@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package main
 
 import (
@@ -7,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -178,5 +180,4 @@ func runSessionLimit(ctx context.Context, run *canary.Runner, cfg canary.Config)
 	}
 	_ = conns
 
-	_ = strings.TrimSpace
 }
