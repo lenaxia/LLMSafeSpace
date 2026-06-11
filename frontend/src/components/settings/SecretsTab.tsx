@@ -10,6 +10,11 @@ const SECRET_TYPES = [
   { value: "git-credential", label: "Git Credentials", icon: "📦", metaFields: ["host"] },
   { value: "secret-file", label: "Secret Files", icon: "📄", metaFields: ["mount_path"] },
   { value: "env-secret", label: "Environment Variables", icon: "⚙️", metaFields: ["var_name"] },
+  // api-key is a legacy type superseded by llm-provider. New secrets of this
+  // type cannot be created from the UI; this entry exists solely to render
+  // existing api-key secrets returned by GET /secrets (which would otherwise
+  // be silently filtered out by the grouped display logic).
+  { value: "api-key", label: "API Keys (legacy)", icon: "🗝️", metaFields: [] as string[], legacyOnly: true },
 ] as const;
 
 const FIELD_INFO: Record<string, string> = {
@@ -153,6 +158,13 @@ export function SecretsTab() {
                 </span>
                 <span className="text-xs text-muted-foreground">{collapsed[group.value] ? "▶" : "▼"}</span>
               </button>
+              {"legacyOnly" in group && group.legacyOnly && (
+                <div className="border-t border-border px-4 py-2 bg-amber-50 dark:bg-amber-950/20">
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    These are legacy <code>api-key</code> secrets. They are materialized as <code>API_KEY_&lt;NAME&gt;</code> environment variables. Consider recreating them as <strong>LLM Providers</strong> or <strong>Environment Variables</strong> for structured support.
+                  </p>
+                </div>
+              )}
               {!collapsed[group.value] && (
                 <div className="border-t border-border divide-y divide-border">
                   {group.secrets.map((s) => (
@@ -397,9 +409,6 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
     setSubmitting(true);
     try {
       const submitMetadata = { ...metadata };
-      if (submitMetadata.mount_path) {
-        submitMetadata.mount_path = `/home/sandbox/.secrets/${submitMetadata.mount_path}`;
-      }
       await secretsApi.create({
         name, type, value,
         metadata: Object.keys(submitMetadata).length > 0 ? submitMetadata : undefined,
@@ -470,7 +479,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             onChange={(e) => { setType(e.target.value as SecretType); setMetadata({}); setValue(""); }}
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
           >
-            {SECRET_TYPES.map((t) => (
+            {SECRET_TYPES.filter((t) => !("legacyOnly" in t && t.legacyOnly)).map((t) => (
               <option key={t.value} value={t.value}>{t.icon} {t.label}</option>
             ))}
           </select>

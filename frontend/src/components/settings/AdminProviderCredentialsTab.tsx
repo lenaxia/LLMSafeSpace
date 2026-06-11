@@ -7,6 +7,7 @@
 // unless overridden by the user.
 
 import { useEffect, useState } from "react";
+import { ApiClientError } from "../../api/client";
 import {
   adminProviderCredentialsApi,
   type AdminProviderCredential,
@@ -45,7 +46,7 @@ export function AdminProviderCredentialsTab() {
       const data = await adminProviderCredentialsApi.list();
       setCreds(data);
     } catch (e: unknown) {
-      if (e instanceof Error && e.message.includes("403")) {
+      if (e instanceof ApiClientError && e.status === 404) {
         setError("not-admin");
       } else {
         setError(e instanceof Error ? e.message : "Failed to load credentials");
@@ -438,7 +439,7 @@ function AddAutoApplyRuleForm({
         >
           <option value="all">All workspaces</option>
           <option value="user">Specific user</option>
-          <option value="org">Organisation</option>
+          <option value="org" disabled>Organisation (coming soon)</option>
         </select>
         {targetType !== "all" && (
           <input
