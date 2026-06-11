@@ -3,7 +3,7 @@
 // D-CRED-MODEL-FLOW canary — TypeScript SDK (flagship end-to-end scenario)
 
 import { LLMSafeSpace } from '../../src/index.js';
-import { Runner, Config, configFromEnv, nodeFetch, waitActive, ensureSessionWithRetry, rawDo } from '../canary.js';
+import { Runner, Config, configFromEnv, nodeFetch, waitActive, ensureSessionWithRetry } from '../canary.js';
 
 async function run(run: Runner, cfg: Config): Promise<void> {
   if (!cfg.llmApiKey || !cfg.llmModel) {
@@ -11,7 +11,18 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     return;
   }
 
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 120000, fetch: nodeFetch as any });
+  const jwtAvailable = cfg.email !== '' && cfg.password !== '';
+  if (!jwtAvailable) {
+    run.ok('cred-model-flow: JWT credentials not set — agent tests will be skipped (only API surface tested)');
+  }
+
+  const clientOpts: any = { baseUrl: cfg.apiUrl, timeout: 120000, fetch: nodeFetch as any };
+  if (jwtAvailable) {
+    clientOpts.credentials = { email: cfg.email, password: cfg.password };
+  } else {
+    clientOpts.apiKey = cfg.apiKey;
+  }
+  const c = new LLMSafeSpace(clientOpts);
   let wsId: string | null = null;
   let credId: string | null = null;
 
@@ -38,15 +49,14 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     run.assert(cred.type === 'llm-provider', 'create-cred: type=llm-provider', cred.type);
     credId = cred.id;
 
-    // Step 3: Bind (setBindings — not in TS SDK directly, use raw HTTP)
-    const [bindStatus] = await rawDo('PUT', `${cfg.apiUrl}/api/v1/workspaces/${wsId}/bindings`,
-      cfg.apiKey, JSON.stringify({ secretIds: [credId] }));
-    run.assert(bindStatus === 204, 'bind-cred: 204', `got ${bindStatus}`);
+    await run.assertNoError(() => c.workspaces.setBindings(wsId!, [credId!]), 'bind-cred: no error');
 
-    // Step 4: Set model (raw HTTP)
-    const [modelStatus] = await rawDo('PUT', `${cfg.apiUrl}/api/v1/workspaces/${wsId}/model`,
-      cfg.apiKey, JSON.stringify({ model: cfg.llmModel }));
-    run.assert(modelStatus === 204, 'set-model: 204', `got ${modelStatus}`);
+    await run.assertNoError(() => c.workspaces.setModel(wsId!, cfg.llmModel), 'set-model: no error');
+
+    if (!jwtAvailable) {
+      run.ok('agent-tests: skipped (JWT required for DEK-based secret injection)');
+      return;
+    }
 
     // Step 5: Ensure session
     let sess: any;
