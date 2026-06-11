@@ -95,7 +95,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
     return (
       <div className={cn(
         "prose prose-sm dark:prose-invert max-w-none",
-        "[&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto [&_:not(pre)>code]:break-all",
+        "[&_pre]:overflow-x-auto [&_pre]:touch-pan-x [&_table]:block [&_table]:overflow-x-auto [&_table]:touch-pan-x [&_:not(pre)>code]:break-all",
         wordWrap && "[&_pre]:whitespace-pre-wrap [&_pre]:break-words",
       )}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
@@ -175,7 +175,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
             newStr={String((input as Record<string, unknown>).newString ?? (input as Record<string, unknown>).newStr ?? "")}
           />
         ) : isFileWrite ? (
-          <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+          <pre className="overflow-x-auto touch-pan-x text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
             {String((input as Record<string, unknown>).content ?? "")}
           </pre>
         ) : (
@@ -190,7 +190,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
                 <summary className="px-3 py-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                   Output ({part.toolOutput.length > 200 ? `${Math.ceil(part.toolOutput.length / 1024)}KB` : `${part.toolOutput.length} chars`})
                 </summary>
-                <pre className="overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
+                <pre className="overflow-x-auto touch-pan-x text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-60 overflow-y-auto px-3 py-1">
                   {part.toolOutput}
                 </pre>
               </details>
@@ -208,7 +208,7 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
           <Server className="h-3.5 w-3.5" />
           Tool result
         </div>
-        <pre className="mt-1 overflow-x-auto text-xs text-muted-foreground whitespace-pre-wrap font-mono">
+        <pre className="mt-1 overflow-x-auto touch-pan-x text-xs text-muted-foreground whitespace-pre-wrap font-mono">
           {part.text ?? ""}
         </pre>
       </div>
