@@ -122,6 +122,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     && apt-get upgrade -y zlib1g \
     && apt-get upgrade -y curl libcurl4 \
+    && apt-get upgrade -y sqlite3 libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install opencode from upstream releases.
