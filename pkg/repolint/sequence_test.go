@@ -643,6 +643,79 @@ func TestFixWorklogs_SelfReferenceWriteFailureIsSilent(t *testing.T) {
 // helpers
 // ---------------------------------------------------------------------------
 
+func TestMainlineCheck_NoCollisions(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0210_2026-06-11_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0211_2026-06-11_beta.md"), "")
+
+	rep, err := MainlineCheck(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK, got: %s", rep.String())
+	}
+	if rep.NextNumber < 212 {
+		t.Fatalf("expected NextNumber >= 212 (local max + remote max), got %d", rep.NextNumber)
+	}
+}
+
+func TestMainlineCheck_ReportFormatting(t *testing.T) {
+	rep := MainlineReport{
+		Collisions: []MainlineCollision{
+			{
+				Version:     209,
+				LocalFiles:  []string{"0209_2026-06-11_local.md"},
+				RemoteFiles: []string{"0209_2026-06-10_remote.md"},
+			},
+		},
+		NextNumber: 219,
+	}
+	s := rep.String()
+	if !strings.Contains(s, "version 0209") {
+		t.Errorf("expected version in output, got: %s", s)
+	}
+	if !strings.Contains(s, "local:") {
+		t.Errorf("expected 'local:' in output, got: %s", s)
+	}
+	if !strings.Contains(s, "remote:") {
+		t.Errorf("expected 'remote:' in output, got: %s", s)
+	}
+	if !strings.Contains(s, "0219") {
+		t.Errorf("expected next number in output, got: %s", s)
+	}
+}
+
+func TestMainlineCheck_OKReport(t *testing.T) {
+	rep := MainlineReport{NextNumber: 300}
+	if !rep.OK() {
+		t.Error("empty collisions should be OK")
+	}
+	if rep.String() != "(ok)" {
+		t.Errorf("expected (ok), got: %s", rep.String())
+	}
+}
+
+func TestMainlineCheck_NotOKReport(t *testing.T) {
+	rep := MainlineReport{
+		Collisions: []MainlineCollision{{Version: 100}},
+	}
+	if rep.OK() {
+		t.Error("collision present should not be OK")
+	}
+}
+
+func TestLive_Worklogs_NoMainlineCollisions(t *testing.T) {
+	root := repoRoot(t)
+	rep, err := MainlineCheck(filepath.Join(root, "worklogs"))
+	if err != nil {
+		t.Fatalf("mainline check: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("worklogs/ collides with origin/main:\n%s", rep.String())
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

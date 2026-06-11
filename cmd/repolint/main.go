@@ -78,6 +78,7 @@ func main() {
 	failures := 0
 	failures += runMigrations(root)
 	failures += runWorklogs(root)
+	failures += runWorklogMainline(root)
 	failures += runChartDrift(root)
 	failures += runCRDDrift(root)
 
@@ -144,6 +145,25 @@ func runWorklogs(root string) int {
 	}
 	fmt.Printf("ok    worklogs sequence (%d worklogs, max %04d, grandfathered <%04d)\n",
 		len(rep.SeenVersions), rep.MaxVersion, worklogGrandfatherBelow)
+	return 0
+}
+
+func runWorklogMainline(root string) int {
+	dir := filepath.Join(root, "worklogs")
+	rep, err := repolint.MainlineCheck(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN  worklogs mainline check skipped: %v\n", err)
+		return 0
+	}
+	if !rep.OK() {
+		fmt.Fprintf(os.Stderr, "FAIL  worklogs collide with origin/main:\n%s\n", rep.String())
+		return 1
+	}
+	if rep.NextNumber > 0 {
+		fmt.Printf("ok    worklogs no mainline collisions (next available: %04d)\n", rep.NextNumber)
+	} else {
+		fmt.Println("ok    worklogs no mainline collisions")
+	}
 	return 0
 }
 
