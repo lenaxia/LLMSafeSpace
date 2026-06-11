@@ -51,10 +51,12 @@ body {
   @apply bg-background text-foreground antialiased;
   font-family: system-ui, -apple-system, sans-serif;
   overscroll-behavior: none;
+  touch-action: pan-y;
 }
 
 html {
   overscroll-behavior: none;
+  touch-action: pan-y;
 }
 
 /* Minimal scrollbars */
