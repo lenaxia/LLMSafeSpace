@@ -55,6 +55,9 @@ async function setupAPIMocks(
   await page.route(`${API}/workspaces/${WORKSPACE_ID}/sessions/${SESSION_ID}/message`, (r: Route) =>
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ messages: [], nextCursor: null }) }));
 
+  await page.route(`${API}/workspaces/${WORKSPACE_ID}/sessions/${SESSION_ID}`, (r: Route) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: SESSION_ID, title: "CTX Test Session" }) }));
+
   // Default SSE — silent (individual tests override when they need events)
   await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, (r: Route) =>
     r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body: "" }));
@@ -130,37 +133,31 @@ test.describe("Context bar (DiskUsageBar) — real browser", () => {
   });
 
   test("compaction banner appears when contextUsed drops >50% via SSE", async ({ page }) => {
-    await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: null });
-
-    const sseBody =
-      stepEndedSSE(SESSION_ID, 100000) +
-      stepEndedSSE(SESSION_ID, 40000);
+    // Seed sessions list with contextUsed=100000 so prevContextUsedRef is primed.
+    // Then a single SSE step.ended with 40000 triggers the >50% drop.
+    await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: 100000 });
 
     await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, (r: Route) =>
       r.fulfill({
         status: 200,
         headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-        body: sseBody,
+        body: stepEndedSSE(SESSION_ID, 40000),
       }));
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
 
-    // 100K → 40K is a >50% drop — compaction banner must appear
+    // 100K (cold-start) → 40K (SSE) is a >50% drop — compaction banner must appear
     await expect(page.getByText(/context compacted/i)).toBeVisible({ timeout: 10_000 });
   });
 
   test("compaction banner can be dismissed", async ({ page }) => {
-    await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: null });
-
-    const sseBody =
-      stepEndedSSE(SESSION_ID, 100000) +
-      stepEndedSSE(SESSION_ID, 40000);
+    await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: 100000 });
 
     await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, (r: Route) =>
       r.fulfill({
         status: 200,
         headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-        body: sseBody,
+        body: stepEndedSSE(SESSION_ID, 40000),
       }));
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
