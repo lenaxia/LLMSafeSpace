@@ -52,9 +52,11 @@ type SSETracker struct {
 	onRawEvent      RawEventCallback
 	// onInference fires when a session produces new output tokens (billing/metering).
 	onInference InferenceCallback
-	// sessionTokenSeen tracks cumulative tokens per sessionID:workspaceID for delta computation.
+	// sessionTokenSeen and sessionCostSeen track cumulative output tokens and cost
+	// per "workspaceID:sessionID" key for delta computation. Guarded by tokensMu.
 	tokensMu         sync.Mutex
 	sessionTokenSeen map[string]int64
+	sessionCostSeen  map[string]float64
 	// sessionStartTime tracks when each session first went busy (for duration metric).
 	startTimeMu      sync.Mutex
 	sessionStartTime map[string]time.Time
@@ -85,6 +87,7 @@ func NewSSETracker(
 		onSessionIdle:    onSessionIdle,
 		subscriptions:    make(map[string]context.CancelFunc),
 		sessionTokenSeen: make(map[string]int64),
+		sessionCostSeen:  make(map[string]float64),
 		sessionStartTime: make(map[string]time.Time),
 	}
 }
@@ -392,7 +395,9 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 //	}}
 //
 // Fields are under properties.info, NOT at properties top-level.
-// Delta tracking uses cumulative output only — input varies due to cache reads.
+// Delta tracking uses cumulative output and cost — both are monotonically
+// increasing cumulative fields in the opencode session object. Input tokens
+// are not delta-tracked (they vary due to cache reads across events).
 func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
 	var p struct {
 		SessionID string `json:"sessionID"`
@@ -414,21 +419,29 @@ func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
 	}
 	key := workspaceID + ":" + p.Info.ID
 	t.tokensMu.Lock()
-	prev := t.sessionTokenSeen[key]
-	if p.Info.Tokens.Output <= prev {
+	prevOutput := t.sessionTokenSeen[key]
+	if p.Info.Tokens.Output <= prevOutput {
 		t.tokensMu.Unlock()
 		return
 	}
+	prevCost := t.sessionCostSeen[key]
 	t.sessionTokenSeen[key] = p.Info.Tokens.Output
+	t.sessionCostSeen[key] = p.Info.Cost
 	t.tokensMu.Unlock()
 
-	outputDelta := p.Info.Tokens.Output - prev
-	// On first observation prev==0: report the full input count alongside
+	outputDelta := p.Info.Tokens.Output - prevOutput
+	// On first observation prevOutput==0: report the full input count alongside
 	// the full output count. On subsequent events: only the output delta
 	// is meaningful; input varies due to cache reads and is not delta-trackable.
 	inputTokens := p.Info.Tokens.Input
-	if prev > 0 {
+	if prevOutput > 0 {
 		inputTokens = 0
 	}
-	t.onInference(workspaceID, p.Info.Model.ID, p.Info.Model.ProviderID, inputTokens, outputDelta, p.Info.Cost)
+	// Cost is a cumulative session-level value — emit the delta to avoid
+	// double-counting on repeated session.updated events.
+	costDelta := p.Info.Cost - prevCost
+	if costDelta < 0 {
+		costDelta = 0
+	}
+	t.onInference(workspaceID, p.Info.Model.ID, p.Info.Model.ProviderID, inputTokens, outputDelta, costDelta)
 }
