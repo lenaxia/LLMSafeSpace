@@ -133,40 +133,52 @@ test.describe("Context bar (DiskUsageBar) — real browser", () => {
   });
 
   test("compaction banner appears when contextUsed drops >50% via SSE", async ({ page }) => {
-    // Seed sessions list with contextUsed=100000 so prevContextUsedRef is primed.
-    // Then a single SSE step.ended with 40000 triggers the >50% drop.
     await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: 100000 });
 
-    await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, (r: Route) =>
-      r.fulfill({
-        status: 200,
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-        body: stepEndedSSE(SESSION_ID, 40000),
-      }));
+    let sendSSE: ((body: string) => void) | null = null;
+    await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, async (r: Route) => {
+      await new Promise<void>((resolve) => {
+        sendSSE = (body: string) => {
+          r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body });
+          resolve();
+        };
+      });
+    });
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
 
-    // Wait for cold-start value first (ensures prevContextUsedRef is set before SSE event)
+    // Wait for cold-start value — prevContextUsedRef is now 100000
     await expect(page.getByText(/100K/).first()).toBeVisible({ timeout: 10_000 });
 
-    // 100K (cold-start) → 40K (SSE) is a >50% drop — compaction banner must appear
+    // Fire SSE event: 40K < 50% of 100K → compaction detected
+    sendSSE?.(stepEndedSSE(SESSION_ID, 40000));
+
     await expect(page.getByText(/context compacted/i)).toBeVisible({ timeout: 10_000 });
   });
 
   test("compaction banner can be dismissed", async ({ page }) => {
     await setupAPIMocks(page, { contextTotal: 200000, sessionContextUsed: 100000 });
 
-    await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, (r: Route) =>
-      r.fulfill({
-        status: 200,
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-        body: stepEndedSSE(SESSION_ID, 40000),
-      }));
+    // Deferred SSE — hold the connection open until we're ready to send the event.
+    // This ensures prevContextUsedRef is set from the cold-start sessions list
+    // before the SSE compaction event fires.
+    let sendSSE: ((body: string) => void) | null = null;
+    await page.route(`${API}/workspaces/${WORKSPACE_ID}/session-events`, async (r: Route) => {
+      await new Promise<void>((resolve) => {
+        sendSSE = (body: string) => {
+          r.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }, body });
+          resolve();
+        };
+      });
+    });
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
 
-    // Wait for cold-start value first (ensures prevContextUsedRef is set before SSE event)
+    // Wait for cold-start value — prevContextUsedRef is now 100000
     await expect(page.getByText(/100K/).first()).toBeVisible({ timeout: 10_000 });
+
+    // Now fire the SSE event that triggers compaction (40K < 50% of 100K)
+    sendSSE?.(stepEndedSSE(SESSION_ID, 40000));
 
     await expect(page.getByText(/context compacted/i)).toBeVisible({ timeout: 10_000 });
     await page.getByRole("button", { name: /dismiss/i }).click();
