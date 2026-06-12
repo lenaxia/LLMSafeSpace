@@ -111,13 +111,17 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			// Both /workspace and /home/sandbox use explicit subPaths so the PVC
-			// root contains only two named subtrees (workspace/ and home/) plus
-			// the Longhorn-managed lost+found/. All existing PVC data was migrated
-			// into workspace/ before this change was deployed (worklog 0198).
+			// The workspace PVC contains three named subtrees via explicit subPaths:
+			//   workspace/ — user workspace data, opencode.db, auth.json
+			//   home/      — SSH keys, secrets base dir, enricher cache, tool caches
+			//   tmp/       — agent-config.json, secrets-env; cleared on each pod start
+			//                by workspace-setup init; PVC-backed so it inherits the
+			//                same Longhorn redundancy as the rest of user data.
+			// All existing PVC data was migrated into workspace/ before the subPath
+			// scheme was deployed (worklog 0198).
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
-			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
 		Resources: resourceRequirementsFor(workspace),
@@ -127,19 +131,15 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workspace.Status.PVCName},
 		}},
-		// G15 (Epic 17): sandbox-cfg and tmp are tmpfs-backed to
-		// prevent plaintext secrets / session keys from touching
-		// node disk. /home/sandbox is now a subPath on the workspace
-		// PVC (see SubPath: "home" mount above) so tool caches and
-		// home-dir state persist across pod restarts without consuming
-		// node ephemeral storage or triggering emptyDir evictions.
+		// G15 (Epic 17): sandbox-cfg is tmpfs-backed (Memory medium) to
+		// prevent plaintext secrets / session keys from touching node disk.
+		// /tmp is now a subPath on the workspace PVC (see SubPath: "tmp" mount
+		// above) so agent-config.json and secrets-env survive pod restarts and
+		// are subject to the same Longhorn redundancy as other workspace data.
+		// workspace-setup clears tmp/ on each pod start to avoid stale configs.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptrQuantity("4Mi"),
-		}}},
-		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium:    corev1.StorageMediumMemory,
-			SizeLimit: ptrQuantity("64Mi"),
 		}}},
 	}
 
@@ -408,7 +408,7 @@ func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev
 		Command: []string{"/bin/sh", "-c", buildWorkspaceSetupScript(workspace)},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
-			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 		},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,

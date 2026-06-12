@@ -110,35 +110,6 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 	return stalest.ID, nil
 }
 
-// enforceMaxStorageSize validates that the requested storage size does not
-// exceed the configured maximum. Returns a validation error if exceeded.
-func (s *Service) enforceMaxStorageSize(ctx context.Context, requestedSize string) error {
-	if s.instanceSettings == nil {
-		return nil
-	}
-
-	maxSize, err := s.instanceSettings.GetString(ctx, "workspace.maxStorageSize")
-	if err != nil || maxSize == "" {
-		return nil // settings unavailable, don't block
-	}
-
-	reqBytes := parseStorageSize(requestedSize)
-	maxBytes := parseStorageSize(maxSize)
-
-	if reqBytes <= 0 || maxBytes <= 0 {
-		return nil // unparseable, don't block
-	}
-
-	if reqBytes > maxBytes {
-		return apierrors.NewValidationError(
-			fmt.Sprintf("storage size %s exceeds maximum %s", requestedSize, maxSize),
-			map[string]interface{}{"field": "storageSize", "max": maxSize},
-			fmt.Errorf("requested %s > max %s", requestedSize, maxSize),
-		)
-	}
-	return nil
-}
-
 // parseStorageSize converts a K8s quantity string (e.g. "1Gi", "512Mi") to bytes.
 func parseStorageSize(s string) int64 {
 	if len(s) < 3 {

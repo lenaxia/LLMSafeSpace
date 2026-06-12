@@ -182,11 +182,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		}
 	}
 
-	// Enforce max storage size from instance settings
-	if err := s.enforceMaxStorageSize(ctx, req.StorageSize); err != nil {
-		return nil, err
-	}
-
 	workspaceID := uuid.New().String()
 
 	crd := buildWorkspaceCRD(workspaceID, userID, req, s.config.Namespace)
@@ -682,10 +677,9 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 	if crd.Spec.Resources == nil {
 		cpu, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.cpu")
 		mem, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.memory")
-		eph, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.ephemeralStorage")
-		if cpu != "" || mem != "" || eph != "" {
+		if cpu != "" || mem != "" {
 			crd.Spec.Resources = &v1.ResourceRequirements{
-				CPU: cpu, Memory: mem, EphemeralStorage: eph,
+				CPU: cpu, Memory: mem,
 			}
 		}
 	}
