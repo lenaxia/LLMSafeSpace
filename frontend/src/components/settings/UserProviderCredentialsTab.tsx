@@ -32,6 +32,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
+import { Tooltip } from "../ui/Tooltip";
 
 // ─── Main tab ────────────────────────────────────────────────────────────────
 
@@ -329,16 +330,23 @@ function CredentialRow({
                           {ws.phase || "unknown"}
                         </span>
                         {isAuto && (
-                          <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                            title="Auto-bound by credential seeding. Cannot be manually unbound.">
-                            auto
-                          </span>
+                          <Tooltip
+                            content="Auto-bound by credential seeding. Cannot be manually unbound."
+                            side="top"
+                            align="start"
+                          >
+                            <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground cursor-default">
+                              auto
+                            </span>
+                          </Tooltip>
                         )}
                       </div>
                       {isAuto ? (
-                        <span className="text-[10px] text-muted-foreground" title="Auto-bindings are managed automatically">
-                          seeded
-                        </span>
+                        <Tooltip content="Auto-bindings are managed automatically" side="top" align="start">
+                          <span className="text-[10px] text-muted-foreground cursor-default">
+                            seeded
+                          </span>
+                        </Tooltip>
                       ) : (
                         <button
                           onClick={() => isBound ? handleUnbind(ws.id) : handleBind(ws.id)}

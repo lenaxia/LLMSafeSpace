@@ -3,6 +3,7 @@ import { useToast } from "../../providers/ToastProvider";
 import { secretsApi, type SecretResponse } from "../../api/secrets";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
+import { Tooltip } from "../ui/Tooltip";
 
 const SECRET_TYPES = [
   { value: "llm-provider", label: "LLM Providers", icon: "🤖", metaFields: ["provider", "apiKey"] },
@@ -181,9 +182,11 @@ export function SecretsTab() {
                             {new Date(s.createdAt).toLocaleDateString()}
                           </span>
                           {s.metadata?.notes && (
-                            <span className="text-xs italic text-muted-foreground truncate max-w-[12rem] inline-block align-bottom" title={s.metadata.notes}>
-                              — {s.metadata.notes}
-                            </span>
+                            <Tooltip content={s.metadata.notes} side="top" align="start" maxWidth="md">
+                              <span className="text-xs italic text-muted-foreground truncate max-w-[12rem] inline-block align-bottom cursor-default">
+                                — {s.metadata.notes}
+                              </span>
+                            </Tooltip>
                           )}
                           {(secretBindings[s.id] ?? []).length > 0 && (
                             <span className="text-xs text-muted-foreground">
@@ -515,12 +518,11 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
               <label className="text-sm font-medium inline-flex items-center gap-1">
                 {field === "mount_path" ? "File path" : field.replace(/_/g, " ")}
                 {FIELD_INFO[field] && (
-                  <button type="button" className="relative group/tip cursor-help focus:outline-none" aria-label="More info">
-                    <span className="text-muted-foreground text-xs">ⓘ</span>
-                    <span className="absolute bottom-full left-0 mb-1 hidden group-focus-within/tip:block group-hover/tip:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-[100] font-normal">
-                      {FIELD_INFO[field]}
-                    </span>
-                  </button>
+                  <Tooltip content={FIELD_INFO[field]} side="top" align="start">
+                    <button type="button" className="cursor-help focus:outline-none" aria-label="More info">
+                      <span className="text-muted-foreground text-xs">ⓘ</span>
+                    </button>
+                  </Tooltip>
                 )}
               </label>
               {field === "mount_path" ? (
@@ -573,12 +575,11 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
       <div>
         <label className="text-sm font-medium inline-flex items-center gap-1">
           Notes
-          <button type="button" className="relative group/tip cursor-help focus:outline-none" aria-label="More info">
-            <span className="text-muted-foreground text-xs">ⓘ</span>
-            <span className="absolute bottom-full left-0 mb-1 hidden group-focus-within/tip:block group-hover/tip:block w-56 rounded bg-popover border border-border p-2 text-xs text-popover-foreground shadow-md z-[100] font-normal">
-              {FIELD_INFO.notes}
-            </span>
-          </button>
+          <Tooltip content={FIELD_INFO.notes} side="top" align="start">
+            <button type="button" className="cursor-help focus:outline-none" aria-label="More info">
+              <span className="text-muted-foreground text-xs">ⓘ</span>
+            </button>
+          </Tooltip>
         </label>
         <Input
           value={metadata.notes || ""}
