@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
@@ -22,43 +22,70 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   const params = useParams();
   const currentSessionId = params.sessionId;
 
-  useEffect(() => {
-    // Seed state from whatever sessions data is already in the cache, then
-    // subscribe so we re-seed whenever any sessions query settles. This covers
-    // two scenarios:
-    //   1. Provider mounts after queries have already resolved (e.g. fast cache
-    //      hit) — getAll() is non-empty on the first call.
-    //   2. Provider mounts before queries resolve (typical page load, E2E) —
-    //      the subscriber fires when each query transitions to "success".
-    const queryCache = queryClient.getQueryCache();
+  // Track which workspaces have been seeded from REST. Once seeded, SSE
+  // events are the sole source of truth — REST refetches (triggered by
+  // invalidateQueries in ChatPage on every session.status event) must not
+  // clobber SSE-tracked state. The set is per-provider-instance and lives
+  // for the mount lifetime.
+  const seededRef = useRef(new Set<string>());
 
-    function seedFromCache() {
-      const busy = new Map<string, string>();
-      const unread = new Map<string, string>();
+  useEffect(() => {
+    const queryCache = queryClient.getQueryCache();
+    const seeded = seededRef.current;
+
+    function seedNewWorkspaces() {
+      let busyDelta: Map<string, string> | null = null;
+      let unreadDelta: Map<string, string> | null = null;
+
       for (const query of queryCache.getAll()) {
         const key = query.queryKey;
         if (!Array.isArray(key) || key[0] !== "sessions" || typeof key[1] !== "string") continue;
         const wsId = key[1];
+        if (seeded.has(wsId)) continue;
         const data = query.state.data;
         if (!Array.isArray(data)) continue;
+
+        seeded.add(wsId);
+
         for (const session of data as Array<{ id: string; status?: string; hasUnread?: boolean }>) {
-          if (session.status === "active") busy.set(session.id, wsId);
-          if (session.hasUnread) unread.set(session.id, wsId);
+          if (session.status === "active") {
+            if (!busyDelta) busyDelta = new Map();
+            busyDelta.set(session.id, wsId);
+          }
+          if (session.hasUnread) {
+            if (!unreadDelta) unreadDelta = new Map();
+            unreadDelta.set(session.id, wsId);
+          }
         }
       }
-      setBusySessions(busy);
-      setPendingUnread(unread);
+
+      if (busyDelta && busyDelta.size > 0) {
+        setBusySessions((prev) => {
+          const next = new Map(prev);
+          for (const [sid, wid] of busyDelta!) {
+            next.set(sid, wid);
+          }
+          return next;
+        });
+      }
+      if (unreadDelta && unreadDelta.size > 0) {
+        setPendingUnread((prev) => {
+          const next = new Map(prev);
+          for (const [sid, wid] of unreadDelta!) {
+            next.set(sid, wid);
+          }
+          return next;
+        });
+      }
     }
 
-    // Seed immediately (handles case where data is already present)
-    seedFromCache();
+    seedNewWorkspaces();
 
-    // Re-seed on every cache update that touches a "sessions" query
     const unsubscribe = queryCache.subscribe((event) => {
       if (event.type === "updated" || event.type === "added") {
         const key = event.query.queryKey;
         if (Array.isArray(key) && key[0] === "sessions") {
-          seedFromCache();
+          seedNewWorkspaces();
         }
       }
     });
@@ -67,6 +94,10 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   useUserEventStream({
+    onReconnect: () => {
+      seededRef.current.clear();
+      setBusySessions(new Map());
+    },
     onEvent: (data) => {
       const evt = data as {
         type: string;
@@ -108,11 +139,6 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
               return next;
             });
 
-            // Write hasUnread:true into the cache so seedFromCache() (called
-            // by queryCache.subscribe) rebuilds the correct unread state if it
-            // fires after this SSE event. Without this, seedFromCache reads the
-            // stale cache entry (hasUnread:false) and clobbers the functional
-            // updater above.
             const sessionsKey = ["sessions", evt.workspace_id];
             const existing = queryClient.getQueryData(sessionsKey);
             if (existing) {
@@ -138,22 +164,27 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      if (evt.type === "workspace.phase" && evt.workspace_id && evt.phase && NON_ACTIVE_PHASES.has(evt.phase)) {
+      if (evt.type === "workspace.phase" && evt.workspace_id && evt.phase) {
         const wsId = evt.workspace_id;
-        setBusySessions((prev) => {
-          const next = new Map();
-          for (const [sid, wid] of prev) {
-            if (wid !== wsId) next.set(sid, wid);
-          }
-          return next;
-        });
-        setPendingUnread((prev) => {
-          const next = new Map<string, string>();
-          for (const [sid, wid] of prev) {
-            if (wid !== wsId) next.set(sid, wid);
-          }
-          return next;
-        });
+        if (NON_ACTIVE_PHASES.has(evt.phase)) {
+          seededRef.current.delete(wsId);
+          setBusySessions((prev) => {
+            const next = new Map();
+            for (const [sid, wid] of prev) {
+              if (wid !== wsId) next.set(sid, wid);
+            }
+            return next;
+          });
+          setPendingUnread((prev) => {
+            const next = new Map<string, string>();
+            for (const [sid, wid] of prev) {
+              if (wid !== wsId) next.set(sid, wid);
+            }
+            return next;
+          });
+        } else if (evt.phase === "Active") {
+          seededRef.current.delete(wsId);
+        }
       }
     },
   });
@@ -186,9 +217,6 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
       next.delete(sessionId);
       return next;
     });
-    // Also clear hasUnread in the query cache so seedFromCache does not
-    // re-add the session to pendingUnread if it fires after this call
-    // (e.g. on a subsequent cache update for the same workspace).
     const wsId = pendingUnread.get(sessionId);
     if (wsId) {
       const sessionsKey = ["sessions", wsId];

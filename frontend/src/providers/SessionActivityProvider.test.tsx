@@ -5,10 +5,12 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread } from "./SessionActivityProvider";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
+let capturedOnReconnect: (() => void) | undefined;
 
 vi.mock("../hooks/useUserEventStream", () => ({
-  useUserEventStream: (options?: { onEvent?: (data: unknown) => void }) => {
+  useUserEventStream: (options?: { onEvent?: (data: unknown) => void; onReconnect?: () => void }) => {
     capturedOnEvent = options?.onEvent;
+    capturedOnReconnect = options?.onReconnect;
   },
 }));
 
@@ -30,6 +32,7 @@ describe("SessionActivityProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedOnEvent = undefined;
+    capturedOnReconnect = undefined;
   });
 
   it("registers onEvent callback with useUserEventStream", () => {
@@ -420,5 +423,273 @@ describe("SessionActivityProvider", () => {
     // Cache must have hasUnread:false so seedFromCache won't re-add it
     const sessions = qc.getQueryData(["sessions", "ws-1"]) as Array<{ id: string; hasUnread: boolean }>;
     expect(sessions.find((s) => s.id === "sess-1")?.hasUnread).toBe(false);
+  });
+
+  // Regression: SSE-tracked busy session must survive a cache refetch that
+  // returns status:"idle" for that session. This happens when the REST API
+  // enrichment misses the busy state (multi-replica, timing gap, etc.).
+  // seedFromCache must preserve SSE-tracked sessions instead of clobbering.
+  it("SSE busy state survives cache refetch returning status:idle (regression)", () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-1");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "sess-1",
+        status: "busy",
+      });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+      ]);
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+  });
+
+  // Variant: SSE busy in ws-1 survives a refetch of ws-2 sessions
+  it("SSE busy state in ws-1 survives cache update for ws-2", () => {
+    function Display() {
+      const busy1 = useIsSessionBusy("sess-1");
+      const busy2 = useIsSessionBusy("sess-2");
+      return (
+        <>
+          <span data-testid="busy1">{busy1 ? "yes" : "no"}</span>
+          <span data-testid="busy2">{busy2 ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+    qc.setQueryData(["sessions", "ws-2"], [
+      { id: "sess-2", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "sess-1",
+        status: "busy",
+      });
+    });
+    expect(screen.getByTestId("busy1").textContent).toBe("yes");
+    expect(screen.getByTestId("busy2").textContent).toBe("no");
+
+    act(() => {
+      qc.setQueryData(["sessions", "ws-2"], [
+        { id: "sess-2", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+      ]);
+    });
+
+    expect(screen.getByTestId("busy1").textContent).toBe("yes");
+    expect(screen.getByTestId("busy2").textContent).toBe("no");
+  });
+
+  // Regression: workspace suspend/resume re-seeds from REST. After suspend
+  // clears state and removes the workspace from seeded, the next cache update
+  // (triggered by sidebar's invalidateQueries on activate) re-seeds busy
+  // sessions that were active before the suspend.
+  it("workspace suspend then resume re-seeds busy state from REST (regression)", () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-1");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "active", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({ type: "workspace.phase", workspace_id: "ws-1", phase: "Suspended" });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+
+    // Simulate REST returning the session as active after resume
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "active", hasUnread: false },
+      ]);
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+  });
+
+  // Regression: workspace Active phase resets seeding so stale REST data
+  // doesn't block re-seeding. This handles the case where the SSE tracker
+  // reconnects after a resume and the pod has sessions that are already busy.
+  it("workspace.phase Active resets seeding for re-seed", () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-1");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+
+    // Simulate resume: phase goes Active, REST now says session is active
+    act(() => {
+      capturedOnEvent!({ type: "workspace.phase", workspace_id: "ws-1", phase: "Active" });
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "active", hasUnread: false },
+      ]);
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+  });
+
+  // Regression: SSE reconnect clears seeded set so workspaces get re-seeded
+  // from current REST data. Covers the gap where events are missed during
+  // reconnection and REST has the correct state.
+  it("SSE reconnect re-seeds from REST (regression)", () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-1");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+
+    // Session goes busy via SSE
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    // Simulate SSE reconnect — clears seeded
+    act(() => {
+      capturedOnReconnect!();
+    });
+
+    // REST now shows session as active (e.g., different replica or the
+    // enrichment caught up). The re-seed should pick it up.
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "active", hasUnread: false },
+      ]);
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+  });
+
+  // Regression: stale busy sessions must be cleared on SSE reconnect.
+  // Without clearing, a session that completed during the disconnect gap
+  // (idle event lost to replay buffer overflow) shows as permanently busy.
+  it("SSE reconnect clears stale busy state (regression)", () => {
+    function BusyDisplay() {
+      const isBusy = useIsSessionBusy("sess-1");
+      return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <BusyDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnReconnect!();
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+
+    // Re-seed from REST (session completed during gap — REST says idle)
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+      ]);
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
   });
 });
