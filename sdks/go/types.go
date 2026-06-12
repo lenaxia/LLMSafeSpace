@@ -101,8 +101,8 @@ type WorkspaceStatus struct {
 	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
 	MemoryUsedBytes  int64                `json:"memoryUsedBytes,omitempty"`
 	MemoryTotalBytes int64                `json:"memoryTotalBytes,omitempty"`
-	ContextUsed      int64                `json:"contextUsed,omitempty"`
-	ContextTotal     int64                `json:"contextTotal,omitempty"`
+	ContextUsed      int64                `json:"contextUsed"`
+	ContextTotal     int64                `json:"contextTotal"`
 }
 
 type WorkspaceCondition struct {
