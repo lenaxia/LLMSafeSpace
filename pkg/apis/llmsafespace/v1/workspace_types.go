@@ -227,7 +227,7 @@ type AgentSessionStatus struct {
 	ID          string `json:"id"`
 	Title       string `json:"title,omitempty"`
 	Status      string `json:"status"` // "idle" | "busy"
-	ContextUsed int64  `json:"contextUsed,omitempty"`
+	ContextUsed int64  `json:"contextUsed"`
 }
 
 // WorkspaceStatus defines the observed state of a Workspace.

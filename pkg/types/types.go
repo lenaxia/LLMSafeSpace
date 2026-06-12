@@ -484,7 +484,7 @@ type SessionStatusItem struct {
 	ID          string `json:"id"`
 	Title       string `json:"title,omitempty"`
 	Status      string `json:"status"`
-	ContextUsed int64  `json:"contextUsed,omitempty"`
+	ContextUsed int64  `json:"contextUsed"`
 }
 
 type CredentialStateResult struct {

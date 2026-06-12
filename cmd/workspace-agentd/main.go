@@ -696,9 +696,7 @@ func buildStatuszHandler(
 		{
 			var modelID string
 			for i, s := range sessions {
-				if pt := tracker.getPromptTokens(s.ID); pt > 0 {
-					sessions[i].ContextUsed = pt
-				}
+				sessions[i].ContextUsed = tracker.getPromptTokens(s.ID)
 				if modelID == "" && s.Model != "" {
 					modelID = s.Model
 				}

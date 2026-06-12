@@ -265,6 +265,7 @@ func TestStatuszEndpoint_ContextUsage_EmptySessions(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
 	var resp agentd.StatuszResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Empty(t, resp.Sessions)
@@ -520,6 +521,7 @@ func TestBuildStatuszHandler_NoContextUsed_WhenTrackerEmpty(t *testing.T) {
 
 	assert.Len(t, resp.Sessions, 1)
 	assert.Equal(t, int64(0), resp.Sessions[0].ContextUsed, "cold-start: no SSE data → ContextUsed must be 0")
+	assert.Contains(t, w.Body.String(), `"contextUsed":0`, "JSON wire format must include contextUsed:0 (omitempty regression guard)")
 }
 
 // setAgentAddr is a test helper to override the package-level agentAddr.

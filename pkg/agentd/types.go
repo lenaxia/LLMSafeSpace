@@ -64,7 +64,7 @@ type SessionInfo struct {
 	Status      string         `json:"status"` // "idle" | "busy"
 	Tokens      *SessionTokens `json:"tokens,omitempty"`
 	Model       string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
-	ContextUsed int64          `json:"contextUsed,omitempty"`
+	ContextUsed int64          `json:"contextUsed"`
 }
 
 // CPUUsage reports cumulative CPU consumption from cgroup v2 cpu.stat.

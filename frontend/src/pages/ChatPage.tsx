@@ -887,8 +887,8 @@ export function ChatPage() {
           diskTotalBytes={status?.diskTotalBytes}
           memoryUsedBytes={status?.memoryUsedBytes}
           memoryTotalBytes={status?.memoryTotalBytes}
-          contextUsed={contextUsedForDisplay}
-          contextTotal={status?.contextTotal}
+          contextUsed={contextUsedForDisplay ?? 0}
+          contextTotal={status?.contextTotal ?? 0}
         />
       )}
 

@@ -129,7 +129,7 @@ describe("S36.4 — per-session contextUsed in DiskUsageBar", () => {
     });
   });
 
-  it("does NOT show context bar when session has no contextUsed", async () => {
+  it("shows context bar with 0 when session has no contextUsed", async () => {
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       phase: "Active",
       contextTotal: 200000,
@@ -140,9 +140,9 @@ describe("S36.4 — per-session contextUsed in DiskUsageBar", () => {
     seedSessionsCache(qc, "ws-1", "ses-1", undefined);
     renderChat(qc, "/chat/ws-1/ses-1");
 
-    // Allow render to settle — context bar should not appear (no contextUsed on session)
-    await new Promise((r) => setTimeout(r, 100));
-    expect(screen.queryByText(/^context$/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText(/Context/).length).toBeGreaterThan(0);
+    });
   });
 });
 
