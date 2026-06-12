@@ -137,7 +137,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		// above) so agent-config.json and secrets-env survive pod restarts and
 		// are subject to the same Longhorn redundancy as other workspace data.
 		// The agentd Materializer.reset() deletes agent-config.json and
-		// secrets-env at the start of each credential materialise cycle, so
+		// secrets-env at the start of each credential materialize cycle, so
 		// these specific files are always freshly written. Other files written
 		// to /tmp by packages or agent processes persist across pod restarts.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
