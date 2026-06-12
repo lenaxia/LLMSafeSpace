@@ -1220,12 +1220,11 @@ describe("ChatPage SSE event handler", () => {
       });
     });
 
-    it("REGRESSION: sessionErrors are cleared even when reconcileOnIdle history refetch fails", async () => {
-      // reconcileOnIdle calls await queryClient.refetchQueries(...) then
-      // setSessionErrors([]). TanStack Query's refetchQueries does not throw
-      // when individual query functions reject — it silently swallows errors
-      // and resolves. So setSessionErrors([]) is always reached regardless of
-      // fetch outcome.
+    it("REGRESSION: error stays visible when reconcileOnIdle history refetch fails", async () => {
+      // If reconcileOnIdle's refetchQueries throws (network error), the catch
+      // block intentionally keeps streaming parts and localMessages visible.
+      // sessionErrors are cleared BEFORE the await, so they are always wiped
+      // even on failure. This test documents the current behavior.
       const qc = makeQueryClient();
       (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
       (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network fail"));
