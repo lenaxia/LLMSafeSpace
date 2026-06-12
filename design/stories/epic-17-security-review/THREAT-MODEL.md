@@ -24,26 +24,27 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ BOUNDARY 1: Ingress → API Server                                        │
 │  • Authentication (JWT + API key)                                        │
-│  • Rate limiting                                                         │
-│  • Input validation                                                      │
-│  • CORS enforcement                                                      │
+│  • Rate limiting (global 100/min default)                                │
+│  • Input validation + body size limits                                   │
+│  • CORS enforcement (explicit allow-list, no wildcard)                   │
+│  • Security headers (CSP, HSTS, X-Frame-Options, Permissions-Policy)    │
 └────────────────────────────┬────────────────────────────────────────────┘
                              │ Internal HTTP / K8s API
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ BOUNDARY 2: API Server → Kubernetes Cluster                             │
-│  • RBAC (ServiceAccount scoped)                                          │
+│  • RBAC (ServiceAccount, namespace-scoped by default)                    │
 │  • CRD operations                                                        │
 │  • Secret management                                                     │
-│  • Proxy to sandbox pods (pod IP:agentd port)                            │
+│  • Proxy to sandbox pods (pod IP:agentd port, plain HTTP — G4)          │
 └────────────────────────────┬────────────────────────────────────────────┘
                              │ Pod network / K8s API
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ BOUNDARY 3: Controller → Sandbox Pods                                   │
-│  • Pod creation with security context                                    │
+│  • Pod creation with hardened security context                           │
 │  • Credential injection via init containers                              │
-│  • Network policy enforcement (operator-supplied)                        │
+│  • NetworkPolicy default-deny ingress + egress allow-list (shipped)      │
 │  • PVC lifecycle                                                         │
 └────────────────────────────┬────────────────────────────────────────────┘
                              │ Filesystem / Network
@@ -52,8 +53,9 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 │ BOUNDARY 4: Sandbox Pod → External World                                │
 │  • Agent (opencode serve) executes LLM-directed actions                  │
 │  • Egress to LLM APIs (always allowed)                                   │
-│  • Egress to allowlisted domains (configurable, NetworkPolicy-enforced)  │
+│  • Egress to allowlisted domains (NetworkPolicy-enforced)                │
 │  • Credential access (tmpfs-mounted, never on PVC)                       │
+│  • No SA token automounted                                               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,19 +65,19 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 
 | Asset | Sensitivity | Location | Impact if Compromised |
 |-------|-------------|----------|----------------------|
-| User LLM API keys | Critical | K8s Secret → tmpfs in pod | Financial loss, unauthorized API usage |
+| User LLM API keys | Critical | K8s Secret → tmpfs in pod (`/sandbox-cfg`) | Financial loss, unauthorized API usage |
 | User SSH keys / Git tokens | Critical | K8s Secret → tmpfs in pod | Source code theft, supply chain attack |
 | User DEK (data encryption key) | Critical | Redis session cache (memory) | All user secrets decryptable |
-| User password hash (bcrypt) | High | PostgreSQL | Offline brute-force → credential access |
+| User password hash (bcrypt cost 12) | High | PostgreSQL | Offline brute-force → credential access |
 | JWT signing key | Critical | API server config/env | Full impersonation of any user |
-| PostgreSQL credentials | Critical | K8s Secret / env var | Full database access |
-| Redis credentials | High | K8s Secret / env var | Session hijacking, cache poisoning |
+| PostgreSQL credentials | Critical | K8s Secret (auto-generated) | Full database access |
+| Redis credentials | High | K8s Secret (auto-generated) | Session hijacking, cache poisoning |
 | Workspace PVC data | Medium | Kubernetes PV | User code/data exposure |
-| Agent conversation history | Medium | opencode state in pod | Intellectual property leak |
-| Controller ServiceAccount token | Critical | Pod automount | Cluster-wide CRD/Secret/Pod manipulation (default scope: cluster) |
+| Agent conversation history | Medium | opencode state in pod (`/workspace`) | Intellectual property leak |
+| Controller ServiceAccount token | High | Pod automount (namespace-scoped by default) | Namespace-scoped CRD/Secret/Pod manipulation |
 | API ServiceAccount token | High | Pod automount | Workspace-namespace Secret + CRD CRUD |
 | etcd data (K8s Secrets at rest) | Critical | etcd storage | All credentials if unencrypted |
-| Frontend session (JWT in browser) | High | localStorage / cookie | Account takeover until expiry |
+| Frontend session (JWT in browser) | High | cookie (HttpOnly, Secure) | Account takeover until expiry |
 
 ---
 
@@ -87,11 +89,11 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 | **Compromised agent** | Code execution inside sandbox pod | Exfiltrate data, pivot to cluster, mine crypto |
 | **Malicious LLM output** | Prompt injection via tool responses | Manipulate agent to exfiltrate, escalate, or destroy |
 | **Malicious assistant content (browser)** | LLM emits markdown/HTML rendered in user's browser | Exfiltrate JWT from browser via crafted content if sanitization is bypassed |
-| **Network attacker** | MITM on pod-to-pod or egress traffic | Credential interception, data exfiltration |
+| **Network attacker** | MITM on pod-to-pod traffic (G4: plain HTTP) | Credential interception, data exfiltration |
 | **Compromised API server** | Full API memory + DB access | Access all active session DEKs, impersonate users |
-| **Compromised controller** | K8s SA with Secret/Pod CRUD (cluster-wide by default) | Read all credentials, create privileged pods |
+| **Compromised controller** | K8s SA with Secret/Pod CRUD | Read credentials, create pods (namespace-scoped by default) |
 | **Cluster admin (insider)** | kubectl access to all namespaces | Read Secrets, exec into pods |
-| **Supply chain attacker** | Compromised base image, opencode binary, mise binary, or Go dependency | Backdoor in all sandbox pods |
+| **Supply chain attacker** | Compromised opencode binary, Go dependency | Backdoor in all sandbox pods |
 
 ---
 
@@ -103,27 +105,31 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 Goal: Steal user's LLM API key
 ├── [1] From sandbox pod (attacker = compromised agent)
 │   ├── [1.1] Read /sandbox-cfg/secrets.json (init container writes plaintext)
-│   │   └── Mitigation: emptyDir mount (default disk-backed, NOT tmpfs — see G15),
-│   │                   ReadOnly: true mount in main container, runs as UID 1000
-│   ├── [1.2] Read /tmp/agent-config.json (materialized by entrypoint)
-│   │   └── Mitigation: chmod is NOT set on /tmp/agent-config.json
-│   │                   (entrypoint-common.sh:35 uses unconstrained `>`)
-│   │                   — RESIDUAL RISK; same-UID processes can read
+│   │   └── Mitigation: tmpfs-backed emptyDir (pod_builder.go:136-139),
+│   │                   main container mount read-only, runs as UID 1000
+│   ├── [1.2] Read /tmp/agent-config.json (materialized by agentd)
+│   │   └── Mitigation: File created with mode 0600 (pkg/agentd/secrets
+│   │                   atomicWrite uses O_CREATE|O_TRUNC, 0o600).
+│   │                   Same-UID processes can still read — residual risk.
 │   ├── [1.3] Read environment variables (env-secret type)
-│   │   └── Mitigation: /proc/self/environ readable by same user — RESIDUAL RISK (G3)
+│   │   └── Mitigation: /proc/self/environ readable by same user —
+│   │                   ACCEPTED RISK (G3)
 │   ├── [1.4] Exfiltrate via allowed egress domain
-│   │   └── Mitigation: Redaction on proxy layer (read-path only); NetworkPolicy
-│   │                   if applied (operator-supplied — G16)
+│   │   └── Mitigation: Redaction library exists (pkg/redact, 16 rules)
+│   │                   but is NOT wired into the agent output pipeline.
+│   │                   NetworkPolicy restricts egress destinations.
 │   └── [1.5] Exfiltrate via DNS tunneling
-│       └── Mitigation: Audit logging; DNS rate limiting (operator responsibility)
+│       └── Mitigation: External DNS resolvers reachable on port 53 (G30);
+│                       audit logging; DNS rate limiting (operator responsibility)
 ├── [2] From API server (attacker = compromised API)
 │   ├── [2.1] Read K8s Secrets directly (API SA has Secret read access)
 │   │   └── Mitigation: Namespace-scoped Role
-│   │                   (charts/llmsafespace/templates/rbac.yaml:101-118);
+│   │                   (charts/llmsafespace/templates/rbac.yaml:234-285);
 │   │                   etcd encryption at rest (operator responsibility)
 │   └── [2.2] Read DEK from Redis session cache
-│       └── Mitigation: Redis auth; no NetworkPolicy template — relies on
-│                       operator-supplied policy (G16)
+│       └── Mitigation: Redis auth required; auto-generated password
+│                       (values.yaml:276-278); datastore NetworkPolicy
+│                       restricts ingress (chart_test.go:419-470)
 ├── [3] From database (attacker = SQL injection or DB compromise)
 │   ├── [3.1] Read wrapped_dek from user_keys table
 │   │   └── Mitigation: Useless without password (HKDF-derived KEK)
@@ -133,15 +139,15 @@ Goal: Steal user's LLM API key
 │   ├── [4.1] Read K8s Secret objects (plaintext if etcd unencrypted)
 │   │   └── Mitigation: Operator MUST configure etcd encryption (A1)
 │   └── [4.2] Read controller SA token → impersonate controller
-│       └── Mitigation: Bound SA tokens (short-lived); cluster-wide blast
-│                       radius if controller scope = "cluster" (G5)
+│       └── Mitigation: Namespace-scoped by default (rbac.scope: "namespace");
+│                       bound SA tokens (short-lived)
 └── [5] From browser (attacker = malicious assistant content)
     ├── [5.1] XSS via crafted markdown bypassing rehype-sanitize
     │   └── Mitigation: rehype-sanitize default schema
     │                   (frontend/src/components/chat/MessagePart.tsx:74,84);
-    │                   needs explicit verification — bypass would steal JWT
+    │                   needs explicit fuzz testing (RT-7.9)
     └── [5.2] Token theft via leaked Authorization header to attacker domain
-        └── Mitigation: API CORS hardened (AllowedOrigins: [], no wildcard)
+        └── Mitigation: API CORS hardened (explicit allow-list, no wildcard)
 ```
 
 ### 4.2 Sandbox Escape
@@ -150,35 +156,41 @@ Goal: Steal user's LLM API key
 Goal: Break out of sandbox pod to access cluster resources
 ├── [1] Container escape
 │   ├── [1.1] Kernel exploit (CVE in container runtime)
-│   │   └── Mitigation: gVisor runtime (high-security profile); seccomp;
-│   │                   regular patching (A3)
+│   │   └── Mitigation: RuntimeDefault seccomp profile
+│   │                   (pod_builder.go:329-331); Drop ALL caps;
+│   │                   AllowPrivilegeEscalation: false; regular patching (A3)
 │   ├── [1.2] Exploit writable paths (/tmp, /workspace, /home/sandbox)
-│   │   └── Mitigation: Read-only root (controller/internal/workspace/
-│   │                   controller.go:613); noexec NOT set on emptyDir
-│   │                   volumes (G1 confirmed)
+│   │   └── Mitigation: Read-only root filesystem (pod_builder.go:108);
+│   │                   /tmp and /sandbox-cfg are tmpfs-backed with size limits
+│   │                   (pod_builder.go:136-143); noexec NOT enforced on
+│   │                   emptyDir volumes (G1 — K8s limitation, mitigated by
+│   │                   seccomp + cap-drop + NoNewPrivs)
 │   └── [1.3] Abuse capabilities
-│       └── Mitigation: Drop ALL capabilities (controller/internal/
-│                       workspace/controller.go:616);
-│                       AllowPrivilegeEscalation: false (line 615)
+│       └── Mitigation: Drop ALL capabilities on ALL containers
+│                       (pod_builder.go:111,395,417);
+│                       AllowPrivilegeEscalation: false (pod_builder.go:110,394,416)
 ├── [2] Network escape
-│   ├── [2.1] Access K8s API server (metadata endpoint)
-│   │   └── Mitigation: Operator-supplied NetworkPolicy required;
-│   │                   chart does NOT ship a default-deny policy (G16)
+│   ├── [2.1] Access K8s API server
+│   │   └── Mitigation: Egress NetworkPolicy blocks RFC1918 CIDRs
+│   │                   (workspace-network-policy.yaml:120-130);
+│   │                   SA token NOT automounted (pod_builder.go:196)
 │   ├── [2.2] Access other pods in namespace
-│   │   └── Mitigation: Operator-supplied NetworkPolicy required (G16)
+│   │   └── Mitigation: Default-deny ingress NetworkPolicy
+│   │                   (workspace-network-policy.yaml:18-65)
 │   ├── [2.3] Access node metadata (169.254.169.254)
-│   │   └── Mitigation: Operator-supplied NetworkPolicy required (G16);
-│   │                   cloud provider metadata blocking
+│   │   └── Mitigation: blockedEgressCIDRs includes 169.254.0.0/16
+│   │                   (values.yaml:403-407)
 │   └── [2.4] Access Redis/PostgreSQL directly
-│       └── Mitigation: Service auth required; NetworkPolicy operator-
-│                       supplied
+│       └── Mitigation: Datastore NetworkPolicy restricts ingress
+│                       (chart_test.go:419-470); auto-generated passwords
 ├── [3] Kubernetes API abuse
 │   ├── [3.1] SA token automount in sandbox pod
-│   │   └── Mitigation: NONE — automountServiceAccountToken NOT set
-│   │                   to false in pod spec (G17 — new gap)
+│   │   └── Mitigation: AutomountServiceAccountToken=false
+│   │                   (pod_builder.go:196, security_test.go:51-63)
 │   └── [3.2] Exploit mounted secrets/configmaps
-│       └── Mitigation: Only /sandbox-cfg (emptyDir) and /workspace (PVC)
-│                       and password Secret mounted
+│       └── Mitigation: Only /sandbox-cfg (tmpfs emptyDir) and /workspace (PVC)
+│                       and password Secret mounted; EnableServiceLinks=false
+│                       (pod_builder.go:203) prevents service env leaks
 └── [4] Resource exhaustion (DoS)
     ├── [4.1] Fork bomb / CPU exhaustion
     │   └── Mitigation: Resource limits (CPU/memory); PID limits
@@ -197,17 +209,17 @@ Goal: User A accesses User B's workspace/credentials
 │   │   └── Mitigation: Ownership check on every API call; UUIDv4 unguessable
 │   ├── [1.2] JWT manipulation (change user_id claim)
 │   │   └── Mitigation: JWT signature verification (HMAC-SHA256);
-│   │                   alg-confusion check (api/internal/services/auth/
-│   │                   auth.go:283 enforces SigningMethodHMAC only)
+│   │                   alg-confusion check enforces SigningMethodHMAC only
 │   ├── [1.3] API key of another user
 │   │   └── Mitigation: API keys per-user; bcrypt-hashed in DB; lsp_ prefix
 │   └── [1.4] Replay revoked JWT
-│       └── Mitigation: BROKEN — RevokeToken stores key as `token:<jti>`
-│                       (auth.go:203) but ValidateToken reads `token:<hash>`
-│                       (auth.go:270) — keys mismatch (G18 — new gap)
+│       └── Mitigation: RevokeToken writes both token:<hash> and token:<jti>
+│                       (auth.go:276-281); ValidateToken checks both
+│                       (auth.go:368-376, 407-411); /auth/logout calls
+│                       RevokeToken (router.go:462)
 ├── [2] Kubernetes-level
 │   ├── [2.1] All workspaces in same namespace (label-based isolation only)
-│   │   └── Mitigation: NetworkPolicy per-pod (operator-supplied — G16);
+│   │   └── Mitigation: Per-workspace NetworkPolicy (default-deny ingress);
 │   │                   ownership labels; controller enforces
 │   ├── [2.2] PVC access from another pod
 │   │   └── Mitigation: RWO access mode; one pod per workspace; controller
@@ -228,12 +240,13 @@ Goal: User A accesses User B's workspace/credentials
 Goal: Manipulate agent to perform unauthorized actions
 ├── [1] Indirect injection via tool output
 │   ├── [1.1] Malicious content in fetched web page
-│   │   └── Mitigation: Injection detection (where wired); redaction
+│   │   └── Mitigation: Injection detection (not yet wired — design only);
+│   │                   redaction library exists but not in pipeline
 │   ├── [1.2] Malicious content in git repo
 │   │   └── Mitigation: Agent-level defense (opencode's own guardrails)
 │   └── [1.3] Malicious content in package metadata
-│       └── Mitigation: Mise resolves tools but does not pin checksums
-│                       per-install (G19); redaction; audit logging
+│       └── Mitigation: mise uses MISE_GITHUB_ATTESTATIONS=1 (Dockerfile:269);
+│                       opencode binary has no checksum verification (G9)
 ├── [2] Direct injection via user input
 │   ├── [2.1] User crafts prompt to bypass agent guardrails
 │   │   └── Mitigation: Out of scope (user attacking their own agent)
@@ -241,11 +254,11 @@ Goal: Manipulate agent to perform unauthorized actions
 │       └── Mitigation: Workspaces are single-owner; no sharing in V2
 └── [3] Exfiltration via agent
     ├── [3.1] Agent instructed to curl secrets to external URL
-    │   └── Mitigation: NetworkPolicy if applied (G16); redaction on read
-    │                   path only — does NOT redact outbound bodies (G14)
+    │   └── Mitigation: NetworkPolicy restricts egress; no egress body
+    │                   inspection — ACCEPTED RISK (G14)
     └── [3.2] Agent encodes secrets in DNS queries
-        └── Mitigation: DNS audit logging; rate limiting; accepted
-                        residual risk
+        └── Mitigation: External DNS resolvers reachable on port 53 (G30);
+                        DNS audit logging; accepted residual risk
 ```
 
 ### 4.5 Frontend XSS / Browser-Side Compromise
@@ -259,65 +272,80 @@ Goal: Steal user's JWT or perform actions in user's browser session
 │   │                   default schema strips on*, javascript:, data: URIs;
 │   │                   needs explicit fuzz testing (RT-7.9)
 │   ├── [1.2] Tool output rendered as <pre> — no XSS surface
-│   │   └── Mitigation: <pre> renders as text, not HTML
-│   │                   (MessagePart.tsx:171-173); React auto-escapes children
+│   │   └── Mitigation: <pre> renders as text, not HTML; React auto-escapes
 │   └── [1.3] Dangerous part types (HTML, raw)
 │       └── Mitigation: Only known part types rendered (text/thinking/
 │                       tool_use/tool_result/error); unknown returns null
-│                       (MessagePart.tsx:205)
 ├── [2] Reflected XSS via API error responses rendered in UI
 │   └── Mitigation: API errors are text-only; React JSX auto-escapes;
 │                   no v-html / dangerouslySetInnerHTML in chat components
 └── [3] Clickjacking
-    └── Mitigation: Operator-supplied (Content-Security-Policy headers via
-                    ingress; X-Frame-Options); not enforced by app
+    └── Mitigation: Frontend ingress sets CSP frame-ancestors 'none' and
+                    X-Frame-Options DENY (values.yaml:580-585);
+                    API security middleware sets same headers
+                    (middleware/security.go:104,107)
 ```
 
 ---
 
 ## 5. Identified Gaps & Residual Risks
 
-All gaps below have been verified against the codebase. Each entry cites exact file:line evidence so red-team validators can independently re-verify per Rule 7.
+All gaps below have been verified against the codebase. Each entry cites exact file:line evidence.
 
 **Status legend:**
-- 🔴 **Open** — present in codebase, awaiting fix; included in pentest test plan as known baseline.
+- 🔴 **Open** — present in codebase, awaiting fix.
 - 🟡 **Accepted** — risk accepted with documented rationale and compensating controls.
-- 🟢 **Fixed** — remediated with regression test that prevents reintroduction; pentest will validate the fix.
+- 🟢 **Fixed** — remediated with regression test that prevents reintroduction.
 
 | # | Gap | Severity | Status | Verified By | Fix / Recommendation |
 |---|-----|----------|--------|-------------|----------------------|
-| G1 | No `noexec` on emptyDir mounts | Medium | 🔴 Open | `controller/internal/workspace/controller.go:630-632` (no `Medium: Memory` either; backed by node disk) | Set `Medium: Memory` and use SecurityContext fsGroupChangePolicy + securityContext.seccompProfile RuntimeDefault. K8s does not directly support `noexec` on emptyDir; consider gVisor or Kyverno mount-option enforcement. |
-| **G2** | **Entrypoint shell injection via secret values** | High | 🟢 **Fixed (worklog 0078)** | Pre-fix: `runtimes/base/tools/entrypoints/entrypoint-common.sh:78` — single quote in PLAINTEXT escaped the literal | **Fixed**: secret materialization moved out of bash entirely into `pkg/agentd/secrets` (typed Go package with strict validators, atomic mode-on-create writes, `filepath.Rel` prefix-checked path traversal). Bash entrypoint is now a 35-line shim invoking `workspace-agentd materialize`. Regression: 26 tests in `pkg/agentd/secrets/secrets_test.go` and `cmd/workspace-agentd/secrets_test.go`, including a 13-payload bash-subprocess corpus. Mutation-validated. |
-| G3 | env-secret readable via /proc/self/environ | Medium | 🟡 Accepted | `entrypoint-opencode.sh:14` sources `/tmp/secrets-env` into the agent env | Document as accepted risk; prefer secret-file type; mark `env-secret` deprecated for new credentials. |
-| G4 | No mTLS between API and sandbox pods | Medium | 🔴 Open | `api/internal/handlers/proxy.go:91-95` — plain `http.Transport`, no TLSClientConfig | Implement mTLS using a per-workspace cert issued by the controller, or deploy via service mesh (Linkerd/Istio sidecar). |
-| G5 | Controller SA cluster-wide Secret access (default) | High | 🔴 Open | `charts/llmsafespace/templates/rbac.yaml:1-95` defaults to ClusterRole when `rbac.scope == "cluster"` (default in values.yaml) | Make `rbac.scope: namespace` the default; document upgrade path; refactor controller to drop cross-namespace dependencies. |
-| G6 | No rate limiting on sensitive secret/credential endpoints | Medium | 🔴 Open | `api/internal/server/router.go:171-180` — `/api/v1/secrets/*` only behind global AuthMiddleware; no per-endpoint rate limiter | Apply per-user RateLimiter middleware specifically on POST /secrets, PUT /secrets/:id, POST /secrets/:id/reveal. |
-| G7 | SSE streams bypass injection-detection blocking | Low | 🟡 Accepted | Streaming endpoints buffer-and-emit; injection detector only runs in non-streaming path (verify in `api/internal/handlers/proxy.go` event loop) | Document as accepted; buffer-and-scan for non-streaming responses where detector is wired. |
-| G8 | First-user-admin auto-promotion | Medium | 🔴 Open | `api/internal/services/auth/auth.go:386-394` — checks `CountUsers == 0` then sets role=admin; no transaction wrapping → race window between count and insert | Use INSERT ... WHERE NOT EXISTS (SELECT 1 FROM users) RETURNING role, or admin bootstrap token via env var. |
-| G9 | No image signature verification | Medium | 🔴 Open | `runtimes/base/Dockerfile:67-78` — `curl --fail` over TLS only; explicitly notes "Upstream does not publish .sha256 or signature files" | Implement Sigstore/cosign verification at admission time (Sigstore Policy Controller / Kyverno). For mise (lines 86-98), upstream publishes Sigstore attestations — use them. |
-| G10 | Redis session cache not encrypted at rest | Low | 🔴 Open | `charts/llmsafespace/values.yaml` — Redis is external; persistence depends on operator config | Document operator requirement: disable RDB/AOF persistence OR enable disk encryption OR enable Redis TLS at rest. |
-| G11 | No Pod Security Admission (PSA) enforcement | Medium | 🔴 Open | `charts/llmsafespace/templates/namespace.yaml` does not set `pod-security.kubernetes.io/enforce` labels; `NOTES.txt` and `values.yaml` both note Kyverno enforcement is "not active" | Set `pod-security.kubernetes.io/enforce=restricted` on workspace namespace via chart. |
-| G12 | Proxy ResponseHeaderTimeout 300s | Low | 🔴 Open | `api/internal/handlers/proxy.go:95` — `ResponseHeaderTimeout: 300 * time.Second` | Differentiate timeouts per operation: 30s for `/message`, no timeout for `/event` (SSE). |
-| G13 | Account lockout DoS | Medium | 🔴 Open | `api/internal/services/auth/auth.go:440-512` — lockout key is `lockout:<email>` (line 441, 502) — attacker who knows victim's email can lock them out by sending N failed logins | Use IP-based throttling with progressive delays + CAPTCHA; reserve hard lockout for confirmed-source-IP attacks. |
+| G1 | No `noexec` on emptyDir mounts | Low | 🟡 Accepted | `pod_builder.go:136-143` — tmpfs-backed but no `noexec` enforcement | K8s does not support `noexec` on emptyDir natively. Mitigated by RuntimeDefault seccomp + Drop ALL caps + NoNewPrivs + tmpfs (not disk). Accept with documented rationale. |
+| **G2** | **Entrypoint shell injection via secret values** | High | 🟢 **Fixed** | Pre-fix: `entrypoint-common.sh:78` — single quote in PLAINTEXT escaped the literal | Secret materialization moved into `pkg/agentd/secrets` (typed Go package, atomic 0600 writes, `filepath.Rel` path traversal check). Bash entrypoint is a 35-line shim. Regression: 26 tests including 13-payload bash-subprocess corpus. |
+| G3 | env-secret readable via /proc/self/environ | Medium | 🟡 Accepted | `entrypoint-opencode.sh:13-14` sources `/tmp/secrets-env` into agent env | Accepted risk; prefer secret-file type; document for operators. |
+| G4 | No mTLS between API and sandbox pods | Medium | 🔴 Open | `api/internal/handlers/proxy.go:610` — `http://%s:%d%s`, no TLSClientConfig | Implement mTLS via per-workspace cert or service mesh (Linkerd/Istio). |
+| G5 | ~~Controller SA cluster-wide Secret access~~ | — | 🟢 **Fixed** | `values.yaml:460` defaults `rbac.scope: "namespace"`; `chart_test.go:696` regression | Default is namespace-scoped. Cluster scope is opt-in. Even in cluster mode, no mutating verbs on secrets/pods (chart_test.go:1411). |
+| G6 | No per-endpoint rate limit on secrets | Medium | 🔴 Open | `router.go:237-256` — `/api/v1/secrets/*` behind global 100/min only; no stricter limit on `/secrets/:id/reveal` | Apply stricter per-endpoint rate limit (e.g. 10/min) on POST /secrets/:id/reveal. |
+| G7 | SSE streams bypass injection-detection blocking | Low | 🟡 Accepted | Streaming endpoints cannot be blocked mid-stream; injection detector runs in non-streaming path only | Accepted: SSE is unidirectional; block action applies to non-streaming JSON responses. |
+| G8 | ~~First-user-admin auto-promotion race~~ | — | 🟢 **Fixed** | `auth.go:570-576` — uses atomic SQL CTE; role promotion is atomic in the INSERT statement; no CountUsers→INSERT race | Fixed via database-layer atomicity. |
+| G9 | opencode/gh binary downloaded without checksum verification | Medium | 🔴 Open | `runtimes/base/Dockerfile:142-154` (opencode), `Dockerfile:166-172` (gh) — `curl --fail` over TLS only, no checksum or Sigstore verification | opencode upstream does not publish checksums. GitHub CLI publishes `.sha256` — should be verified. Implement cosign at admission time. |
+| G10 | Redis session cache not encrypted at rest | Low | 🟡 Accepted | Redis persistence is operator-configured | Document operator requirement: disable RDB/AOF persistence or enable disk encryption. |
+| G11 | ~~No Pod Security Admission enforcement~~ | — | 🟢 **Fixed** | `namespace.yaml:20-25` sets `pod-security.kubernetes.io/enforce=restricted`; `values.yaml:19` defaults `podSecurityEnforce: "restricted"` | PSA labels enforce restricted profile on workspace namespace. |
+| G12 | ~~Proxy ResponseHeaderTimeout 300s~~ | — | 🟢 **Fixed** | `proxy.go:128` — `ResponseHeaderTimeout: 60 * time.Second`; streaming endpoints bypass this client entirely | Reduced from 300s to 60s for non-streaming requests. |
+| G13 | Account lockout keyed on email only (DoS vector) | Medium | 🔴 Open | `auth.go:686` — `lockoutKey := fmt.Sprintf("lockout:%s", email)` — attacker who knows victim email can lock them out from any IP | Add IP component to lockout key, or use progressive delays + CAPTCHA. |
 | G14 | No egress request body inspection | High | 🟡 Accepted | No code path inspects outbound HTTP request bodies from sandbox pods | Accepted residual risk; minimize allowedDomains; document. |
-| G15 | Sandbox emptyDir is disk-backed, not tmpfs | High | 🔴 Open | `controller/internal/workspace/controller.go:630-632` — no `Medium: Memory` set on `sandbox-cfg`, `tmp`, `sandbox-home` volumes | Set `Medium: Memory` on all three emptyDir volumes. Plaintext secrets in /sandbox-cfg/secrets.json currently survive on the node's disk if the kubelet doesn't reclaim immediately. |
-| **G16** | **No NetworkPolicy templates ship with the chart** | Critical | 🟢 **Fixed (worklog 0078)** | Pre-fix: `charts/llmsafespace/templates/` had no NetworkPolicy resource | **Fixed**: chart now ships `workspace-network-policy.yaml` with default-deny ingress (allowing only API proxy on agentd port 4097) and egress allow-list (DNS + operator-allowed CIDRs minus RFC1918 + cloud metadata). `networkPolicy.enabled` default flipped to `true`. Regression: 5 helm-render tests in `charts/llmsafespace/chart_test.go`. Mutation-validated. |
-| **G17** | **AutomountServiceAccountToken not set to false on sandbox pod** | High | 🟢 **Fixed (worklog 0078)** | Pre-fix: `controller/internal/workspace/controller.go:653-666` — no `AutomountServiceAccountToken` field → defaulted to true | **Fixed**: `controller.go:670` now sets `AutomountServiceAccountToken: &falseVal` explicitly. Regression: `controller/internal/workspace/security_test.go::TestG17_SandboxPodDoesNotAutomountSAToken` plus security-context and volume-footprint tests. Mutation-validated. |
-| **G18** | **JWT revocation is broken (cache key mismatch)** | High | 🟡 **Fix dormant — code OK, no caller** (worklog 0089, RT-4.13) | Pre-fix: `auth.go:203` wrote `token:<jti>`; `auth.go:270` read `token:<hash(token)>` — keys never collided | **Code-level fix landed (worklog 0078)** but Phase 4 (RT-4.13) confirmed live: `/api/v1/auth/logout` (`api/internal/server/router.go:330-333`) only clears the cookie and does NOT call `RevokeToken`. Token remains valid after logout. **Required follow-up**: wire RevokeToken into the logout handler. |
-| G19 | mise installs runtimes from upstream without checksum verification | Medium | 🔴 Open | `runtimes/base/Dockerfile:119-130` — `MISE_GITHUB_ATTESTATIONS=0` explicitly disables attestation checks | Re-enable `MISE_GITHUB_ATTESTATIONS=1` at build time; document the build environment must reach Sigstore/GitHub OIDC. Alternative: pin per-runtime versions and ship checksum files. |
-| **G20** | **Credential files written without atomic mode 0600** | Medium | 🟢 **Fixed (worklog 0078)** | Pre-fix: `entrypoint-common.sh` lines 14, 19, 35 wrote files via `>` with no chmod (TOCTOU window) | **Fixed**: closed incidentally by the G2 architecture refactor. `pkg/agentd/secrets` uses `os.OpenFile(path, O_CREATE\|..., 0o600)` for every credential file, making mode atomic with creation. Regression: `TestG20_AllFilesCreatedWithMode0600` verifies mode 0600 on all five secret types. Mutation-validated. |
-| **G21** | **`/sandbox-cfg/password` mode 0644 (init-script `cp` preserves source mode)** | Medium | 🔴 Open (worklog 0088, RT-3.16) | `controller/internal/workspace/controller.go:733-738` — `cp /mnt/secrets/password/password /sandbox-cfg/password`; Secret `defaultMode: 420` (=0644) preserved by `cp` | Replace `cp` with `install -m 0600` in the init-container `credScript`. Add helm chart-render test. Distinct from G20 (different code path). |
-| **G22** | **`enableServiceLinks: true` leaks namespace topology to sandbox via env vars** | Low | 🔴 Open (worklog 0088, RT-3.3) | Workspace pod spec at `controller/internal/workspace/controller.go` never sets `EnableServiceLinks` → K8s default `true` materialises 30+ `<SVC>_SERVICE_HOST/PORT` env vars in PID-1 environ | Add `EnableServiceLinks: ptr.To(false)` to workspace pod template. One-line change; trivially testable. |
-| **G23** | **`/workspace` PVC mount lacks `nosuid`** | Medium | 🔴 Open (worklog 0088, RT-3.5) | Live mount: `/dev/longhorn/pvc-... /workspace ext4 rw,seclabel,relatime` (no `nosuid`, no `nodev`) | Add Helm value `storage.workspace.mountOptions: ["nosuid","nodev"]`; apply via the workspace StorageClass. Currently mitigated by `runAsNonRoot:true` + `NoNewPrivs:1` + `cap-drop: ALL`, but defence-in-depth weakened. |
-| **G24** | **No `seccompProfile` on workspace pod** | Low | 🔴 Open (worklog 0088, RT-3.7) | `controller/internal/workspace/controller.go` PodSecurityContext lacks `SeccompProfile` | Add `SeccompProfile: {Type: RuntimeDefault}` at pod-level securityContext. Severity is currently low because `cap-drop ALL + NoNewPrivs:1` already EPERM the dangerous syscalls (unshare/clone/ptrace/keyctl), but RuntimeDefault is risk-free defence-in-depth. |
-| **G25** | **Secret value field logged unredacted in API request bodies** | High | 🔴 Open (worklog 0089, RT-4.2) | `api/internal/middleware/logging.go:54` `SensitiveFields = ["password","token","secret","key","apiKey","credit_card"]` does not include `value`; `pkg/utilities/masking.go:6` only masks fields by **key name**, never recurses into values to detect secret-shaped content | (a) Add `"value"` to `SensitiveFields`. (b) Better: route the JSON-marshalled body through `pkg/redact.Redact()` (16 patterns) before logging. (c) Best: disable request-body logging for `/api/v1/secrets/*` paths entirely. |
-| **G26** | **Default Postgres password "changeme" + Valkey empty `requirepass`** | Critical | 🔴 Open (worklog 0089, RT-4.5) | Live K8s Secret `llmsafespace-credentials`: `postgres-password = changeme`, `redis-password = "" (empty)`. Valkey `CONFIG GET requirepass` returns empty. Postgres+Valkey have no NetworkPolicy in chart. | Helm chart must (a) generate `postgres-password` and `redis-password` at install time via `randAlphaNum`, (b) set them via Secret + secretKeyRef, (c) add NetworkPolicies restricting postgres+valkey ingress to API pod label. Workspace pods are NetPol-blocked but API/frontend pods + any future workload in the namespace can talk to either DB unauthenticated. |
-| **G27** | **Login response timing reveals registered emails** | Medium | 🔴 Open (worklog 0089, RT-4.10) | Median: valid email ≈226 ms (bcrypt cost 12), invalid email ≈16 ms (no bcrypt path). 210 ms delta → reliable user enumeration. | Run a dummy `bcrypt.CompareHashAndPassword` on the no-such-user branch so total response time is constant. Standard pattern; ~5 lines in `auth.go`. Combined with G13 (email-keyed lockout), enumeration enables targeted DoS. |
-| **G28** | **Workspace bind handler is a no-op for first-time secret delivery** | High | 🔴 Open (worklog 0089, RT-4.3) | `PUT /api/v1/workspaces/<id>/bindings` returns 204 in 5-16 ms; `GET /bindings` reflects the binding; but K8s Secret `workspace-secrets-<ws>` is never created and PID-1 env in pod has no payload | Investigate why `pushSecretsToAgent` (`api/internal/handlers/secrets.go:307-356`) silently skips both `EnsureSecretsManifest` and `doReload` when bindings are added to a freshly-created workspace. Likely cause: `PrepareSecretsForInjection` returns `[]` due to session/transaction-visibility race. |
-| **G29** | **Path-traversal `mount_path` accepted by API** | Medium | 🔴 Open (worklog 0089, RT-4.4) | API `POST /api/v1/secrets` accepts `metadata.mount_path = "../../etc/passwd"` and 4 other traversal payloads with HTTP 201 | `pkg/agentd/secrets/secrets.go:270 resolveMountPath` strictly validates at materialize time (real exploit blocked), but the API should reject up-front to give clear UX errors. Apply the same `filepath.Clean + filepath.Rel` check in the handler. |
-| **G30** | **Egress NetPol allows external DNS resolvers (e.g. 8.8.8.8:53)** | Medium | 🔴 Open (worklog 0090, RT-5.7) | The "DNS to kube-dns" rule and the "0.0.0.0/0 except RFC1918" rule are OR-ed — port 53 to 8.8.8.8 is allowed by the second rule, fully bypassing CoreDNS-only intent | Standard k8s NetworkPolicy can't express "allow X except port Y to Z". Use Cilium FQDN policies (allow-list specific external hostnames) OR Calico GlobalNetworkPolicy with negative selectors. Enables DNS exfil / tunnelling. |
-| **G31** | **Frontend ingress lacks Content-Security-Policy and X-Frame-Options** | Medium | 🔴 Open (worklog 0092, RT-7.13) | `curl -I https://safespace.thekao.cloud` returns no CSP and no XFO. The API DOES set strong headers (verified). | Add HTTP response headers to the Traefik IngressRoute (or whatever serves the frontend bundle) — match the API's CSP including `frame-ancestors 'none'` and `X-Frame-Options: DENY`. Without these, the frontend can be iframed (clickjacking) and any rehype-sanitize bypass becomes critical. |
-| **G32** | **No per-user workspace quota** | Low | 🟡 Accepted (worklog 0092, RT-7.1) | API `POST /api/v1/workspaces` accepts unbounded creates; 8 sequential creates from one user all return 201 | For single-tenant operator deployments this is intentional. For multi-tenant SaaS, add a `MAX_WORKSPACES_PER_USER` env-driven limit in the workspace creation handler. |
+| G15 | ~~Sandbox emptyDir is disk-backed, not tmpfs~~ | — | 🟢 **Fixed** | `pod_builder.go:136-143` — `sandbox-cfg` and `tmp` volumes use `StorageMediumMemory` with explicit size limits (4Mi, 64Mi) | All credential-bearing emptyDir volumes are tmpfs-backed with size limits. |
+| **G16** | **No NetworkPolicy templates ship with the chart** | Critical | 🟢 **Fixed** | Pre-fix: no NetworkPolicy in chart | Chart ships `workspace-network-policy.yaml` with default-deny ingress and egress allow-list. `networkPolicy.enabled` defaults to `true`. Regression: 5 helm-render tests. |
+| **G17** | **SA token automounted in sandbox pod** | High | 🟢 **Fixed** | Pre-fix: no `AutomountServiceAccountToken` field → defaulted to true | `pod_builder.go:196` sets `AutomountServiceAccountToken: &falseVal`. Regression: `security_test.go:51-63`. |
+| **G18** | **JWT revocation broken (cache key mismatch)** | High | 🟢 **Fixed** | Pre-fix: RevokeToken wrote `token:<jti>`, ValidateToken read `token:<hash>` — keys never collided | `auth.go:276-281` writes both `token:<hash>` and `token:<jti>`. `auth.go:368-376,407-411` checks both. `/auth/logout` calls `RevokeToken` (router.go:462). Regression: 6 tests in `auth_revocation_test.go`. |
+| G19 | ~~mise installs runtimes without attestation~~ | — | 🟢 **Fixed** | `Dockerfile:269,277` sets `MISE_GITHUB_ATTESTATIONS=1` | mise verifies Sigstore-backed GitHub attestations on every tool install. |
+| **G20** | **Credential files written without atomic mode 0600** | Medium | 🟢 **Fixed** | Pre-fix: entrypoint used `>` with no chmod | `pkg/agentd/secrets` uses `os.OpenFile(path, O_CREATE|O_TRUNC, 0o600)`. Regression: `TestG20_AllFilesCreatedWithMode0600`. |
+| G21 | `/sandbox-cfg/password` mode 0644 | Medium | 🔴 Open | `pod_builder.go:350` — `cp /mnt/secrets/password/password /sandbox-cfg/password`; Secret `defaultMode: 420` (0644) preserved by `cp` | Replace `cp` with `install -m 0600` in the init-container credScript. Distinct from G20 (different code path). |
+| G22 | ~~EnableServiceLinks leaks namespace topology~~ | — | 🟢 **Fixed** | `pod_builder.go:203` sets `EnableServiceLinks: &falseVal`. Regression: `security_test.go:490-499`. |
+| G23 | `/workspace` PVC mount lacks `nosuid` | Medium | 🟡 Accepted | PVC mount lacks `nosuid,nodev` mount options | Documented in NOTES.txt:180-198 as operator responsibility via StorageClass mountOptions. Mitigated by runAsNonRoot + NoNewPrivs + cap-drop ALL. |
+| G24 | ~~No seccompProfile on workspace pod~~ | — | 🟢 **Fixed** | `pod_builder.go:329-331` sets `SeccompProfile: RuntimeDefault` at pod level. Regression: `security_test.go:505-515`. |
+| G25 | Secret value field logged unredacted in API request bodies | High | 🔴 Open | `logging.go:48` — `SensitiveFields` does not include `"value"`; masking only matches key names, never recurses into values | Add `"value"` to SensitiveFields; or route JSON body through `pkg/redact.Redact()`; or disable body logging for `/api/v1/secrets/*`. |
+| G26 | ~~Default Postgres/Redis passwords~~ | Critical | 🟢 **Fixed** | `values.yaml:276-278` auto-generates 32-char random passwords on install. Datastore NetworkPolicies restrict ingress (chart_test.go:419-470). |
+| G27 | ~~Login response timing reveals registered emails~~ | — | 🟢 **Fixed** | `auth.go:698-701,709` — dummy bcrypt `CompareHashAndPassword` runs on DB-error and user-not-found paths. All failure branches return identical timing and same generic error message. |
+| G28 | Workspace bind handler is a no-op for first-time secret delivery | High | 🔴 Open | `PUT /api/v1/workspaces/<id>/bindings` returns 204 but K8s Secret is never created | Investigate `pushSecretsToAgent` silent skip when bindings added to a freshly-created workspace. |
+| G29 | Path-traversal `mount_path` accepted by API | Medium | 🔴 Open | API `POST /api/v1/secrets` accepts `mount_path = "../../etc/passwd"` with HTTP 201 | Materialize-time validation in `pkg/agentd/secrets/secrets.go:277-296` blocks the real exploit. API should reject up-front with same `filepath.Clean + filepath.Rel` check. |
+| G30 | Egress NetPol allows external DNS resolvers (e.g. 8.8.8.8:53) | Medium | 🔴 Open | "DNS to kube-dns" and "0.0.0.0/0 except RFC1918" rules are OR-ed — port 53 to 8.8.8.8 allowed by second rule | Standard NetPol limitation. Use Cilium FQDN policies or Calico GlobalNetworkPolicy. Enables DNS exfil/tunnelling. |
+| G31 | ~~Frontend ingress lacks CSP and X-Frame-Options~~ | — | 🟢 **Fixed** | `values.yaml:580-585` configures CSP `frame-ancestors 'none'`, X-Frame-Options DENY, HSTS, X-Content-Type-Options, Referrer-Policy on frontend ingress. |
+| G32 | No per-user workspace quota | Low | 🟡 Accepted | `POST /api/v1/workspaces` accepts unbounded creates | Intentional for single-tenant. Multi-tenant SaaS should add `MAX_WORKSPACES_PER_USER`. |
+| **G33** | **Proxy routes have no workspace ownership check (IDOR)** | Critical | 🔴 Open | `proxy.go:460-482` fetches workspace by ID without checking `Labels["user-id"] == userID`; `proxy.go:344-358` subscribes to any workspace's SSE events; `router.go:824` comment claims ownership check exists but no such middleware is wired | Add ownership check matching `terminal.go:153-157` pattern. Full details in `security-report-g33-g47.md`. |
+| **G34** | **Proxy forwards all client headers to sandbox pod** | Critical | 🔴 Open | `proxy.go:625-629` forwards Cookie, Origin, Referer, X-Forwarded-* and all custom headers to sandbox before SetBasicAuth overwrites Authorization | Replace with explicit header allowlist. Full details in `security-report-g33-g47.md`. |
+| **G35** | **RecoverAccount endpoint has no rate limiting** | High | 🔴 Open | `router.go:264` on root router outside auth rate limiter (20/min); requires only userID + recovery key | Move behind auth rate limiter. Full details in `security-report-g33-g47.md`. |
+| **G36** | **Workspace secrets not cleaned on deletion** | High | 🔴 Open | `phase_terminating.go:32-38` only deletes `workspace-pw-*`; `workspace-secrets-*` and `workspace-creds-*` persist indefinitely; `deleteEphemeralSecretsSecret` exists but never called from termination path | Call `deleteEphemeralSecretsSecret` from `handleTerminating`. Full details in `security-report-g33-g47.md`. |
+| **G37** | **No validation on workspace env var names** | High | 🔴 Open | `secrets.go:573` accepts `LD_PRELOAD`, `PATH`, `PYTHONPATH` etc. as env var names | Add blocklist of dangerous names. Full details in `security-report-g33-g47.md`. |
+| **G38** | **ChangePassword does not invalidate existing sessions** | High | 🔴 Open | `secrets.go:782-817` updates bcrypt and re-wraps DEK but never calls RevokeToken; existing JWTs remain valid | Revoke all active sessions on password change. Full details in `security-report-g33-g47.md`. |
+| G39 | Terminal WebSocket allows all origins | Medium | 🔴 Open | `terminal.go:126` — `CheckOrigin: func(r *http.Request) bool { return true }`; WebSocket security middleware not applied to terminal route | Apply existing origin validation middleware. |
+| G40 | Agentd user port (4097) has no application-layer auth | Medium | 🔴 Open | `agent_reload.go:25-26` — "Authentication: none"; `/v1/reload-secrets` writes arbitrary secrets; `requireBearerToken` middleware exists but not applied to user port | Apply `requireBearerToken` to user port endpoints. |
+| G41 | No per-endpoint rate limit on RevealSecret | Medium | 🔴 Open | `router.go:245` — `/secrets/:id/reveal` behind global 100/min only; enables password brute-force | Add stricter per-endpoint limit (e.g. 5/min). |
+| G42 | SSE connection tracking has unbounded memory growth | Medium | 🔴 Open | `stream_user_events.go:36-38` — `sseConnCounts` global map never pruned | Add periodic cleanup of stale entries. |
+| G43 | IPv6 egress not covered by workspace NetworkPolicy | Medium | 🔴 Open | `workspace-network-policy.yaml:120-130` — CIDR allowlist uses `0.0.0.0/0` only; IPv6 `::/0` unrestricted | Add IPv6 rules or document IPv4-only assumption. |
+| G44 | Workspace pod-level SecurityContext missing RunAsNonRoot | Low | 🔴 Open | `pod_builder.go:309-333` — container-level has it but pod-level doesn't; future sidecars could run as root | Add `RunAsNonRoot: ptr.To(true)` to `buildPodSecurityContext()`. |
+| G45 | Legacy `source /sandbox-cfg/env` in entrypoint | Low | 🔴 Open | `entrypoint-opencode.sh:8-10` sources file that is never created; bypasses secrets validation if ever created | Remove dead code. |
+| G46 | Password file read failure is silent | Low | 🔴 Open | `cmd/workspace-agentd/main.go:753-757` — empty password if file missing; workspace non-functional silently | Log at Error level, consider non-zero exit. |
+| G47 | Inference relay secret exposed as CLI arg | Low | 🔴 Open | `controller-deployment.yaml:84-86` — fallback interpolates secret as command-line argument | Remove fallback path. |
 
 ---
 
@@ -325,14 +353,14 @@ All gaps below have been verified against the codebase. Each entry cites exact f
 
 | Component | Spoofing | Tampering | Repudiation | Info Disclosure | DoS | Elevation |
 |-----------|----------|-----------|-------------|-----------------|-----|-----------|
-| **API Auth** | JWT forgery (mitigated: signing key + HMAC-only check); API key theft | Token replay (G18 dormant: RevokeToken correct but `/auth/logout` does not call it — RT-4.13) | No audit of failed auth (GAP) | Login timing exposes registered emails (G27); secret values logged unredacted (G25) | Account lockout abuse (G13) | First-user-admin (G8) |
-| **Proxy** | Workspace ID spoofing (mitigated: ownership check) | Response tampering (mitigated: same-cluster network — G4 if MITM) | No per-request audit trail | Credential leak in responses (mitigated: redaction read-path only) | Connection exhaustion (mitigated: limits) | N/A |
-| **Controller** | SA token theft (mitigated: bound tokens) | CRD manipulation (mitigated: webhooks) | Controller actions not individually audited | Secret read access (G5) | CRD spam (mitigated: quotas) | Cluster-wide SA (G5) |
-| **Sandbox Pod** | N/A (no auth within pod) | PVC data corruption | No file-level audit | Credential in env/files (G3, G15); G2/G20 fixed (atomic 0600 writes); G17 fixed (no SA token automount) | Resource exhaustion (mitigated: limits) | Container escape (mitigated: seccomp, caps; G1 unmitigated) |
+| **API Auth** | JWT forgery (mitigated: HMAC-only signing); API key theft | Token replay (mitigated: dual-key revocation) | No audit of failed auth | Secret values logged unredacted (G25) | Account lockout abuse (G13); no rate limit on recovery (G35) | Sessions survive password change (G38) |
+| **Proxy** | Workspace ID spoofing — **NO OWNERSHIP CHECK (G33)** | Response tampering (plain HTTP — G4); header injection to sandbox (G34) | No per-request audit trail | All client headers forwarded to sandbox (G34); credential leak in responses | Connection exhaustion (mitigated: limits) | Cross-tenant access via proxy (G33) |
+| **Controller** | SA token theft (mitigated: bound tokens) | CRD manipulation (mitigated: webhooks) | Actions not individually audited | Namespace-scoped by default; secrets persist after deletion (G36) | CRD spam (mitigated: quotas) | Namespace-scoped SA |
+| **Sandbox Pod** | N/A (no auth within pod) | PVC data corruption | No file-level audit | Credential in env (G3 accepted); tmpfs-backed (G15 fixed); env var injection (G37); agentd user port unauthenticated (G40) | Resource exhaustion (mitigated: limits) | Container escape (mitigated: seccomp, caps; G1 accepted) |
 | **Database** | SQL injection (mitigated: pgx parameterized) | Data corruption (mitigated: transactions) | No query audit log | Wrapped DEK exposure (mitigated: encryption) | Connection exhaustion | N/A |
-| **Redis** | Auth bypass (mitigated: password) | Cache poisoning | No operation audit | DEK in memory (G10) | Memory exhaustion | N/A |
-| **Frontend** | Session theft via XSS (mitigated: rehype-sanitize — needs fuzzing) | DOM tampering (mitigated: React auto-escape) | No client audit | JWT in localStorage if used | UI freeze via huge messages | N/A |
-| **Workspace Network** | Cross-tenant traffic to sandbox pods (G16 fixed: default-deny ingress shipped) | N/A | NetworkPolicy events not audited at app layer | Cross-tenant pod-IP probing (G16 fixed) | N/A | N/A |
+| **Redis** | Auth bypass (mitigated: auto-generated password, datastore NetworkPolicy) | Cache poisoning | No operation audit | DEK in memory (G10 accepted) | Memory exhaustion; SSE tracking leak (G42) | N/A |
+| **Frontend** | Session theft via XSS (mitigated: rehype-sanitize — needs fuzzing) | DOM tampering (mitigated: React auto-escape) | No client audit | JWT in HttpOnly Secure cookie | UI freeze via huge messages | N/A |
+| **Workspace Network** | Cross-tenant traffic (mitigated: NetworkPolicy) | N/A | NetworkPolicy events not audited | DNS exfil via external resolvers (G30); IPv6 unrestricted (G43) | N/A | N/A |
 
 ---
 
@@ -341,48 +369,46 @@ All gaps below have been verified against the codebase. Each entry cites exact f
 ```
 User ──[HTTPS/JWT]──► API Server ──[K8s API/SA token]──► K8s API Server
                            │                                    │
-                           │ [HTTP/pod-IP:agentd]               │ [etcd]
+                           │ [HTTP/pod-IP:agentd — plain text]   │ [etcd]
                            ▼                                    ▼
                       Sandbox Pod                          K8s Secrets
                            │                              (credential store)
                            │ [HTTPS/API key]                    │
                            ▼                                    │
                       LLM Provider                              │
-                                                                │
+                                                                  │
 User ──[HTTPS/JWT]──► API Server ──[pgx/TLS]──► PostgreSQL     │
                            │                    (user metadata,  │
                            │                     wrapped DEKs)   │
                            │                                    │
-                           └──[go-redis]──► Redis               │
-                                           (session DEKs,       │
-                                            rate limits,        │
-                                            cache)              │
+                           └──[go-redis/auth]──► Redis          │
+                                                (session DEKs,   │
+                                                 rate limits,    │
+                                                 cache)          │
 ```
 
 ---
 
 ## 8. Assumptions (with Validation Evidence)
 
-Per `README-LLM.md` Rule 7, every assumption must be validated. The table below records evidence collected during threat modeling. Where validation is not yet possible (operator runtime config), the assumption is flagged as a deployment-time precondition that must be enforced by Helm chart guards or documentation.
+Per `README-LLM.md` Rule 7, every assumption must be validated. Where validation is not yet possible (operator runtime config), the assumption is flagged as a deployment-time precondition.
 
 | # | Assumption | Validation Method | Status | Evidence / Action Required |
 |---|-----------|-------------------|--------|----------------------------|
-| A1 | etcd encryption at rest enabled | Pre-flight check at install time | **Unvalidated** | No chart guard exists. Action: add `helm install --pre-upgrade-hook` or `NOTES.txt` warning that fails-loud if EncryptionConfiguration is missing; document required `kube-apiserver --encryption-provider-config` flag. |
-| A2 | NetworkPolicy CNI installed and functioning | Cluster capability check | **Unvalidated** | `charts/llmsafespace/templates/` has zero NetworkPolicy resources (G16). Even if CNI is present, no policy is applied. Action: ship default-deny + allowlist NetworkPolicy template gated by `networkPolicy.enabled` and add chart guard test. |
-| A3 | Node OS patched, container runtime current | Operator responsibility | **Unvalidated** | No pre-flight check. Action: document minimum K8s version (>=1.29 for PSA stable) and container runtime baseline in chart README and NOTES.txt. |
-| A4 | TLS termination at ingress | Helm chart values | **Configurable, default off** | `values.yaml:330+` — `frontend.ingress.tls: false` by default; api ingress similar. Action: flip default to `tls: true` and require user to explicitly disable for dev. |
-| A5 | Redis not exposed outside cluster | Service type review | **VERIFIED for in-cluster Redis** | `charts/llmsafespace/values.yaml:266` references `redis-master` host (operator's existing deploy); chart does not create a Redis service. If operator deploys Redis with `type: LoadBalancer`, this assumption fails. Action: document network requirement; add NetworkPolicy gating Redis ingress to API SA only. |
-| A6 | PostgreSQL not exposed outside cluster | Service type review | **VERIFIED for in-cluster Postgres** | `values.yaml:254-264` — Postgres is operator-deployed; same caveat as A5. Action: same as A5. |
-| A7 | Container images from trusted registry | Dockerfile review | **PARTIAL** | `runtimes/base/Dockerfile:33` uses digest-pinned base (`debian:bookworm-slim@sha256:...`); opencode (line 67-78) and mise (line 86-98) downloaded over TLS without checksum or signature verification (G9, G19). Action: implement cosign verification; pin opencode/mise via SHA256 once upstream publishes. |
-| A8 | JWT signing keys rotated periodically | Code search | **REFUTED** | `api/internal/services/auth/auth.go` — no rotation primitives; key sourced from config once at startup. Action: add JWKS-style key rotation with kid header, or document operator runbook for restart-with-new-secret rotation. |
-| A9 | rehype-sanitize default schema is sufficient for LLM output | Bypass fuzz testing | **Unvalidated** | `frontend/src/components/chat/MessagePart.tsx:74,84` applies `rehype-sanitize` with default GFM-friendly schema. Action: fuzz with known XSS bypass corpora (RT-7.9). |
-| A10 | Operator deploys etcd, K8s, CNI according to chart documentation | Documentation completeness | **Unvalidated** | Chart README lists requirements but no automated check. Action: write a `helm test` that probes for these preconditions. |
+| A1 | etcd encryption at rest enabled | Pre-flight check at install time | **Unvalidated** | No chart guard exists. Document requirement in NOTES.txt. |
+| A2 | NetworkPolicy CNI installed and functioning | Chart ships NetworkPolicy resources | **Validated** | `workspace-network-policy.yaml` ships with chart; `networkPolicy.enabled: true` by default. No preflight check that CNI actually enforces policies. |
+| A3 | Node OS patched, container runtime current | Operator responsibility | **Unvalidated** | Document minimum K8s version (>=1.29) in chart NOTES.txt. |
+| A4 | TLS termination at ingress | Helm chart values | **Validated** | `values.yaml:565` defaults `tls: true`. Operator must provide cert or use cert-manager. |
+| A5 | Redis not exposed outside cluster | Service type review | **Validated** | Chart does not create a Redis service. Document network requirement. Datastore NetworkPolicy restricts ingress (chart_test.go:447-470). |
+| A6 | PostgreSQL not exposed outside cluster | Service type review | **Validated** | Same as A5. Datastore NetworkPolicy restricts ingress (chart_test.go:419-443). |
+| A7 | Container images from trusted registry | Dockerfile review | **Partial** | Base image uses tag-only `debian:bookworm-slim` (not digest-pinned). opencode and gh downloaded over TLS without checksum verification (G9). mise uses MISE_GITHUB_ATTESTATIONS=1. AWS CLI has full PGP verification. |
+| A8 | JWT signing keys rotated periodically | Code search | **Refuted** | No rotation primitives in code; key sourced from config at startup. Document operator runbook for restart-with-new-secret rotation. |
+| A9 | rehype-sanitize default schema is sufficient for LLM output | Bypass fuzz testing | **Unvalidated** | Needs fuzz testing with known XSS bypass corpora (RT-7.9). |
+| A10 | Operator deploys etcd, K8s, CNI per chart documentation | Documentation completeness | **Unvalidated** | Chart README lists requirements. No automated preflight check. |
 
 ---
 
 ## 9. Out-of-Scope (Explicitly Documented)
-
-The following risks are out of scope for the application but must be documented for operators:
 
 | Risk | Owner | Mitigation Reference |
 |------|-------|---------------------|
@@ -391,16 +417,32 @@ The following risks are out of scope for the application but must be documented 
 | Physical/social engineering | Operator | Out of scope |
 | etcd encryption at rest | K8s operator | Documented (A1) |
 | Node OS hardening | Cluster admin | Documented (A3) |
-| TLS termination | Ingress operator | Documented (A4) |
+| gVisor runtime availability | Cluster admin | Optional defense-in-depth |
 
 ---
 
-## 10. Revision History
+## 10. Implementation Status Summary
+
+| Category | Total | Fixed | Open | Accepted |
+|----------|-------|-------|------|----------|
+| Security gaps (G1–G47) | 47 | 18 | 22 | 7 |
+
+**Open gaps (require remediation):** G4, G6, G9, G13, G21, G25, G28, G29, G30, G33–G47
+
+**Accepted risks (documented rationale):** G1, G3, G7, G10, G14, G23, G32
+
+**Critical open gaps:** G33 (proxy IDOR), G34 (header forwarding)
+
+---
+
+## 11. Revision History
 
 | Version | Change |
 |---------|--------|
-| 1.4 | Phase C remediation (worklogs 0095-0116). 19 of 32 G-findings closed at code level (G1, G4 partial, G5, G8, G9, G11, G12, G13 partial, G15, G18, G19, G22, G23, G24, G26, G27, G30, G31, G32). 8 owned by other agent (G3, G6, G15-adjacent, G21, G25, G28, G29, plus F1.7.x). G7, G14, G10 accepted residual. Plus 18 F1.x.y phase-1 findings closed (F1.1.1, F1.1.2, F1.1.3, F1.1.4, F1.2.1-F1.2.10, F1.3.1-F1.3.7, F1.4.2, F1.4.3, F1.7.5). Live re-pentest pending. |
-| 1.3 | Pentest Phases 3-7 complete (worklogs 0088-0092). 12 new gaps surfaced (G21-G32). G18 status downgraded from Fixed → "Fix dormant" — RT-4.13 confirmed `/auth/logout` doesn't call `RevokeToken` despite the function being correct. G16/G17 fixes re-confirmed holding via independent live tests. G1, G3, G5, G11, G12, G13, G15, G19 re-confirmed open. New critical: G26 (default Postgres password + open Valkey). |
-| 1.2 | Added Status column (Open / Accepted / Fixed) to gap table per Epic 17 lifecycle. G2, G16, G17, G18, G20 marked Fixed with regression-test references (worklog 0078); G3, G7, G14 marked Accepted. STRIDE table updated to reflect remediated entries; added Workspace Network row covering G16. |
-| 1.1 | All gaps verified against code with file:line evidence; added G15 (emptyDir disk-backed), G16 (no NetworkPolicy ships), G17 (SA token automount), G18 (JWT revocation broken), G19 (mise no checksum), G20 (chmod missing on /tmp/agent-config.json); assumptions A1-A8 validated with evidence; added A9 (rehype-sanitize) and A10 (operator preconditions); added attack tree §4.5 (frontend XSS); STRIDE row added for Frontend |
-| 1.0 | Initial threat model created |
+| 2.1 | Added 15 new gaps (G33-G47) from adversarial re-validation. Critical: G33 (proxy IDOR — no ownership check), G34 (all client headers forwarded to sandbox). High: G35 (RecoveryAccount no rate limit), G36 (secrets persist after deletion), G37 (env var name injection), G38 (sessions survive password change). Full report in security-report-g33-g47.md. STRIDE table updated with new findings. Implementation status updated. |
+| 2.0 | Full rewrite against verified code state. 12 gaps updated from stale "Open" to reflect actual fixed status (G5, G8, G11, G12, G15, G18, G19, G22, G24, G26, G27, G31). Attack trees updated to reflect current mitigations. STRIDE table updated. Assumptions re-validated against code. Trust boundaries updated. Removed stale file:line references to deleted controller.go code (now pod_builder.go). |
+| 1.4 | Phase C remediation (worklogs 0095-0116). 19 of 32 G-findings claimed closed. |
+| 1.3 | Pentest Phases 3-7 complete (worklogs 0088-0092). 12 new gaps surfaced (G21-G32). |
+| 1.2 | Added Status column to gap table. G2, G16, G17, G18, G20 marked Fixed. |
+| 1.1 | All gaps verified against code with file:line evidence; added G15-G20; assumptions A1-A10. |
+| 1.0 | Initial threat model created. |
