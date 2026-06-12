@@ -48,7 +48,8 @@
       "id": 1,
       "panels": [],
       "title": "Request Overview",
-      "type": "row"
+      "type": "row",
+      "description": "API-level HTTP traffic health. Use these panels to verify the API is serving requests at expected rates with acceptable latency and error rates."
     },
     {
       "datasource": {
@@ -130,7 +131,8 @@
         }
       ],
       "title": "HTTP Request Rate by Status",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "HTTP requests per second grouped by response status code. 2xx = success, 4xx = client errors (auth failures, bad input), 5xx = server errors. A rising 5xx rate is the primary signal that the API is degraded."
     },
     {
       "datasource": {
@@ -230,7 +232,8 @@
         }
       ],
       "title": "HTTP Request Latency",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "p50, p95, and p99 API response latency. p50 is the typical user experience; p99 is the worst-case for roughly 1-in-100 requests. Latency above 2s at p95 indicates backend pressure. Latency above 10s likely reflects workspace proxy calls to slow agentd endpoints."
     },
     {
       "datasource": {
@@ -312,7 +315,8 @@
         }
       ],
       "title": "API Error Rate by Type",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of application-level errors grouped by error type. Distinct from HTTP 5xx status codes \u2014 this captures errors that may be returned as structured error responses with 4xx codes (e.g. workspace_not_found, auth_failed)."
     },
     {
       "collapsed": false,
@@ -325,7 +329,8 @@
       "id": 5,
       "panels": [],
       "title": "Connections & WebSocket",
-      "type": "row"
+      "type": "row",
+      "description": "Active connection state. Use these panels to check for connection saturation and to correlate authentication failure spikes with specific failure reasons."
     },
     {
       "datasource": {
@@ -407,7 +412,8 @@
         }
       ],
       "title": "Active API Connections",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Current open connections by type. REST connections should be short-lived; persistently high counts indicate clients are not closing connections."
     },
     {
       "datasource": {
@@ -498,7 +504,8 @@
         }
       ],
       "title": "WebSocket Connections",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Active and new WebSocket connections (e.g. terminal sessions). Active line = current open sessions. New line = connection rate (new sessions/s)."
     },
     {
       "datasource": {
@@ -580,7 +587,8 @@
         }
       ],
       "title": "Authentication Failures",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of auth failures by reason. missing_token: request had no Authorization header. invalid_token / expired_token: bearer token was invalid or expired. wrong_password / user_not_found: failed username/password login. A sustained spike in invalid_token may indicate a misconfigured client or a brute-force attempt."
     },
     {
       "collapsed": false,
@@ -593,7 +601,8 @@
       "id": 9,
       "panels": [],
       "title": "Workspace Lifecycle & Controller",
-      "type": "row"
+      "type": "row",
+      "description": "Workspace creation, resume, and failure state as observed by the controller. The stat panels are instantaneous \u2014 check them first when a user reports a broken workspace."
     },
     {
       "datasource": {
@@ -674,7 +683,8 @@
         }
       ],
       "title": "Workspace Phase Transitions (destination)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of workspace phase changes, grouped by the destination phase. Each series represents arrivals into that phase (e.g. Active means workspaces becoming ready). A steady Creating\u2192Active flow is normal during workspace boot. Repeated transitions back to Creating from Active or Failed indicate restart loops."
     },
     {
       "datasource": {
@@ -741,7 +751,8 @@
         }
       ],
       "title": "Active Workspaces",
-      "type": "stat"
+      "type": "stat",
+      "description": "Current count of workspaces in the Active phase. This gauge is seeded from cluster state at controller startup and updated on phase transitions."
     },
     {
       "datasource": {
@@ -804,7 +815,8 @@
         }
       ],
       "title": "Safe Mode Active",
-      "type": "stat"
+      "type": "stat",
+      "description": "Number of workspaces currently in Safe Mode (repeated failure, awaiting user intervention). Any non-zero value requires operator attention \u2014 affected workspaces will not auto-recover."
     },
     {
       "datasource": {
@@ -871,7 +883,8 @@
         }
       ],
       "title": "Max Consecutive Failures",
-      "type": "stat"
+      "type": "stat",
+      "description": "Highest consecutive failure count across all workspaces at this instant. Values above 3 indicate a workspace approaching or in Safe Mode. Check the Workspace Phase Transitions graph to identify which workspace is failing."
     },
     {
       "datasource": {
@@ -934,7 +947,8 @@
         }
       ],
       "title": "Legacy API Keys (plaintext)",
-      "type": "stat"
+      "type": "stat",
+      "description": "Count of API keys using pre-DEK plaintext storage. Target is 0."
     },
     {
       "datasource": {
@@ -1034,7 +1048,8 @@
         }
       ],
       "title": "Workspace Create Duration",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Time from workspace creation request to the pod reaching the Active phase. Measured at p50, p95, and p99. p50 is typically 30\u201390 seconds (image pull + init container). p99 significantly higher than p95 suggests occasional infrastructure delays (node pressure, slow image pull)."
     },
     {
       "datasource": {
@@ -1125,7 +1140,8 @@
         }
       ],
       "title": "Workspace Resume Duration",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Time from resume request to Active phase, split by resume type. first_resume: workspace was suspended and resumed for the first time (image already on node). subsequent_resume: later resumes are typically faster since the image is cached locally."
     },
     {
       "collapsed": false,
@@ -1138,7 +1154,8 @@
       "id": 17,
       "panels": [],
       "title": "Reconciliation & Recovery",
-      "type": "row"
+      "type": "row",
+      "description": "Controller loop health. A healthy controller should show near-zero errors and recovery attempts. Use these panels to diagnose controller instability."
     },
     {
       "datasource": {
@@ -1220,7 +1237,8 @@
         }
       ],
       "title": "Reconciliation Duration (p99) by Resource",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "p99 duration of the controller reconcile loop per resource type. Values below 500ms are healthy. A sustained rise usually indicates slow Kubernetes API calls or a large workspace backlog. This is the per-iteration cost, not the end-to-end creation time."
     },
     {
       "datasource": {
@@ -1301,7 +1319,8 @@
         }
       ],
       "title": "Reconciliation Errors",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of errors in the controller reconcile loop by error type. get_failed: the controller could not fetch the workspace object from the API server. phase_handler: an error in the phase-specific handler (creating, active, terminating, etc.). Non-zero values warrant investigation \u2014 the controller relies on successful reconciles to progress workspace state."
     },
     {
       "datasource": {
@@ -1391,7 +1410,8 @@
         }
       ],
       "title": "Recovery Attempts vs Success",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Recovery attempt rate vs success rate, per failure class. The gap between attempts and successes indicates workspaces that entered recovery but did not stabilize. Failure classes: infrastructure (node/pod eviction), resource (OOM/CPU limit), process (app crash), configuration (bad user spec). A widening gap signals a systemic issue for that failure class."
     },
     {
       "collapsed": false,
@@ -1404,7 +1424,8 @@
       "id": 21,
       "panels": [],
       "title": "Agent Operations",
-      "type": "row"
+      "type": "row",
+      "description": "Agent reload and startup activity. Agent reloads happen when user credentials are rotated. Startup gate duration measures how long agentd waits for opencode to be ready."
     },
     {
       "datasource": {
@@ -1485,7 +1506,8 @@
         }
       ],
       "title": "Agent Reload Results",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of agent reload operations by result (success or error). Agent reloads are triggered when user API credentials are rotated. A high error rate means credential rotations are failing \u2014 users will not receive updated credentials in their running workspaces."
     },
     {
       "datasource": {
@@ -1576,7 +1598,8 @@
         }
       ],
       "title": "Agent Reload Duration",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "p50 and p99 time taken to complete an agent reload in milliseconds. A reload involves draining active sessions and calling the agentd dispose endpoint. Values above 30 seconds at p99 indicate session drain is timing out (check SSE Broker Dropped Events)."
     },
     {
       "datasource": {
@@ -1658,7 +1681,8 @@
         }
       ],
       "title": "Agentd Startup Gate Duration (p99)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Time the agentd process spends waiting for opencode to become ready after pod start, per gate stage. Empty until agentd gate metrics are instrumented. High values here contribute directly to Workspace Create Duration."
     },
     {
       "collapsed": false,
@@ -1671,7 +1695,8 @@
       "id": 25,
       "panels": [],
       "title": "SSE & Relay",
-      "type": "row"
+      "type": "row",
+      "description": "Server-Sent Event reliability and relay injection outcomes. Dropped events and failed relay injections directly impact user experience."
     },
     {
       "datasource": {
@@ -1752,7 +1777,8 @@
         }
       ],
       "title": "SSE Broker Dropped Events",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of SSE events dropped because a subscriber's channel buffer was full. Events are dropped per-subscriber \u2014 a slow browser client or a large burst of events can cause this. Dropped events mean the browser misses real-time updates (phase changes, session status) and must wait for the next poll cycle to catch up. Non-zero is a signal to investigate client-side SSE handling."
     },
     {
       "datasource": {
@@ -1833,7 +1859,8 @@
         }
       ],
       "title": "Relay Injector Outcomes",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Counts of relay config injection results per workspace boot (same data as on the Billing dashboard). success = relay configured; skipped_personal_key = user has own credentials; no_free_models = no relay-eligible models for this workspace."
     },
     {
       "datasource": {
@@ -1914,7 +1941,8 @@
         }
       ],
       "title": "Bulk Reload Outcomes",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Results of bulk agent reload operations (triggered when platform-level credentials are rotated). Each outcome (success, error) represents one workspace in the bulk operation. A high error count after a bulk reload means many workspaces failed to pick up the new credentials."
     },
     {
       "collapsed": false,
@@ -1927,7 +1955,8 @@
       "id": 29,
       "panels": [],
       "title": "Billing at a Glance (on ops dashboard)",
-      "type": "row"
+      "type": "row",
+      "description": "Abbreviated billing view embedded in the ops dashboard for quick cross-referencing. For full billing detail, use the Billing & Metering dashboard."
     },
     {
       "datasource": {
@@ -2009,7 +2038,8 @@
         }
       ],
       "title": "Inference Request Rate by Tier",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Rate of inference calls split by tier (free vs paid). Free-tier calls route through the opencode relay (shared IP). Paid-tier calls use direct provider credentials. Use this to monitor relay load and understand the mix of credential types in use."
     },
     {
       "datasource": {
@@ -2091,7 +2121,8 @@
         }
       ],
       "title": "Inference Cost Rate ($/s)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Current inference spend rate across the fleet in USD per second. Zero for providers that do not report cost. Useful for quick cost-rate checks without navigating to the full billing dashboard."
     },
     {
       "datasource": {
@@ -2182,7 +2213,8 @@
         }
       ],
       "title": "Session Duration Distribution",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "p50 and p95 of opencode session lengths (first message to idle). A session starts when the first message is sent and ends when the session status returns to idle. p50 ~ typical working session; p95 ~ long-running or background agent sessions. Note: unit is seconds."
     }
   ],
   "refresh": "30s",
