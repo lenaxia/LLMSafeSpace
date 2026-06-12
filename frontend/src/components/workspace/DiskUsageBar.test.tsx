@@ -18,9 +18,10 @@ describe("DiskUsageBar — context unknown (contextTotal=0)", () => {
     expect(screen.queryByText(/unknown/i)).not.toBeInTheDocument();
   });
 
-  it("renders nothing when no metrics are provided", () => {
-    const { container } = render(<DiskUsageBar />);
-    expect(container.firstChild).toBeNull();
+  it("always renders context bar with Unknown when no metrics are provided", () => {
+    render(<DiskUsageBar />);
+    expect(screen.getAllByText(/Context/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Unknown/).length).toBeGreaterThan(0);
   });
 
   // ── Unknown context limit ────────────────────────────────────────────────

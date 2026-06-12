@@ -463,3 +463,86 @@ func TestMarkSessionSeen_Unauthorized(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// --- GET /api/v1/workspaces/:id/status — context usage e2e ---
+
+func TestGetWorkspaceStatus_ContextTotal_InJSON(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("GetWorkspaceStatus", mock.Anything, "test-user", "ws-1").Return(
+		&types.WorkspaceStatusResult{
+			Phase:        "Active",
+			ContextUsed:  45000,
+			ContextTotal: 200000,
+			Sessions: []types.SessionStatusItem{
+				{ID: "ses_1", Status: "idle", ContextUsed: 45000},
+			},
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/status", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"contextUsed":45000`, "contextUsed must appear in JSON wire format")
+	assert.Contains(t, body, `"contextTotal":200000`, "contextTotal must appear in JSON wire format")
+
+	var result types.WorkspaceStatusResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Equal(t, int64(45000), result.ContextUsed)
+	assert.Equal(t, int64(200000), result.ContextTotal)
+	require.Len(t, result.Sessions, 1)
+	assert.Equal(t, int64(45000), result.Sessions[0].ContextUsed)
+}
+
+func TestGetWorkspaceStatus_ContextTotalZero_InJSON(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("GetWorkspaceStatus", mock.Anything, "test-user", "ws-1").Return(
+		&types.WorkspaceStatusResult{
+			Phase:        "Active",
+			ContextUsed:  0,
+			ContextTotal: 0,
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/status", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"contextUsed":0`, "zero contextUsed must NOT be dropped by omitempty")
+	assert.Contains(t, body, `"contextTotal":0`, "zero contextTotal must NOT be dropped by omitempty")
+}
+
+func TestGetWorkspaceStatus_SessionsWithContextUsed_InJSON(t *testing.T) {
+	router, svc := newRouterFixture(t)
+
+	svc.workspace.On("GetWorkspaceStatus", mock.Anything, "test-user", "ws-1").Return(
+		&types.WorkspaceStatusResult{
+			Phase: "Active",
+			Sessions: []types.SessionStatusItem{
+				{ID: "ses_1", Status: "idle", ContextUsed: 42000},
+				{ID: "ses_2", Status: "busy", ContextUsed: 0},
+			},
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/status", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"contextUsed":42000`, "ses_1 contextUsed in JSON")
+	assert.Contains(t, body, `"contextUsed":0`, "ses_2 contextUsed:0 in JSON (no omitempty)")
+
+	var result types.WorkspaceStatusResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Len(t, result.Sessions, 2)
+	assert.Equal(t, int64(42000), result.Sessions[0].ContextUsed)
+	assert.Equal(t, int64(0), result.Sessions[1].ContextUsed)
+}

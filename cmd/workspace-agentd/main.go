@@ -702,11 +702,9 @@ func buildStatuszHandler(
 				}
 			}
 			contextLimit := client.ModelContextLimit(r.Context(), modelID, "")
-			if len(sessions) > 0 {
-				contextUsage = &agentd.ContextUsage{
-					UsedTokens:  0,
-					TotalTokens: contextLimit,
-				}
+			contextUsage = &agentd.ContextUsage{
+				UsedTokens:  0,
+				TotalTokens: contextLimit,
 			}
 		}
 

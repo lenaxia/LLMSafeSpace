@@ -271,3 +271,48 @@ func TestTerminating_ClearsAllAgentFields(t *testing.T) {
 	assert.Equal(t, int64(0), ws.Status.DiskUsedBytes)
 	assert.Equal(t, int64(0), ws.Status.DiskTotalBytes)
 }
+
+func TestCheckAgentHealth_ThreadsContextTotal(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Context: &agentd.ContextUsage{UsedTokens: 0, TotalTokens: 200000},
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Equal(t, int64(0), ws.Status.ContextUsed, "top-level ContextUsed from statusz")
+	assert.Equal(t, int64(200000), ws.Status.ContextTotal, "ContextTotal threaded to CRD")
+}
+
+func TestCheckAgentHealth_ContextTotal_ZeroPreserved(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Context: &agentd.ContextUsage{UsedTokens: 0, TotalTokens: 0},
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Equal(t, int64(0), ws.Status.ContextUsed)
+	assert.Equal(t, int64(0), ws.Status.ContextTotal, "zero ContextTotal preserved")
+}
+
+func TestCheckAgentHealth_NilContext_PreservesOldValues(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1, AgentVersion: "1.0.0",
+		Context: nil,
+	})
+	defer server.Close()
+
+	ws.Status.ContextUsed = 12345
+	ws.Status.ContextTotal = 200000
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Equal(t, int64(12345), ws.Status.ContextUsed, "nil Context → old ContextUsed preserved")
+	assert.Equal(t, int64(200000), ws.Status.ContextTotal, "nil Context → old ContextTotal preserved")
+}

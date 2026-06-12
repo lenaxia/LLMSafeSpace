@@ -5,6 +5,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -1080,6 +1081,45 @@ func TestGetWorkspaceStatus_IncludesSessionContextUsed(t *testing.T) {
 	require.Len(t, result.Sessions, 2)
 	assert.Equal(t, int64(42000), result.Sessions[0].ContextUsed, "ses_1 ContextUsed threaded to API response")
 	assert.Equal(t, int64(99000), result.Sessions[1].ContextUsed, "ses_2 ContextUsed threaded to API response")
+}
+
+func TestGetWorkspaceStatus_IncludesContextTotal(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	activeCrd.Status.ContextUsed = 0
+	activeCrd.Status.ContextTotal = 200000
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+
+	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), result.ContextUsed, "ContextUsed threaded to API response")
+	assert.Equal(t, int64(200000), result.ContextTotal, "ContextTotal threaded to API response")
+}
+
+func TestGetWorkspaceStatus_ContextTotal_ZeroNotDropped(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	activeCrd.Status.ContextUsed = 0
+	activeCrd.Status.ContextTotal = 0
+	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+
+	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
+
+	assert.NoError(t, err)
+
+	raw, jsonErr := json.Marshal(result)
+	require.NoError(t, jsonErr)
+	assert.Contains(t, string(raw), `"contextUsed":0`, "omitempty removed — zero contextUsed must appear in JSON")
+	assert.Contains(t, string(raw), `"contextTotal":0`, "omitempty removed — zero contextTotal must appear in JSON")
 }
 
 func TestGetWorkspaceStatus_WrongOwner_ReturnsForbidden(t *testing.T) {
