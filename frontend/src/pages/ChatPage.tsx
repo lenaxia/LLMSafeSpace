@@ -35,9 +35,9 @@ export function ChatPage() {
   const navigate = useNavigate();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   // sessionErrors holds error messages surfaced by session.error SSE events.
-  // Kept separate from localMessages so reconcileOnIdle (which clears
-  // localMessages) cannot wipe them — errors must persist until the user
-  // navigates away or starts a new session.
+  // Kept separate from localMessages so they survive between send and idle.
+  // Cleared in reconcileOnIdle (session goes idle → history is authoritative)
+  // and on session change.
   const [sessionErrors, setSessionErrors] = useState<Message[]>([]);
   const queryClient = useQueryClient();
 
@@ -307,6 +307,7 @@ export function ChatPage() {
       await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
       setSseStreamParts([]);
       setLocalMessages([]);
+      setSessionErrors([]);
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
