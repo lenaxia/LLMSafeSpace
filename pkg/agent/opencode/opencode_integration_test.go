@@ -302,14 +302,6 @@ func TestOpencode_SSEEventEnvelope_HasTypeField(t *testing.T) {
 	require.Equal(t, "text/event-stream", strings.ToLower(resp.Header.Get("Content-Type")),
 		"SSE endpoint must return text/event-stream content type")
 
-	receivedEvent := false
-	deadline := time.After(12 * time.Second)
-
-	go func() {
-		<-deadline
-		resp.Body.Close()
-	}()
-
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
@@ -333,7 +325,6 @@ func TestOpencode_SSEEventEnvelope_HasTypeField(t *testing.T) {
 			continue
 		}
 
-		receivedEvent = true
 		t.Logf("SSE event: type=%s id=%s", evt.Type, evt.ID)
 
 		assert.NotEmpty(t, evt.Type, "event type must not be empty")
@@ -347,5 +338,5 @@ func TestOpencode_SSEEventEnvelope_HasTypeField(t *testing.T) {
 		return
 	}
 
-	assert.True(t, receivedEvent, "must receive at least one SSE event from opencode")
+	t.Fatal("must receive at least one SSE event from opencode")
 }
