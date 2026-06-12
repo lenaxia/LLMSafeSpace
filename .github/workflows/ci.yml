@@ -816,11 +816,13 @@ jobs:
             -t controller-smoke \
             --load \
             .
-          set -o pipefail
-          NONZERO=$(docker run --rm --entrypoint sh controller-smoke -c \
+          MATCHES=$(docker run --rm --entrypoint sh controller-smoke -c \
             'if [ ! -s /out/manager ]; then echo "FATAL: /out/manager is empty"; exit 1; fi; \
-             cat /out/manager | grep -c "llmsafespace_workspaces_running"' || true)
-          if [ "$NONZERO" -eq 0 ] 2>/dev/null; then
+             grep -ac "llmsafespace_workspaces_running" /out/manager') || {
+            echo "::error::docker run failed with exit code $?"
+            exit 1
+          }
+          if [ "$MATCHES" -eq 0 ] 2>/dev/null; then
             echo "::error::Controller binary missing llmsafespace_workspaces_running metric string."
             echo "This usually means Docker BuildKit served a stale cache layer."
             echo "Binary size: $(docker run --rm --entrypoint stat controller-smoke -c '%s' /out/manager) bytes"
