@@ -818,7 +818,7 @@ jobs:
             .
           MATCHES=$(docker run --rm --entrypoint sh controller-smoke -c \
             'if [ ! -s /out/manager ]; then echo "FATAL: /out/manager is empty"; exit 1; fi; \
-             grep -ac "llmsafespace_workspaces_running" /out/manager') || {
+             grep -ac "llmsafespace_workspaces_running" /out/manager || true') || {
             echo "::error::docker run failed with exit code $?"
             exit 1
           }
