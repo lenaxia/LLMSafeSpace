@@ -15,13 +15,14 @@
 3. [Repository Structure](#repository-structure)
 4. [Architecture Overview](#architecture-overview)
 5. [Relay Config Subsystem](#relay-config-subsystem)
-6. [Technology Stack](#technology-stack)
-7. [Worklog Requirements](#worklog-requirements)
-8. [Development Workflow](#development-workflow)
-9. [Multi-Agent Workflow](#multi-agent-workflow)
-10. [PR Review Guide](#pr-review-guide)
-11. [Common Commands](#common-commands)
-12. [Testing Requirements](#testing-requirements)
+6. [Storage Settings](#storage-settings)
+7. [Technology Stack](#technology-stack)
+8. [Worklog Requirements](#worklog-requirements)
+9. [Development Workflow](#development-workflow)
+10. [Multi-Agent Workflow](#multi-agent-workflow)
+11. [PR Review Guide](#pr-review-guide)
+12. [Common Commands](#common-commands)
+13. [Testing Requirements](#testing-requirements)
 
 ---
 
@@ -315,7 +316,7 @@ llmsafespace/
 │   │  │  │ main: opencode serve --hostname 0.0.0.0 --port 4096       │ │   │
 │   │  │  │ security: readOnlyRoot, runAsNonRoot, drop ALL caps        │ │   │
 │   │  │  └──────────────────────────────────────────────────────────┘  │ │   │
-│   │  │  Volumes: PVC at /workspace (subPath:workspace) + /home/sandbox (subPath:home) + emptyDirs (/tmp, /sandbox-cfg)  │ │   │
+│   │  │  Volumes: PVC at /workspace (subPath:workspace) + /home/sandbox (subPath:home) + /tmp (subPath:tmp) + emptyDir /sandbox-cfg  │ │   │
 │   │  └───────────────────────────────────────────────────────────────┘ │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
@@ -404,8 +405,8 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 |---|---|---|---|
 | `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
+| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — agentd rewrites `agent-config.json` and `secrets-env` on each credential cycle; other files persist | agent-config.json, secrets-env |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
-| `/tmp` | emptyDir (memory) | No | agent-config.json, secrets-env |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
@@ -414,6 +415,8 @@ AgentConfigPath  = "/tmp/agent-config.json"
 SecretsBasePath  = "/home/sandbox/.secrets"   ← deleted by reset() on every reload
 SecretsEnvPath   = "/tmp/secrets-env"
 ```
+
+Note: `/tmp` is now a PVC subPath (`subPath: tmp`), not an emptyDir. The `workspace-dirs` init container unconditionally creates this directory on every pod start. The agentd `Materializer.reset()` deletes and rewrites `agent-config.json` and `secrets-env` on each credential cycle, so those specific files are always freshly written. Other files written to `/tmp` by packages or agent processes persist across pod restarts.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
 
@@ -515,7 +518,52 @@ the workspace within the first 20s of pod boot. The stale window is purely cosme
 
 The remap guard `relayGloballyEnabled && relayInjected && p.ID=="opencode"` is unreachable in Phase 2 (because `disabled_providers` removes `opencode` from `connected[]`) and correctly suppressed in Phase 1. The code is defense-in-depth for a hypothetical future opencode change but is effectively dead code. Should be removed as tech debt — the `disabled_providers` mechanism is the correct solution.
 
+---
 
+## Storage Settings
+
+### Settings involved
+
+| Setting key | Schema default | Admin UX label | Where enforced |
+|---|---|---|---|
+| `workspace.defaultStorageSize` | `15Gi` | Default Storage | API service at workspace create time |
+| `workspace.defaultStorageClass` | `""` | Storage Class | API service at workspace create time |
+
+Both are Tier 2 (admin-mutable) `instance_settings` entries stored in PostgreSQL and served by the settings service (`pkg/settings/instance_service.go`). The admin UX reads them via `GET /admin/settings` and writes via `PUT /admin/settings/{key}` (`api/internal/handlers/settings.go`).
+
+**Removed settings:**
+- `workspace.maxStorageSize` — removed. PVC size is set once at creation and never changed; the admission webhook (`webhooks.maxWorkspaceStorageGi: 1024 Gi` in `values.yaml`) is the correct infrastructure-level ceiling. A dynamic DB-backed cap that only applied to the API path added complexity without meaningful safety.
+- `workspace.defaultResources.ephemeralStorage` — removed. With `readOnlyRootFilesystem: true` and all writable paths on PVC subPaths or `Medium: Memory` emptyDirs, ephemeral storage is consumed only by kubelet container log files. This is governed by kubelet's own log rotation (default 10 Mi × 5 files = 50 Mi), not by a tunable admin setting. The pod builder hardcodes `"1Gi"` as the ephemeral limit (`controller/internal/workspace/pod_builder.go:232`).
+
+### `workspace.defaultStorageSize` — full trace
+
+1. **Frontend** (`frontend/src/api/workspaces.ts`): `storageSize` is intentionally omitted from the create workspace payload — the API resolves the default.
+2. **API service** (`api/internal/services/workspace/workspace_service.go`): on `CreateWorkspace`, if `req.StorageSize` is empty, `instanceSettings.GetString(ctx, "workspace.defaultStorageSize")` supplies it.
+3. The resolved size is written into `WorkspaceSpec.Storage.Size` in the CRD, persisted to the `workspace_metadata` PostgreSQL table, and returned in API responses as `storageSize`.
+
+**Side effects of changing `defaultStorageSize`:**
+- Affects only **new** workspaces. Existing PVCs are never resized.
+- Takes effect immediately on the next workspace creation — no redeploy needed.
+- The hard ceiling is `webhooks.maxWorkspaceStorageGi` (default `1024 Gi`, Helm value) enforced at the Kubernetes admission layer for all paths including direct `kubectl apply`.
+
+### Ephemeral storage — hardcoded, not admin-configurable
+
+The pod builder sets `ephemeral-storage` request and limit to `"1Gi"` (hardcoded at `controller/internal/workspace/pod_builder.go:232`). This limit exists solely to cap **container log volume** on node disk. With `readOnlyRootFilesystem: true` and all writable paths on the PVC, the container overlay filesystem receives no writes; the only ephemeral storage consumer is kubelet's stdout/stderr log files, which kubelet's own rotation already caps at ~50 Mi.
+
+**What contributes to ephemeral storage on a workspace pod:**
+
+| Source | Counts toward ephemeral storage? | Notes |
+|---|---|---|
+| Container writable layer (overlay FS) | No | `readOnlyRootFilesystem: true` — EROFS for all unmounted paths |
+| Container log files (stdout/stderr) | **Yes** | Kubelet writes to `/var/log/pods/` on node disk; kubelet rotation caps at ~50 Mi |
+| `/tmp` (PVC `subPath: tmp`) | No | PVC-backed |
+| `/workspace` (PVC `subPath: workspace`) | No | PVC-backed |
+| `/home/sandbox` (PVC `subPath: home`) | No | PVC-backed |
+| `/sandbox-cfg` (emptyDir, `Medium: Memory`) | No | Counts toward memory, not ephemeral storage |
+
+The webhook cap (`webhooks.maxWorkspaceEphemeralStorageGi: 100` in `values.yaml`) is still enforced by the validating webhook against `spec.resources.ephemeralStorage` on the Workspace CRD for any operator who explicitly sets a custom ephemeral storage value.
+
+---
 
 ## Technology Stack
 

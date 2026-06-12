@@ -110,7 +110,6 @@ func TestCreateWorkspace_NoSettings_EmptyRuntimePassesThrough(t *testing.T) {
 func TestCreateWorkspace_EmptyStorageSize_UsesDefault(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
 		"workspace.defaultStorageSize": "2Gi",
-		"workspace.maxStorageSize":     "10Gi",
 	})
 	ctx := context.Background()
 
@@ -139,17 +138,15 @@ func TestCreateWorkspace_EmptyStorageSize_NoSettings_FailsValidation(t *testing.
 
 func TestCreateWorkspace_DefaultResources_Applied(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
-		"workspace.defaultResources.cpu":              "1000m",
-		"workspace.defaultResources.memory":           "1Gi",
-		"workspace.defaultResources.ephemeralStorage": "2Gi",
+		"workspace.defaultResources.cpu":    "1000m",
+		"workspace.defaultResources.memory": "1Gi",
 	})
 	ctx := context.Background()
 
 	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Resources != nil &&
 			ws.Spec.Resources.CPU == "1000m" &&
-			ws.Spec.Resources.Memory == "1Gi" &&
-			ws.Spec.Resources.EphemeralStorage == "2Gi"
+			ws.Spec.Resources.Memory == "1Gi"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
 
@@ -325,20 +322,6 @@ func (s *errorSettingsStore) SetInstanceSetting(_ context.Context, _ string, _ j
 
 // === Edge cases ===
 
-func TestCreateWorkspace_DefaultStorageSize_ExceedsMax_Rejected(t *testing.T) {
-	// Admin misconfigured: default > max
-	f := newDefaultsFixture(t, map[string]any{
-		"workspace.defaultStorageSize": "20Gi",
-		"workspace.maxStorageSize":     "10Gi",
-	})
-	ctx := context.Background()
-
-	req := types.CreateWorkspaceRequest{Name: "test", Runtime: "base"} // no storageSize
-	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds maximum")
-}
-
 func TestCreateWorkspace_PartialResources_OnlyCPU(t *testing.T) {
 	// Only cpu is set in settings, memory/ephemeral use schema defaults
 	f := newDefaultsFixture(t, map[string]any{
@@ -431,12 +414,10 @@ func TestCreateWorkspace_AllDefaults_AppliedTogether(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
 		"workspace.defaultImage":                       "custom:latest",
 		"workspace.defaultStorageSize":                 "5Gi",
-		"workspace.maxStorageSize":                     "50Gi",
 		"workspace.defaultStorageClass":                "premium",
 		"workspace.defaultSecurityLevel":               "high",
 		"workspace.defaultResources.cpu":               "2000m",
 		"workspace.defaultResources.memory":            "2Gi",
-		"workspace.defaultResources.ephemeralStorage":  "4Gi",
 		"workspace.autoSuspend.enabled":                true,
 		"workspace.autoSuspend.idleTimeoutMinutes":     120,
 		"workspace.ttlDaysAfterSuspended":              14,
@@ -453,7 +434,6 @@ func TestCreateWorkspace_AllDefaults_AppliedTogether(t *testing.T) {
 			ws.Spec.Resources != nil &&
 			ws.Spec.Resources.CPU == "2000m" &&
 			ws.Spec.Resources.Memory == "2Gi" &&
-			ws.Spec.Resources.EphemeralStorage == "4Gi" &&
 			ws.Spec.AutoSuspend != nil &&
 			ws.Spec.AutoSuspend.Enabled == true &&
 			ws.Spec.AutoSuspend.IdleTimeoutSeconds == 7200 &&
@@ -476,7 +456,6 @@ func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
 		"workspace.defaultImage":        "default:latest",
 		"workspace.defaultStorageSize":  "1Gi",
-		"workspace.maxStorageSize":      "50Gi",
 		"workspace.defaultStorageClass": "slow",
 	})
 	ctx := context.Background()

@@ -111,13 +111,17 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			// Both /workspace and /home/sandbox use explicit subPaths so the PVC
-			// root contains only two named subtrees (workspace/ and home/) plus
-			// the Longhorn-managed lost+found/. All existing PVC data was migrated
-			// into workspace/ before this change was deployed (worklog 0198).
+			// The workspace PVC contains three named subtrees via explicit subPaths:
+			//   workspace/ — user workspace data, opencode.db, auth.json
+			//   home/      — SSH keys, secrets base dir, enricher cache, tool caches
+			//   tmp/       — agent-config.json, secrets-env; agentd rewrites these
+			//                on each credential cycle. Other files persist across
+			//                pod restarts (PVC-backed, not ephemeral).
+			// workspace-dirs init container unconditionally creates all three
+			// subdirectories at the PVC root before any subPath mount is attempted.
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
-			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
 		Resources: resourceRequirementsFor(workspace),
@@ -127,23 +131,29 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workspace.Status.PVCName},
 		}},
-		// G15 (Epic 17): sandbox-cfg and tmp are tmpfs-backed to
-		// prevent plaintext secrets / session keys from touching
-		// node disk. /home/sandbox is now a subPath on the workspace
-		// PVC (see SubPath: "home" mount above) so tool caches and
-		// home-dir state persist across pod restarts without consuming
-		// node ephemeral storage or triggering emptyDir evictions.
+		// G15 (Epic 17): sandbox-cfg is tmpfs-backed (Memory medium) to
+		// prevent plaintext secrets / session keys from touching node disk.
+		// /tmp is now a subPath on the workspace PVC (see SubPath: "tmp" mount
+		// above) so agent-config.json and secrets-env survive pod restarts and
+		// are subject to the same Longhorn redundancy as other workspace data.
+		// The agentd Materializer.reset() deletes agent-config.json and
+		// secrets-env at the start of each credential materialize cycle, so
+		// these specific files are always freshly written. Other files written
+		// to /tmp by packages or agent processes persist across pod restarts.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptrQuantity("4Mi"),
 		}}},
-		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium:    corev1.StorageMediumMemory,
-			SizeLimit: ptrQuantity("64Mi"),
-		}}},
 	}
 
 	var initContainers []corev1.Container
+
+	// workspace-dirs init: unconditionally ensures all three PVC subPath
+	// directories exist at the PVC root before any other init or the main
+	// container mounts them. Without this, kubelet fails the pod with
+	// "subPath not found" on a fresh PVC. Runs as the same non-root UID as
+	// the main container; writes only to the PVC root.
+	initContainers = append(initContainers, buildWorkspaceDirsInit(runtimeImage))
 
 	// Epic 26: inject relay baseURL so agentd can configure the opencode provider
 	// to route free-tier inference through the Cloudflare Worker for IP distribution.
@@ -399,6 +409,30 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	return credInit, pwVolume, userSecretsVolume, nil
 }
 
+// buildWorkspaceDirsInit returns an always-running init container that creates
+// the three PVC subPath directories (workspace/, home/, tmp/) at the PVC root
+// before any other init or the main container attempts to mount them.
+// Without this, kubelet fails the pod with "subPath not found" on a fresh PVC.
+func buildWorkspaceDirsInit(runtimeImage string) corev1.Container {
+	trueVal := true
+	falseVal := false
+	return corev1.Container{
+		Name:    "workspace-dirs",
+		Image:   runtimeImage,
+		Command: []string{"/bin/sh", "-c", "mkdir -p /pvc/workspace /pvc/home /pvc/tmp"},
+		VolumeMounts: []corev1.VolumeMount{
+			// Mount PVC root (no subPath) so we can create the subdirectories.
+			{Name: "workspace", MountPath: "/pvc"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &trueVal,
+			RunAsNonRoot:             &trueVal,
+			AllowPrivilegeEscalation: &falseVal,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
 func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev1.Container {
 	trueVal := true
 	falseVal := false
@@ -408,7 +442,7 @@ func buildWorkspaceSetupInit(workspace *v1.Workspace, runtimeImage string) corev
 		Command: []string{"/bin/sh", "-c", buildWorkspaceSetupScript(workspace)},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
-			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 		},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
