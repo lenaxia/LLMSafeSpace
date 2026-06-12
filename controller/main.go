@@ -33,6 +33,7 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 
+	// ldflags injection targets — set by the build system.
 	version   = "dev"
 	commitSHA = "unknown"
 	buildTime = "unknown"
@@ -88,6 +89,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	setupLog.Info("starting controller", "version", version, "commit", commitSHA, "built", buildTime)
 
 	// Register custom metrics with the controller-runtime metrics registry
 	// (not prometheus.DefaultRegisterer). controller-runtime v0.15+ serves
