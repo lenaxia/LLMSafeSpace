@@ -445,16 +445,19 @@ func (a *App) Run() error {
 			if a.bulkReloadHandler != nil {
 				a.bulkReloadHandler.SetSSETracker(tracker)
 			}
-			// Epic 26 / billing: wire inference callback so session.updated events
-			// feed token/cost counters. The workspace→user mapping is not needed
-			// here — the SSE tracker fires per-workspace and the metrics record
-			// workspaceID which can be joined to userID at query time.
-			if metricsSvc, ok := a.services.Metrics.(*metrics.Service); ok {
-				tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
-					metricsSvc.RecordInference(modelID, providerID, inputTokens, outputTokens, costDollars)
-				})
-				tracker.SetSessionMetrics(metricsSvc)
-			}
+		}
+	}
+
+	// Epic 26 / billing: wire inference callback and session metrics unconditionally.
+	// Previously nested inside the agentReloadHandler guard, which meant if the
+	// workspace service type assertion failed (or the handler wasn't created),
+	// SetOnInference was never called and inference metrics remained permanently zero.
+	if tracker := a.proxyHandler.GetSSETracker(); tracker != nil {
+		if metricsSvc, ok := a.services.Metrics.(*metrics.Service); ok {
+			tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
+				metricsSvc.RecordInference(modelID, providerID, inputTokens, outputTokens, costDollars)
+			})
+			tracker.SetSessionMetrics(metricsSvc)
 		}
 	}
 	// Epic 27b US-27b.5: Wire agent state checker into proxy for chat error enrichment.
