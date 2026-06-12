@@ -41,14 +41,14 @@ func TestIntegration_UpsertContextUsed_RoundTrip(t *testing.T) {
 	_, _ = pool.Exec(ctx, "DELETE FROM session_index WHERE workspace_id = $1", wsID)
 
 	_, err := pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, $2, 'Test Session', 0, NOW(), false, NULL)
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, $2, 'Test Session', 0, NOW(), NULL)
 	`, wsID, sesID)
 	require.NoError(t, err, "insert seed session")
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, $2, 'Test Session', 0, NOW(), false, $3)
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, $2, 'Test Session', 0, NOW(), $3)
 		ON CONFLICT (workspace_id, session_id) DO UPDATE SET context_used = $3, updated_at = NOW()
 	`, wsID, sesID, int64(45000))
 	require.NoError(t, err, "upsert context_used=45000")
@@ -60,8 +60,8 @@ func TestIntegration_UpsertContextUsed_RoundTrip(t *testing.T) {
 	assert.Equal(t, int64(45000), *contextUsed, "context_used must match upserted value")
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, $2, 'Test Session', 0, NOW(), false, $3)
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, $2, 'Test Session', 0, NOW(), $3)
 		ON CONFLICT (workspace_id, session_id) DO UPDATE SET context_used = $3, updated_at = NOW()
 	`, wsID, sesID, int64(95000))
 	require.NoError(t, err, "upsert context_used=95000 (overwrite)")
@@ -71,9 +71,9 @@ func TestIntegration_UpsertContextUsed_RoundTrip(t *testing.T) {
 	require.NotNil(t, contextUsed)
 	assert.Equal(t, int64(95000), *contextUsed, "context_used must reflect latest value")
 
-	_, _ = pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, $2, 'Test Session', 0, NOW(), false, $3)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, $2, 'Test Session', 0, NOW(), $3)
 		ON CONFLICT (workspace_id, session_id) DO UPDATE SET context_used = $3, updated_at = NOW()
 	`, wsID, sesID, int64(0))
 	require.NoError(t, err, "upsert context_used=0")
@@ -97,14 +97,14 @@ func TestIntegration_ListSessionIndex_ReturnsContextUsed(t *testing.T) {
 	_, _ = pool.Exec(ctx, "DELETE FROM session_index WHERE workspace_id = $1", wsID)
 
 	_, err := pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, 'ses_with_ctx', 'Has Context', 5, $2, false, 42000)
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, 'ses_with_ctx', 'Has Context', 5, $2, 42000)
 	`, wsID, now)
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, has_unread, context_used)
-		VALUES ($1, 'ses_no_ctx', 'No Context', 2, $2, false, NULL)
+		INSERT INTO session_index (workspace_id, session_id, title, message_count, last_message_at, context_used)
+		VALUES ($1, 'ses_no_ctx', 'No Context', 2, $2, NULL)
 	`, wsID, now)
 	require.NoError(t, err)
 
