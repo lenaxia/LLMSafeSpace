@@ -959,6 +959,29 @@ describe("ChatPage SSE event handler", () => {
   });
 
   describe("session.error lifecycle", () => {
+    function makeSessionErrorEvent(sessionID: string, errName: string, errMessage: string): WorkspaceStreamEvent {
+      return {
+        type: "opencode.event",
+        event_type: "session.error",
+        data: {
+          type: "session.error",
+          properties: {
+            sessionID,
+            error: { name: errName, data: { message: errMessage } },
+          },
+        },
+      } as unknown as WorkspaceStreamEvent;
+    }
+
+    function getMessagesFromView(): Array<{ id: string; role: string; parts: Array<{ type: string; text?: string }> }> {
+      const view = screen.getByTestId("chat-view");
+      return JSON.parse(view.getAttribute("data-messages") ?? "[]");
+    }
+
+    function getErrorParts(): Array<{ type: string; text?: string }> {
+      return getMessagesFromView().flatMap((m) => m.parts).filter((p) => p.type === "error");
+    }
+
     it("session.error message is visible until reconcileOnIdle clears it", async () => {
       // The error must be visible while the session is active, then cleared
       // when session.status=idle triggers reconcileOnIdle (history is now
@@ -971,41 +994,18 @@ describe("ChatPage SSE event handler", () => {
       renderChat(qc, "/chat/ws-1/sess-1");
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
 
-      // Fire session.error
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "session.error",
-        data: {
-          type: "session.error",
-          properties: {
-            sessionID: "sess-1",
-            error: { name: "APIError", data: { message: "Forbidden: Forbidden" } },
-          },
-        },
-      } as WorkspaceStreamEvent);
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "Forbidden: Forbidden"));
 
-      // Error must be visible immediately
       await waitFor(() => {
-        const view = screen.getByTestId("chat-view");
-        const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
-        const errorPart = msgs.flatMap((m) => m.parts).find((p) => p.type === "error");
-        expect(errorPart).toBeDefined();
-        expect(errorPart?.text).toContain("Forbidden");
+        const errors = getErrorParts();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.text).toContain("Forbidden");
       });
 
-      // Fire session.status=idle — this triggers reconcileOnIdle which clears sessionErrors
-      sendSSEEvent({
-        type: "session.status",
-        session_id: "sess-1",
-        status: "idle",
-      } as WorkspaceStreamEvent);
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
 
-      // Error must be cleared after reconcileOnIdle completes
       await waitFor(() => {
-        const view = screen.getByTestId("chat-view");
-        const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
-        const errorPart = msgs.flatMap((m) => m.parts).find((p) => p.type === "error");
-        expect(errorPart).toBeUndefined();
+        expect(getErrorParts()).toHaveLength(0);
       });
     });
 
@@ -1014,40 +1014,232 @@ describe("ChatPage SSE event handler", () => {
       (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
       (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-      // Render with sess-1
       const { unmount } = renderChat(qc, "/chat/ws-1/sess-1");
-
       await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
 
-      // Fire session.error for sess-1
-      sendSSEEvent({
-        type: "opencode.event",
-        event_type: "session.error",
-        data: {
-          type: "session.error",
-          properties: {
-            sessionID: "sess-1",
-            error: { name: "APIError", data: { message: "some error" } },
-          },
-        },
-      } as WorkspaceStreamEvent);
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "some error"));
 
       await waitFor(() => {
-        const view = screen.getByTestId("chat-view");
-        const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string }> }>;
-        expect(msgs.some((m) => m.parts.some((p) => p.type === "error"))).toBe(true);
+        expect(getErrorParts().length).toBeGreaterThan(0);
       });
 
-      // Unmount sess-1, mount sess-2 (simulates navigation)
       unmount();
       renderChat(qc, "/chat/ws-1/sess-2");
 
-      // Errors from sess-1 must not appear in sess-2
       await waitFor(() => {
-        const view = screen.getByTestId("chat-view");
-        const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string }> }>;
-        expect(msgs.some((m) => m.parts.some((p) => p.type === "error"))).toBe(false);
+        expect(getErrorParts()).toHaveLength(0);
       });
+    });
+
+    it("REGRESSION: multiple errors all cleared on idle", async () => {
+      // If multiple session.error events fire before idle (e.g. two quick
+      // provider failures), ALL of them must be cleared when reconcileOnIdle
+      // runs. Previously only localMessages was cleared — sessionErrors
+      // accumulated indefinitely.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "first error"));
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "ContextOverflowError", "context full"));
+
+      await waitFor(() => {
+        expect(getErrorParts()).toHaveLength(2);
+      });
+
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      await waitFor(() => {
+        expect(getErrorParts()).toHaveLength(0);
+      });
+    });
+
+    it("REGRESSION: error from a different session is ignored", async () => {
+      // session.error events are filtered by sessionID — only errors for the
+      // current session should appear. This prevents cross-session error leaks.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionErrorEvent("sess-OTHER", "APIError", "wrong session error"));
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(getErrorParts()).toHaveLength(0);
+    });
+
+    it("REGRESSION: new error after reconcileOnIdle is visible (next turn)", async () => {
+      // After reconcileOnIdle clears sessionErrors, a new session.error in
+      // the next turn must still render. This guards against a hypothetical
+      // bug where setSessionErrors([]) breaks subsequent accumulation.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Turn 1: error → idle → cleared
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "turn 1 error"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(1));
+
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(0));
+
+      // Turn 2: new error must still render
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "turn 2 error"));
+      await waitFor(() => {
+        const errors = getErrorParts();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.text).toContain("turn 2 error");
+      });
+    });
+
+    it("REGRESSION: error persists while session is busy, only clears on idle", async () => {
+      // If the session stays busy after an error, the error must remain
+      // visible. reconcileOnIdle only fires on session.status=idle.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "busy"));
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "still busy error"));
+
+      await waitFor(() => {
+        expect(getErrorParts()).toHaveLength(1);
+      });
+
+      // Error still present — session hasn't gone idle
+      await new Promise((r) => setTimeout(r, 50));
+      expect(getErrorParts()).toHaveLength(1);
+
+      // Now idle → cleared
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(0));
+    });
+
+    it("REGRESSION: error does not reappear after idle + new history", async () => {
+      // The original bug: error stuck at bottom while history messages
+      // populated above it. Simulate: error fires, history contains prior
+      // messages, session goes idle → reconcileOnIdle clears errors and
+      // refetches history. The final message list must NOT contain the error.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "msg-1", role: "user", parts: [{ type: "text", text: "earlier message" }] },
+      ]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Wait for initial history load
+      await waitFor(() => {
+        const msgs = getMessagesFromView();
+        expect(msgs.some((m) => m.parts.some((p) => p.text === "earlier message"))).toBe(true);
+      });
+
+      // Error arrives during streaming
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "Aborted"));
+
+      await waitFor(() => expect(getErrorParts()).toHaveLength(1));
+
+      // Session goes idle → reconcileOnIdle clears sessionErrors and refetches history
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      await waitFor(() => {
+        const errors = getErrorParts();
+        const msgs = getMessagesFromView();
+        expect(errors).toHaveLength(0);
+        // History still present
+        expect(msgs.some((m) => m.parts.some((p) => p.text === "earlier message"))).toBe(true);
+      });
+    });
+
+    it("REGRESSION: rapid error → idle → error → idle does not leak between turns", async () => {
+      // Two quick turns: each produces an error that should be cleared by
+      // its own idle. The second error must not be prematurely cleared by
+      // the first idle, and must be cleared by the second idle.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      // Turn 1
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "error A"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(1));
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(0));
+
+      // Turn 2
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "busy"));
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "error B"));
+      await waitFor(() => {
+        const errors = getErrorParts();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.text).toContain("error B");
+      });
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(0));
+    });
+
+    it("REGRESSION: errors always rendered after history and localMessages in allMessages", async () => {
+      // allMessages = [...history, ...localMessages, ...sessionErrors]
+      // Errors must always be the last items so they appear at the bottom of
+      // the chat. If history messages exist, they come first.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "hist-1", role: "user", parts: [{ type: "text", text: "from history" }] },
+      ]);
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "pinned error"));
+
+      await waitFor(() => {
+        const msgs = getMessagesFromView();
+        const hasHistory = msgs.some((m) => m.parts.some((p) => p.text === "from history"));
+        const hasError = msgs.some((m) => m.parts.some((p) => p.type === "error"));
+        expect(hasHistory).toBe(true);
+        expect(hasError).toBe(true);
+
+        // Error message must be the LAST message
+        const lastMsg = msgs[msgs.length - 1];
+        expect(lastMsg?.parts.some((p) => p.type === "error")).toBe(true);
+      });
+    });
+
+    it("REGRESSION: error stays visible when reconcileOnIdle history refetch fails", async () => {
+      // If reconcileOnIdle's refetchQueries throws (network error), the catch
+      // block intentionally keeps streaming parts and localMessages visible.
+      // sessionErrors are cleared BEFORE the await, so they are always wiped
+      // even on failure. This test documents the current behavior.
+      const qc = makeQueryClient();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network fail"));
+
+      renderChat(qc, "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeSessionErrorEvent("sess-1", "APIError", "error before fail"));
+      await waitFor(() => expect(getErrorParts()).toHaveLength(1));
+
+      // Idle triggers reconcileOnIdle which calls refetchQueries → rejects
+      sendSSEEvent(makeSessionStatusEvent("sess-1", "idle"));
+
+      // reconcileOnIdle clears sessionErrors regardless of refetch outcome
+      await waitFor(() => expect(getErrorParts()).toHaveLength(0));
     });
   });
 
