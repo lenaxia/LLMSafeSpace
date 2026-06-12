@@ -364,11 +364,9 @@ Both are also called in `proxyToWorkspace` (on write operations), so this is not
 
 **Residual risk:** If opencode's DB write is asynchronous and the SSE event races ahead of it (not observed in source), a brief stale state could persist. Self-corrects on the next interaction. Low probability, low impact.
 
-### FM2 — 409 guard fires for a session active on a different replica (LOW)
+### FM2 — 409 guard misses when session is active on a different replica (LOW)
 
-**Scenario:** Session is active on replica B (SSE tracker on B has `activeSess[wsId][sesId]=true`). Client sends `prompt_async` to replica A. Replica A's `activeSess` is empty for this session. The 409 guard does NOT fire. Request is forwarded to opencode. opencode's runner handles it correctly because its own state IS `Idle` at this point (the session was busy on replica B, not on opencode — wait, no, opencode is single-pod and the runner IS busy if the session is processing).
-
-Actually: opencode is single-pod. If session is processing on opencode, `activeSess` on SOME replica has it. Replica A may not. So the 409 guard is a best-effort defense. If it misses, opencode's runner silently drops the work (Bug 2 scenario). The frontend gets 204, removes the pill, orphan user message.
+**Scenario:** opencode is single-pod. If a session is processing, exactly one API replica — whichever received the originating `prompt_async` and had its SSE tracker fire `onSessionActive` — has `activeSess[wsId][sesId]=true`. Every other replica has no entry. If the client's next `prompt_async` (from a queued message) is routed to a replica that does not hold the active entry, the 409 guard does not fire. The request is forwarded to opencode while opencode's runner is still `Running`. opencode silently discards the new work (V4). The frontend receives 204, removes the queue pill, and an orphan user message is left in history with no assistant reply.
 
 **Mitigation:** US-41.1 (Bug 1 fix) is the primary mitigation. Bug 2 (orphan messages) is a secondary concern only triggered by concurrent sends. The `drainingRef` guard in the frontend prevents the queue from sending concurrently. This race can only happen if `doSendNow` is called simultaneously with a queue drain — which requires `!serverBusy && !streaming` to be true at the same time as a queued message is draining.
 
@@ -446,7 +444,7 @@ This can only happen if the same `messageID` appears in history AND the queue. S
 | 9 | 409 response transitions message to `pending` (not `error`) | `useMessageQueue.test.ts` | Unit |
 | 10 | Message in `pending` after 409 is retried on next `notifyIdle` | `useMessageQueue.test.ts` | Unit |
 | 11 | After MAX_RETRIES 409s, message transitions to `error` | `useMessageQueue.test.ts` | Unit |
-| 12 | `_retryCount` resets to 0 on successful send | `useMessageQueue.test.ts` | Unit |
+| 12 | Queue item is removed on successful send after prior 409 retries | `useMessageQueue.test.ts` | Unit |
 
 ### US-41.4 tests (backend — Go)
 
