@@ -797,6 +797,8 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.CONTROLLER_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=controller-${{ matrix.platform }}
           cache-to: type=gha,scope=controller-${{ matrix.platform }},mode=max
+          build-args: |
+            COMMIT_SHA=${{ github.sha }}
 
       - name: Export digest
         if: github.event_name != 'pull_request'
@@ -804,6 +806,29 @@ jobs:
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Smoke-test controller binary
+        run: |
+          docker buildx build \
+            --build-arg COMMIT_SHA=${{ github.sha }} \
+            -f controller/Dockerfile \
+            --target builder \
+            -t controller-smoke \
+            --load \
+            .
+          MATCHES=$(docker run --rm --entrypoint sh controller-smoke -c \
+            'if [ ! -s /out/manager ]; then echo "FATAL: /out/manager is empty"; exit 1; fi; \
+             grep -ac "llmsafespace_workspaces_running" /out/manager || true') || {
+            echo "::error::docker run failed with exit code $?"
+            exit 1
+          }
+          if [ "$MATCHES" -eq 0 ] 2>/dev/null; then
+            echo "::error::Controller binary missing llmsafespace_workspaces_running metric string."
+            echo "This usually means Docker BuildKit served a stale cache layer."
+            echo "Binary size: $(docker run --rm --entrypoint stat controller-smoke -c '%s' /out/manager) bytes"
+            exit 1
+          fi
+          echo "Controller binary smoke test passed: llmsafespace_* metric strings present"
 
       - name: Upload digest
         if: github.event_name != 'pull_request'

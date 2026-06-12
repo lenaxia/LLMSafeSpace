@@ -235,6 +235,38 @@ func TestCountActiveByLabels(t *testing.T) {
 	assert.Len(t, counts, 2, "Only Active workspaces produce entries")
 }
 
+func TestAllCollectorsGatherableAfterRegisterWith(t *testing.T) {
+	reg := isolatedRegistry(t)
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+
+	names := make(map[string]bool, len(families))
+	for _, mf := range families {
+		names[mf.GetName()] = true
+	}
+
+	// Unlabeled scalar metrics are always gatherable after registration.
+	// Labeled metrics (CounterVec/GaugeVec) only appear after their first
+	// WithLabelValues().Inc()/Set() call, so we don't assert them here —
+	// that's tested by the individual metric tests above.
+	expected := []string{
+		"llmsafespace_workspace_consecutive_failures_max",
+		"llmsafespace_workspace_safe_mode_active",
+		"llmsafespace_workspace_status_update_conflicts_total",
+		"llmsafespace_api_key_legacy_total",
+		"llmsafespace_workspace_init_container_duration_seconds",
+	}
+	for _, name := range expected {
+		assert.True(t, names[name], "metric %q must be gatherable after RegisterWith", name)
+	}
+
+	// Verify the full collector count matches what RegisterWith registered.
+	assert.GreaterOrEqual(t, len(families), len(expected),
+		"RegisterWith must register at least %d unlabeled collectors (got %d metric families)",
+		len(expected), len(families))
+}
+
 // ---- helpers ----
 
 func gatherFamily(t *testing.T, reg *prometheus.Registry, name string) *dto.MetricFamily {

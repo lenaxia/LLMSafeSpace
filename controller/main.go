@@ -32,6 +32,10 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	version   = "dev"
+	commitSHA = "unknown"
+	buildTime = "unknown"
 )
 
 func init() {
