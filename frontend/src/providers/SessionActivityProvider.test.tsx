@@ -692,4 +692,63 @@ describe("SessionActivityProvider", () => {
     });
     expect(screen.getByTestId("busy").textContent).toBe("no");
   });
+
+  // Regression: pendingUnread is preserved through SSE reconnect.
+  // Unread represents durable information ("session completed that you
+  // haven't looked at") and should survive reconnection. The REST re-seed
+  // will also re-populate unread from hasUnread in the cache.
+  it("SSE reconnect preserves pendingUnread state (regression)", () => {
+    function Display() {
+      const isBusy = useIsSessionBusy("sess-1");
+      const isUnread = useIsSessionUnread("sess-1");
+      return (
+        <>
+          <span data-testid="busy">{isBusy ? "yes" : "no"}</span>
+          <span data-testid="unread">{isUnread ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "idle" });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnReconnect!();
+    });
+
+    // busy cleared by reconnect, unread preserved
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    // Re-seed from REST — hasUnread in cache preserves unread
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
 });
