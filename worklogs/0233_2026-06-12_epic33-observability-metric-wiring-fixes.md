@@ -1,4 +1,4 @@
-# Worklog 0232 — Epic 33 Observability: Metric Wiring, Inference Parsing Fix, Grafana Datasource
+# Worklog 0233 — Epic 33 Observability: Metric Wiring, Inference Parsing Fix, Grafana Datasource
 
 **Date:** 2026-06-11 / 2026-06-12
 **Session:** Deploy monitoring helm upgrade, diagnose and fix all zero metrics, fix Grafana dashboards
