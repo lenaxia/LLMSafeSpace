@@ -15,6 +15,7 @@ import {
   Plus,
   Circle,
   MessageSquare,
+  MessageSquareText,
   ChevronRight,
   ChevronDown,
   Play,
@@ -731,7 +732,11 @@ function SessionTreeRow({
           {isBusy ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
           ) : (
-            <MessageSquare className={cn("h-3.5 w-3.5 flex-shrink-0", showPulse && "animate-unread-pulse")} />
+            showPulse ? (
+              <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse" />
+            ) : (
+              <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
+            )
           )}
           <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse")}>{title}</span>
           {contextUsed != null && (
