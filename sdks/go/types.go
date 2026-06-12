@@ -101,8 +101,8 @@ type WorkspaceStatus struct {
 	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
 	MemoryUsedBytes  int64                `json:"memoryUsedBytes,omitempty"`
 	MemoryTotalBytes int64                `json:"memoryTotalBytes,omitempty"`
-	ContextUsed      int64                `json:"contextUsed,omitempty"`
-	ContextTotal     int64                `json:"contextTotal,omitempty"`
+	ContextUsed      int64                `json:"contextUsed"`
+	ContextTotal     int64                `json:"contextTotal"`
 }
 
 type WorkspaceCondition struct {
@@ -128,9 +128,10 @@ type AgentHealth struct {
 }
 
 type SessionStatusItem struct {
-	ID     string `json:"id"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status"`
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"`
+	ContextUsed int64  `json:"contextUsed"`
 }
 
 // ActivateWorkspaceResponse is returned by POST /workspaces/:id/activate.

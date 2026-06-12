@@ -269,7 +269,9 @@ func TestStatuszEndpoint_ContextUsage_EmptySessions(t *testing.T) {
 	var resp agentd.StatuszResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Empty(t, resp.Sessions)
-	assert.Nil(t, resp.Context, "no context field when no sessions")
+	assert.NotNil(t, resp.Context, "context field always present")
+	assert.Equal(t, int64(0), resp.Context.TotalTokens, "no sessions → context limit unknown")
+	assert.Contains(t, w.Body.String(), `"context":`, "JSON wire format must include context object")
 }
 
 func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {

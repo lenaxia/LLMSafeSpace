@@ -123,13 +123,13 @@ export function DiskUsageBar(props: Props) {
   // Build ordered metric list (context always first)
   const allMetrics: MetricDef[] = [];
 
-  if (contextUsed != null) {
-    if (contextTotal != null && contextTotal > 0) {
-      // Known limit — show normal progress bar
-      allMetrics.push({ id: "context", label: "Context", used: contextUsed, total: contextTotal, formatValue: formatTokens, warningThreshold: 80 });
+  {
+    const used = contextUsed ?? 0;
+    const total = contextTotal ?? 0;
+    if (total > 0) {
+      allMetrics.push({ id: "context", label: "Context", used, total, formatValue: formatTokens, warningThreshold: 80 });
     } else {
-      // Unknown limit (contextTotal=0 or missing) — show "Unknown" with tooltip
-      allMetrics.push({ id: "context-unknown", label: "Context", used: contextUsed, total: 0, formatValue: formatTokens, unknown: true });
+      allMetrics.push({ id: "context-unknown", label: "Context", used, total: 0, formatValue: formatTokens, unknown: true });
     }
   }
 

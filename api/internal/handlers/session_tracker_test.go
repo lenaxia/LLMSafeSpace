@@ -907,5 +907,96 @@ func TestSSETracker_Inference_ZeroCostNoInflation(t *testing.T) {
 
 	mu.Lock()
 	assert.Equal(t, 0.0, totalCost, "zero-cost provider must never accumulate cost")
+}
+
+func TestSSETracker_RawEventCallback_StepEnded(t *testing.T) {
+	var mu sync.Mutex
+	var rawCalls []struct {
+		workspaceID string
+		eventType   string
+		rawData     string
+	}
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnRawEvent(func(workspaceID, eventType, rawData string) {
+		mu.Lock()
+		rawCalls = append(rawCalls, struct {
+			workspaceID string
+			eventType   string
+			rawData     string
+		}{workspaceID, eventType, rawData})
+		mu.Unlock()
+	})
+
+	stepEndedJSON := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_abc","tokens":{"input":800,"output":400,"reasoning":100,"cache":{"read":200,"write":50}}}}`
+	tracker.processEvent("ws-1", stepEndedJSON)
+
+	mu.Lock()
+	require.Len(t, rawCalls, 1)
+	assert.Equal(t, "ws-1", rawCalls[0].workspaceID)
+	assert.Equal(t, "session.next.step.ended", rawCalls[0].eventType)
+	assert.Contains(t, rawCalls[0].rawData, `"ses_abc"`)
+	assert.Contains(t, rawCalls[0].rawData, `"input":800`)
 	mu.Unlock()
+}
+
+func TestSSETracker_Subscribe_ReceivesStepEndedViaSSE(t *testing.T) {
+	var mu sync.Mutex
+	var rawCalls []struct {
+		workspaceID string
+		eventType   string
+		rawData     string
+	}
+
+	sseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		stepEndedJSON := `{"type":"session.next.step.ended","properties":{"sessionID":"ses_rt","tokens":{"input":5000,"output":200,"reasoning":0,"cache":{"read":1000,"write":500}}}}`
+		fmt.Fprintf(w, "data: %s\n\n", stepEndedJSON)
+		flusher.Flush()
+
+		<-r.Context().Done()
+	}))
+	defer sseServer.Close()
+
+	tracker := NewSSETracker(
+		&http.Client{Transport: &redirectTransport{server: sseServer}, Timeout: 2 * time.Second},
+		&testLogger{},
+		func(_, _ string) {},
+	)
+	tracker.SetOnRawEvent(func(workspaceID, eventType, rawData string) {
+		mu.Lock()
+		rawCalls = append(rawCalls, struct {
+			workspaceID string
+			eventType   string
+			rawData     string
+		}{workspaceID, eventType, rawData})
+		mu.Unlock()
+	})
+	tracker.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
+		return "test-pw", nil
+	})
+	tracker.SetPodIPResolver(func(_ string) string { return "10.0.0.1" })
+
+	tracker.EnsureWatching("ws-1")
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(rawCalls) >= 1
+	}, 5*time.Second, 50*time.Millisecond, "expected at least 1 rawEvent callback")
+
+	mu.Lock()
+	require.Len(t, rawCalls, 1)
+	assert.Equal(t, "ws-1", rawCalls[0].workspaceID)
+	assert.Equal(t, "session.next.step.ended", rawCalls[0].eventType)
+	assert.Contains(t, rawCalls[0].rawData, `"ses_rt"`)
+	assert.Contains(t, rawCalls[0].rawData, `"input":5000`)
+	assert.Contains(t, rawCalls[0].rawData, `"read":1000`)
+	assert.Contains(t, rawCalls[0].rawData, `"write":500`)
+	mu.Unlock()
+
+	tracker.Stop()
 }

@@ -276,8 +276,8 @@ type WorkspaceStatus struct {
 	// Stored so enrichAgentStatus can compute delta on the next poll.
 	CpuUsageMicros       int64 `json:"cpuUsageMicros,omitempty"`
 	CpuLimitMicrosPerSec int64 `json:"cpuLimitMicrosPerSec,omitempty"`
-	ContextUsed          int64 `json:"contextUsed,omitempty"`
-	ContextTotal         int64 `json:"contextTotal,omitempty"`
+	ContextUsed          int64 `json:"contextUsed"`
+	ContextTotal         int64 `json:"contextTotal"`
 
 	// ---- Startup latency measurement anchors (S18.10) ----
 	//
