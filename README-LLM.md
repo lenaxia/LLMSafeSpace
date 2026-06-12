@@ -405,7 +405,7 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 |---|---|---|---|
 | `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
-| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes (cleared by workspace-setup init on each pod start) | agent-config.json, secrets-env |
+| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — agentd rewrites `agent-config.json` and `secrets-env` on each credential cycle; other files persist | agent-config.json, secrets-env |
 | `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
 
 **Key path constants** (`pkg/agentd/types.go`):
@@ -416,7 +416,7 @@ SecretsBasePath  = "/home/sandbox/.secrets"   ← deleted by reset() on every re
 SecretsEnvPath   = "/tmp/secrets-env"
 ```
 
-Note: `/tmp` is now a PVC subPath (`subPath: tmp`), not an emptyDir. The workspace-setup init container clears this directory on every pod start so stale configs are never inherited across restarts. The paths above are unchanged — only the backing storage changed.
+Note: `/tmp` is now a PVC subPath (`subPath: tmp`), not an emptyDir. The `workspace-dirs` init container unconditionally creates this directory on every pod start. The agentd `Materializer.reset()` deletes and rewrites `agent-config.json` and `secrets-env` on each credential cycle, so those specific files are always freshly written. Other files written to `/tmp` by packages or agent processes persist across pod restarts.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
 

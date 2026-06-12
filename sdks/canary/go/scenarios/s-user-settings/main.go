@@ -15,7 +15,7 @@ import (
 	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
 )
 
-const expectedSchemaVersion = 1
+const expectedSchemaVersion = 2
 
 func Handler(w http.ResponseWriter, r *http.Request) {
 	run := canary.NewRunner("user-settings", "go-sdk")

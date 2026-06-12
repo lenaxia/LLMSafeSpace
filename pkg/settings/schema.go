@@ -5,7 +5,7 @@ package settings
 
 // SchemaVersion is incremented on any schema change (add/remove/modify keys).
 // Used by the seed job to detect orphaned keys and by the frontend to cache-bust.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // SettingType defines the data type of a setting.
 type SettingType string
