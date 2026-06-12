@@ -146,6 +146,9 @@ test.describe("Context bar (DiskUsageBar) — real browser", () => {
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
 
+    // Wait for cold-start value first (ensures prevContextUsedRef is set before SSE event)
+    await expect(page.getByText(/100K/).first()).toBeVisible({ timeout: 10_000 });
+
     // 100K (cold-start) → 40K (SSE) is a >50% drop — compaction banner must appear
     await expect(page.getByText(/context compacted/i)).toBeVisible({ timeout: 10_000 });
   });
@@ -161,6 +164,9 @@ test.describe("Context bar (DiskUsageBar) — real browser", () => {
       }));
 
     await page.goto(`/chat/${WORKSPACE_ID}/${SESSION_ID}`);
+
+    // Wait for cold-start value first (ensures prevContextUsedRef is set before SSE event)
+    await expect(page.getByText(/100K/).first()).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByText(/context compacted/i)).toBeVisible({ timeout: 10_000 });
     await page.getByRole("button", { name: /dismiss/i }).click();
