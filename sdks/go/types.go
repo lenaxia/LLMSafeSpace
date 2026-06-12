@@ -128,9 +128,10 @@ type AgentHealth struct {
 }
 
 type SessionStatusItem struct {
-	ID     string `json:"id"`
-	Title  string `json:"title,omitempty"`
-	Status string `json:"status"`
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"`
+	ContextUsed int64  `json:"contextUsed"`
 }
 
 // ActivateWorkspaceResponse is returned by POST /workspaces/:id/activate.

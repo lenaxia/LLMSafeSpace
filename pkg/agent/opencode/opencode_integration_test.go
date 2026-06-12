@@ -51,16 +51,18 @@ func findOrDownloadBinary(t *testing.T) string {
 	tmp := filepath.Join(cacheDir, "opencode.tar.gz")
 	out, err := os.Create(tmp)
 	require.NoError(t, err)
-	defer out.Close()
 
 	resp, err := http.Get(url)
-	require.NoError(t, err)
+	if err != nil {
+		out.Close()
+		require.NoError(t, err)
+	}
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "download failed: %s", url)
 
 	_, err = io.Copy(out, resp.Body)
-	require.NoError(t, err)
 	out.Close()
+	require.NoError(t, err)
 
 	require.NoError(t, exec.Command("tar", "-xzf", tmp, "-C", cacheDir, "opencode").Run())
 
