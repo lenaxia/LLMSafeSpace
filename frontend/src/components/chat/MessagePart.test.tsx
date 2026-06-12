@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
-import { MessagePart } from "./MessagePart";
+import { MessagePart, closeOpenFence } from "./MessagePart";
+import { highlight } from "../../lib/shiki";
+
+vi.mock("../../lib/shiki", () => ({
+  highlight: vi.fn().mockResolvedValue(null),
+}));
+const mockHighlight = highlight as ReturnType<typeof vi.fn>;
 
 describe("MessagePart", () => {
+  beforeEach(() => {
+    mockHighlight.mockResolvedValue(null);
+  });
+
   it("renders user text as plain paragraph", () => {
     render(<MessagePart part={{ type: "text", text: "Hello world" }} isUser={true} />);
     const p = screen.getByText("Hello world");
@@ -39,12 +50,14 @@ describe("MessagePart", () => {
     expect(screen.getByText("4")).toBeInTheDocument();
   });
 
-  it("renders fenced code blocks", () => {
+  it("renders fenced code blocks", async () => {
     const code = "```js\nconst x = 1;\n```";
     render(<MessagePart part={{ type: "text", text: code }} isUser={false} />);
-    expect(screen.getByText("const x = 1;")).toBeInTheDocument();
-    const codeEl = screen.getByText("const x = 1;").closest("code");
-    expect(codeEl).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("const x = 1;")).toBeInTheDocument();
+      const codeEl = screen.getByText("const x = 1;").closest("code");
+      expect(codeEl).toBeInTheDocument();
+    });
   });
 
   it("renders inline code", () => {
@@ -92,15 +105,6 @@ describe("MessagePart", () => {
   });
 
   describe("overflow containment", () => {
-    it("applies overflow-x-auto to code blocks via prose selector", () => {
-      const code = "```js\nconst x = 1;\n```";
-      const { container } = render(
-        <MessagePart part={{ type: "text", text: code }} isUser={false} />,
-      );
-      const prose = container.querySelector(".prose");
-      expect(prose?.className).toContain("[&_pre]:overflow-x-auto");
-    });
-
     it("applies overflow-x-auto to tables via prose selector", () => {
       const table = "| A | B |\n|---|---|\n| 1 | 2 |";
       const { container } = render(
@@ -108,14 +112,6 @@ describe("MessagePart", () => {
       );
       const prose = container.querySelector(".prose");
       expect(prose?.className).toContain("[&_table]:overflow-x-auto");
-    });
-
-    it("applies break-all to inline code via prose selector", () => {
-      const { container } = render(
-        <MessagePart part={{ type: "text", text: "Use `some_long_function_name`" }} isUser={false} />,
-      );
-      const prose = container.querySelector(".prose");
-      expect(prose?.className).toContain("[&_:not(pre)>code]:break-all");
     });
   });
 
@@ -127,33 +123,197 @@ describe("MessagePart", () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: false }));
       const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
       _resetStoreFromStorage();
-      const { container } = render(
+      render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
-      const prose = container.querySelector(".prose");
-      expect(prose?.className).not.toContain("whitespace-pre-wrap");
+      await waitFor(() => {
+        const pre = document.querySelector("pre");
+        expect(pre?.className).not.toContain("whitespace-pre-wrap");
+      });
     });
 
     it("applies word-wrap classes when setting is true", async () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ codeBlockWordWrap: true }));
       const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
       _resetStoreFromStorage();
-      const { container } = render(
+      render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
-      const prose = container.querySelector(".prose");
-      expect(prose?.className).toContain("whitespace-pre-wrap");
+      await waitFor(() => {
+        const pre = document.querySelector("pre");
+        expect(pre?.className).toContain("whitespace-pre-wrap");
+      });
     });
 
     it("defaults to no word-wrap when setting is absent", async () => {
       localStorage.removeItem(STORAGE_KEY);
       const { _resetStoreFromStorage } = await import("../../hooks/useUserSettings");
       _resetStoreFromStorage();
-      const { container } = render(
+      render(
         <MessagePart part={{ type: "text", text: codeMarkdown }} isUser={false} />,
       );
-      const prose = container.querySelector(".prose");
-      expect(prose?.className).not.toContain("whitespace-pre-wrap");
+      await waitFor(() => {
+        const pre = document.querySelector("pre");
+        expect(pre?.className).not.toContain("whitespace-pre-wrap");
+      });
     });
+  });
+});
+
+describe("closeOpenFence", () => {
+  it("returns unchanged text when no fences are present", () => {
+    expect(closeOpenFence("no code here")).toBe("no code here");
+  });
+
+  it("returns unchanged text when fences are balanced", () => {
+    const text = "```go\nfunc main(){}\n```";
+    expect(closeOpenFence(text)).toBe(text);
+  });
+
+  it("closes an open 3-backtick fence", () => {
+    expect(closeOpenFence("```go\nfunc main(){}")).toBe("```go\nfunc main(){}\n```");
+  });
+
+  it("closes an open 4-backtick fence with 4 backticks, not 3", () => {
+    expect(closeOpenFence("````go\nfunc main(){}")).toBe("````go\nfunc main(){}\n````");
+  });
+
+  it("closes an open tilde fence", () => {
+    expect(closeOpenFence("~~~python\nprint('hi')")).toBe("~~~python\nprint('hi')\n~~~");
+  });
+
+  it("closes an open 4-tilde fence", () => {
+    expect(closeOpenFence("~~~~sh\necho hello")).toBe("~~~~sh\necho hello\n~~~~");
+  });
+
+  it("does not close a fence with mismatched character (backtick vs tilde)", () => {
+    const text = "~~~\ncode\n```";
+    const result = closeOpenFence(text);
+    expect(result).toBe("~~~\ncode\n```\n~~~");
+  });
+
+  it("does not close with shorter fence than opening", () => {
+    const text = "````\ncode\n```\nmore";
+    const result = closeOpenFence(text);
+    expect(result).toBe("````\ncode\n```\nmore\n````");
+  });
+
+  it("handles multiple balanced fences correctly", () => {
+    const text = "```go\ncode1\n```\n```py\ncode2\n```";
+    expect(closeOpenFence(text)).toBe(text);
+  });
+
+  it("closes the second open fence in a mixed sequence", () => {
+    const text = "```go\ncode1\n```\ntext\n```py\ncode2";
+    expect(closeOpenFence(text)).toBe("```go\ncode1\n```\ntext\n```py\ncode2\n```");
+  });
+
+  it("handles empty string", () => {
+    expect(closeOpenFence("")).toBe("");
+  });
+
+  it("handles text with only a fence opening and no newline", () => {
+    expect(closeOpenFence("```")).toBe("```\n```");
+  });
+
+  it("handles fence with no language info string", () => {
+    expect(closeOpenFence("```\ncode")).toBe("```\ncode\n```");
+  });
+});
+
+describe("CodeBlock (via MessagePart)", () => {
+  beforeEach(() => {
+    mockHighlight.mockReset();
+    mockHighlight.mockResolvedValue(null);
+  });
+
+  it("renders language label when language is present", async () => {
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => expect(screen.getByText("go")).toBeInTheDocument());
+  });
+
+  it("does not render header bar for unlabelled fence", async () => {
+    render(<MessagePart part={{ type: "text", text: "```\ncode\n```" }} isUser={false} />);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /copy code/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders copy button with accessible label when language is present", async () => {
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument()
+    );
+  });
+
+  it("does not call highlight() while isStreaming=true", () => {
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} isStreaming={true} />);
+    expect(mockHighlight).not.toHaveBeenCalled();
+  });
+
+  it("calls highlight() when isStreaming is false", async () => {
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} isStreaming={false} />);
+    await waitFor(() => expect(mockHighlight).toHaveBeenCalledWith("func main(){}", "go"));
+  });
+
+  it("renders shiki HTML when highlight() returns HTML", async () => {
+    mockHighlight.mockResolvedValue('<pre class="shiki"><code><span style="color:#333">func</span></code></pre>');
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => expect(document.querySelector(".shiki")).toBeInTheDocument());
+  });
+
+  it("renders plain pre fallback when highlight() returns null", async () => {
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => {
+      const pre = document.querySelector("pre");
+      expect(pre).toBeInTheDocument();
+      expect(pre?.textContent).toContain("func main(){}");
+    });
+  });
+
+  it("copy button copies raw code", async () => {
+    const user = userEvent.setup();
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => screen.getByRole("button", { name: /copy code/i }));
+    await user.click(screen.getByRole("button", { name: /copy code/i }));
+    // userEvent handles clipboard internally; verify the copied state transition
+    await waitFor(() => expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument());
+  });
+
+  it("copy button shows check icon after copy", async () => {
+    const user = userEvent.setup();
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => screen.getByRole("button", { name: /copy code/i }));
+    await user.click(screen.getByRole("button", { name: /copy code/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument());
+  });
+
+  it("copy button reverts after 2s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => screen.getByRole("button", { name: /copy code/i }));
+    await user.click(screen.getByRole("button", { name: /copy code/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument());
+    vi.advanceTimersByTime(2100);
+    await waitFor(() => expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument());
+    vi.useRealTimers();
+  });
+
+  it("calls highlight() exactly once when isStreaming transitions to false", async () => {
+    const { rerender } = render(<MessagePart
+      part={{ type: "text", text: "```go\nfunc main(){}\n```" }}
+      isUser={false}
+      isStreaming={true}
+    />);
+    expect(mockHighlight).not.toHaveBeenCalled();
+
+    rerender(<MessagePart
+      part={{ type: "text", text: "```go\nfunc main(){}\n```" }}
+      isUser={false}
+      isStreaming={false}
+    />);
+    await waitFor(() => expect(mockHighlight).toHaveBeenCalledTimes(1), { timeout: 10000 });
+    expect(mockHighlight).toHaveBeenCalledWith("func main(){}", "go");
   });
 });

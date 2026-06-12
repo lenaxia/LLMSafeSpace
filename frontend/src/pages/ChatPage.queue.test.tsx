@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "../providers/ThemeProvider";
 import { ChatPage } from "./ChatPage";
 
 vi.mock("../api/workspaces", () => ({
@@ -65,11 +66,13 @@ function renderChat(qc: QueryClient, path: string) {
   qc.setQueryData(["messages", wsId, sesId], { pages: [{ messages: [], nextCursor: undefined }], pageParams: [undefined] });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-        </Routes>
-      </MemoryRouter>
+      <ThemeProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ThemeProvider>
     </QueryClientProvider>,
   );
 }
