@@ -958,11 +958,12 @@ describe("ChatPage SSE event handler", () => {
     });
   });
 
-  describe("session.error persistence across reconcileOnIdle", () => {
-    it("session.error message survives subsequent session.status=idle", async () => {
-      // Regression: session.error added the error to localMessages, then
-      // session.status=idle fired reconcileOnIdle which called setLocalMessages([]),
-      // wiping the error before the user could read it.
+  describe("session.error lifecycle", () => {
+    it("session.error message is visible until reconcileOnIdle clears it", async () => {
+      // The error must be visible while the session is active, then cleared
+      // when session.status=idle triggers reconcileOnIdle (history is now
+      // authoritative). Previously errors persisted at the bottom of the
+      // message list even after newer messages arrived above them.
       const qc = makeQueryClient();
       (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
       (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -992,20 +993,19 @@ describe("ChatPage SSE event handler", () => {
         expect(errorPart?.text).toContain("Forbidden");
       });
 
-      // Fire session.status=idle — this triggers reconcileOnIdle which clears localMessages
+      // Fire session.status=idle — this triggers reconcileOnIdle which clears sessionErrors
       sendSSEEvent({
         type: "session.status",
         session_id: "sess-1",
         status: "idle",
       } as WorkspaceStreamEvent);
 
-      // Error must STILL be visible after reconcileOnIdle
+      // Error must be cleared after reconcileOnIdle completes
       await waitFor(() => {
         const view = screen.getByTestId("chat-view");
         const msgs = JSON.parse(view.getAttribute("data-messages") ?? "[]") as Array<{ parts: Array<{ type: string; text?: string }> }>;
         const errorPart = msgs.flatMap((m) => m.parts).find((p) => p.type === "error");
-        expect(errorPart).toBeDefined();
-        expect(errorPart?.text).toContain("Forbidden");
+        expect(errorPart).toBeUndefined();
       });
     });
 
