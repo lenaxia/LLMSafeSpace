@@ -139,6 +139,65 @@ describe("useUserEventStream", () => {
       );
     });
   });
+
+  it("does NOT call onReconnect on initial connect", async () => {
+    const onReconnect = vi.fn();
+    const encoder = new TextEncoder();
+    const event = `id: 1\ndata: {"event_id":1,"type":"workspace.phase","workspace_id":"ws-1","phase":"Active"}\n\n`;
+
+    let readCount = 0;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: () => {
+            readCount++;
+            if (readCount === 1) {
+              return Promise.resolve({ done: false, value: encoder.encode(event) });
+            }
+            return new Promise(() => {});
+          },
+        }),
+      },
+    });
+
+    const { wrapper } = createWrapper();
+    renderHook(() => useUserEventStream({ onReconnect }), { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("calls onReconnect on second connect (reconnect)", async () => {
+    const onReconnect = vi.fn();
+    const encoder = new TextEncoder();
+    const event = `id: 1\ndata: {"event_id":1,"type":"workspace.phase","workspace_id":"ws-1","phase":"Active"}\n\n`;
+
+    let readCount = 0;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: () => {
+            readCount++;
+            if (readCount === 1) {
+              return Promise.resolve({ done: false, value: encoder.encode(event) });
+            }
+            if (readCount === 2) {
+              return Promise.resolve({ done: true });
+            }
+            return new Promise(() => {});
+          },
+        }),
+      },
+    });
+
+    const { wrapper } = createWrapper();
+    renderHook(() => useUserEventStream({ onReconnect }), { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5000 });
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("useUserEventStream — read timeout & abort", () => {
