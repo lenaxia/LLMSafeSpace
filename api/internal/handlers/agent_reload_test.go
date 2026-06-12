@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -178,4 +180,73 @@ func TestAgentReload_NoAgentStateRow_Returns409(t *testing.T) {
 
 func TestAgentReload_HappyPath(t *testing.T) {
 	t.Skip("Requires agentd port injection — covered by integration tests")
+}
+
+// --- Metric recording tests ---
+
+type recordingMetrics struct {
+	mu      sync.Mutex
+	results []string
+}
+
+func (m *recordingMetrics) RecordAgentReload(result string, _ int64, _ bool) {
+	m.mu.Lock()
+	m.results = append(m.results, result)
+	m.mu.Unlock()
+}
+func (m *recordingMetrics) RecordAgentReloadDrainTimeout(_ int64) {}
+func (m *recordingMetrics) RecordAgentReloadBulk(_, _, _ int)     {}
+
+func TestAgentReload_ErrorPath_RecordsErrorMetric(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	metrics := &recordingMetrics{}
+	handler := NewAgentReloadHandler(
+		&mockWsSvc{ws: &types.Workspace{Phase: "Active"}},
+		&mockAgentStateStore{changedAt: time.Now()},
+		&mockPodIPResolver{ip: "192.0.2.1"}, // unreachable TEST-NET-1
+		&http.Client{Timeout: 50 * time.Millisecond},
+		nil,
+	)
+	handler.SetMetrics(metrics)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.POST("/workspaces/:id/agent/reload", handler.Reload)
+
+	req := httptest.NewRequest(http.MethodPost, "/workspaces/ws-1/agent/reload", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	require.Len(t, metrics.results, 1, "defer must record exactly one metric")
+	assert.Equal(t, "error", metrics.results[0], "error return path must record result=error")
+}
+
+func TestAgentReload_WorkspaceNotActive_RecordsErrorMetric(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	metrics := &recordingMetrics{}
+	handler := NewAgentReloadHandler(
+		&mockWsSvc{ws: &types.Workspace{Phase: "Suspended"}},
+		&mockAgentStateStore{changedAt: time.Now()},
+		&mockPodIPResolver{ip: "192.0.2.1"},
+		&http.Client{Timeout: 50 * time.Millisecond},
+		nil,
+	)
+	handler.SetMetrics(metrics)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.POST("/workspaces/:id/agent/reload", handler.Reload)
+
+	req := httptest.NewRequest(http.MethodPost, "/workspaces/ws-1/agent/reload", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	require.Len(t, metrics.results, 1)
+	assert.Equal(t, "error", metrics.results[0])
 }

@@ -848,3 +848,64 @@ func TestSSETracker_Inference_CacheTokensIncludedInInputDelta(t *testing.T) {
 	assert.Equal(t, int64(20861), calls[0].outputTokens)
 	mu.Unlock()
 }
+
+func TestSSETracker_Inference_CostDeltaOnSubsequentEvent(t *testing.T) {
+	var mu sync.Mutex
+	type call struct {
+		cost float64
+	}
+	var calls []call
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, _ int64, cost float64) {
+		mu.Lock()
+		calls = append(calls, call{cost})
+		mu.Unlock()
+	})
+
+	// First event: cumulative cost = 0.05
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_cost", map[string]interface{}{
+		"id": "ses_cost", "cost": 0.05,
+		"tokens": map[string]interface{}{"input": 1000, "output": 500, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+
+	// Second event: cumulative cost = 0.10 — delta should be 0.05, not 0.10
+	tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_cost", map[string]interface{}{
+		"id": "ses_cost", "cost": 0.10,
+		"tokens": map[string]interface{}{"input": 2000, "output": 700, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+		"model":  map[string]interface{}{"id": "gpt-4o", "providerID": "openai"},
+	}))
+
+	mu.Lock()
+	require.Len(t, calls, 2)
+	assert.InDelta(t, 0.05, calls[0].cost, 0.001, "first event: full cumulative cost")
+	assert.InDelta(t, 0.05, calls[1].cost, 0.001, "second event: delta only, not cumulative")
+	mu.Unlock()
+}
+
+func TestSSETracker_Inference_ZeroCostNoInflation(t *testing.T) {
+	var totalCost float64
+	var mu sync.Mutex
+
+	tracker := newTestSSETracker(func(_, _ string) {})
+	tracker.SetOnInference(func(_, _, _ string, _, _ int64, cost float64) {
+		mu.Lock()
+		totalCost += cost
+		mu.Unlock()
+	})
+
+	// Three events all reporting cost=0 (self-hosted provider)
+	for i, output := range []int{500, 700, 900} {
+		tracker.processEvent("ws-1", makeSessionUpdatedEvent("ses_zero_cost", map[string]interface{}{
+			"id": "ses_zero_cost", "cost": 0.0,
+			"tokens": map[string]interface{}{"input": 1000, "output": output, "reasoning": 0, "cache": map[string]interface{}{"read": 0, "write": 0}},
+			"model":  map[string]interface{}{"id": "glm-5.1", "providerID": "thekao cloud"},
+		}))
+		_ = i
+	}
+
+	mu.Lock()
+	assert.Equal(t, 0.0, totalCost, "zero-cost provider must never accumulate cost")
+	mu.Unlock()
+}

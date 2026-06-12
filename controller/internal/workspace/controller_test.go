@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	ctrMetrics "github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -575,4 +577,35 @@ func TestReconcile_Failed_CleansUpSecrets(t *testing.T) {
 	updated := &v1.Workspace{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-fail-cleanup", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase, "Failed with no pod should auto-retry")
+}
+
+// TestReconcile_Creating_WithPriorFailures_RecoverySuccessMetricFires verifies
+// that when a workspace transitions Creating→Active and has ConsecutiveFailures>0,
+// the WorkspaceRecoverySuccessTotal metric is incremented.
+func TestReconcile_Creating_WithPriorFailures_RecoverySuccessMetricFires(t *testing.T) {
+	ws := makeWorkspace("ws-recovering", "default", v1.WorkspacePhaseCreating)
+	ws.Status.PVCName = "workspace-ws-recovering"
+	ws.Status.ConsecutiveFailures = 3 // simulate prior failures
+	ws.Status.LastFailureClass = "infrastructure"
+	expectedPodName := podName("ws-recovering", string(ws.UID))
+	pod := makeRunningPod(expectedPodName, "default", "10.0.0.99")
+	r := reconcilerFor(t, ws, pod)
+
+	// Read counter value directly from the CounterVec (not registered in DefaultGatherer in tests).
+	readCounter := func() float64 {
+		m := &dto.Metric{}
+		if err := ctrMetrics.WorkspaceRecoverySuccessTotal.WithLabelValues("infrastructure").Write(m); err != nil {
+			return 0
+		}
+		return m.GetCounter().GetValue()
+	}
+	before := readCounter()
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-recovering", "default"))
+	require.NoError(t, err)
+
+	updated := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-recovering", Namespace: "default"}, updated))
+	assert.Equal(t, v1.WorkspacePhaseActive, updated.Status.Phase)
+	assert.Greater(t, readCounter(), before, "WorkspaceRecoverySuccessTotal must increment on Creating→Active with prior failures")
 }
