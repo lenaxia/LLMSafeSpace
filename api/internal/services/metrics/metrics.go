@@ -235,8 +235,8 @@ var (
 // omitted to keep cardinality bounded (O(models × providers × tiers) ≈ 3k series
 // vs O(workspaces × models × providers × tiers) ≈ 30M at scale).
 //
-// For per-workspace billing granularity, use RecordBillingEvent which writes
-// to the postgres billing_events table.
+// For per-user/per-workspace billing granularity, use the metering service
+// (api/internal/services/metering) which writes to the usage_events table.
 func (s *Service) RecordInference(modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
 	tier := "paid"
 	if providerID == "opencode-relay" {

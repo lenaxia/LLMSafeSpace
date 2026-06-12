@@ -228,6 +228,135 @@ func TestLoggingMiddleware_BodySizeTruncation(t *testing.T) {
 	mockLogger.AssertExpectations(t)
 }
 
+// TestLoggingMiddleware_RequestIDFromContext verifies that LoggingMiddleware reads the
+// request_id from the Gin context (set by TracingMiddleware / RequestIDMiddleware) rather
+// than generating its own. This is the contract that eliminates the dual-ID problem.
+func TestLoggingMiddleware_RequestIDFromContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockLogger := logmock.NewMockLogger()
+
+	const injectedID = "550e8400-e29b-41d4-a716-446655440000"
+
+	var requestFields, responseFields []interface{}
+	mockLogger.On("Info", "Request received", mock.Anything).Run(func(args mock.Arguments) {
+		requestFields = args.Get(1).([]interface{})
+	}).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
+		responseFields = args.Get(1).([]interface{})
+	}).Once()
+
+	router := gin.New()
+	// Simulate TracingMiddleware setting request_id before LoggingMiddleware runs.
+	router.Use(func(c *gin.Context) {
+		c.Set("request_id", injectedID)
+		c.Next()
+	})
+	router.Use(middleware.LoggingMiddleware(mockLogger, middleware.LoggingConfig{}))
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Both request and response log lines must carry the injected UUID, not a
+	// random 8-char string.
+	findField := func(fields []interface{}, key string) interface{} {
+		for i := 0; i+1 < len(fields); i += 2 {
+			if fields[i] == key {
+				return fields[i+1]
+			}
+		}
+		return nil
+	}
+
+	assert.Equal(t, injectedID, findField(requestFields, "request_id"),
+		"request log must carry the context request_id, not a generated one")
+	assert.Equal(t, injectedID, findField(responseFields, "request_id"),
+		"response log must carry the same context request_id")
+
+	mockLogger.AssertExpectations(t)
+}
+
+// TestLoggingMiddleware_UserIDInResponseLog verifies that user_id is included in the
+// response log line when the auth middleware has set it in the Gin context.
+func TestLoggingMiddleware_UserIDInResponseLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockLogger := logmock.NewMockLogger()
+
+	const testUserID = "user-abc-123"
+
+	var responseFields []interface{}
+	mockLogger.On("Info", "Request received", mock.Anything).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
+		responseFields = args.Get(1).([]interface{})
+	}).Once()
+
+	router := gin.New()
+	router.Use(middleware.LoggingMiddleware(mockLogger, middleware.LoggingConfig{}))
+	router.GET("/test", func(c *gin.Context) {
+		// Simulate auth middleware having set userID before handler runs.
+		c.Set("userID", testUserID)
+		c.String(http.StatusOK, "ok")
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	findField := func(fields []interface{}, key string) interface{} {
+		for i := 0; i+1 < len(fields); i += 2 {
+			if fields[i] == key {
+				return fields[i+1]
+			}
+		}
+		return nil
+	}
+
+	assert.Equal(t, testUserID, findField(responseFields, "user_id"),
+		"response log must include user_id when set by auth middleware")
+
+	mockLogger.AssertExpectations(t)
+}
+
+// TestLoggingMiddleware_NoUserIDWhenUnauthenticated verifies that user_id is absent
+// from the response log when the request is unauthenticated.
+func TestLoggingMiddleware_NoUserIDWhenUnauthenticated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockLogger := logmock.NewMockLogger()
+
+	var responseFields []interface{}
+	mockLogger.On("Info", "Request received", mock.Anything).Once()
+	mockLogger.On("Info", "Request completed", mock.Anything).Run(func(args mock.Arguments) {
+		responseFields = args.Get(1).([]interface{})
+	}).Once()
+
+	router := gin.New()
+	router.Use(middleware.LoggingMiddleware(mockLogger, middleware.LoggingConfig{}))
+	router.GET("/test", func(c *gin.Context) {
+		// No userID set — unauthenticated request.
+		c.String(http.StatusOK, "ok")
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	for i := 0; i+1 < len(responseFields); i += 2 {
+		assert.NotEqual(t, "user_id", responseFields[i],
+			"user_id must not appear in response log for unauthenticated requests")
+	}
+
+	mockLogger.AssertExpectations(t)
+}
+
 func TestLoggingMiddleware_SkipPaths(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
