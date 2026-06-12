@@ -8,70 +8,75 @@ function makeMsg(overrides: Partial<QueuedMessage> = {}): QueuedMessage {
   return {
     id: "msg_test",
     text: "hello",
-    sentAt: Date.now(),
     status: "pending",
+    sessionId: "ses_1",
     ...overrides,
   };
 }
 
 describe("QueueSection", () => {
-  it("renders nothing when messages array is empty", () => {
-    const { container } = render(<QueueSection messages={[]} onRetry={vi.fn()} onDismiss={vi.fn()} />);
+  it("renders nothing when messages array is empty and not open", () => {
+    const { container } = render(<QueueSection messages={[]} onRetry={vi.fn()} onDismiss={vi.fn()} isMobile={false} />);
     expect(container.innerHTML).toBe("");
   });
 
-  it("renders pending pills with text", () => {
+  it("renders pending messages as user-aligned chat bubbles", () => {
     render(
       <QueueSection
         messages={[makeMsg({ text: "fix the bug" }), makeMsg({ id: "msg_2", text: "add tests" })]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     expect(screen.getByText("fix the bug")).toBeInTheDocument();
     expect(screen.getByText("add tests")).toBeInTheDocument();
   });
 
-  it("renders error pills with line-through text", () => {
+  it("renders error messages with line-through text", () => {
     render(
       <QueueSection
         messages={[makeMsg({ status: "error", error: "failed" })]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     const el = screen.getByText("hello");
-    expect(el.closest("s, [class*=line]")).toBeTruthy();
+    expect(el.closest("p")?.className).toContain("line-through");
   });
 
-  it("shows retry button on error pills", () => {
+  it("shows retry button on error messages", () => {
     render(
       <QueueSection
         messages={[makeMsg({ status: "error", error: "failed" })]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     expect(screen.getByLabelText("Retry")).toBeInTheDocument();
   });
 
-  it("shows dismiss button on error pills", () => {
+  it("shows dismiss button on error messages", () => {
     render(
       <QueueSection
         messages={[makeMsg({ status: "error", error: "failed" })]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     expect(screen.getByLabelText("Dismiss")).toBeInTheDocument();
   });
 
-  it("does not show retry/dismiss on pending pills", () => {
+  it("does not show retry/dismiss on pending messages", () => {
     render(
       <QueueSection
         messages={[makeMsg()]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     expect(screen.queryByLabelText("Retry")).not.toBeInTheDocument();
@@ -86,6 +91,7 @@ describe("QueueSection", () => {
         messages={[makeMsg({ status: "error", error: "failed" })]}
         onRetry={onRetry}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
     await user.click(screen.getByLabelText("Retry"));
@@ -100,22 +106,45 @@ describe("QueueSection", () => {
         messages={[makeMsg({ status: "error", error: "failed" })]}
         onRetry={vi.fn()}
         onDismiss={onDismiss}
+        isMobile={false}
       />,
     );
     await user.click(screen.getByLabelText("Dismiss"));
     expect(onDismiss).toHaveBeenCalledWith("msg_test");
   });
 
-  it("truncates long text with ellipsis", () => {
-    const longText = "a".repeat(200);
+  it("shows queued count in toggle button", () => {
     render(
       <QueueSection
-        messages={[makeMsg({ text: longText })]}
+        messages={[makeMsg({ text: "first" }), makeMsg({ id: "msg_2", text: "second" })]}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
+        isMobile={false}
       />,
     );
-    const el = screen.getByText(longText);
-    expect(el.className).toContain("truncate");
+    expect(screen.getByText("2 messages queued")).toBeInTheDocument();
+  });
+
+  it("auto-closes drawer when messages are cleared", async () => {
+    const { rerender } = render(
+      <QueueSection
+        messages={[makeMsg()]}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+        isMobile={false}
+      />,
+    );
+    expect(screen.getByText("1 message queued")).toBeInTheDocument();
+
+    rerender(
+      <QueueSection
+        messages={[]}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+        isMobile={false}
+      />,
+    );
+
+    expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
   });
 });

@@ -11,10 +11,9 @@ interface Props {
   disabled?: boolean;
   streaming?: boolean;
   placeholder?: string;
-  queuedCount?: number;
 }
 
-export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "Type a message...", queuedCount = 0 }: Props) {
+export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "Type a message..." }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendOnEnter = useUserSetting("sendOnEnter", true);
@@ -53,11 +52,6 @@ export function Composer({ onSend, onAbort, disabled, streaming, placeholder = "
 
   return (
     <form onSubmit={handleSubmit} className="border-t border-border p-4">
-      {queuedCount > 0 && (
-        <div className="mb-2 text-xs text-muted-foreground">
-          {queuedCount} message{queuedCount !== 1 ? "s" : ""} queued
-        </div>
-      )}
       <div className="flex items-end gap-2">
         <textarea
           ref={textareaRef}
