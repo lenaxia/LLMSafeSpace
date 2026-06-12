@@ -194,8 +194,8 @@ type providerResponse struct {
 	All       []struct {
 		ID     string `json:"id"`
 		Models map[string]struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID    string `json:"id"`
+			Name  string `json:"name"`
 			Limit *struct {
 				Context int `json:"context"`
 				Output  int `json:"output"`

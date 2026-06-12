@@ -25,7 +25,7 @@ type contextUsedSessionIndex struct {
 func newContextUsedSessionIndex() *contextUsedSessionIndex {
 	return &contextUsedSessionIndex{
 		contextUsed: make(map[string]int64),
-		records:    make(map[string]types.SessionListItem),
+		records:     make(map[string]types.SessionListItem),
 	}
 }
 
