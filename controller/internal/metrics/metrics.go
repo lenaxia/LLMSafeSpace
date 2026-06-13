@@ -45,8 +45,9 @@ var (
 	WorkspaceConsecutiveFailuresMax = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "llmsafespace_workspace_consecutive_failures_max", Help: "Highest ConsecutiveFailures across any active workspace"},
 	)
-	WorkspaceSafeModeActive = prometheus.NewGauge(
+	WorkspaceSafeModeActive = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "llmsafespace_workspace_safe_mode_active", Help: "Workspaces currently in SafeMode"},
+		[]string{"workspace_id"},
 	)
 	WorkspaceStatusUpdateConflictsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{Name: "llmsafespace_workspace_status_update_conflicts_total", Help: "Optimistic-lock conflicts on workspace status updates"},

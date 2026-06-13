@@ -115,6 +115,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			logger.Info("Agent unreachable beyond threshold; restarting pod",
 				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN, "lastError", err.Error())
 			r.deletePodByName(ctx, podN, ws.Namespace)
+			metrics.WorkspacesRunning.WithLabelValues(ws.Spec.Runtime, string(ws.Spec.SecurityLevel)).Dec()
 			ws.Status.Phase = v1.WorkspacePhaseCreating
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
@@ -123,6 +124,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		}
 		return
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	var healthResp agentd.HealthzResponse
@@ -142,6 +144,7 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			logger.Info("Agent unhealthy beyond threshold; restarting pod",
 				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN)
 			r.deletePodByName(ctx, podN, ws.Namespace)
+			metrics.WorkspacesRunning.WithLabelValues(ws.Spec.Runtime, string(ws.Spec.SecurityLevel)).Dec()
 			ws.Status.Phase = v1.WorkspacePhaseCreating
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""

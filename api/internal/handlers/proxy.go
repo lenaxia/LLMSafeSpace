@@ -49,6 +49,7 @@ const (
 )
 
 type workspaceConfig struct {
+	workspaceID            string
 	maxActiveSessions      int
 	autoApprovePermissions bool
 }

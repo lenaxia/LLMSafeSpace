@@ -1,0 +1,293 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package workspace
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+
+	ctrMetrics "github.com/lenaxia/llmsafespace/controller/internal/metrics"
+)
+
+func readGaugeVecValue(t *testing.T, gv *prometheus.GaugeVec, lv ...string) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := gv.WithLabelValues(lv...).Write(m); err != nil {
+		return 0
+	}
+	return m.GetGauge().GetValue()
+}
+
+func gaugeDelta(t *testing.T, runtime, secLevel string, fn func()) float64 {
+	t.Helper()
+	before := readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, runtime, secLevel)
+	fn()
+	after := readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, runtime, secLevel)
+	return after - before
+}
+
+func activeWorkspaceWithPod(name string) *v1.Workspace {
+	ws := makeWorkspace(name, "default", v1.WorkspacePhaseActive)
+	ws.Status.PodIP = "10.0.0.1"
+	now := metav1.Now()
+	ws.Status.StartTime = &now
+	return ws
+}
+
+func TestGaugeDrift_Active_RestartGenerationBump_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-rg")
+	ws.Spec.RestartGeneration = 2
+	ws.Status.ObservedRestartGeneration = 1
+	pod := makeRunningPod(podName("ws-g-rg", string(ws.UID)), "default", "10.0.0.1")
+	r := reconcilerFor(t, ws, pod)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-rg", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 on RestartGeneration bump")
+}
+
+func TestGaugeDrift_Active_PasswordSecretMissing_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-nopw")
+	pod := makeRunningPod(podName("ws-g-nopw", string(ws.UID)), "default", "10.0.0.1")
+	r := reconcilerFor(t, ws, pod)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-nopw", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when password secret missing")
+}
+
+func TestGaugeDrift_Active_PodMissing_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-podlost")
+	r := reconcilerFor(t, ws)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-podlost", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when pod missing")
+}
+
+func TestGaugeDrift_Active_PodTerminating_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-term")
+	pod := makeRunningPod(podName("ws-g-term", string(ws.UID)), "default", "10.0.0.1")
+	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	pod.Finalizers = []string{"test-finalizer"}
+	pwSecret := makePasswordSecret("ws-g-term", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-term", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when pod has DeletionTimestamp")
+}
+
+func TestGaugeDrift_Active_PodNotRunning_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-pending")
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: podName("ws-g-pending", string(ws.UID)), Namespace: "default"},
+		Status:     corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	pwSecret := makePasswordSecret("ws-g-pending", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-pending", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when pod not Running")
+}
+
+func TestGaugeDrift_Active_ArchDrift_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-arch")
+	ws.Spec.Architecture = "arm64"
+	pod := makeRunningPod(podName("ws-g-arch", string(ws.UID)), "default", "10.0.0.1")
+	pod.Spec.NodeSelector = map[string]string{"kubernetes.io/arch": "amd64"}
+	pwSecret := makePasswordSecret("ws-g-arch", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-arch", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 on architecture drift")
+}
+
+func TestGaugeDrift_Active_CrashLoopBackOff_Decrements(t *testing.T) {
+	ws := activeWorkspaceWithPod("ws-g-crash")
+	pod := makeRunningPod(podName("ws-g-crash", string(ws.UID)), "default", "10.0.0.1")
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{
+			Ready: true,
+			State: corev1.ContainerState{
+				Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+			},
+		},
+	}
+	pwSecret := makePasswordSecret("ws-g-crash", "default")
+	r := reconcilerFor(t, ws, pod, pwSecret)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-crash", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 on CrashLoopBackOff")
+}
+
+func TestGaugeDrift_Active_AgentUnreachableThreshold_Decrements(t *testing.T) {
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-g-unreach", "default", v1.WorkspacePhaseActive)
+	ws.UID = "ws-g-unreach-uid"
+	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &past
+	ws.Status.PodIP = "127.0.0.1"
+	ws.Status.ConsecutiveHealthFailures = 2
+
+	pod := makeRunningPod(podName("ws-g-unreach", string(ws.UID)), "default", "127.0.0.1")
+
+	origInterval := healthCheckInterval
+	origPort := agentdPort
+	origAdminPort := agentdAdminPort
+	healthCheckInterval = 0
+	agentdPort = 1
+	agentdAdminPort = 1
+	defer func() {
+		healthCheckInterval = origInterval
+		agentdPort = origPort
+		agentdAdminPort = origAdminPort
+	}()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws, pod).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-unreach", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when agent unreachable beyond threshold")
+}
+
+func TestGaugeDrift_Active_AgentUnhealthyThreshold_Decrements(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(agentd.HealthzResponse{Healthy: false})
+	}))
+	defer server.Close()
+
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-g-sick", "default", v1.WorkspacePhaseActive)
+	ws.UID = "ws-g-sick-uid"
+	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	ws.Status.StartTime = &past
+	_, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	ws.Status.PodIP = "127.0.0.1"
+	ws.Status.ConsecutiveHealthFailures = 2
+
+	pod := makeRunningPod(podName("ws-g-sick", string(ws.UID)), "default", "127.0.0.1")
+
+	origInterval := healthCheckInterval
+	origPort := agentdPort
+	origAdminPort := agentdAdminPort
+	healthCheckInterval = 0
+	agentdPort = port
+	agentdAdminPort = port
+	defer func() {
+		healthCheckInterval = origInterval
+		agentdPort = origPort
+		agentdAdminPort = origAdminPort
+	}()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws, pod).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-sick", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 when agent unhealthy beyond threshold")
+}
+
+func TestGaugeDrift_Terminating_WithPodIP_Decrements(t *testing.T) {
+	ws := makeWorkspace("ws-g-term", "default", v1.WorkspacePhaseTerminating)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PodIP = "10.0.0.1"
+	r := reconcilerFor(t, ws)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-term", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, -1.0, delta, "WorkspacesRunning must decrement by 1 on Terminating with PodIP set")
+}
+
+func TestGaugeDrift_Terminating_NoPodIP_NoDecrement(t *testing.T) {
+	ws := makeWorkspace("ws-g-noterm", "default", v1.WorkspacePhaseTerminating)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PodIP = ""
+	r := reconcilerFor(t, ws)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-noterm", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 0.0, delta, "WorkspacesRunning must NOT decrement on Terminating with empty PodIP")
+}
+
+func TestGaugeDrift_Failed_SelfHealToActive_Increments(t *testing.T) {
+	ws := makeWorkspace("ws-g-heal", "default", v1.WorkspacePhaseFailed)
+	expectedPodName := podName("ws-g-heal", string(ws.UID))
+	pod := makeRunningPod(expectedPodName, "default", "10.0.0.1")
+	pod.Status.Conditions = []corev1.PodCondition{
+		{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+	}
+	r := reconcilerFor(t, ws, pod)
+
+	delta := gaugeDelta(t, ws.Spec.Runtime, string(ws.Spec.SecurityLevel), func() {
+		_, err := r.Reconcile(context.Background(), reqFor("ws-g-heal", "default"))
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 1.0, delta, "WorkspacesRunning must increment by 1 when Failed self-heals to Active")
+}
+
+func TestSafeModeActive_IsGaugeVec(t *testing.T) {
+	ctrMetrics.WorkspaceSafeModeActive.WithLabelValues("ws-vec-1").Set(1)
+	ctrMetrics.WorkspaceSafeModeActive.WithLabelValues("ws-vec-2").Set(1)
+
+	v1 := readGaugeVecValue(t, ctrMetrics.WorkspaceSafeModeActive, "ws-vec-1")
+	v2 := readGaugeVecValue(t, ctrMetrics.WorkspaceSafeModeActive, "ws-vec-2")
+	assert.Equal(t, 1.0, v1, "per-workspace safe mode gauge must track independently")
+	assert.Equal(t, 1.0, v2, "per-workspace safe mode gauge must track independently")
+
+	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-1")
+	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-2")
+}
