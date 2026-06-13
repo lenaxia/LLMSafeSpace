@@ -7,10 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
@@ -30,6 +34,17 @@ type Client struct {
 	baseURL    string
 	password   string
 	httpClient *http.Client
+	logger     *zap.Logger
+}
+
+type nonRetryableError struct {
+	Provider   string
+	StatusCode int
+	Attempt    int
+}
+
+func (e *nonRetryableError) Error() string {
+	return fmt.Sprintf("PUT /auth/%s (attempt %d): client error: HTTP %d", e.Provider, e.Attempt, e.StatusCode)
 }
 
 // NewClient creates a Client targeting the given opencode base URL.
@@ -40,13 +55,17 @@ type Client struct {
 // cmd/workspace-agentd/main.go OpenCodeClient). Passing the empty
 // string is allowed (so unit tests that don't need auth-gated paths
 // still work) but will fail against a real opencode server with 401.
-func NewClient(baseURL, password string) *Client {
+func NewClient(baseURL, password string, logger *zap.Logger) *Client {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &Client{
 		baseURL:  baseURL,
 		password: password,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		logger: logger,
 	}
 }
 
@@ -143,6 +162,29 @@ func (c *Client) GetSessionStatuses(ctx context.Context) (map[string]string, err
 }
 
 // setAuth sends PUT /auth/:providerID with the credential payload.
+func (c *Client) retryWithBackoff(ctx context.Context, maxAttempts int, initialDelay time.Duration, fn func(attempt int) error) error {
+	var lastErr error
+	for i := 1; i <= maxAttempts; i++ {
+		lastErr = fn(i)
+		if lastErr == nil {
+			return nil
+		}
+		var nre *nonRetryableError
+		if errors.As(lastErr, &nre) {
+			return lastErr
+		}
+		if i < maxAttempts {
+			delay := initialDelay*time.Duration(1<<(i-1)) + time.Duration(rand.Intn(500))*time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	return lastErr
+}
+
 func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 	payload := authPayload{
 		Type: "api",
@@ -157,25 +199,47 @@ func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 		return fmt.Errorf("marshal auth payload for %s: %w", p.Provider, err)
 	}
 
-	url := c.baseURL + "/auth/" + p.Provider
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create PUT request for %s: %w", p.Provider, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(agentd.AuthUsername, c.password)
+	return c.retryWithBackoff(ctx, 3, 1*time.Second, func(attempt int) error {
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("PUT /auth/%s: %w", p.Provider, err)
-	}
-	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	_, _ = io.Copy(io.Discard, resp.Body)
+		url := c.baseURL + "/auth/" + p.Provider
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPut, url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create PUT request for %s: %w", p.Provider, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.SetBasicAuth(agentd.AuthUsername, c.password)
 
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("PUT /auth/%s returned %d", p.Provider, resp.StatusCode)
-	}
-	return nil
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			c.logger.Warn("PUT /auth failed, will retry",
+				zap.String("provider", p.Provider),
+				zap.Int("attempt", attempt),
+				zap.Error(err),
+			)
+			return fmt.Errorf("PUT /auth/%s (attempt %d): %w", p.Provider, attempt, err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return &nonRetryableError{
+				Provider:   p.Provider,
+				StatusCode: resp.StatusCode,
+				Attempt:    attempt,
+			}
+		}
+		if resp.StatusCode >= 500 {
+			c.logger.Warn("PUT /auth server error, will retry",
+				zap.String("provider", p.Provider),
+				zap.Int("attempt", attempt),
+				zap.Int("status", resp.StatusCode),
+			)
+			return fmt.Errorf("PUT /auth/%s (attempt %d): server error: HTTP %d", p.Provider, attempt, resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // authPayload matches opencode's Auth.Info schema for type:"api".

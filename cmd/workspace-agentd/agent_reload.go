@@ -37,6 +37,7 @@ func agentReloadHandler(opencodePassword string, log *zap.Logger) http.HandlerFu
 		oc := opencode.NewClient(
 			fmt.Sprintf("http://localhost:%d", agentd.AgentPort),
 			opencodePassword,
+			log,
 		)
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

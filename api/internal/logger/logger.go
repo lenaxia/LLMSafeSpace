@@ -100,6 +100,10 @@ func (l *Logger) With(keysAndValues ...interface{}) pkginterfaces.LoggerInterfac
 	}
 }
 
+func (l *Logger) ZapLogger() *zap.Logger {
+	return l.logger
+}
+
 // fieldsFromKeysAndValues converts a list of key-value pairs to zap fields
 func fieldsFromKeysAndValues(keysAndValues []interface{}) []zap.Field {
 	if len(keysAndValues) == 0 {

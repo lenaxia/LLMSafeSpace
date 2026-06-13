@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -56,6 +57,7 @@ type AgentReloadHandler struct {
 	podResolver    PodIPResolver
 	httpClient     *http.Client
 	logger         pkginterfaces.LoggerInterface
+	zapLogger      *zap.Logger
 	sseTracker     *SSETracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
@@ -76,12 +78,19 @@ func NewAgentReloadHandler(
 	httpClient *http.Client,
 	logger pkginterfaces.LoggerInterface,
 ) *AgentReloadHandler {
+	var zl *zap.Logger
+	if logger != nil {
+		if z, ok := logger.(interface{ ZapLogger() *zap.Logger }); ok {
+			zl = z.ZapLogger()
+		}
+	}
 	return &AgentReloadHandler{
 		workspaceSvc: wsSvc,
 		db:           db,
 		podResolver:  podResolver,
 		httpClient:   httpClient,
 		logger:       logger,
+		zapLogger:    zl,
 	}
 }
 
@@ -158,6 +167,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		opencodeCl := opencode.NewClient(
 			fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort),
 			pw,
+			h.zapLogger,
 		)
 		if err := WaitUntilIdle(c.Request.Context(), workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
@@ -272,6 +282,7 @@ type BulkReloadHandler struct {
 	podResolver    PodIPResolver
 	httpClient     *http.Client
 	logger         pkginterfaces.LoggerInterface
+	zapLogger      *zap.Logger
 	sseTracker     *SSETracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
@@ -286,6 +297,12 @@ func NewBulkReloadHandler(
 	httpClient *http.Client,
 	logger pkginterfaces.LoggerInterface,
 ) *BulkReloadHandler {
+	var zl *zap.Logger
+	if logger != nil {
+		if z, ok := logger.(interface{ ZapLogger() *zap.Logger }); ok {
+			zl = z.ZapLogger()
+		}
+	}
 	return &BulkReloadHandler{
 		pendingLister: pendingLister,
 		workspaceSvc:  wsSvc,
@@ -293,6 +310,7 @@ func NewBulkReloadHandler(
 		podResolver:   podResolver,
 		httpClient:    httpClient,
 		logger:        logger,
+		zapLogger:     zl,
 	}
 }
 
@@ -414,7 +432,7 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 		if err != nil {
 			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "get_password_failed", "message": err.Error()}}
 		}
-		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw)
+		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw, h.zapLogger)
 		if err := WaitUntilIdle(ctx, workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
 			if errors.As(err, &drainErr) {

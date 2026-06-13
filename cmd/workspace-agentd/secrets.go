@@ -397,7 +397,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 		if hasLLMProviders(batch) {
 			staged := m.StagedProviders()
 			if len(staged) > 0 {
-				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort), opencodePassword)
+				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort), opencodePassword, log)
 				if err := oc.StageCredentials(r.Context(), staged); err != nil {
 					log.Warn("reload-secrets: opencode stage failed; credentials remain in "+
 						"auth.json on disk but in-memory provider state will not pick them up "+
