@@ -78,8 +78,8 @@ describe("MessagePart", () => {
   });
 
   it("renders tool_result with empty text as empty container", () => {
-    const { container } = render(<MessagePart part={{ type: "text", text: "" }} isUser={true} />);
-    expect(container.innerHTML).toBe("");
+    const { container } = render(<MessagePart part={{ type: "tool_result", text: "" }} isUser={false} />);
+    expect(container.querySelector("pre")).toBeInTheDocument();
   });
 
   it("renders tool_result with undefined text as null", () => {
@@ -276,6 +276,16 @@ describe("closeOpenFence", () => {
   it("handles indented fence (1 leading space)", () => {
     expect(closeOpenFence(" ```\ncode"))
       .toBe(" ```\ncode\n ```");
+  });
+
+  it("does not treat 4+ space indent as fence", () => {
+    const text = "    ```go\ncode";
+    expect(closeOpenFence(text)).toBe(text);
+  });
+
+  it("handles balanced indented fences (2 spaces)", () => {
+    const text = "  ```go\ncode\n  ```";
+    expect(closeOpenFence(text)).toBe(text);
   });
 });
 

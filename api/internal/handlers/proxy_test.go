@@ -776,7 +776,7 @@ func TestProxy_CacheInvalidation(t *testing.T) {
 	handler.pwCacheMu.Unlock()
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = &workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	handler.activeMu.Lock()
@@ -1102,7 +1102,7 @@ func TestProxy_E2E_SSEBusyEventAddsActiveSession(t *testing.T) {
 	require.NoError(t, err)
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = &workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	handler.onSessionActive("ws-1", "s1")

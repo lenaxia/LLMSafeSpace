@@ -586,7 +586,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	handler.broker = broker
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = &workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	sub := broker.Subscribe("ws-1")

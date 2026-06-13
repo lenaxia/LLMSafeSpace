@@ -48,7 +48,7 @@ func TestOnSessionActive_PublishesToUserBroker(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = &workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	broker := NewUserEventBroker()
@@ -111,7 +111,7 @@ func TestOnSessionActive_NoPanicWhenUserBrokerNil(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
 	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = &workspaceConfig{workspaceID: "ws-1", maxActiveSessions: 5}
+	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
 	assert.NotPanics(t, func() {

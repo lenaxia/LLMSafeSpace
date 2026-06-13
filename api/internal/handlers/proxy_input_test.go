@@ -628,7 +628,6 @@ func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 	handler.wsConfigMu.RLock()
 	cfg := handler.wsConfig["ws-1"]
 	handler.wsConfigMu.RUnlock()
-	assert.Equal(t, "ws-1", cfg.workspaceID)
 	assert.Equal(t, 10, cfg.maxActiveSessions)
 	assert.False(t, cfg.autoApprovePermissions)
 }
