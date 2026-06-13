@@ -68,8 +68,8 @@ func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	sessions, ok := h.activeSess[workspaceID]
 	if !ok {
 		return false
@@ -78,8 +78,8 @@ func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
 }
 
 func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	return len(h.activeSess[workspaceID])
 }
 
@@ -105,8 +105,8 @@ func (h *ProxyHandler) releaseConnection(workspaceID string) {
 }
 
 func (h *ProxyHandler) connectionCount(workspaceID string) int {
-	h.connMu.Lock()
-	defer h.connMu.Unlock()
+	h.connMu.RLock()
+	defer h.connMu.RUnlock()
 	return h.connCount[workspaceID]
 }
 

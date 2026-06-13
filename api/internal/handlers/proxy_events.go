@@ -11,8 +11,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	"github.com/lenaxia/llmsafespace/pkg/types"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {

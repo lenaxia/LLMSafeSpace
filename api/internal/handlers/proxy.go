@@ -70,7 +70,7 @@ type ProxyHandler struct {
 	activeMu   sync.RWMutex
 
 	connCount map[string]int
-	connMu    sync.Mutex
+	connMu    sync.RWMutex
 
 	activityTracker *activity.ActivityTracker
 	watcher         *workspace.Watcher
