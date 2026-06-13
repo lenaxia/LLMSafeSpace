@@ -518,7 +518,7 @@ func deriveServerKey(purpose string) []byte {
 		return nil
 	}
 
-	key, err := secrets.DeriveKEK(master, []byte("llmsafespace-server"), purpose)
+	key, err := secrets.DeriveKEKFromKey(master, []byte("llmsafespace-server"), purpose)
 	if err != nil {
 		return nil
 	}

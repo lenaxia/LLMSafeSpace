@@ -11,23 +11,39 @@ import (
 	"errors"
 	"io"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
 )
 
 const (
-	dekSize  = 32 // 256-bit DEK
-	saltSize = 32 // 256-bit salt
+	dekSize  = 32
+	saltSize = 32
 	kekInfo  = "llmsafespace-kek"
 	recInfo  = "llmsafespace-recovery"
+
+	KDFVersionHKDF     = 0
+	KDFVersionArgon2id = 1
+	KDFCurrentVersion  = KDFVersionArgon2id
+	argon2Time         = 3
+	argon2Memory       = 64 * 1024
+	argon2Threads      = 4
+	argon2KeyLen       = 32
 )
 
 var (
 	ErrDecryptionFailed  = errors.New("decryption failed: ciphertext tampered or wrong key")
 	ErrInvalidCiphertext = errors.New("ciphertext too short")
+	ErrInvalidSaltLength = errors.New("salt must be 32 bytes")
 )
 
-// DeriveKEK derives a Key Encryption Key from a password and salt using HKDF-SHA256.
-func DeriveKEK(password []byte, salt []byte, info string) ([]byte, error) {
+func DeriveKEKFromPassword(password, salt []byte) ([]byte, error) {
+	if len(salt) != saltSize {
+		return nil, ErrInvalidSaltLength
+	}
+	return argon2.IDKey(password, salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen), nil
+}
+
+func DeriveKEKFromPasswordV0(password, salt []byte, info string) ([]byte, error) {
 	hkdfReader := hkdf.New(sha256.New, password, salt, []byte(info))
 	kek := make([]byte, 32)
 	if _, err := io.ReadFull(hkdfReader, kek); err != nil {
@@ -36,7 +52,15 @@ func DeriveKEK(password []byte, salt []byte, info string) ([]byte, error) {
 	return kek, nil
 }
 
-// GenerateDEK generates a random 256-bit Data Encryption Key.
+func DeriveKEKFromKey(keyMaterial, salt []byte, info string) ([]byte, error) {
+	hkdfReader := hkdf.New(sha256.New, keyMaterial, salt, []byte(info))
+	kek := make([]byte, 32)
+	if _, err := io.ReadFull(hkdfReader, kek); err != nil {
+		return nil, err
+	}
+	return kek, nil
+}
+
 func GenerateDEK() ([]byte, error) {
 	dek := make([]byte, dekSize)
 	if _, err := rand.Read(dek); err != nil {
@@ -45,7 +69,6 @@ func GenerateDEK() ([]byte, error) {
 	return dek, nil
 }
 
-// GenerateSalt generates a random salt.
 func GenerateSalt() ([]byte, error) {
 	salt := make([]byte, saltSize)
 	if _, err := rand.Read(salt); err != nil {
@@ -54,7 +77,6 @@ func GenerateSalt() ([]byte, error) {
 	return salt, nil
 }
 
-// GenerateRecoveryKey generates a 128-bit recovery key.
 func GenerateRecoveryKey() ([]byte, error) {
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
@@ -63,8 +85,6 @@ func GenerateRecoveryKey() ([]byte, error) {
 	return key, nil
 }
 
-// WrapDEK encrypts a DEK with a KEK using AES-256-GCM.
-// Returns nonce || ciphertext (nonce is prepended).
 func WrapDEK(kek, dek []byte) ([]byte, error) {
 	block, err := aes.NewCipher(kek)
 	if err != nil {
@@ -81,8 +101,6 @@ func WrapDEK(kek, dek []byte) ([]byte, error) {
 	return gcm.Seal(nonce, nonce, dek, nil), nil
 }
 
-// UnwrapDEK decrypts a wrapped DEK using a KEK.
-// Expects nonce || ciphertext format.
 func UnwrapDEK(kek, wrappedDEK []byte) ([]byte, error) {
 	block, err := aes.NewCipher(kek)
 	if err != nil {
@@ -104,8 +122,6 @@ func UnwrapDEK(kek, wrappedDEK []byte) ([]byte, error) {
 	return dek, nil
 }
 
-// EncryptSecret encrypts plaintext with a DEK using AES-256-GCM.
-// Returns nonce || ciphertext.
 func EncryptSecret(dek, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(dek)
 	if err != nil {
@@ -122,8 +138,6 @@ func EncryptSecret(dek, plaintext []byte) ([]byte, error) {
 	return gcm.Seal(nonce, nonce, plaintext, nil), nil
 }
 
-// DecryptSecret decrypts ciphertext with a DEK using AES-256-GCM.
-// Expects nonce || ciphertext format.
 func DecryptSecret(dek, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(dek)
 	if err != nil {

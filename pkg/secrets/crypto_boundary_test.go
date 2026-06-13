@@ -10,32 +10,29 @@ import (
 	"testing"
 )
 
-func TestDeriveKEK_EmptyPassword(t *testing.T) {
+func TestDeriveKEKFromPassword_EmptyPassword(t *testing.T) {
 	salt := make([]byte, 32)
-	kek, err := DeriveKEK([]byte{}, salt, kekInfo)
+	kek, err := DeriveKEKFromPassword([]byte{}, salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK with empty password should succeed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword with empty password should succeed: %v", err)
 	}
 	if len(kek) != 32 {
 		t.Errorf("KEK should still be 32 bytes, got %d", len(kek))
 	}
 }
 
-func TestDeriveKEK_EmptySalt(t *testing.T) {
-	kek, err := DeriveKEK([]byte("password"), []byte{}, kekInfo)
-	if err != nil {
-		t.Fatalf("DeriveKEK with empty salt should succeed: %v", err)
-	}
-	if len(kek) != 32 {
-		t.Errorf("KEK should be 32 bytes, got %d", len(kek))
+func TestDeriveKEKFromPassword_EmptySalt(t *testing.T) {
+	_, err := DeriveKEKFromPassword([]byte("password"), []byte{})
+	if err == nil {
+		t.Error("DeriveKEKFromPassword with empty salt should fail")
 	}
 }
 
-func TestDeriveKEK_EmptyInfo(t *testing.T) {
+func TestDeriveKEKFromKey_EmptyInfo(t *testing.T) {
 	salt := make([]byte, 32)
-	kek, err := DeriveKEK([]byte("password"), salt, "")
+	kek, err := DeriveKEKFromKey([]byte("password"), salt, "")
 	if err != nil {
-		t.Fatalf("DeriveKEK with empty info should succeed: %v", err)
+		t.Fatalf("DeriveKEKFromKey with empty info should succeed: %v", err)
 	}
 	if len(kek) != 32 {
 		t.Errorf("KEK should be 32 bytes, got %d", len(kek))
