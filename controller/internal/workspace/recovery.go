@@ -90,7 +90,11 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 			workspace.Status.ConsecutiveHealthFailures = 0
 			workspace.Status.Message = ""
 			workspace.Status.FailureReason = v1.FailureReasonNone
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 

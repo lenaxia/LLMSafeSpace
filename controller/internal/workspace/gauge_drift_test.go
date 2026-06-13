@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -295,16 +296,69 @@ func TestSafeModeActive_IsGaugeVec(t *testing.T) {
 	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-2")
 }
 
-func TestCreatingActiveCycle_TenCycles_NoGaugeDrift(t *testing.T) {
-	ctrMetrics.WorkspacesRunning.Reset()
-	rt, sl := "python:3.11", "standard"
-	for i := 0; i < 10; i++ {
-		ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Inc()
-		ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Dec()
+func TestCreatingActiveCycle_MultiReconcile_NoGaugeDrift(t *testing.T) {
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-cycle", "default", v1.WorkspacePhaseCreating)
+	ws.UID = "ws-cycle-uid"
+	ws.Status.PVCName = "workspace-ws-cycle"
+
+	name := podName("ws-cycle", string(ws.UID))
+	readyPod := makeRunningPod(name, "default", "10.0.0.1")
+	pwSecret := makePasswordSecret("ws-cycle", "default")
+	rte := &v1.RuntimeEnvironment{
+		ObjectMeta: metav1.ObjectMeta{Name: "python-3.11"},
+		Spec:       v1.RuntimeEnvironmentSpec{Image: "ghcr.io/test/python:3.11", Language: "python", Version: "3.11"},
 	}
-	ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Inc()
+
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws, readyPod, pwSecret, rte).
+		WithStatusSubresource(&v1.Workspace{}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	rt, sl := ws.Spec.Runtime, string(ws.Spec.SecurityLevel)
+	ctrMetrics.WorkspacesRunning.Reset()
+
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "ws-cycle", Namespace: "default"}
+
+	// Initial Creating→Active: the ready pod drives the gauge to 1 through
+	// the real reconcile path (handleCreating Inc).
+	_, err := r.Reconcile(ctx, reqFor("ws-cycle", "default"))
+	require.NoError(t, err)
 	assert.Equal(t, 1.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
-		"after 10 cycles with 1 workspace still Active, gauge must be 1 not 11")
+		"initial Creating→Active reconcile must set gauge to 1")
+
+	const cycles = 5
+	for i := int64(1); i <= cycles; i++ {
+		// Active→Creating: bump RestartGeneration (persisted to the fake
+		// client so Reconcile observes it) then reconcile. handleActive
+		// deletes the pod and Dec's the gauge.
+		cur := &v1.Workspace{}
+		require.NoError(t, fc.Get(ctx, key, cur))
+		cur.Spec.RestartGeneration = i
+		require.NoError(t, fc.Update(ctx, cur))
+
+		_, err := r.Reconcile(ctx, reqFor("ws-cycle", "default"))
+		require.NoError(t, err)
+		assert.Equal(t, 0.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
+			"cycle %d: Active→Creating reconcile must decrement gauge to 0", i)
+
+		// Simulate kubelet having rebuilt a fresh, ready pod (handleActive
+		// deleted the prior one on the RestartGeneration bump).
+		require.NoError(t, fc.Create(ctx, makeRunningPod(name, "default", "10.0.0.1")))
+
+		// Creating→Active: the ready pod reconciles back to Active via
+		// handleCreating and Inc's the gauge.
+		_, err = r.Reconcile(ctx, reqFor("ws-cycle", "default"))
+		require.NoError(t, err)
+		assert.Equal(t, 1.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
+			"cycle %d: Creating→Active reconcile must increment gauge back to 1", i)
+	}
+
+	assert.Equal(t, 1.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
+		"after %d full Active↔Creating reconcile cycles the gauge must read 1 (no drift)", cycles)
 }
 
 func TestGaugeDrift_Terminating_StatusUpdateFailure_NoDecrement(t *testing.T) {
