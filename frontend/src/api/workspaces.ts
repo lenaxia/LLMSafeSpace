@@ -38,14 +38,11 @@ export interface ListModelsResponse {
 
 export const workspacesApi = {
   list: () => api.get<WorkspaceListResponse>("/workspaces"),
-  create: (params: { name: string; runtime?: string }) =>
+  create: (params: { name: string; runtime?: string; orgId?: string }) =>
     api.post<{ id: string; name: string; workspaceId?: string }>("/workspaces", {
       name: params.name,
       runtime: params.runtime || "base",
-      // storageSize intentionally omitted — the API resolves the default
-      // from instance_settings (workspace.defaultStorageSize). Hardcoding
-      // it here would shadow operator-configured defaults and require a
-      // frontend deploy to change the value.
+      ...(params.orgId ? { orgId: params.orgId } : {}),
     }),
   createWorkspace: (workspaceId: string, runtime = "base") =>
     api.post<{ id: string }>("/workspaces", { runtime, workspaceRef: workspaceId }),
