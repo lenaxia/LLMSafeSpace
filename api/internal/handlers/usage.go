@@ -137,7 +137,7 @@ func (h *UsageHandler) AdminGetDLQ(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query DLQ"})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type dlqEntry struct {
 		ID            int64           `json:"id"`
@@ -267,7 +267,7 @@ func (h *UsageHandler) AdminBillingStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"export_cursors": map[string]interface{}{}, "dlq_size": dlqSize})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cursors := make(map[string]interface{})
 	for rows.Next() {
