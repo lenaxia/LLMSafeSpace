@@ -71,7 +71,7 @@ type ProxyHandler struct {
 	priorPhaseMu sync.Mutex
 
 	activeSess map[string]map[string]bool
-	activeMu   sync.Mutex
+	activeMu   sync.RWMutex
 
 	connCount map[string]int
 	connMu    sync.Mutex
@@ -523,7 +523,6 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 
 	if isWriteOp && sessionID != "" {
 		if !h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions) {
-			h.releaseConnection(workspaceID)
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":             "active session limit reached",
@@ -911,8 +910,8 @@ func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	sessions, ok := h.activeSess[workspaceID]
 	if !ok {
 		return false
@@ -921,8 +920,8 @@ func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
 }
 
 func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	return len(h.activeSess[workspaceID])
 }
 
@@ -1073,10 +1072,10 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 
 	if h.activityTracker != nil {
 		h.activityTracker.Record(workspaceID)
-		if h.sessionIndex != nil {
-			h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
-			go h.fetchAndPersistTitle(workspaceID, sessionID)
-		}
+	}
+	if h.sessionIndex != nil {
+		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+		go h.fetchAndPersistTitle(workspaceID, sessionID)
 	}
 }
 

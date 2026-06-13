@@ -2372,3 +2372,68 @@ func TestProxy_SendPromptAsync_409DoesNotAffectSendMessage(t *testing.T) {
 	assert.NotEqual(t, http.StatusConflict, w.Code,
 		"SendMessage (synchronous) should NOT get 409 guard")
 }
+
+func TestProxy_OnSessionIdle_SessionIndexIndependentOfActivityTracker(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock).Maybe()
+	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
+	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
+
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+
+	si := &recordingActivitySessionIndex{}
+	handler.sessionIndex = si
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	handler.activeMu.Unlock()
+
+	handler.onSessionIdle("ws-1", "s1")
+
+	si.mu.Lock()
+	assert.Len(t, si.recorded, 1, "sessionIndex.RecordMessage must fire even when activityTracker is nil")
+	si.mu.Unlock()
+}
+
+func TestProxy_ProxyToWorkspace_NoDoubleReleaseOnMaxSessions(t *testing.T) {
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	ws := makeWorkspaceCRD("ws-1", 1)
+	env.wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+
+	env.handler.activeMu.Lock()
+	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	env.handler.activeMu.Unlock()
+
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+	env.handler.connMu.Lock()
+	count := env.handler.connCount["ws-1"]
+	env.handler.connMu.Unlock()
+	assert.Equal(t, 0, count, "connection count should be 0 after failed max-sessions check, not underflowed")
+}
+
+func TestProxy_IsSessionActive_ConcurrentReads(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	handler.activeMu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assert.True(t, handler.isSessionActive("ws-1", "s1"))
+		}()
+	}
+	wg.Wait()
+}
