@@ -268,6 +268,79 @@ func TestWorkspaceWatcher_HandleEvent_SamePhase_NoMetric(t *testing.T) {
 	assert.Equal(t, before, gatherPhaseTransitionCount(t, "Active", "Active"))
 }
 
+// TestWorkspaceWatcher_SeedResourceVersion_CallsOnPhaseChangeForActiveWorkspaces verifies that
+// seedResourceVersion calls onPhaseChange for every Active workspace discovered during the
+// initial List. This is the fix for the SSE tracker startup race: without this call, the
+// EnsureWatching loop in proxy_lifecycle.Start() runs against an empty knownPhases map (because
+// watcher.Start() is async) and the SSE tracker never connects to already-Active workspaces.
+func TestWorkspaceWatcher_SeedResourceVersion_CallsOnPhaseChangeForActiveWorkspaces(t *testing.T) {
+	k8s := k8smocks.NewMockKubernetesClient()
+	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsi := k8smocks.NewMockWorkspaceInterface()
+	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	llm.On("Workspaces", "default").Return(wsi)
+
+	wsi.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-active-1"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-active-2"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-suspended"},
+				Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended},
+			},
+		},
+	}, nil)
+
+	var called []string
+	callback := func(ws *v1.Workspace) {
+		called = append(called, ws.Name)
+	}
+
+	w, err := NewWatcher(k8s, &testLogger{}, "default", callback)
+	require.NoError(t, err)
+
+	require.NoError(t, w.seedResourceVersion())
+
+	// Only Active workspaces must have triggered onPhaseChange.
+	assert.Len(t, called, 2)
+	assert.Contains(t, called, "ws-active-1")
+	assert.Contains(t, called, "ws-active-2")
+	assert.NotContains(t, called, "ws-suspended")
+}
+
+// TestWorkspaceWatcher_SeedResourceVersion_NonActiveNoCallback verifies that non-Active
+// workspaces discovered during seeding do not trigger onPhaseChange.
+func TestWorkspaceWatcher_SeedResourceVersion_NonActiveNoCallback(t *testing.T) {
+	k8s := k8smocks.NewMockKubernetesClient()
+	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsi := k8smocks.NewMockWorkspaceInterface()
+	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	llm.On("Workspaces", "default").Return(wsi)
+
+	wsi.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-suspended"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-creating"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-failed"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseFailed}},
+		},
+	}, nil)
+
+	var called []string
+	w, err := NewWatcher(k8s, &testLogger{}, "default", func(ws *v1.Workspace) {
+		called = append(called, ws.Name)
+	})
+	require.NoError(t, err)
+	require.NoError(t, w.seedResourceVersion())
+
+	assert.Empty(t, called, "no onPhaseChange for non-Active workspaces during seed")
+}
+
 func gatherPhaseTransitionCount(t *testing.T, from, to string) float64 {
 	t.Helper()
 	mfs, err := prometheus.DefaultGatherer.Gather()
