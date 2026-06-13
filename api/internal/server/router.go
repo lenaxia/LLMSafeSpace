@@ -61,6 +61,9 @@ type RouterConfig struct {
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 
+	// OrgsHandler handles org CRUD routes (optional)
+	OrgsHandler *handlers.OrgsHandler
+
 	// TerminalHandler is the handler for WebSocket terminal proxy (optional)
 	TerminalHandler *handlers.TerminalHandler
 
@@ -262,6 +265,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
 		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
+	}
+
+	// Org CRUD routes (Epic 11)
+	if cfg.OrgsHandler != nil {
+		registerOrgRoutes(router, services, cfg.OrgsHandler)
 	}
 
 	// Metrics endpoint.
@@ -881,4 +889,24 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 		}
 	}
 	return 5
+}
+
+// registerOrgRoutes adds all /api/v1/orgs routes.
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler) {
+	authMW := services.GetAuth().AuthMiddleware()
+
+	orgGroup := router.Group("/api/v1/orgs")
+	orgGroup.Use(authMW)
+	orgGroup.POST("", h.Create)
+	orgGroup.GET("", h.List)
+
+	orgIDGroup := orgGroup.Group("/:id")
+	orgIDGroup.Use(middleware.OrgMemberGuard(h))
+	orgIDGroup.GET("", h.Get)
+	orgIDGroup.GET("/workspaces", h.ListWorkspaces)
+
+	orgAdminGroup := orgGroup.Group("/:id")
+	orgAdminGroup.Use(middleware.OrgAdminGuard(h))
+	orgAdminGroup.PUT("", h.Update)
+	orgAdminGroup.DELETE("", h.Delete)
 }

@@ -112,6 +112,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
+	var orgsHandler *handlers.OrgsHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -254,6 +255,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			}
 		}
 
+		pgOrgKeyStore := secrets.NewPgOrgKeyStore(secretsPool)
+		orgKeyService := secrets.NewOrgKeyService(pgOrgKeyStore, dekCache)
+		orgKeyService.SetLogger(log)
+		orgAwareKS := secrets.NewOrgAwareKeyService(keyService, orgKeyService)
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			authSvc.SetKeyService(orgAwareKS)
+		}
+
+		pgOrgStore := database.NewPgOrgStore(dbSvc.DB)
+		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
+
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
 		} else {
@@ -370,6 +382,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
 		RotateKeyHandler:                rotateKeyHandler,
+		OrgsHandler:                     orgsHandler,
 		TerminalHandler:                 terminalHandler,
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,
