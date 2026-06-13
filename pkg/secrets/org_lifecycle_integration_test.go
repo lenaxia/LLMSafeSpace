@@ -309,7 +309,7 @@ func TestOrgCredentialStore_AutoApply(t *testing.T) {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
 
-	err := store.CreateOrgAutoApply(ctx, orgID, credID, 15)
+	err = store.CreateOrgAutoApply(ctx, orgID, credID, 15)
 	if err != nil {
 		t.Fatalf("CreateOrgAutoApply: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestBindCredentialToAllOrgWorkspaces(t *testing.T) {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
 
-	err := store.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID)
+	err = store.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID)
 	if err != nil {
 		t.Fatalf("BindCredentialToAllOrgWorkspaces: %v", err)
 	}
