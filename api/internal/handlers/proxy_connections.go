@@ -133,8 +133,8 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 }
 
 func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	sessions := h.activeSess[workspaceID]
 	if sessions == nil {
 		return nil

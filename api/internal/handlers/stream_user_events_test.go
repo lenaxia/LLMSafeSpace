@@ -19,9 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
