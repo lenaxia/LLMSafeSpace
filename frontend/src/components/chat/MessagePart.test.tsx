@@ -11,8 +11,15 @@ vi.mock("../../lib/shiki", () => ({
 const mockHighlight = highlight as ReturnType<typeof vi.fn>;
 
 describe("MessagePart", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     mockHighlight.mockResolvedValue(null);
+    consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
   });
 
   it("renders user text as plain paragraph", () => {
@@ -232,9 +239,16 @@ describe("closeOpenFence", () => {
 });
 
 describe("CodeBlock (via MessagePart)", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     mockHighlight.mockReset();
     mockHighlight.mockResolvedValue(null);
+    consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
   });
 
   it("renders language label when language is present", async () => {
@@ -356,9 +370,16 @@ describe("CodeBlock (via MessagePart)", () => {
 });
 
 describe("streaming fence + CodeBlock integration", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     mockHighlight.mockReset();
     mockHighlight.mockResolvedValue(null);
+    consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
   });
 
   it("renders a streaming code block as plain pre without calling highlight", () => {
