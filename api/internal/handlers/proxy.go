@@ -36,11 +36,6 @@ const (
 	opencodePort               = agentd.AgentPort
 	retryAfterSec              = 10
 
-	// maxNonStreamingResponseBytes caps the buffered read in the shouldFilter
-	// path to prevent OOM on a misbehaving or compromised upstream. (Epic 25 G1)
-	// 32 MB matches the limit in models.go for provider /models responses.
-	maxNonStreamingResponseBytes int64 = 32 << 20
-
 	phaseActive      = v1.WorkspacePhaseActive
 	phaseSuspending  = "Suspending"
 	phaseSuspended   = "Suspended"
@@ -584,7 +579,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	podIP := workspace.Status.PodIP
 
 	if h.meteringSvc != nil && workspaceID != "" {
-		userID := c.GetString("userID")
+		userID, _ := extractAuth(c)
 		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
 			owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
 			allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
@@ -598,12 +593,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		}
 	}
 
-	// NOTE: stripPatch is intentionally false (streaming mode). If re-enabled,
-	// you MUST strip Accept-Encoding from the upstream request because opencode
-	// v1.15+ compresses JSON responses >1KB via gzip/deflate, which would break
-	// json.Unmarshal in stripPatchParts(). See worklog 0070 for full analysis.
-	stripPatch := false
-	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, stripPatch)
+	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes)
 
 	// Only attempt a pod-IP retry when the response headers have NOT yet been
 	// committed. If doProxy flushed headers (streaming path), the response is
@@ -619,7 +609,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		}()
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
-			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
+			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes)
 		}
 	}
 
@@ -652,7 +642,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 
 	if h.meteringSvc != nil && workspaceID != "" {
-		userID := c.GetString("userID")
+		userID, _ := extractAuth(c)
 		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
 			h.meteringSvc.Record(types.UsageEvent{
 				IdempotencyKey: fmt.Sprintf("llmreq:%s:%d", workspaceID, time.Now().UnixNano()),
@@ -675,11 +665,9 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 }
 
 // doProxy sends the request to the sandbox and writes the response back to
-// the client. When stripPatch is true, JSON responses with status 2xx are
-// buffered in memory so parts of type=="patch" can be removed before being
-// sent to the client. Streaming endpoints (events, prompt_async) must always
-// be invoked with stripPatch=false.
-func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte, stripPatch bool) error {
+// the client. Streaming endpoints (events, prompt_async) are streamed
+// directly to the client with flushed writes.
+func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte) error {
 	targetURL := fmt.Sprintf("http://%s:%d%s", podIP, opencodePort, targetPath)
 	if forwardedQuery := stripVerboseQuery(c.Request.URL.RawQuery); forwardedQuery != "" {
 		targetURL += "?" + forwardedQuery
@@ -722,35 +710,6 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			"error":       "upstream authentication failed; please retry",
 			"workspaceID": wsID,
 		})
-		return nil
-	}
-
-	// Determine whether to filter the response. Filtering only applies when
-	// the caller asked, the response is JSON, and the upstream succeeded.
-	contentType := resp.Header.Get("Content-Type")
-	isJSON := strings.Contains(contentType, "application/json")
-	shouldFilter := stripPatch && isJSON && resp.StatusCode >= 200 && resp.StatusCode < 300
-
-	if shouldFilter {
-		// Bound the read to prevent OOM on a misbehaving upstream. (Epic 25 G1)
-		// 32 MB matches the limit already established in models.go for provider responses.
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxNonStreamingResponseBytes))
-		if readErr != nil {
-			return fmt.Errorf("reading workspace response: %w", readErr)
-		}
-		if int64(len(raw)) >= maxNonStreamingResponseBytes {
-			return fmt.Errorf("workspace response exceeds %d-byte limit", maxNonStreamingResponseBytes)
-		}
-		filtered, filterErr := stripPatchParts(raw)
-		if filterErr != nil {
-			h.logger.Warn("Failed to filter response, returning original", "error", filterErr.Error())
-			filtered = raw
-		}
-		// Copy safe headers, then overwrite Content-Length to match filtered body.
-		copyResponseHeaders(resp.Header, c.Writer.Header())
-		c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(filtered)))
-		c.Writer.WriteHeader(resp.StatusCode)
-		_, _ = c.Writer.Write(filtered)
 		return nil
 	}
 
@@ -839,83 +798,6 @@ func stripVerboseQuery(rawQuery string) string {
 	values.Del("workspace")
 	values.Del("directory")
 	return values.Encode()
-}
-
-// stripPatchParts removes any element where "type" == "patch" from a "parts"
-// array. It handles both shapes opencode returns:
-//   - {"info": ..., "parts": [...]}  (single message)
-//   - [{"info":..., "parts":[...]}, ...]  (history)
-//
-// Returns the original bytes unchanged if the body is neither shape.
-func stripPatchParts(body []byte) ([]byte, error) {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return body, nil
-	}
-
-	switch trimmed[0] {
-	case '{':
-		var msg messageEnvelope
-		if err := json.Unmarshal(body, &msg); err != nil {
-			return nil, err
-		}
-		if msg.Parts == nil {
-			// No parts field — pass through as-is to avoid mangling unrelated
-			// JSON objects (e.g. error responses).
-			return body, nil
-		}
-		msg.Parts = filterOutPatch(msg.Parts)
-		return json.Marshal(msg)
-	case '[':
-		var msgs []messageEnvelope
-		if err := json.Unmarshal(body, &msgs); err != nil {
-			return nil, err
-		}
-		filteredAny := false
-		for i, m := range msgs {
-			if m.Parts != nil {
-				msgs[i].Parts = filterOutPatch(m.Parts)
-				filteredAny = true
-			}
-		}
-		if !filteredAny {
-			return body, nil
-		}
-		return json.Marshal(msgs)
-	default:
-		return body, nil
-	}
-}
-
-// messageEnvelope is the minimal shape used to filter parts. Other fields
-// are preserved via json.RawMessage.
-type messageEnvelope struct {
-	Info  json.RawMessage   `json:"info,omitempty"`
-	Parts []json.RawMessage `json:"parts"`
-}
-
-// filterOutPatch returns a slice with patch parts removed. Each element is
-// inspected for a "type" field; if it equals "patch", it is dropped.
-func filterOutPatch(parts []json.RawMessage) []json.RawMessage {
-	if len(parts) == 0 {
-		return parts
-	}
-	out := make([]json.RawMessage, 0, len(parts))
-	for _, p := range parts {
-		var probe struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(p, &probe); err != nil {
-			// Couldn't parse this entry — keep it (don't silently drop unknown shapes).
-			out = append(out, p)
-			continue
-		}
-		if probe.Type == "patch" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (string, error) {
