@@ -9,12 +9,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
 	uid := string(workspace.UID)
 	name := podName(workspace.Name, uid)
+
+	// Capture active state BEFORE the status update. PodIP != "" is the proxy
+	// for "this workspace is counted in WorkspacesRunning". We Dec only AFTER a
+	// successful Status().Update so that an update failure does not leave the
+	// gauge decremented while the workspace remains Active — which would cause a
+	// double-decrement on the next reconcile attempt.
+	wasActive := workspace.Status.PodIP != ""
 
 	// Delete pod.
 	r.deletePodByName(ctx, name, workspace.Namespace)
@@ -56,6 +64,14 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	if wasActive {
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+	}
+
+	metrics.WorkspaceSafeModeActive.DeleteLabelValues(string(workspace.UID))
 
 	common.RemoveFinalizer(workspace, WorkspaceFinalizer)
 	return ctrl.Result{}, r.Update(ctx, workspace)

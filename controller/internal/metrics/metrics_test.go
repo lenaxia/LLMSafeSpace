@@ -252,7 +252,6 @@ func TestAllCollectorsGatherableAfterRegisterWith(t *testing.T) {
 	// that's tested by the individual metric tests above.
 	expected := []string{
 		"llmsafespace_workspace_consecutive_failures_max",
-		"llmsafespace_workspace_safe_mode_active",
 		"llmsafespace_workspace_status_update_conflicts_total",
 		"llmsafespace_api_key_legacy_total",
 		"llmsafespace_workspace_init_container_duration_seconds",

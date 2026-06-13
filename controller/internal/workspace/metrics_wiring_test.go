@@ -107,10 +107,11 @@ func TestWorkspacesDeletedIncremented(t *testing.T) {
 func TestRecordRecoveryMetrics_IncrementsAttempts(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_a", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_a", []string{"failure_class"})
-	safeModeGauge := newTestGaugeMetric("test_safe_mode_a")
+	safeModeGauge := newTestGaugeVec("test_safe_mode_a", []string{"workspace_id"})
 	failedCtr := newTestCounterVec("test_ws_failed_a", []string{"reason"})
 
 	ws := &v1.Workspace{}
+	ws.UID = "ws-uid-a"
 	ws.Status.ConsecutiveFailures = 1
 	ws.Status.SafeMode = false
 	now := metav1.Now()
@@ -120,17 +121,17 @@ func TestRecordRecoveryMetrics_IncrementsAttempts(t *testing.T) {
 	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
 
 	assert.Equal(t, float64(1), counterValue(t, attempts, string(FailureClassProcess)))
-	assert.Equal(t, float64(0), gaugeScalarValue(t, safeModeGauge)) // not yet in safe mode
 }
 
 func TestRecordRecoveryMetrics_RecordsBackoff(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_b", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_b", []string{"failure_class"})
-	safeModeGauge := newTestGaugeMetric("test_safe_mode_b")
+	safeModeGauge := newTestGaugeVec("test_safe_mode_b", []string{"workspace_id"})
 	failedCtr := newTestCounterVec("test_ws_failed_b", []string{"reason"})
 
 	ws := &v1.Workspace{}
-	ws.Status.ConsecutiveFailures = 2 // non-zero → backoff > 0 for Infrastructure
+	ws.UID = "ws-uid-b"
+	ws.Status.ConsecutiveFailures = 2
 	ws.Status.SafeMode = false
 	next := metav1.NewTime(time.Now().Add(10 * time.Second))
 	ws.Status.NextRetryAt = &next
@@ -143,32 +144,40 @@ func TestRecordRecoveryMetrics_RecordsBackoff(t *testing.T) {
 func TestRecordRecoveryMetrics_SafeMode_SetsGauge(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_c", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_c", []string{"failure_class"})
-	safeModeGauge := newTestGaugeMetric("test_safe_mode_c")
+	safeModeGauge := newTestGaugeVec("test_safe_mode_c", []string{"workspace_id"})
 	failedCtr := newTestCounterVec("test_ws_failed_c", []string{"reason"})
 
 	ws := &v1.Workspace{}
+	ws.UID = "ws-uid-c"
 	ws.Status.ConsecutiveFailures = 6
-	ws.Status.SafeMode = true // safe mode entered → gauge=1 AND failedCtr incremented
+	ws.Status.SafeMode = true
 
 	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
 
-	assert.Equal(t, float64(1), gaugeScalarValue(t, safeModeGauge))
+	assert.Equal(t, float64(1), gaugeVecValue(t, safeModeGauge, "ws-uid-c"))
 	assert.Equal(t, float64(1), counterValue(t, failedCtr, string(FailureClassProcess)))
 }
 
 func TestRecordRecoveryMetrics_NoSafeMode_GaugeZero(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_d", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_d", []string{"failure_class"})
-	safeModeGauge := newTestGaugeMetric("test_safe_mode_d")
+	safeModeGauge := newTestGaugeVec("test_safe_mode_d", []string{"workspace_id"})
 	failedCtr := newTestCounterVec("test_ws_failed_d", []string{"reason"})
 
 	ws := &v1.Workspace{}
+	ws.UID = "ws-uid-d"
 	ws.Status.ConsecutiveFailures = 1
 	ws.Status.SafeMode = false
 
+	safeModeGauge.WithLabelValues("ws-uid-d").Set(1)
+
 	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
 
-	assert.Equal(t, float64(0), gaugeScalarValue(t, safeModeGauge))
+	m := &dto.Metric{}
+	err := safeModeGauge.WithLabelValues("ws-uid-d").Write(m)
+	if err == nil {
+		assert.Equal(t, float64(0), m.GetGauge().GetValue())
+	}
 }
 
 // ---- WorkspaceActiveSeconds ----

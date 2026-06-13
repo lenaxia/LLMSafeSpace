@@ -36,7 +36,11 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.LastStableAt = nil
 	workspace.Status.Sessions = nil
 	workspace.Status.ActiveSessions = 0
-	return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {

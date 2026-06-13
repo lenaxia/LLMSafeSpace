@@ -147,7 +147,11 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspace.Status.Endpoint = fmt.Sprintf("http://%s:4096", existingPod.Status.PodIP)
 		workspace.Status.StartTime = &now
 		workspace.Status.Message = ""
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if existingPod.Status.Phase == corev1.PodFailed {

@@ -11,6 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
 func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
@@ -32,12 +34,19 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
 		logger.Info("Restart generation bumped; deleting pod", "gen", workspace.Spec.RestartGeneration)
 		r.deletePodByName(ctx, name, workspace.Namespace)
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 		workspace.Status.Phase = v1.WorkspacePhaseCreating
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// Ensure password secret still exists (can be lost during crash cycles
@@ -47,11 +56,18 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		if errors.IsNotFound(pwErr) {
 			logger.Info("Password secret missing in Active phase; recycling pod to regenerate", "secret", passwordSecretName(workspace.Name))
 			r.deletePodByName(ctx, name, workspace.Namespace)
+			runtime := workspace.Spec.Runtime
+			secLevel := string(workspace.Spec.SecurityLevel)
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 			workspace.Status.Phase = v1.WorkspacePhaseCreating
 			workspace.Status.PodIP = ""
 			workspace.Status.Endpoint = ""
 			workspace.Status.RestartCount++
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -62,8 +78,14 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		if !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		// Pod missing — classify as infrastructure (external deletion/eviction).
-		return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+		result, err := r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
+		if err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+		}
+		return result, err
 	}
 
 	// US-23.1: A pod with DeletionTimestamp set is being terminated by the
@@ -72,16 +94,30 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	// count this as a transient failure — the controller initiated the delete.
 	if isPodTerminating(pod) {
 		logger.V(1).Info("Pod is terminating in Active phase; transitioning to Creating", "pod", pod.Name)
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 		workspace.Status.Phase = v1.WorkspacePhaseCreating
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
-		return ctrl.Result{RequeueAfter: requeueCreating}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueCreating}, nil
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
 		obs := observePod(pod)
 		class := classifyFailure(obs)
-		return r.enterRecovery(ctx, workspace, class)
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+		result, err := r.enterRecovery(ctx, workspace, class)
+		if err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+		}
+		return result, err
 	}
 
 	// Detect architecture drift: if the running pod's nodeSelector doesn't
@@ -95,17 +131,31 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	if pod.Spec.NodeSelector != nil && pod.Spec.NodeSelector["kubernetes.io/arch"] != desiredArch {
 		logger.Info("Architecture changed; recreating pod", "desired", desiredArch, "current", pod.Spec.NodeSelector["kubernetes.io/arch"])
 		r.deletePodByName(ctx, name, workspace.Namespace)
+		runtime := workspace.Spec.Runtime
+		secLevel := string(workspace.Spec.SecurityLevel)
+		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 		workspace.Status.Phase = v1.WorkspacePhaseCreating
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
 			obs := observePod(pod)
 			class := classifyFailure(obs)
-			return r.enterRecovery(ctx, workspace, class)
+			runtime := workspace.Spec.Runtime
+			secLevel := string(workspace.Spec.SecurityLevel)
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+			result, err := r.enterRecovery(ctx, workspace, class)
+			if err != nil {
+				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+			}
+			return result, err
 		}
 	}
 
@@ -152,13 +202,14 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	accumulateActiveSeconds(workspace, requeueActive)
 	// Set PVC-allocated storage gauge (idempotent set; cheap).
 	setStorageBytes(workspace)
-	// Check agent liveness (HTTP to /v1/healthz — rate-limited, cheap).
+	phaseBefore := workspace.Status.Phase
 	r.checkAgentHealth(ctx, workspace)
-	// US-22.6: Deep-status enrichment on a slower cadence (60s).
-	// Failures do NOT trigger pod restarts.
 	r.maybeEnrichAgentStatus(ctx, workspace)
 
 	if err := r.Status().Update(ctx, workspace); err != nil {
+		if phaseBefore == v1.WorkspacePhaseActive && workspace.Status.Phase == v1.WorkspacePhaseCreating {
+			metrics.WorkspacesRunning.WithLabelValues(workspace.Spec.Runtime, string(workspace.Spec.SecurityLevel)).Inc()
+		}
 		return ctrl.Result{}, err
 	}
 

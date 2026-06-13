@@ -12,6 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
 // handleFailed handles workspaces that are in the legacy Failed phase.
@@ -72,6 +74,9 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 		}
 		if ready {
 			logger.Info("Workspace Failed but pod is Running/Ready; self-healing to Active")
+			runtime := workspace.Spec.Runtime
+			secLevel := string(workspace.Spec.SecurityLevel)
+			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 			now := metav1.Now()
 			workspace.Status.Phase = v1.WorkspacePhaseActive
 			workspace.Status.PodName = pod.Name
@@ -85,7 +90,11 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 			workspace.Status.ConsecutiveHealthFailures = 0
 			workspace.Status.Message = ""
 			workspace.Status.FailureReason = v1.FailureReasonNone
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 
