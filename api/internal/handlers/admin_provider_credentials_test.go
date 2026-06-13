@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
@@ -87,7 +88,7 @@ func (f *fakeAdminCredStore) DeleteAdminCredential(_ context.Context, id string)
 		return err
 	}
 	if _, ok := f.creds[id]; !ok {
-		return &pgconn.PgError{Code: "P0002", Message: "no rows in result set"}
+		return pgx.ErrNoRows
 	}
 	delete(f.creds, id)
 	return nil

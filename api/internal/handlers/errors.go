@@ -6,6 +6,7 @@ package handlers
 import (
 	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -15,12 +16,15 @@ var (
 )
 
 func ClassifyPostgresError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrCredentialNotFound
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505":
 			return ErrDuplicateCredential
-		case "02000", "P0002":
+		case "P0002":
 			return ErrCredentialNotFound
 		}
 	}
