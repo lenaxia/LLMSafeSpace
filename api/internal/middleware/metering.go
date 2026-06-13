@@ -42,9 +42,8 @@ func (m *MeteringMiddleware) Handler() gin.HandlerFunc {
 		}
 
 		m.meteringSvc.Record(types.UsageEvent{
-			IdempotencyKey: "apicall:" + userID + ":" + subtype + ":" + time.Now().UTC().Format("20060102150405"),
-			Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
-			ActorID:        userID,
+			Owner:        types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
+			ActorID:      userID,
 			EventType:      "api_call",
 			EventSubtype:   subtype,
 			Quantity:        1,

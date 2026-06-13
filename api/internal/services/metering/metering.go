@@ -332,7 +332,11 @@ func (s *Service) GetQuotaStatus(ctx context.Context, owner BillingOwner) ([]Quo
 		if err := rows.Scan(&qs.EventType, &qs.PeriodType, &qs.Limit); err != nil {
 			return nil, fmt.Errorf("scan quota limit: %w", err)
 		}
-		qs.Used, qs.Remaining, qs.ResetsAt, _ = s.getQuotaUsage(ctx, owner, qs.EventType, qs.PeriodType, qs.Limit)
+		var qerr error
+		qs.Used, qs.Remaining, qs.ResetsAt, _, qerr = s.getQuotaUsage(ctx, owner, qs.EventType, qs.PeriodType, qs.Limit)
+		if qerr != nil {
+			return nil, qerr
+		}
 		statuses = append(statuses, qs)
 	}
 	if err := rows.Err(); err != nil {
@@ -341,7 +345,7 @@ func (s *Service) GetQuotaStatus(ctx context.Context, owner BillingOwner) ([]Quo
 	return statuses, nil
 }
 
-func (s *Service) getQuotaUsage(ctx context.Context, owner BillingOwner, eventType, periodType string, limit int64) (used, remaining int64, resetsAt time.Time, periodKey string) {
+func (s *Service) getQuotaUsage(ctx context.Context, owner BillingOwner, eventType, periodType string, limit int64) (used, remaining int64, resetsAt time.Time, periodKey string, err error) {
 	now := time.Now().UTC()
 	var query string
 	var args []interface{}
@@ -369,20 +373,20 @@ func (s *Service) getQuotaUsage(ctx context.Context, owner BillingOwner, eventTy
 		args = []interface{}{owner.ID, string(owner.Type), eventType}
 	}
 
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&used)
-	if err != nil {
-		s.logger.Error("Failed to query quota usage", err,
+	if qerr := s.db.QueryRowContext(ctx, query, args...).Scan(&used); qerr != nil {
+		s.logger.Error("Failed to query quota usage", qerr,
 			"owner_id", owner.ID,
 			"event_type", eventType,
 			"period_type", periodType,
 		)
+		return 0, limit, resetsAt, periodKey, fmt.Errorf("query quota usage: %w", qerr)
 	}
 
 	remaining = limit - used
 	if remaining < 0 {
 		remaining = 0
 	}
-	return
+	return used, remaining, resetsAt, periodKey, nil
 }
 
 func (s *Service) CheckQuota(ctx context.Context, owner BillingOwner, eventType string) (bool, int64, error) {
@@ -400,7 +404,10 @@ func (s *Service) CheckQuota(ctx context.Context, owner BillingOwner, eventType 
 		return true, 0, fmt.Errorf("check quota: %w", err)
 	}
 
-	_, remaining, _, _ := s.getQuotaUsage(ctx, owner, eventType, periodType, maxQty)
+	_, remaining, _, _, qerr := s.getQuotaUsage(ctx, owner, eventType, periodType, maxQty)
+	if qerr != nil {
+		return true, 0, fmt.Errorf("check quota: %w", qerr)
+	}
 	return remaining > 0, remaining, nil
 }
 

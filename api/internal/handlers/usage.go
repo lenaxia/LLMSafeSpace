@@ -156,6 +156,10 @@ func (h *UsageHandler) AdminGetDLQ(c *gin.Context) {
 		}
 		entries = append(entries, e)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read DLQ entries"})
+		return
+	}
 	if entries == nil {
 		entries = []dlqEntry{}
 	}
@@ -253,6 +257,10 @@ func (h *UsageHandler) AdminBillingStatus(c *gin.Context) {
 			continue
 		}
 		cursors[provider] = gin.H{"last_exported_id": lastID, "last_exported_at": lastAt}
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read cursors"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"export_cursors": cursors, "dlq_size": dlqSize})
