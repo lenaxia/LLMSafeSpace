@@ -340,13 +340,20 @@ func (s *PgOrgStore) RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 		}
 	}()
 
-	var adminCount int
-	err = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
+	adminRows, err := tx.QueryContext(ctx,
+		`SELECT user_id FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
 		orgID,
-	).Scan(&adminCount)
+	)
 	if err != nil {
-		return false, fmt.Errorf("count org admins: %w", err)
+		return false, fmt.Errorf("lock admin rows: %w", err)
+	}
+	adminCount := 0
+	for adminRows.Next() {
+		adminCount++
+	}
+	adminRows.Close()
+	if err := adminRows.Err(); err != nil {
+		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}
 
 	var targetRole string
@@ -395,13 +402,20 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 		}
 	}()
 
-	var adminCount int
-	err = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
+	adminRows, err := tx.QueryContext(ctx,
+		`SELECT user_id FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
 		orgID,
-	).Scan(&adminCount)
+	)
 	if err != nil {
-		return false, fmt.Errorf("count org admins: %w", err)
+		return false, fmt.Errorf("lock admin rows: %w", err)
+	}
+	adminCount := 0
+	for adminRows.Next() {
+		adminCount++
+	}
+	adminRows.Close()
+	if err := adminRows.Err(); err != nil {
+		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}
 
 	if adminCount <= 1 {

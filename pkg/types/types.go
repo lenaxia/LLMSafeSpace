@@ -647,14 +647,14 @@ type OrgMember struct {
 // CreateOrgRequest is the request body for creating an organization.
 type CreateOrgRequest struct {
 	Name     string `json:"name"     binding:"required,min=2,max=100"`
-	Slug     string `json:"slug"     binding:"required,min=2,max=50,slug"`
+	Slug     string `json:"slug"     binding:"required,min=2,max=50,alphanum"`
 	Password string `json:"password" binding:"required"               log:"-"`
 }
 
 // UpdateOrgRequest is the request body for updating an organization.
 type UpdateOrgRequest struct {
 	Name string `json:"name" binding:"omitempty,min=2,max=100"`
-	Slug string `json:"slug" binding:"omitempty,min=2,max=50,slug"`
+	Slug string `json:"slug" binding:"omitempty,min=2,max=50,alphanum"`
 }
 
 // OrgResponse extends Organization with the calling user's membership context.

@@ -514,6 +514,10 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to promote member"})
 			return
 		}
+		if err := h.orgStore.SetPendingKeyWrap(ctx, orgID, targetUserID, true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set pending key wrap"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"pendingKeyWrap": true,
 			"message":        "Admin must call POST /orgs/" + orgID + "/accept-key to complete key setup",

@@ -101,7 +101,13 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	_ = h.credStore.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID)
+	if err := h.credStore.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID); err != nil {
+		c.JSON(http.StatusCreated, gin.H{
+			"id": credID, "orgId": orgID, "name": req.Name, "provider": req.Provider,
+			"bindWarning": "credential created but auto-bind to existing org workspaces failed",
+		})
+		return
+	}
 
 	c.JSON(http.StatusCreated, gin.H{"id": credID, "orgId": orgID, "name": req.Name, "provider": req.Provider})
 }
