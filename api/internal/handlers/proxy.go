@@ -1037,7 +1037,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
-		_ = h.meteringSvc.RecordLifecycleEvent(
+		if err := h.meteringSvc.RecordLifecycleEvent(
 			context.Background(),
 			workspace.Name,
 			workspace.Spec.Owner.UserID,
@@ -1046,7 +1046,12 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			string(phase),
 			workspace.Spec.SecurityLevel,
 			time.Now(),
-		)
+		); err != nil {
+			h.logger.Error("Failed to record lifecycle event", err,
+				"workspace_id", workspace.Name,
+				"phase", string(phase),
+			)
+		}
 	}
 
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {

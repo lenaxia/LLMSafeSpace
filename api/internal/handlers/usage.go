@@ -187,8 +187,16 @@ func (h *UsageHandler) AdminRetryDLQ(c *gin.Context) {
 		return
 	}
 
-	metaBytes, _ := marshalJSON(event.Metadata)
-	rcBytes, _ := marshalJSON(event.RequestContext)
+	metaBytes, merr := marshalJSON(event.Metadata)
+	if merr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal event metadata"})
+		return
+	}
+	rcBytes, rerr := marshalJSON(event.RequestContext)
+	if rerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal request context"})
+		return
+	}
 	_, err = h.db.ExecContext(c.Request.Context(),
 		`INSERT INTO usage_events (idempotency_key, owner_id, owner_type, actor_id, workspace_id,
 			event_type, event_subtype, quantity, resource_tier, region, metadata, request_context,
