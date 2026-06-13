@@ -76,9 +76,13 @@ function CodeBlock({ code, lang, wordWrap, isStreaming }: CodeBlockProps) {
     if (isStreaming || !lang) return;
 
     let cancelled = false;
-    highlight(code, lang).then((html) => {
-      if (!cancelled) setHighlightedHtml(html);
-    });
+    highlight(code, lang)
+      .then((html) => {
+        if (!cancelled) setHighlightedHtml(html);
+      })
+      .catch(() => {
+        if (!cancelled) setHighlightedHtml(null);
+      });
     return () => {
       cancelled = true;
     };

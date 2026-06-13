@@ -11,12 +11,17 @@ export type QueuedMessage = {
   sessionId: string;
   /** @internal used for sending timeout tracking */
   _sentAt?: number;
+  /** @internal retry counter for 409 handling */
+  _retryCount?: number;
 };
+
+const MAX_RETRIES = 5;
 
 type Action =
   | { type: "enqueue"; msg: QueuedMessage }
   | { type: "mark_sending"; id: string; sentAt: number }
   | { type: "mark_error"; id: string; error: string }
+  | { type: "mark_pending"; id: string }
   | { type: "send_success"; id: string }
   | { type: "remove"; id: string }
   | { type: "clear" }
@@ -37,6 +42,12 @@ function reduce(state: QueuedMessage[], action: Action): QueuedMessage[] {
     case "mark_error":
       return state.map((m) =>
         m.id === action.id ? { ...m, status: "error" as const, error: action.error, _sentAt: undefined } : m,
+      );
+    case "mark_pending":
+      return state.map((m) =>
+        m.id === action.id && m.status === "sending"
+          ? { ...m, status: "pending" as const, _sentAt: undefined, _retryCount: (m._retryCount ?? 0) + 1 }
+          : m,
       );
     case "send_success":
       return state.find((m) => m.id === action.id && m.status === "sending")
@@ -154,6 +165,16 @@ export function useMessageQueue(
         drainingRef.current = false;
       })
       .catch((err: unknown) => {
+        if (err instanceof ApiClientError && err.status === 409) {
+          const retryCount = head._retryCount ?? 0;
+          if (retryCount >= MAX_RETRIES) {
+            dispatch({ type: "mark_error", id: head.id, error: "Session busy — retry manually" });
+          } else {
+            dispatch({ type: "mark_pending", id: head.id });
+          }
+          drainingRef.current = false;
+          return;
+        }
         let error = err instanceof Error ? err.message : "Failed to send";
         if (err instanceof ApiClientError && err.status === 429) {
           const retryAfter = ((err.body as unknown) as Record<string, unknown>).retryAfter ?? 60;
