@@ -67,7 +67,7 @@ describe("MessagePart", () => {
     });
   });
 
-  it("falls back to plain pre when code children is not a string", async () => {
+  it("renders code block with react-markdown string children correctly", async () => {
     // This would happen if a rehype plugin transforms the AST
     // (e.g., inserting span elements instead of raw text).
     // Verified: the String() coercion guard prevents "[object Object]".
