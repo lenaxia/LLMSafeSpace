@@ -70,7 +70,7 @@ type RouterConfig struct {
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
 
-	UsageHandler *handlers.UsageHandler
+	UsageHandler   *handlers.UsageHandler
 	WebhookHandler *handlers.WebhookHandler
 
 	CookieName string

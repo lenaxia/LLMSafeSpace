@@ -452,15 +452,29 @@ func (s *Service) DeleteWorkspace(ctx context.Context, workspaceID string) error
 	return nil
 }
 
-// SyncWorkspaceVersionInfo updates the image_tag and agent_version columns.
-// Called when the workspace status is fetched and version info is available.
+// SyncWorkspaceVersionInfo updates image_tag and/or agent_version in the DB.
+// Only non-empty values are written; passing an empty string for either field
+// leaves the existing DB value untouched. This allows the CRD watcher to sync
+// imageTag without clobbering agentVersion, which is sourced separately from
+// agentd health checks.
 func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string) {
 	if workspaceID == "" || (imageTag == "" && agentVersion == "") {
 		return
 	}
-	_, err := s.DB.ExecContext(ctx,
-		"UPDATE workspaces SET image_tag = $1, agent_version = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
-		imageTag, agentVersion, workspaceID)
+	var query string
+	var args []any
+	switch {
+	case imageTag != "" && agentVersion != "":
+		query = "UPDATE workspaces SET image_tag = $1, agent_version = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL"
+		args = []any{imageTag, agentVersion, workspaceID}
+	case imageTag != "":
+		query = "UPDATE workspaces SET image_tag = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL"
+		args = []any{imageTag, workspaceID}
+	default:
+		query = "UPDATE workspaces SET agent_version = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL"
+		args = []any{agentVersion, workspaceID}
+	}
+	_, err := s.DB.ExecContext(ctx, query, args...)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Error("failed to sync workspace version info to DB", err, "workspaceID", workspaceID)

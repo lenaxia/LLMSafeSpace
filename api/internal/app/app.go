@@ -22,8 +22,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -113,6 +113,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 		wsSvc.SetInstanceSettings(instanceSettings)
 	}
+
+	// Wire version sync: whenever the watcher observes a workspace becoming
+	// Active with a new imageTag, persist it to the DB immediately. This
+	// replaces the lazy side-effect in GetWorkspaceStatus which only updated
+	// the DB when the status endpoint was polled for that specific workspace.
+	proxyHandler.SetVersionSyncCallback(func(workspaceID, imageTag, agentVersion string) {
+		dbSvc.SyncWorkspaceVersionInfo(context.Background(), workspaceID, imageTag, agentVersion)
+	})
 
 	// Create settings handler for API routes.
 	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
@@ -487,14 +495,14 @@ func (a *App) Run() error {
 				meteringSvc.Record(types.UsageEvent{
 					IdempotencyKey: fmt.Sprintf("tokens:%s:%s:in:%d", workspaceID, modelID, time.Now().UnixNano()),
 					Owner:          owner,
-					ActorID:      ownerID,
-					WorkspaceID:  workspaceID,
-					EventType:    "llm_tokens",
-					EventSubtype: "input",
-					Quantity:     inputTokens,
-					Source:       "api",
-					EventTime:    time.Now(),
-					Metadata:     map[string]any{"model_id": modelID, "provider_id": providerID},
+					ActorID:        ownerID,
+					WorkspaceID:    workspaceID,
+					EventType:      "llm_tokens",
+					EventSubtype:   "input",
+					Quantity:       inputTokens,
+					Source:         "api",
+					EventTime:      time.Now(),
+					Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
 				})
 				if outputTokens > 0 {
 					meteringSvc.Record(types.UsageEvent{
