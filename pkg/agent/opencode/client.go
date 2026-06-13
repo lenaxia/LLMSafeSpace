@@ -175,7 +175,7 @@ func (c *Client) retryWithBackoff(ctx context.Context, maxAttempts int, initialD
 			return lastErr
 		}
 		if i < maxAttempts {
-			delay := initialDelay*time.Duration(1<<(i-1)) + time.Duration(rand.Intn(500))*time.Millisecond
+			delay := initialDelay*time.Duration(1<<(i-1)) + time.Duration(rand.Intn(500))*time.Millisecond //nolint:gosec // intentional jitter, not crypto
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -222,7 +222,7 @@ func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 			)
 			return fmt.Errorf("PUT /auth/%s (attempt %d): %w", p.Provider, attempt, err)
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		_, _ = io.Copy(io.Discard, resp.Body)
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {

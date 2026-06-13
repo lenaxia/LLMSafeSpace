@@ -23,10 +23,10 @@ type InformerFactory struct {
 	namespace     string
 	ctx           context.Context
 
-	mu               sync.Mutex
-	started          bool
-	runtimeEnvInf    cache.SharedIndexInformer
-	workspaceInf     cache.SharedIndexInformer
+	mu            sync.Mutex
+	started       bool
+	runtimeEnvInf cache.SharedIndexInformer
+	workspaceInf  cache.SharedIndexInformer
 }
 
 func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
