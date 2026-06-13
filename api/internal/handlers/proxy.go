@@ -47,6 +47,7 @@ const (
 )
 
 type workspaceConfig struct {
+	workspaceID            string
 	maxActiveSessions      int
 	autoApprovePermissions bool
 }
@@ -62,7 +63,7 @@ type ProxyHandler struct {
 	pwCache   map[string]string
 	pwCacheMu sync.RWMutex
 
-	wsConfig   map[string]workspaceConfig
+	wsConfig   map[string]*workspaceConfig
 	wsConfigMu sync.RWMutex
 
 	// US-23.4: Track prior phase per workspace to detect Active-from-non-Active
@@ -135,7 +136,7 @@ func NewProxyHandler(
 		namespace:        namespace,
 		dialect:          dialect,
 		pwCache:          make(map[string]string),
-		wsConfig:         make(map[string]workspaceConfig),
+		wsConfig:         make(map[string]*workspaceConfig),
 		priorPhase:       make(map[string]string),
 		activeSess:       make(map[string]map[string]bool),
 		connCount:        make(map[string]int),
@@ -1435,6 +1436,9 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 
 	h.wsConfigMu.Lock()
 	cfg := h.wsConfig[workspaceID]
+	if cfg == nil {
+		cfg = &workspaceConfig{}
+	}
 	cfg.workspaceID = workspaceID
 	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
 	cfg.maxActiveSessions = int(workspace.Spec.MaxActiveSessions)
