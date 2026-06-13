@@ -268,6 +268,9 @@ func (s *Service) GetUsage(ctx context.Context, owner BillingOwner, from, to tim
 			report.ByWorkspace[wsID][eventType] += total
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
 	return report, nil
 }
 
@@ -308,6 +311,9 @@ func (s *Service) GetUsageByWorkspace(ctx context.Context, owner BillingOwner, w
 		}
 		report.ByDay[dayStr][eventType] += total
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
 	return report, nil
 }
 
@@ -328,6 +334,9 @@ func (s *Service) GetQuotaStatus(ctx context.Context, owner BillingOwner) ([]Quo
 		}
 		qs.Used, qs.Remaining, qs.ResetsAt, _ = s.getQuotaUsage(ctx, owner, qs.EventType, qs.PeriodType, qs.Limit)
 		statuses = append(statuses, qs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return statuses, nil
 }
