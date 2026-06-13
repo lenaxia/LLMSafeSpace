@@ -22,10 +22,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 const (
@@ -90,6 +92,13 @@ type ProxyHandler struct {
 	// suspend/restart cycle re-runs the backfill against the new pod.
 	parentBackfilled   map[string]struct{}
 	parentBackfilledMu sync.Mutex
+
+	meteringSvc interfaces.MeteringService
+
+	// versionSyncCb is the callback wired into the CRD watcher to persist
+	// runtime version info (imageTag) to the DB whenever a workspace becomes
+	// Active. Set via SetVersionSyncCallback before Start().
+	versionSyncCb VersionSyncCallback
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -184,6 +193,9 @@ func (h *ProxyHandler) Start() error {
 			return
 		}
 		watcher.SetUserBroker(h.userBroker)
+		if h.versionSyncCb != nil {
+			watcher.SetVersionSyncCallback(h.versionSyncCb)
+		}
 		if err := watcher.Start(); err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
@@ -560,6 +572,22 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 
 	podIP := workspace.Status.PodIP
+
+	if h.meteringSvc != nil && workspaceID != "" {
+		userID := c.GetString("userID")
+		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+			owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
+			allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
+			if qerr != nil {
+				h.logger.Warn("Quota check failed, allowing request", "error", qerr, "user_id", userID)
+			} else if !allowed {
+				metrics.RecordQuotaExceeded("llm_request")
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded", "event_type": "llm_request"})
+				return
+			}
+		}
+	}
+
 	// NOTE: stripPatch is intentionally false (streaming mode). If re-enabled,
 	// you MUST strip Accept-Encoding from the upstream request because opencode
 	// v1.15+ compresses JSON responses >1KB via gzip/deflate, which would break
@@ -605,6 +633,28 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 
 	if h.sessionIndex != nil && sessionID != "" && isWriteOp {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+	}
+
+	if h.meteringSvc != nil && workspaceID != "" {
+		userID := c.GetString("userID")
+		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+			h.meteringSvc.Record(types.UsageEvent{
+				IdempotencyKey: fmt.Sprintf("llmreq:%s:%d", workspaceID, time.Now().UnixNano()),
+				Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
+				ActorID:        userID,
+				WorkspaceID:    workspaceID,
+				EventType:      "llm_request",
+				EventSubtype:   "message",
+				Quantity:       1,
+				Source:         "api",
+				EventTime:      time.Now(),
+				RequestContext: map[string]any{
+					"ip":         c.ClientIP(),
+					"request_id": c.GetString("request_id"),
+					"session_id": sessionID,
+				},
+			})
+		}
 	}
 }
 
@@ -994,6 +1044,24 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		})
 	}
 
+	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
+		if err := h.meteringSvc.RecordLifecycleEvent(
+			context.Background(),
+			workspace.Name,
+			workspace.Spec.Owner.UserID,
+			types.OwnerTypeUser,
+			prior,
+			string(phase),
+			workspace.Spec.SecurityLevel,
+			time.Now(),
+		); err != nil {
+			h.logger.Error("Failed to record lifecycle event", err,
+				"workspace_id", workspace.Name,
+				"phase", string(phase),
+			)
+		}
+	}
+
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
 		h.invalidateCaches(workspace.Name)
 		if h.sseTracker != nil {
@@ -1082,6 +1150,12 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 // SetSessionIndex injects the session index service for recording message activity.
 func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
 	h.sessionIndex = si
+}
+
+// SetVersionSyncCallback sets the callback invoked when a workspace becomes
+// Active with a new imageTag. Must be called before Start().
+func (h *ProxyHandler) SetVersionSyncCallback(cb VersionSyncCallback) {
+	h.versionSyncCb = cb
 }
 
 // fetchAndPersistTitle fetches the session title from the opencode agent and
@@ -1636,4 +1710,22 @@ func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID
 // with agentNeedsRefresh hints (Epic 27b US-27b.5).
 func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {
 	h.agentStateChecker = c
+}
+
+func (h *ProxyHandler) SetMeteringService(svc interfaces.MeteringService) {
+	h.meteringSvc = svc
+}
+
+func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
+	if h.userBroker == nil {
+		return ""
+	}
+	return h.userBroker.WorkspaceOwner(workspaceID)
+}
+
+func (h *ProxyHandler) GetAllKnownPhases() map[string]string {
+	if h.watcher == nil {
+		return nil
+	}
+	return h.watcher.GetAllKnownPhases()
 }

@@ -36,6 +36,7 @@ func (s *authMockServices) GetCache() interfaces.CacheService             { retu
 func (s *authMockServices) GetMetrics() interfaces.MetricsService         { return s.metrics }
 func (s *authMockServices) GetWorkspace() interfaces.WorkspaceService     { return nil }
 func (s *authMockServices) GetRateLimiter() interfaces.RateLimiterService { return nil }
+func (s *authMockServices) GetMetering() interfaces.MeteringService       { return nil }
 
 func newAuthFixture(t *testing.T) (*gin.Engine, *authMockServices) {
 	t.Helper()

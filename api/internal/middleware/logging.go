@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"math/rand"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,12 +15,6 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
-const (
-	logRequestIDLength = 8
-	maxBodyLogSize     = 1024 // 1KB
-)
-
-// LoggingConfig defines configuration for the logging middleware
 type LoggingConfig struct {
 	// LogRequestBody indicates whether to log request bodies
 	LogRequestBody bool
@@ -68,7 +61,12 @@ func LoggingMiddleware(log interfaces.LoggerInterface, config ...LoggingConfig) 
 		}
 
 		start := time.Now()
-		requestID := generateRequestID()
+		// Read the request ID set by TracingMiddleware (which runs before
+		// LoggingMiddleware in the router chain). Falls back to empty string
+		// for requests that somehow bypass TracingMiddleware (e.g. tests that
+		// wire LoggingMiddleware alone), which is safe — the field will be
+		// omitted from log output rather than causing a panic.
+		requestID := c.GetString("request_id")
 
 		// Log request details
 		logRequest(c, log, requestID, cfg)
@@ -140,6 +138,11 @@ func logResponse(c *gin.Context, log interfaces.LoggerInterface, requestID strin
 		"request_id", requestID,
 	}
 
+	// Include user_id when available (set by auth middleware for authenticated routes).
+	if userID := c.GetString("userID"); userID != "" {
+		fields = append(fields, "user_id", userID)
+	}
+
 	// Log response body if configured to do so and either:
 	// 1. It's an error response (status >= 400)
 	// 2. LogResponseBody is true for all responses
@@ -179,16 +182,4 @@ func readAndReplaceBody(c *gin.Context) ([]byte, error) {
 	// Replace body with a new reader
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 	return body, nil
-}
-
-func generateRequestID() string {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, logRequestIDLength)
-	for i := range b {
-		// Request IDs are tracing aids, not security tokens.
-		// math/rand is sufficient and avoids the crypto/rand syscall
-		// on the request hot path.
-		b[i] = chars[rand.Intn(len(chars))] //nolint:gosec // G404: tracing ID, not a secret
-	}
-	return string(b)
 }

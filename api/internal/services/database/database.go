@@ -455,15 +455,29 @@ func (s *Service) DeleteWorkspace(ctx context.Context, workspaceID string) error
 	return nil
 }
 
-// SyncWorkspaceVersionInfo updates the image_tag and agent_version columns.
-// Called when the workspace status is fetched and version info is available.
+// SyncWorkspaceVersionInfo updates image_tag and/or agent_version in the DB.
+// Only non-empty values are written; passing an empty string for either field
+// leaves the existing DB value untouched. This allows the CRD watcher to sync
+// imageTag without clobbering agentVersion, which is sourced separately from
+// agentd health checks.
 func (s *Service) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string) {
 	if workspaceID == "" || (imageTag == "" && agentVersion == "") {
 		return
 	}
-	_, err := s.DB.ExecContext(ctx,
-		"UPDATE workspaces SET image_tag = $1, agent_version = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL",
-		imageTag, agentVersion, workspaceID)
+	var query string
+	var args []any
+	switch {
+	case imageTag != "" && agentVersion != "":
+		query = "UPDATE workspaces SET image_tag = $1, agent_version = $2, updated_at = NOW() WHERE id = $3 AND deleted_at IS NULL"
+		args = []any{imageTag, agentVersion, workspaceID}
+	case imageTag != "":
+		query = "UPDATE workspaces SET image_tag = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL"
+		args = []any{imageTag, workspaceID}
+	default:
+		query = "UPDATE workspaces SET agent_version = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL"
+		args = []any{agentVersion, workspaceID}
+	}
+	_, err := s.DB.ExecContext(ctx, query, args...)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Error("failed to sync workspace version info to DB", err, "workspaceID", workspaceID)
@@ -1048,4 +1062,52 @@ func toNullableStringArray(s []string) interface{} {
 		return nil
 	}
 	return pq.Array(s)
+}
+
+func (s *Service) ListAllWorkspaceOwners(ctx context.Context) (map[string]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id FROM workspaces WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspace owners: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var id, userID string
+		if err := rows.Scan(&id, &userID); err != nil {
+			return nil, fmt.Errorf("failed to scan workspace owner: %w", err)
+		}
+		result[id] = userID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return result, nil
+}
+
+type WorkspaceBillingRecord struct {
+	ID          string
+	UserID      string
+	StorageSize string
+}
+
+func (s *Service) ListAllWorkspacesForBilling(ctx context.Context) ([]WorkspaceBillingRecord, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, storage_size FROM workspaces WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspaces for billing: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []WorkspaceBillingRecord
+	for rows.Next() {
+		var r WorkspaceBillingRecord
+		if err := rows.Scan(&r.ID, &r.UserID, &r.StorageSize); err != nil {
+			return nil, fmt.Errorf("failed to scan workspace billing record: %w", err)
+		}
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return records, nil
 }

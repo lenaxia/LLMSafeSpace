@@ -146,16 +146,81 @@ func isLabelChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
-// imageTagFromPod extracts the image tag (portion after the last colon) from
-// the first container's image reference. Returns the full image ref if no tag
-// separator is found.
+// imageTagFromPod extracts the human-readable image tag for the first
+// container of a running pod. It prefers the resolved ImageID from
+// ContainerStatuses over the requested image in Spec, because the spec
+// carries the tag at scheduling time (which may be stale during a rolling
+// upgrade), while ImageID reflects what was actually pulled.
+//
+// ImageID format varies by container runtime:
+//
+//	docker tag+digest  : "ghcr.io/org/img:ts-123@sha256:<hex>"  → "ts-123"
+//	docker tag only    : "ghcr.io/org/img:ts-123"               → "ts-123"
+//	containerd digest  : "ghcr.io/org/img@sha256:<hex>"         → no tag; fallback to spec
+//	bare digest        : "sha256:<hex>"                         → no tag; fallback to spec
+//	empty ImageID      : ""                                     → fallback to spec
+//
+// In all cases where a tag cannot be determined from ImageID the function
+// falls back to parsing Spec.Containers[0].Image, which is always present
+// for a schedulable pod.
 func imageTagFromPod(pod *corev1.Pod) string {
-	if len(pod.Spec.Containers) == 0 {
+	if pod == nil || len(pod.Spec.Containers) == 0 {
 		return ""
 	}
-	image := pod.Spec.Containers[0].Image
-	if i := strings.LastIndex(image, ":"); i >= 0 {
-		return image[i+1:]
+
+	// Attempt to extract tag from the resolved ImageID.
+	if len(pod.Status.ContainerStatuses) > 0 {
+		if tag := tagFromImageID(pod.Status.ContainerStatuses[0].ImageID); tag != "" {
+			return tag
+		}
+	}
+
+	// Fallback: parse the spec image (requested tag, not necessarily pulled tag).
+	return tagFromSpecImage(pod.Spec.Containers[0].Image)
+}
+
+// tagFromImageID extracts the tag portion from a container runtime ImageID.
+// Returns "" if the ImageID carries no tag (digest-only or empty).
+func tagFromImageID(imageID string) string {
+	if imageID == "" {
+		return ""
+	}
+	// Strip digest suffix (everything from "@" onward) so that
+	// "ghcr.io/org/img:ts-123@sha256:abc" becomes "ghcr.io/org/img:ts-123".
+	// Using "@" rather than "@sha256:" handles any digest algorithm (sha512,
+	// etc.) even though sha256 is the only algorithm used by current runtimes.
+	ref := imageID
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	// If nothing remains after digest strip, or the result is itself a bare
+	// digest (containerd records "sha256:<hex>" with no registry prefix),
+	// there is no tag.
+	if ref == "" || strings.Contains(ref, ":") && !strings.Contains(ref, "/") {
+		// bare digest: looks like "sha256:abc" — colon present but no slash
+		return ""
+	}
+	// Extract tag after the last colon, but only if the colon is not part of
+	// a port number in a registry host (e.g. "registry.local:5000/img" has no
+	// tag). A tag colon must appear after the last "/" in the path.
+	lastSlash := strings.LastIndex(ref, "/")
+	lastColon := strings.LastIndex(ref, ":")
+	if lastColon > lastSlash {
+		return ref[lastColon+1:]
+	}
+	return ""
+}
+
+// tagFromSpecImage extracts the tag from a spec image reference, returning
+// the full reference if no tag separator is found (untagged image).
+func tagFromSpecImage(image string) string {
+	if image == "" {
+		return ""
+	}
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image[lastColon+1:]
 	}
 	return image
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
@@ -8,7 +8,7 @@ import { highlight } from "../../lib/shiki";
 vi.mock("../../lib/shiki", () => ({
   highlight: vi.fn().mockResolvedValue(null),
 }));
-const mockHighlight = highlight as ReturnType<typeof vi.fn>;
+const mockHighlight = highlight as Mock;
 
 describe("MessagePart", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
