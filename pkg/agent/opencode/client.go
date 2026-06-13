@@ -38,13 +38,13 @@ type Client struct {
 }
 
 type nonRetryableError struct {
-	Provider   string
-	StatusCode int
-	Attempt    int
+	provider   string
+	statusCode int
+	attempt    int
 }
 
 func (e *nonRetryableError) Error() string {
-	return fmt.Sprintf("PUT /auth/%s (attempt %d): client error: HTTP %d", e.Provider, e.Attempt, e.StatusCode)
+	return fmt.Sprintf("PUT /auth/%s (attempt %d): client error: HTTP %d", e.provider, e.attempt, e.statusCode)
 }
 
 // NewClient creates a Client targeting the given opencode base URL.
@@ -225,9 +225,9 @@ func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return &nonRetryableError{
-				Provider:   p.Provider,
-				StatusCode: resp.StatusCode,
-				Attempt:    attempt,
+				provider:   p.Provider,
+				statusCode: resp.StatusCode,
+				attempt:    attempt,
 			}
 		}
 		if resp.StatusCode >= 500 {
