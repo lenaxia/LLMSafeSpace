@@ -1369,3 +1369,113 @@ func TestAgentHealthFromConditions(t *testing.T) {
 		})
 	}
 }
+
+// ===== LlmsafespaceV1() error path in callers =====
+//
+// LlmsafespaceV1() on the k8s client can return an error (e.g. the typed REST
+// client failed to construct from the rest.Config — the exact bug fixed in
+// US-38.11). Every caller of workspaceCRDClient() must surface that as a clean
+// internal error and never panic. These tests pin that contract so a future
+// refactor that swallows the error (e.g. by ignoring it and dereferencing a nil
+// client) is caught.
+
+// newSvcWithLlmsafespaceV1Error builds a Service whose k8s client returns the
+// given error from LlmsafespaceV1() on every call. Used to exercise caller
+// error paths without the happy-path stubs wired up by newFixture.
+func newSvcWithLlmsafespaceV1Error(t *testing.T, v1Err error) (*Service, *kmocks.MockKubernetesClient) {
+	t.Helper()
+
+	log := lmocks.NewMockLogger()
+	log.On("Info", mock.Anything, mock.Anything).Maybe()
+	log.On("Debug", mock.Anything, mock.Anything).Maybe()
+	log.On("Warn", mock.Anything, mock.Anything).Maybe()
+	log.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	log.On("With", mock.Anything).Return(log).Maybe()
+	log.On("Sync").Return(nil).Maybe()
+
+	k8s := kmocks.NewMockKubernetesClient()
+	// Every call returns the error; the nil interface is intentional so the
+	// mock returns (nil, v1Err) — mirroring the real Client.LlmsafespaceV1().
+	k8s.On("LlmsafespaceV1").Return(nil, v1Err)
+
+	met := &imocks.MockMetricsService{}
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	svc, err := New(log, k8s, &imocks.MockDatabaseService{}, &imocks.MockCacheService{}, met, &Config{Namespace: "default"})
+	require.NoError(t, err)
+	return svc, k8s
+}
+
+func TestCreateWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
+	svc, k8s := newSvcWithLlmsafespaceV1Error(t, errors.New("no kind Workspace registered"))
+
+	req := types.CreateWorkspaceRequest{Name: "ws", StorageSize: "10Gi"}
+	_, err := svc.CreateWorkspace(context.Background(), "user1", req)
+
+	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	assert.Contains(t, err.Error(), "workspace_creation_failed",
+		"error must be wrapped with the workspace_creation_failed code")
+	assert.Contains(t, err.Error(), "LLMSafespaceV1",
+		"underlying LlmsafespaceV1 error must be preserved for diagnosis")
+	// The workspace interface must never have been reached.
+	k8s.AssertNumberOfCalls(t, "LlmsafespaceV1", 1)
+}
+
+func TestGetWorkspaceStatus_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
+	// GetWorkspaceStatus verifies ownership (DB) first, then constructs the
+	// CRD client. An LlmsafespaceV1 error after a successful owner check must
+	// surface as workspace_get_failed rather than nil-deref the workspace client.
+	log := lmocks.NewMockLogger()
+	log.On("Info", mock.Anything, mock.Anything).Maybe()
+	log.On("Debug", mock.Anything, mock.Anything).Maybe()
+	log.On("Warn", mock.Anything, mock.Anything).Maybe()
+	log.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	log.On("With", mock.Anything).Return(log).Maybe()
+	log.On("Sync").Return(nil).Maybe()
+
+	k8s := kmocks.NewMockKubernetesClient()
+	k8s.On("LlmsafespaceV1").Return(nil, errors.New("rest client construction failed"))
+
+	db := &imocks.MockDatabaseService{}
+	db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+	met := &imocks.MockMetricsService{}
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	svc, err := New(log, k8s, db, &imocks.MockCacheService{}, met, &Config{Namespace: "default"})
+	require.NoError(t, err)
+
+	_, err = svc.GetWorkspaceStatus(context.Background(), "user1", "ws-1")
+
+	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	assert.Contains(t, err.Error(), "workspace_get_failed")
+	assert.Contains(t, err.Error(), "LLMSafespaceV1")
+}
+
+func TestDeleteWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
+	log := lmocks.NewMockLogger()
+	log.On("Info", mock.Anything, mock.Anything).Maybe()
+	log.On("Debug", mock.Anything, mock.Anything).Maybe()
+	log.On("Warn", mock.Anything, mock.Anything).Maybe()
+	log.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	log.On("With", mock.Anything).Return(log).Maybe()
+	log.On("Sync").Return(nil).Maybe()
+
+	k8s := kmocks.NewMockKubernetesClient()
+	k8s.On("LlmsafespaceV1").Return(nil, errors.New("scheme missing"))
+
+	db := &imocks.MockDatabaseService{}
+	db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+
+	met := &imocks.MockMetricsService{}
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	svc, err := New(log, k8s, db, &imocks.MockCacheService{}, met, &Config{Namespace: "default"})
+	require.NoError(t, err)
+
+	err = svc.DeleteWorkspace(context.Background(), "user1", "ws-1")
+
+	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	assert.Contains(t, err.Error(), "workspace_deletion_failed")
+	assert.Contains(t, err.Error(), "LLMSafespaceV1")
+}
