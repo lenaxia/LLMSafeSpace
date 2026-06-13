@@ -1265,11 +1265,11 @@ func (h *ProxyHandler) SetActiveSessionsForTest(workspaceID string, sessionIDs [
 func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.wsConfigMu.RLock()
 	cfg, ok := h.wsConfig[workspaceID]
-	h.wsConfigMu.RUnlock()
 	maxSessions := defaultMaxActiveSessions
 	if ok && cfg.maxActiveSessions > 0 {
 		maxSessions = cfg.maxActiveSessions
 	}
+	h.wsConfigMu.RUnlock()
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
 	if h.broker != nil {
@@ -1422,11 +1422,15 @@ func (h *ProxyHandler) resolveRootSessionID(workspaceID, sessionID string) strin
 // Uses the wsConfig cache; falls back to a K8s read on cache miss.
 func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	h.wsConfigMu.RLock()
-	if cfg, ok := h.wsConfig[workspaceID]; ok {
-		h.wsConfigMu.RUnlock()
-		return cfg.autoApprovePermissions
+	cfg, ok := h.wsConfig[workspaceID]
+	autoApprove := false
+	if ok {
+		autoApprove = cfg.autoApprovePermissions
 	}
 	h.wsConfigMu.RUnlock()
+	if ok {
+		return autoApprove
+	}
 
 	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
@@ -1434,8 +1438,7 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	}
 
 	h.wsConfigMu.Lock()
-	cfg := h.wsConfig[workspaceID]
-	cfg.workspaceID = workspaceID
+	cfg = h.wsConfig[workspaceID]
 	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
 	cfg.maxActiveSessions = int(workspace.Spec.MaxActiveSessions)
 	h.wsConfig[workspaceID] = cfg

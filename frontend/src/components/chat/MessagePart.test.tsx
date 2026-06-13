@@ -68,20 +68,23 @@ describe("MessagePart", () => {
   });
 
   it("renders code block with react-markdown string children correctly", async () => {
-    // This would happen if a rehype plugin transforms the AST
-    // (e.g., inserting span elements instead of raw text).
-    // Verified: the String() coercion guard prevents "[object Object]".
     const code = "```js\nconst x = 1;\n```";
     const { container } = render(<MessagePart part={{ type: "text", text: code }} isUser={false} />);
     await waitFor(() => {
       const pre = container.querySelector("pre");
       expect(pre).toBeInTheDocument();
-      // With the null mock, CodeBlock renders plain fallback.
-      // The String() coercion guard is exercised at render time;
-      // react-markdown emits string children, so this test confirms
-      // the happy path works correctly.
       expect(screen.getByText("const x = 1;")).toBeInTheDocument();
     });
+  });
+
+  it("renders tool_result with empty text as empty container", () => {
+    const { container } = render(<MessagePart part={{ type: "tool_result", text: "" }} isUser={false} />);
+    expect(container.querySelector("pre")).toBeInTheDocument();
+  });
+
+  it("renders tool_result with undefined text as null", () => {
+    const { container } = render(<MessagePart part={{ type: "tool_result", text: undefined }} isUser={false} />);
+    expect(container.innerHTML).toBe("");
   });
 
   it("renders inline code", () => {
@@ -264,6 +267,26 @@ describe("closeOpenFence", () => {
     expect(closeOpenFence("```\rcode"))
       .toBe("```\ncode\n```");
   });
+
+  it("handles indented fence (3 leading spaces)", () => {
+    expect(closeOpenFence("   ```go\nfunc main(){}"))
+      .toBe("   ```go\nfunc main(){}\n   ```");
+  });
+
+  it("handles indented fence (1 leading space)", () => {
+    expect(closeOpenFence(" ```\ncode"))
+      .toBe(" ```\ncode\n ```");
+  });
+
+  it("does not treat 4+ space indent as fence", () => {
+    const text = "    ```go\ncode";
+    expect(closeOpenFence(text)).toBe(text);
+  });
+
+  it("handles balanced indented fences (2 spaces)", () => {
+    const text = "  ```go\ncode\n  ```";
+    expect(closeOpenFence(text)).toBe(text);
+  });
 });
 
 describe("CodeBlock (via MessagePart)", () => {
@@ -395,6 +418,40 @@ describe("CodeBlock (via MessagePart)", () => {
     await waitFor(() => expect(mockHighlight).toHaveBeenCalledTimes(1), { timeout: 10000 });
     expect(mockHighlight).toHaveBeenCalledWith("func main(){}", "go");
   });
+
+  it("cancels stale highlight when isStreaming toggles true mid-flight", () => new Promise<void>((done) => {
+    let resolveHighlight: (html: string | null) => void;
+    const delayPromise = new Promise<string | null>((resolve) => {
+      resolveHighlight = resolve;
+    });
+    mockHighlight.mockReturnValue(delayPromise);
+
+    const { rerender } = render(<MessagePart
+      part={{ type: "text", text: "```go\nfunc main(){}\n```" }}
+      isUser={false}
+      isStreaming={false}
+    />);
+
+    // Wait for useEffect to fire and call highlight().
+    waitFor(() => expect(mockHighlight).toHaveBeenCalledTimes(1)).then(() => {
+      // Toggle streaming true mid-flight — the cancelled flag prevents stale update.
+      rerender(<MessagePart
+        part={{ type: "text", text: "```go\nfunc main(){}\n```" }}
+        isUser={false}
+        isStreaming={true}
+      />);
+
+      // Resolve the stale highlight with HTML.
+      resolveHighlight!('<pre class="shiki"><code><span>func</span></code></pre>');
+
+      // After microtask flush, the stale highlight should NOT have been applied.
+      setTimeout(() => {
+        expect(document.querySelector(".shiki")).toBeNull();
+        expect(document.querySelector("pre")).toBeInTheDocument();
+        done();
+      }, 0);
+    });
+  }));
 });
 
 describe("streaming fence + CodeBlock integration", () => {

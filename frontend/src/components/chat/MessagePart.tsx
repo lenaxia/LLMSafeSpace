@@ -21,37 +21,43 @@ const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
  *   - 3+ backtick fences (```python, ````go, etc.)
  *   - 3+ tilde fences (~~~, ~~~~)
  *   - Language info strings on opening fence
+ *   - 0-3 leading spaces (CommonMark §4.5 indented fences)
+ *   - CRLF/CR line endings (normalized to LF)
  *
  * Known limitation: fences inside blockquotes (> ```) are not detected.
  * LLMs rarely produce these; handling them would require a full parser.
  */
 export function closeOpenFence(text: string): string {
-  const fenceLine = /^(`{3,}|~{3,})[^`~]*$/m;
+  const fenceLine = /^([ ]{0,3})(`{3,}|~{3,})[^`~]*$/m;
 
   let openChar: string | null = null;
   let openLen = 0;
+  let openIndent = "";
 
   const normalized = text.replace(/\r\n?/g, "\n");
   for (const line of normalized.split("\n")) {
     const match = fenceLine.exec(line);
     if (!match) continue;
 
-    const fenceStr = match[1];
+    const fenceStr = match[2];
     if (!fenceStr) continue;
+    const indent = match[1] ?? "";
     const char = fenceStr.charAt(0);
     const len = fenceStr.length;
 
     if (openChar === null) {
       openChar = char;
       openLen = len;
+      openIndent = indent;
     } else if (char === openChar && len >= openLen) {
       openChar = null;
       openLen = 0;
+      openIndent = "";
     }
   }
 
   if (openChar !== null) {
-    return normalized + "\n" + openChar.repeat(openLen);
+    return normalized + "\n" + openIndent + openChar.repeat(openLen);
   }
 
   return normalized;
