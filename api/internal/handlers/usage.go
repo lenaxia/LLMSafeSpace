@@ -187,6 +187,8 @@ func (h *UsageHandler) AdminRetryDLQ(c *gin.Context) {
 		return
 	}
 
+	metaBytes, _ := marshalJSON(event.Metadata)
+	rcBytes, _ := marshalJSON(event.RequestContext)
 	_, err = h.db.ExecContext(c.Request.Context(),
 		`INSERT INTO usage_events (idempotency_key, owner_id, owner_type, actor_id, workspace_id,
 			event_type, event_subtype, quantity, resource_tier, region, metadata, request_context,
@@ -195,7 +197,7 @@ func (h *UsageHandler) AdminRetryDLQ(c *gin.Context) {
 		ON CONFLICT (idempotency_key) DO NOTHING`,
 		event.IdempotencyKey, event.Owner.ID, string(event.Owner.Type), event.ActorID, event.WorkspaceID,
 		event.EventType, event.EventSubtype, event.Quantity, event.ResourceTier, event.Region,
-		mustMarshal(event.Metadata), mustMarshal(event.RequestContext), event.Source, event.EventTime,
+		metaBytes, rcBytes, event.Source, event.EventTime,
 		event.EventTime,
 	)
 	if err != nil {
@@ -277,12 +279,11 @@ func (h *UsageHandler) AdminBillingStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"export_cursors": cursors, "dlq_size": dlqSize})
 }
 
-func mustMarshal(v interface{}) []byte {
+func marshalJSON(v interface{}) ([]byte, error) {
 	if v == nil {
-		return nil
+		return []byte(`{}`), nil
 	}
-	b, _ := json.Marshal(v)
-	return b
+	return json.Marshal(v)
 }
 
 func parsePeriod(c *gin.Context) (from, to time.Time, err error) {

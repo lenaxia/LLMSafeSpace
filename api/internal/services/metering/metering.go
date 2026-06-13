@@ -403,10 +403,6 @@ func (s *Service) CheckQuota(ctx context.Context, owner BillingOwner, eventType 
 	return remaining > 0, remaining, nil
 }
 
-func (s *Service) IncrementQuotaCounter(ctx context.Context, owner BillingOwner, eventType string) error {
-	return nil
-}
-
 func (s *Service) ExportUsage(ctx context.Context) (int, error) {
 	var lastID int64
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(last_exported_id, 0) FROM billing_export_cursor WHERE provider = 'noop'`).Scan(&lastID)
