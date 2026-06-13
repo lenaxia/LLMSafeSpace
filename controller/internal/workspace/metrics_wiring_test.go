@@ -24,10 +24,6 @@ func newTestCounterVec(name string, labels []string) *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: name}, labels)
 }
 
-func newTestGaugeMetric(name string) prometheus.Gauge {
-	return prometheus.NewGauge(prometheus.GaugeOpts{Name: name})
-}
-
 func newTestGaugeVec(name string, labels []string) *prometheus.GaugeVec {
 	return prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: name}, labels)
 }
@@ -52,13 +48,6 @@ func gaugeVecValue(t *testing.T, g *prometheus.GaugeVec, lv ...string) float64 {
 	t.Helper()
 	m := &dto.Metric{}
 	require.NoError(t, g.WithLabelValues(lv...).Write(m))
-	return m.GetGauge().GetValue()
-}
-
-func gaugeScalarValue(t *testing.T, g prometheus.Gauge) float64 {
-	t.Helper()
-	m := &dto.Metric{}
-	require.NoError(t, g.Write(m))
 	return m.GetGauge().GetValue()
 }
 

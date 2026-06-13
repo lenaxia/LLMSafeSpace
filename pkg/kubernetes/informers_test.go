@@ -16,7 +16,7 @@ import (
 )
 
 // countingInformer is a cache.SharedIndexInformer double whose only meaningful
-// behaviour is Run(): it records how many times it was invoked and then blocks
+// behavior is Run(): it records how many times it was invoked and then blocks
 // until stopCh is closed. Every other method panics — StartInformers only ever
 // calls Run(), so any other call indicates a contract drift worth failing on.
 type countingInformer struct {
@@ -54,15 +54,17 @@ func (c *countingInformer) GetStore() cache.Store { panic("not used by StartInfo
 func (c *countingInformer) GetController() cache.Controller {
 	panic("not used by StartInformers")
 }
-func (c *countingInformer) HasSynced() bool                          { panic("not used by StartInformers") }
-func (c *countingInformer) LastSyncResourceVersion() string           { panic("not used by StartInformers") }
+func (c *countingInformer) HasSynced() bool                 { panic("not used by StartInformers") }
+func (c *countingInformer) LastSyncResourceVersion() string { panic("not used by StartInformers") }
 func (c *countingInformer) SetWatchErrorHandler(cache.WatchErrorHandler) error {
 	panic("not used by StartInformers")
 }
-func (c *countingInformer) SetTransform(cache.TransformFunc) error { panic("not used by StartInformers") }
-func (c *countingInformer) IsStopped() bool                         { panic("not used by StartInformers") }
-func (c *countingInformer) AddIndexers(cache.Indexers) error        { panic("not used by StartInformers") }
-func (c *countingInformer) GetIndexer() cache.Indexer               { panic("not used by StartInformers") }
+func (c *countingInformer) SetTransform(cache.TransformFunc) error {
+	panic("not used by StartInformers")
+}
+func (c *countingInformer) IsStopped() bool                  { panic("not used by StartInformers") }
+func (c *countingInformer) AddIndexers(cache.Indexers) error { panic("not used by StartInformers") }
+func (c *countingInformer) GetIndexer() cache.Indexer        { panic("not used by StartInformers") }
 
 // TestStartInformers_Idempotent verifies that calling StartInformers more than
 // once launches exactly one set of informer goroutines. The factory guards
