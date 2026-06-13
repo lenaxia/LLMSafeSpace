@@ -827,10 +827,7 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 	// but does NOT evict "org:<orgID>" keys. RewrapAllOrgDEKsForAdmin reads from
 	// "org:<orgID>" — which is still present. This ordering must be preserved.
 	if h.orgKeyService != nil {
-		if err := h.orgKeyService.RewrapAllOrgDEKsForAdmin(c.Request.Context(), userID, []byte(req.NewPassword)); err != nil {
-			// RewrapAllOrgDEKsForAdmin never returns non-nil, but log defensively.
-			_ = err
-		}
+		_ = h.orgKeyService.RewrapAllOrgDEKsForAdmin(c.Request.Context(), userID, []byte(req.NewPassword))
 	}
 
 	c.Status(http.StatusNoContent)
