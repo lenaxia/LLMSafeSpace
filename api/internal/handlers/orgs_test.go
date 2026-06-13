@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
