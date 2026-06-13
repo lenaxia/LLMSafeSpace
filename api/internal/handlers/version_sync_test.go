@@ -313,32 +313,98 @@ func TestWorkspaceWatcher_VersionSync_FiredOnActiveToActiveWithNewImageTag(t *te
 	require.NoError(t, w.Start())
 	defer w.Stop()
 
-	// Seed as Active with old tag
+	// Seed as Active with old tag — fires one sync call (tag "" → "ts-old")
 	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-aa", ResourceVersion: "1"},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive, ImageTag: "ts-old"},
 	}
 	fakeWatch.Add(ws)
 	assert.Eventually(t, func() bool {
-		_, ok := w.GetKnownPhase("ws-aa")
-		return ok
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calls) == 1 && calls[0].tag == "ts-old"
 	}, testTimeout, testPollInterval)
 
-	// Controller updates imageTag while still Active (e.g. after an in-place image refresh)
+	// Controller updates imageTag while still Active (e.g. after an in-place image refresh).
+	// Phase stays Active — NOT a phase transition, but imageTag changed — must fire again.
 	ws2 := ws.DeepCopy()
 	ws2.ResourceVersion = "2"
 	ws2.Status.ImageTag = "ts-1781332002"
-	// Phase stays Active — NOT a phase transition, but imageTag changed
 	fakeWatch.Modify(ws2)
 
 	assert.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(calls) > 0
+		return len(calls) >= 2 && calls[len(calls)-1].tag == "ts-1781332002"
+	}, testTimeout, testPollInterval, "Active→Active imageTag change must fire version sync")
+}
+
+// --- knownImageTags is cleaned up on workspace deletion ---
+// Regression: if not cleaned up, a re-created workspace with the same name
+// and same imageTag would silently skip the sync (stale oldTag == newImageTag).
+
+func TestWorkspaceWatcher_VersionSync_KnownImageTagsClearedOnDelete(t *testing.T) {
+	k8s, _, fakeWatch := setupWatcherMocks(t)
+
+	var mu sync.Mutex
+	var calls []string
+
+	noop := func(*v1.Workspace) {}
+	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	require.NoError(t, err)
+	w.SetVersionSyncCallback(func(id, tag, av string) {
+		mu.Lock()
+		calls = append(calls, tag)
+		mu.Unlock()
+	})
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	ws := &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws-recycle", ResourceVersion: "1"},
+		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+	}
+	fakeWatch.Add(ws)
+	assert.Eventually(t, func() bool {
+		_, ok := w.GetKnownPhase("ws-recycle")
+		return ok
 	}, testTimeout, testPollInterval)
 
-	mu.Lock()
-	got := calls[len(calls)-1]
-	mu.Unlock()
-	assert.Equal(t, "ts-1781332002", got.tag)
+	// Transition to Active with imageTag — 1 sync call
+	ws2 := ws.DeepCopy()
+	ws2.ResourceVersion = "2"
+	ws2.Status.Phase = v1.WorkspacePhaseActive
+	ws2.Status.ImageTag = "ts-1781332002"
+	fakeWatch.Modify(ws2)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calls) == 1
+	}, testTimeout, testPollInterval)
+
+	// Delete the workspace — knownImageTags entry must be removed
+	fakeWatch.Delete(ws2)
+	assert.Eventually(t, func() bool {
+		_, ok := w.GetKnownPhase("ws-recycle")
+		return !ok
+	}, testTimeout, testPollInterval)
+
+	// Re-add with the same name and same imageTag — must fire sync again
+	// (if knownImageTags was not cleared, oldTag == newImageTag and sync is skipped)
+	ws3 := &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws-recycle", ResourceVersion: "10"},
+		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseCreating},
+	}
+	fakeWatch.Add(ws3)
+	ws4 := ws3.DeepCopy()
+	ws4.ResourceVersion = "11"
+	ws4.Status.Phase = v1.WorkspacePhaseActive
+	ws4.Status.ImageTag = "ts-1781332002" // same tag as before
+	fakeWatch.Modify(ws4)
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calls) == 2
+	}, testTimeout, testPollInterval, "re-created workspace with same imageTag must fire sync again after delete")
 }

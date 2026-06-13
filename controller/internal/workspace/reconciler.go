@@ -185,16 +185,19 @@ func tagFromImageID(imageID string) string {
 	if imageID == "" {
 		return ""
 	}
-	// Strip digest suffix (everything from "@sha256:" onward) so that
+	// Strip digest suffix (everything from "@" onward) so that
 	// "ghcr.io/org/img:ts-123@sha256:abc" becomes "ghcr.io/org/img:ts-123".
+	// Using "@" rather than "@sha256:" handles any digest algorithm (sha512,
+	// etc.) even though sha256 is the only algorithm used by current runtimes.
 	ref := imageID
-	if i := strings.Index(ref, "@sha256:"); i >= 0 {
+	if i := strings.Index(ref, "@"); i >= 0 {
 		ref = ref[:i]
 	}
 	// If nothing remains after digest strip, or the result is itself a bare
-	// sha256 digest (containerd records "sha256:<hex>" with no registry prefix),
+	// digest (containerd records "sha256:<hex>" with no registry prefix),
 	// there is no tag.
-	if ref == "" || strings.HasPrefix(ref, "sha256:") {
+	if ref == "" || strings.Contains(ref, ":") && !strings.Contains(ref, "/") {
+		// bare digest: looks like "sha256:abc" — colon present but no slash
 		return ""
 	}
 	// Extract tag after the last colon, but only if the colon is not part of

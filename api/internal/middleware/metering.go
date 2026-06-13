@@ -44,11 +44,11 @@ func (m *MeteringMiddleware) Handler() gin.HandlerFunc {
 		m.meteringSvc.Record(types.UsageEvent{
 			Owner:        types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
 			ActorID:      userID,
-			EventType:      "api_call",
-			EventSubtype:   subtype,
-			Quantity:        1,
-			Source:         "api",
-			EventTime:      time.Now(),
+			EventType:    "api_call",
+			EventSubtype: subtype,
+			Quantity:     1,
+			Source:       "api",
+			EventTime:    time.Now(),
 		})
 	}
 }

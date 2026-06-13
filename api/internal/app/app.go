@@ -22,8 +22,8 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services"
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -495,14 +495,14 @@ func (a *App) Run() error {
 				meteringSvc.Record(types.UsageEvent{
 					IdempotencyKey: fmt.Sprintf("tokens:%s:%s:in:%d", workspaceID, modelID, time.Now().UnixNano()),
 					Owner:          owner,
-					ActorID:      ownerID,
-					WorkspaceID:  workspaceID,
-					EventType:    "llm_tokens",
-					EventSubtype: "input",
-					Quantity:     inputTokens,
-					Source:       "api",
-					EventTime:    time.Now(),
-					Metadata:     map[string]any{"model_id": modelID, "provider_id": providerID},
+					ActorID:        ownerID,
+					WorkspaceID:    workspaceID,
+					EventType:      "llm_tokens",
+					EventSubtype:   "input",
+					Quantity:       inputTokens,
+					Source:         "api",
+					EventTime:      time.Now(),
+					Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
 				})
 				if outputTokens > 0 {
 					meteringSvc.Record(types.UsageEvent{

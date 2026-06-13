@@ -84,9 +84,9 @@ func (w *WorkspaceWatcher) SetUserBroker(broker *UserEventBroker) {
 }
 
 // SetVersionSyncCallback sets the callback invoked when a workspace becomes
-// Active and has a non-empty imageTag. Safe to call before or after Start();
-// the callback is read under no lock so it must be set before Start() to
-// avoid races (or at worst it will be missed for the first batch of events).
+// Active with a non-empty imageTag. Must be called before Start(); calling
+// after Start() is a data race (the watch goroutine reads onVersionSync without
+// a lock). Follows the same contract as SetUserBroker.
 func (w *WorkspaceWatcher) SetVersionSyncCallback(cb VersionSyncCallback) {
 	w.onVersionSync = cb
 }
@@ -174,6 +174,11 @@ func (w *WorkspaceWatcher) seedResourceVersion() error {
 	}
 	w.setResourceVersion(list.ResourceVersion)
 
+	// Collect (name, imageTag) pairs for Active workspaces before releasing
+	// locks, so callbacks fire without holding any mutex (avoids lock-under-I/O).
+	type versionEntry struct{ name, imageTag string }
+	var toSync []versionEntry
+
 	w.knownPhasesMu.Lock()
 	w.knownImageTagsMu.Lock()
 	for i := range list.Items {
@@ -188,14 +193,20 @@ func (w *WorkspaceWatcher) seedResourceVersion() error {
 		if w.userBroker != nil && ws.Spec.Owner.UserID != "" {
 			w.userBroker.RecordWorkspaceOwner(ws.Name, ws.Spec.Owner.UserID)
 		}
-		// Sync version info for Active workspaces on startup so the DB is
-		// up-to-date without waiting for the next phase transition.
-		if ws.Status.Phase == v1.WorkspacePhaseActive && ws.Status.ImageTag != "" && w.onVersionSync != nil {
-			w.onVersionSync(ws.Name, ws.Status.ImageTag, "")
+		if ws.Status.Phase == v1.WorkspacePhaseActive && ws.Status.ImageTag != "" {
+			toSync = append(toSync, versionEntry{ws.Name, ws.Status.ImageTag})
 		}
 	}
 	w.knownImageTagsMu.Unlock()
 	w.knownPhasesMu.Unlock()
+
+	// Fire version sync callbacks after releasing locks to avoid holding
+	// mutexes across DB I/O.
+	if w.onVersionSync != nil {
+		for _, e := range toSync {
+			w.onVersionSync(e.name, e.imageTag, "")
+		}
+	}
 
 	return nil
 }

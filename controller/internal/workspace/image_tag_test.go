@@ -173,6 +173,18 @@ func TestImageTagFromPod_SpecImage_RegistryWithPort(t *testing.T) {
 	}
 }
 
+func TestImageTagFromPod_NonSHA256Digest_FallsBackToSpec(t *testing.T) {
+	// Hypothetical non-sha256 digest — "@" stripping must handle any algorithm.
+	pod := podWithImageIDAndSpecImage(
+		"ghcr.io/lenaxia/llmsafespace/base@sha512:deadbeef",
+		"ghcr.io/lenaxia/llmsafespace/base:ts-1781332002",
+	)
+	got := imageTagFromPod(pod)
+	if got != "ts-1781332002" {
+		t.Errorf("sha512 digest: want ts-1781332002 (spec fallback), got %q", got)
+	}
+}
+
 // helpers
 
 func podWithImageID(imageID string) *corev1.Pod {
