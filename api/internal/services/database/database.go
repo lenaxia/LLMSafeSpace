@@ -1037,3 +1037,51 @@ func toNullableStringArray(s []string) interface{} {
 	}
 	return pq.Array(s)
 }
+
+func (s *Service) ListAllWorkspaceOwners(ctx context.Context) (map[string]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id FROM workspaces WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspace owners: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var id, userID string
+		if err := rows.Scan(&id, &userID); err != nil {
+			return nil, fmt.Errorf("failed to scan workspace owner: %w", err)
+		}
+		result[id] = userID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return result, nil
+}
+
+type WorkspaceBillingRecord struct {
+	ID          string
+	UserID      string
+	StorageSize string
+}
+
+func (s *Service) ListAllWorkspacesForBilling(ctx context.Context) ([]WorkspaceBillingRecord, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, storage_size FROM workspaces WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspaces for billing: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []WorkspaceBillingRecord
+	for rows.Next() {
+		var r WorkspaceBillingRecord
+		if err := rows.Scan(&r.ID, &r.UserID, &r.StorageSize); err != nil {
+			return nil, fmt.Errorf("failed to scan workspace billing record: %w", err)
+		}
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return records, nil
+}

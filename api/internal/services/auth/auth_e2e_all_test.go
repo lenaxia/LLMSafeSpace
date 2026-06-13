@@ -681,3 +681,6 @@ func (m *apiKeyAwareDB) UpdateSessionLastSeen(_ context.Context, _, _ string) er
 func (m *apiKeyAwareDB) Ping(context.Context) error                                 { return nil }
 func (m *apiKeyAwareDB) Start() error                                               { return nil }
 func (m *apiKeyAwareDB) Stop() error                                                { return nil }
+func (m *apiKeyAwareDB) ListAllWorkspaceOwners(context.Context) (map[string]string, error) {
+	return nil, nil
+}

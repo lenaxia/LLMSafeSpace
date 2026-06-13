@@ -149,6 +149,9 @@ func (m *mockDB) UpdateSessionLastSeen(_ context.Context, _, _ string) error { r
 func (m *mockDB) Ping(context.Context) error                                 { return nil }
 func (m *mockDB) Start() error                                               { return nil }
 func (m *mockDB) Stop() error                                                { return nil }
+func (m *mockDB) ListAllWorkspaceOwners(context.Context) (map[string]string, error) {
+	return nil, nil
+}
 
 type mockCache struct{}
 

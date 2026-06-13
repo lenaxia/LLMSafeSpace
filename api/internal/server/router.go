@@ -70,9 +70,9 @@ type RouterConfig struct {
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
 
-	// CookieName is the name of the session cookie. Defaults to "lsp_session".
-	// Reads from cfg.Auth.CookieName; configurable so operators can rename the
-	// cookie without forking the router.
+	UsageHandler *handlers.UsageHandler
+	WebhookHandler *handlers.WebhookHandler
+
 	CookieName string
 }
 
@@ -128,6 +128,10 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	router.Use(middleware.MetricsMiddleware(services.GetMetrics()))
 	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig, cfg.InstanceSettings))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
+
+	if services.GetMetering() != nil {
+		router.Use(middleware.NewMeteringMiddleware(services.GetMetering()).Handler())
+	}
 
 	// F1.1.4 (Epic 17): the previous `/api/v1/workspaces/:id/stream`
 	// group had middleware attached but no handlers — dead code that
@@ -230,6 +234,31 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		userCreds.GET("/:id/bindings", cfg.UserProviderCredentialsHandler.ListBindings)
 		userCreds.POST("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Bind)
 		userCreds.DELETE("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Unbind)
+	}
+
+	if cfg.UsageHandler != nil {
+		usage := router.Group("/api/v1/usage")
+		usage.Use(services.GetAuth().AuthMiddleware())
+		usage.GET("", cfg.UsageHandler.GetUsage)
+		usage.GET("/workspaces/:id", cfg.UsageHandler.GetWorkspaceUsage)
+		usage.GET("/quota", cfg.UsageHandler.GetQuotaStatus)
+
+		adminUsage := router.Group("/api/v1/admin/usage")
+		adminUsage.Use(services.GetAuth().AuthMiddleware())
+		adminUsage.Use(middleware.AdminGuard())
+		adminUsage.GET("/:ownerId", cfg.UsageHandler.AdminGetUsage)
+
+		adminBilling := router.Group("/api/v1/admin/billing")
+		adminBilling.Use(services.GetAuth().AuthMiddleware())
+		adminBilling.Use(middleware.AdminGuard())
+		adminBilling.GET("/status", cfg.UsageHandler.AdminBillingStatus)
+		adminBilling.GET("/dlq", cfg.UsageHandler.AdminGetDLQ)
+		adminBilling.POST("/dlq/:id/retry", cfg.UsageHandler.AdminRetryDLQ)
+		adminBilling.POST("/dlq/:id/discard", cfg.UsageHandler.AdminDiscardDLQ)
+	}
+
+	if cfg.WebhookHandler != nil {
+		router.POST("/api/v1/webhooks/billing", cfg.WebhookHandler.Billing)
 	}
 
 	// Secret management routes (Epic 10)

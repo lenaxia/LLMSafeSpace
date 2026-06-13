@@ -198,3 +198,11 @@ func (m *MockDatabaseService) UpsertSessionContextUsed(ctx context.Context, work
 func (m *MockDatabaseService) UpdateSessionLastSeen(ctx context.Context, workspaceID, sessionID string) error {
 	return m.Called(ctx, workspaceID, sessionID).Error(0)
 }
+
+func (m *MockDatabaseService) ListAllWorkspaceOwners(ctx context.Context) (map[string]string, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]string), args.Error(1)
+}

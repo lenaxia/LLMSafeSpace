@@ -12,6 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/ratelimit"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
@@ -24,6 +25,7 @@ type Services struct {
 	Metrics     interfaces.MetricsService
 	Workspace   interfaces.WorkspaceService
 	RateLimiter interfaces.RateLimiterService
+	Metering    interfaces.MeteringService
 }
 
 var _ interfaces.Services = &Services{}
@@ -50,6 +52,10 @@ func (s *Services) GetWorkspace() interfaces.WorkspaceService {
 
 func (s *Services) GetRateLimiter() interfaces.RateLimiterService {
 	return s.RateLimiter
+}
+
+func (s *Services) GetMetering() interfaces.MeteringService {
+	return s.Metering
 }
 
 func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.KubernetesClient) (*Services, error) {
@@ -88,6 +94,14 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 
 	rateLimiterService := ratelimit.NewWithCache(log, cacheService)
 
+	var meteringService interfaces.MeteringService
+	ms, err := metering.New(cfg, log, dbService.DB)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize metering service: %w", err)
+	}
+	meteringService = ms
+	ms.SetBillingProvider(dbService)
+
 	return &Services{
 		Auth:        authService,
 		Database:    dbService,
@@ -95,6 +109,7 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		Metrics:     metricsService,
 		Workspace:   workspaceService,
 		RateLimiter: rateLimiterService,
+		Metering:    meteringService,
 	}, nil
 }
 
@@ -114,11 +129,21 @@ func (s *Services) Start() error {
 	if err := s.Workspace.Start(); err != nil {
 		return fmt.Errorf("failed to start workspace service: %w", err)
 	}
+	if s.Metering != nil {
+		if err := s.Metering.Start(); err != nil {
+			return fmt.Errorf("failed to start metering service: %w", err)
+		}
+	}
 	return nil
 }
 
 func (s *Services) Stop() error {
 	var errs []error
+	if s.Metering != nil {
+		if err := s.Metering.Stop(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if err := s.Workspace.Stop(); err != nil {
 		errs = append(errs, err)
 	}
