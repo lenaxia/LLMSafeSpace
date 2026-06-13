@@ -204,10 +204,10 @@ func TestValidateAPIKey_WithDecryptAccess_UnlocksDEK(t *testing.T) {
 	keyHash := hex.EncodeToString(h[:])
 
 	user := &types.User{ID: "user-1"}
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("not found")).Once()
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("", errors.New("not found")).Once()
 	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(user, nil).Once()
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(storedKey, nil).Once()
-	mockCache.On("Set", mock.Anything, "apikey:"+rawKey, "user-1", mock.Anything).Return(nil).Once()
+	mockCache.On("Set", mock.Anything, "apikey:"+pkgutil.HashString(rawKey), "user-1", mock.Anything).Return(nil).Once()
 	mockCache.On("Set", mock.Anything, mock.MatchedBy(func(key string) bool {
 		return len(key) > 4 && key[:4] == "dek:"
 	}), mock.Anything, mock.Anything).Return(nil).Once()
@@ -236,10 +236,10 @@ func TestValidateAPIKey_WithoutDecryptAccess_NoDEK(t *testing.T) {
 
 	keyRec := &types.APIKey{ID: "k1", UserID: "user-1", DecryptAccess: false}
 	user := &types.User{ID: "user-1"}
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("not found")).Once()
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("", errors.New("not found")).Once()
 	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(user, nil).Once()
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRec, nil).Once()
-	mockCache.On("Set", mock.Anything, "apikey:"+rawKey, "user-1", mock.Anything).Return(nil).Once()
+	mockCache.On("Set", mock.Anything, "apikey:"+pkgutil.HashString(rawKey), "user-1", mock.Anything).Return(nil).Once()
 
 	userID, err := svc.ValidateToken(rawKey)
 	require.NoError(t, err)
@@ -264,10 +264,10 @@ func TestValidateAPIKey_WrappedDEKCorrupt_Fails(t *testing.T) {
 	keyHash := hex.EncodeToString(h[:])
 
 	user := &types.User{ID: "user-1"}
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("not found")).Once()
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("", errors.New("not found")).Once()
 	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(user, nil).Once()
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(corruptKey, nil).Once()
-	mockCache.On("Set", mock.Anything, "apikey:"+rawKey, "user-1", mock.Anything).Return(nil).Once()
+	mockCache.On("Set", mock.Anything, "apikey:"+pkgutil.HashString(rawKey), "user-1", mock.Anything).Return(nil).Once()
 
 	_, err := svc.ValidateToken(rawKey)
 	assert.NoError(t, err)
@@ -384,7 +384,7 @@ func TestValidateAPIKey_ConstantTimeCompare_RejectsMismatch(t *testing.T) {
 		DecryptAccess: false,
 	}
 
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("miss"))
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("", errors.New("miss"))
 	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
@@ -399,7 +399,7 @@ func TestValidateAPIKey_ConstantTimeCompare_RejectsMismatch(t *testing.T) {
 
 	mockDb.On("GetUserByAPIKey", mock.Anything, wrongHashStr).Return(&types.User{ID: "u1", Active: true}, nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, wrongHashStr).Return(keyRecord, nil)
-	mockCache.On("Get", mock.Anything, "apikey:"+wrongKey).Return("", errors.New("miss"))
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(wrongKey)).Return("", errors.New("miss"))
 
 	userID2, err2 := svc.validateAPIKey(wrongKey, "")
 	assert.Error(t, err2, "wrong key should fail constant-time comparison")
@@ -541,7 +541,7 @@ func TestValidateAPIKey_CIDREnforcement(t *testing.T) {
 		AllowedCIDRs:  []string{"10.0.0.0/8", "172.16.0.0/12"},
 	}
 
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("", errors.New("miss"))
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("", errors.New("miss"))
 	mockDb.On("GetUserByAPIKey", mock.Anything, keyHash).Return(&types.User{ID: "u1", Active: true}, nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
@@ -580,7 +580,7 @@ func TestValidateAPIKey_CIDRCacheBypass_Blocked(t *testing.T) {
 		AllowedCIDRs:  []string{"10.0.0.0/8"},
 	}
 
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("u1", nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 
 	userID, err := svc.validateAPIKey(rawKey, "192.168.1.5")
@@ -612,7 +612,7 @@ func TestValidateAPIKey_CIDRCacheHit_AllowedIP(t *testing.T) {
 		AllowedCIDRs:  []string{"10.0.0.0/8"},
 	}
 
-	mockCache.On("Get", mock.Anything, "apikey:"+rawKey).Return("u1", nil)
+	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("u1", nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 
 	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
