@@ -346,7 +346,8 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
         SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
                COALESCE(w.default_model, '') AS default_model,
                COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
-               s.last_credential_changed_at AS credentials_pending_since
+               s.last_credential_changed_at AS credentials_pending_since,
+               w.org_id
         FROM workspaces w
         LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
         WHERE w.id = $1
@@ -365,6 +366,7 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 		&ws.DefaultModel,
 		&ws.AgentNeedsRefresh,
 		&ws.CredentialsPendingSince,
+		&ws.OrgID,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -378,8 +380,8 @@ func (s *Service) GetWorkspace(ctx context.Context, workspaceID string) (*types.
 // CreateWorkspace inserts a new workspace record.
 func (s *Service) CreateWorkspace(ctx context.Context, workspace *types.WorkspaceMetadata) error {
 	query := `
-        INSERT INTO workspaces (id, user_id, name, runtime, storage_size, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO workspaces (id, user_id, name, runtime, storage_size, org_id, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `
 	now := time.Now()
 	if workspace.CreatedAt.IsZero() {
@@ -394,6 +396,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, workspace *types.Workspac
 		workspace.Name,
 		workspace.Runtime,
 		workspace.StorageSize,
+		workspace.OrgID,
 		workspace.CreatedAt,
 		workspace.UpdatedAt,
 	)
@@ -530,7 +533,12 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 // ListWorkspaces lists workspaces for a user with pagination.
 func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	var total int
-	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM workspaces WHERE user_id = $1 AND deleted_at IS NULL", userID).Scan(&total); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM workspaces w
+		LEFT JOIN org_memberships om ON om.org_id = w.org_id AND om.user_id = $1
+		WHERE w.deleted_at IS NULL
+		  AND (w.user_id = $1 OR (w.org_id IS NOT NULL AND om.org_id IS NOT NULL))
+	`, userID).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
 	}
 	pagination := &types.PaginationMetadata{
@@ -550,10 +558,13 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
         SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at,
                COALESCE(w.default_model, '') AS default_model,
                COALESCE(s.pending_refresh, FALSE) AS agent_needs_refresh,
-               s.last_credential_changed_at AS credentials_pending_since
+               s.last_credential_changed_at AS credentials_pending_since,
+               w.org_id
         FROM workspaces w
         LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
-        WHERE w.user_id = $1 AND w.deleted_at IS NULL
+        LEFT JOIN org_memberships om ON om.org_id = w.org_id AND om.user_id = $1
+        WHERE w.deleted_at IS NULL
+          AND (w.user_id = $1 OR (w.org_id IS NOT NULL AND om.org_id IS NOT NULL))
         ORDER BY w.created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)
@@ -571,6 +582,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 			&ws.CreatedAt, &ws.UpdatedAt,
 			&ws.DefaultModel,
 			&ws.AgentNeedsRefresh, &ws.CredentialsPendingSince,
+			&ws.OrgID,
 		); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan workspace row: %w", err)
 		}

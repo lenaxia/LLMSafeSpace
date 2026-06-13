@@ -278,6 +278,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)
+			wsSvc.SetOrgStore(pgOrgStore)
 		}
 	}
 

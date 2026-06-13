@@ -427,6 +427,7 @@ type CreateWorkspaceRequest struct {
 	StorageSize  string            `json:"storageSize"`
 	StorageClass string            `json:"storageClass,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
+	OrgID        *string           `json:"orgId,omitempty"`
 }
 
 // ListOptions carries pagination and filtering parameters.

@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
-// orgStore is the minimal OrgStore interface used by OrgsHandler.
 type orgStore interface {
 	CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string, adminWrappedDEK []byte) (*types.Organization, error)
 	GetOrg(ctx context.Context, orgID string) (*types.Organization, error)
@@ -25,7 +25,15 @@ type orgStore interface {
 	SoftDeleteOrg(ctx context.Context, orgID string) error
 	OrgHasActiveWorkspaces(ctx context.Context, orgID string) (bool, error)
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
+	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
+	ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error)
+	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error
+	RemoveOrgMember(ctx context.Context, orgID, userID string) error
+	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
+	SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error
+	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
+	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
 }
@@ -312,7 +320,226 @@ func (h *OrgsHandler) ListWorkspaces(c *gin.Context) {
 	})
 }
 
-// zeroBytes overwrites a byte slice with zeros to clear sensitive data from memory.
+// ListMembers handles GET /api/v1/orgs/:id/members.
+func (h *OrgsHandler) ListMembers(c *gin.Context) {
+	orgID := c.Param("id")
+	members, err := h.orgStore.ListOrgMembers(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+	if members == nil {
+		members = []*types.OrgMember{}
+	}
+	c.JSON(http.StatusOK, members)
+}
+
+// AddMember handles POST /api/v1/orgs/:id/members.
+func (h *OrgsHandler) AddMember(c *gin.Context) {
+	orgID := c.Param("id")
+	userID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	var req types.AddOrgMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	if req.Role != types.OrgRoleAdmin && req.Role != types.OrgRoleMember {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be 'admin' or 'member'"})
+		return
+	}
+
+	existing, err := h.orgStore.GetOrgMember(ctx, orgID, req.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
+		return
+	}
+	if existing != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user is already a member"})
+		return
+	}
+
+	pendingKeyWrap := false
+	if req.Role == types.OrgRoleAdmin {
+		pendingKeyWrap = true
+	}
+
+	if err := h.orgStore.AddOrgMember(ctx, orgID, req.UserID, req.Role, pendingKeyWrap); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add member"})
+		return
+	}
+
+	if req.Role == types.OrgRoleAdmin {
+		c.JSON(http.StatusCreated, gin.H{
+			"pendingKeyWrap": true,
+			"message":        "Admin must call POST /orgs/" + orgID + "/accept-key to complete key setup",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"pendingKeyWrap": false})
+}
+
+// RemoveMember handles DELETE /api/v1/orgs/:id/members/:userID.
+func (h *OrgsHandler) RemoveMember(c *gin.Context) {
+	orgID := c.Param("id")
+	targetUserID := c.Param("userID")
+	callerUserID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	if targetUserID == callerUserID {
+		c.JSON(http.StatusConflict, gin.H{"error": "org admins cannot remove themselves; transfer admin role first"})
+		return
+	}
+
+	adminCount, err := h.orgStore.CountOrgAdmins(ctx, orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count admins"})
+		return
+	}
+
+	targetMember, err := h.orgStore.GetOrgMember(ctx, orgID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
+		return
+	}
+	if targetMember == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+		return
+	}
+
+	if targetMember.Role == types.OrgRoleAdmin && adminCount <= 1 {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot remove the last org admin"})
+		return
+	}
+
+	if err := h.orgStore.RemoveOrgMember(ctx, orgID, targetUserID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove member"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// AcceptKey handles POST /api/v1/orgs/:id/accept-key.
+func (h *OrgsHandler) AcceptKey(c *gin.Context) {
+	orgID := c.Param("id")
+	userID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	var req types.AcceptOrgKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	member, err := h.orgStore.GetOrgMember(ctx, orgID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
+		return
+	}
+	if member == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not a member of this organization"})
+		return
+	}
+	if member.Role != types.OrgRoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only admins can complete key setup"})
+		return
+	}
+	if !member.PendingKeyWrap {
+		c.JSON(http.StatusConflict, gin.H{"error": "key wrap already complete — no action needed"})
+		return
+	}
+
+	if err := h.orgKeySvc.WrapOrgDEKForNewAdmin(ctx, orgID, userID, []byte(req.Password)); err != nil {
+		if errors.Is(err, secrets.ErrOrgDEKUnavailable) {
+			c.JSON(http.StatusConflict, gin.H{"error": "org DEK not currently available — an org admin must be logged in to complete key setup"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to wrap org key"})
+		return
+	}
+
+	if err := h.orgStore.SetPendingKeyWrap(ctx, orgID, userID, false); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update membership"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Key wrap complete. Org credentials will be available on your next login."})
+}
+
+// ChangeMemberRole handles PUT /api/v1/orgs/:id/members/:userID.
+func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
+	orgID := c.Param("id")
+	targetUserID := c.Param("userID")
+	callerUserID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	var req types.ChangeOrgMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	if req.Role != types.OrgRoleAdmin && req.Role != types.OrgRoleMember {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be 'admin' or 'member'"})
+		return
+	}
+
+	target, err := h.orgStore.GetOrgMember(ctx, orgID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
+		return
+	}
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+		return
+	}
+
+	if target.Role == req.Role {
+		c.JSON(http.StatusConflict, gin.H{"error": "member already has this role"})
+		return
+	}
+
+	if req.Role == types.OrgRoleAdmin {
+		if err := h.orgStore.UpdateOrgMemberRole(ctx, orgID, targetUserID, types.OrgRoleAdmin); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to promote member"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"pendingKeyWrap": true,
+			"message":        "Admin must call POST /orgs/" + orgID + "/accept-key to complete key setup",
+		})
+		return
+	}
+
+	if targetUserID == callerUserID {
+		c.JSON(http.StatusConflict, gin.H{"error": "org admins cannot demote themselves"})
+		return
+	}
+
+	adminCount, err := h.orgStore.CountOrgAdmins(ctx, orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count admins"})
+		return
+	}
+	if adminCount <= 1 {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot demote the last org admin"})
+		return
+	}
+
+	if err := h.orgStore.UpdateOrgMemberRole(ctx, orgID, targetUserID, types.OrgRoleMember); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to demote admin"})
+		return
+	}
+
+	_ = h.orgStore.DeleteOrgKeyMember(ctx, orgID, targetUserID)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
+}
+
 func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0

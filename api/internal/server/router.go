@@ -904,9 +904,14 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgIDGroup.Use(middleware.OrgMemberGuard(h))
 	orgIDGroup.GET("", h.Get)
 	orgIDGroup.GET("/workspaces", h.ListWorkspaces)
+	orgIDGroup.GET("/members", h.ListMembers)
+	orgIDGroup.POST("/accept-key", h.AcceptKey)
 
 	orgAdminGroup := orgGroup.Group("/:id")
 	orgAdminGroup.Use(middleware.OrgAdminGuard(h))
 	orgAdminGroup.PUT("", h.Update)
 	orgAdminGroup.DELETE("", h.Delete)
+	orgAdminGroup.POST("/members", h.AddMember)
+	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
+	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
 }
