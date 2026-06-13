@@ -38,6 +38,9 @@ func TestGenerateContractFixtures(t *testing.T) {
 			LastMessageAt: &now,
 			MessageCount:  12,
 			Status:        "active",
+			LastSeenAt:    &now,
+			HasUnread:     true,
+			ContextUsed:   func() *int64 { v := int64(12500); return &v }(),
 		},
 		"ActiveSessionsResponse": ActiveSessionsResponse{
 			Active:    []string{"sess-1", "sess-2"},
