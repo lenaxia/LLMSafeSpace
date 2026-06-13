@@ -46,3 +46,8 @@ func (s *OrgAwareKeyService) GetDEK(ctx context.Context, sessionID string) ([]by
 func (s *OrgAwareKeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
 	return s.base.CacheDEK(ctx, sessionID, dek, ttl)
 }
+
+// UnlockAllOrgDEKs delegates to the org key service. Non-fatal: returns nil always.
+func (s *OrgAwareKeyService) UnlockAllOrgDEKs(ctx context.Context, userID string, userSalt []byte, password []byte, ttl time.Duration) error {
+	return s.orgKeySvc.UnlockAllOrgDEKs(ctx, userID, userSalt, password, ttl)
+}

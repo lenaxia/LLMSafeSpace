@@ -683,6 +683,10 @@ func (f *fakeKeyService) CacheDEK(ctx context.Context, sessionID string, dek []b
 	return nil
 }
 
+func (f *fakeKeyService) UnlockAllOrgDEKs(_ context.Context, _ string, _ []byte, _ []byte, _ time.Duration) error {
+	return nil
+}
+
 // TestRegister_UnlocksDEKAndReturnsRecoveryKey is the regression test for
 // Bug 5 (Register must UnlockDEK so the new user can immediately CreateSecret)
 // and Bug 10 (Register must surface the recovery key one time so the user

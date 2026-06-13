@@ -914,4 +914,5 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.POST("/members", h.AddMember)
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
+	orgAdminGroup.POST("/rotate-key", h.RotateKey)
 }

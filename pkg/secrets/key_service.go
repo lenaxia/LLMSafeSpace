@@ -399,6 +399,14 @@ func (s *KeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	return record != nil, nil
 }
 
+// UnlockAllOrgDEKs is a no-op on the base KeyService (no org support).
+// Real org DEK unlocking is handled by OrgAwareKeyService. This method
+// exists only so KeyService satisfies auth.KeyServiceInterface when wired
+// directly (e.g. tests without org support).
+func (s *KeyService) UnlockAllOrgDEKs(_ context.Context, _ string, _ []byte, _ []byte, _ time.Duration) error {
+	return nil
+}
+
 // RotationResult is what RotateKeyWithPassword returns. NewKeyVersion
 // is the bumped key_version; NewRecoveryKeyHex is a freshly-issued
 // recovery key (the previous one wraps the now-discarded old DEK and

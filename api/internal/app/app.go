@@ -262,9 +262,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(orgAwareKS)
 		}
+		secretService.SetOrgKeyService(orgKeyService)
 
 		pgOrgStore := database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
+		rotateKeyHandler.SetOrgKeyService(orgKeyService)
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)

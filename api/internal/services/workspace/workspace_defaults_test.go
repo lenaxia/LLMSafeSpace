@@ -492,7 +492,7 @@ func TestCreateWorkspace_DefaultMaxActiveSessions_Applied(t *testing.T) {
 	f.ws.On("Create", mock.Anything).Return(mockCRD, nil)
 	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
 	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
-	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "10Gi", Runtime: "python:3.10"}
 	_, _ = f.svc.CreateWorkspace(context.Background(), "user-1", req)

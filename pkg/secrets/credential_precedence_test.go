@@ -278,7 +278,7 @@ func (m *mockCredentialStore) GetWorkspaceCredentials(_ context.Context, _ strin
 }
 
 func (m *mockCredentialStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }
-func (m *mockCredentialStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+func (m *mockCredentialStore) SeedWorkspaceCredentials(_ context.Context, _, _ string, _ *string) error {
 	return nil
 }
 func (m *mockCredentialStore) BindCredentialToAllUserWorkspaces(_ context.Context, _, _ string) error {

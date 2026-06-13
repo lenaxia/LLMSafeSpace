@@ -689,9 +689,9 @@ func (l *AsyncAuditLogger) UpsertFreeTierCredential(ctx context.Context, ciphert
 	return fmt.Errorf("inner store does not implement CredentialStore")
 }
 
-func (l *AsyncAuditLogger) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error {
+func (l *AsyncAuditLogger) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error {
 	if cs, ok := l.store.(CredentialStore); ok {
-		return cs.SeedWorkspaceCredentials(ctx, workspaceID, userID)
+		return cs.SeedWorkspaceCredentials(ctx, workspaceID, userID, orgID)
 	}
 	return fmt.Errorf("inner store does not implement CredentialStore")
 }

@@ -108,7 +108,7 @@ func TestPgCredentialStore_SeedWorkspaceCredentials(t *testing.T) {
 	}
 
 	// Now seed workspace credentials.
-	err = store.SeedWorkspaceCredentials(ctx, wsID, userID)
+	err = store.SeedWorkspaceCredentials(ctx, wsID, userID, nil)
 	if err != nil {
 		t.Fatalf("SeedWorkspaceCredentials: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestPgCredentialStore_SeedWorkspaceCredentials(t *testing.T) {
 	}
 
 	// Idempotent: calling again should not fail or duplicate.
-	err = store.SeedWorkspaceCredentials(ctx, wsID, userID)
+	err = store.SeedWorkspaceCredentials(ctx, wsID, userID, nil)
 	if err != nil {
 		t.Fatalf("SeedWorkspaceCredentials (idempotent): %v", err)
 	}

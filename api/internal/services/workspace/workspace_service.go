@@ -62,7 +62,7 @@ func (s *Service) SetOrgStore(store OrgMembershipChecker) {
 
 // CredentialProvisioner seeds workspace_credential_bindings from credential_auto_apply.
 type CredentialProvisioner interface {
-	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
+	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error
 }
 
 // SetCredentialProvisioner installs the credential auto-apply seeder.
@@ -249,7 +249,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	// Seeding is best-effort: a failure does NOT roll back workspace creation,
 	// but is logged at Error (not Warn) so it surfaces in alerting dashboards.
 	if s.credProvisioner != nil {
-		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID); err != nil {
+		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID, meta.OrgID); err != nil {
 			s.logger.Error("credential seeding failed for new workspace; it will have no LLM credentials",
 				err, "workspaceID", meta.ID, "userID", userID)
 		}

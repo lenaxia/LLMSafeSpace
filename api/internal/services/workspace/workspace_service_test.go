@@ -646,7 +646,7 @@ type fakeCredentialProvisioner struct {
 	calls int
 }
 
-func (f *fakeCredentialProvisioner) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+func (f *fakeCredentialProvisioner) SeedWorkspaceCredentials(_ context.Context, _, _ string, _ *string) error {
 	f.calls++
 	return f.err
 }

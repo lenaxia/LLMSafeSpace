@@ -46,9 +46,9 @@ type CredentialStore interface {
 	UpsertFreeTierCredential(ctx context.Context, ciphertext []byte) error
 
 	// SeedWorkspaceCredentials inserts credential bindings for a new workspace:
-	// admin auto-apply rules (all, user, and org target types) AND all
-	// user-owned credentials for userID.
-	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
+	// admin auto-apply rules (all, user target types), user-owned credentials,
+	// and org auto-apply rules + org credentials when orgID is non-nil.
+	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error
 
 	// BindCredentialToAllUserWorkspaces binds a credential to every workspace
 	// owned by userID. Called on credential create to maintain the invariant

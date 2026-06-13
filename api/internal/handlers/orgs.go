@@ -540,6 +540,28 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
 }
 
+// RotateKey handles POST /api/v1/orgs/:id/rotate-key.
+func (h *OrgsHandler) RotateKey(c *gin.Context) {
+	orgID := c.Param("id")
+	userID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	var req struct {
+		Password string `json:"password" binding:"required" log:"-"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password required"})
+		return
+	}
+
+	// orgKeySvc.RotateOrgDEK is defined in US-11.9; for now wire the
+	// placeholder so the endpoint compiles and returns 501 until implemented.
+	_ = orgID
+	_ = userID
+	_ = ctx
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "org DEK rotation not yet implemented"})
+}
+
 func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
