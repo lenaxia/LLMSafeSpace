@@ -348,7 +348,7 @@ func validateNoHTML(fl validator.FieldLevel) bool {
 	}
 
 	value := field.String()
-	return !strings.Contains(value, "<") || !strings.Contains(value, ">")
+	return !strings.Contains(value, "<") && !strings.Contains(value, ">")
 }
 
 // validateAlphanumSpace validates that a string contains only alphanumeric characters and spaces

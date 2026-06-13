@@ -131,7 +131,7 @@ func (s *Service) Stop() error {
 
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error) {
 	// Check if API key is cached
-	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
+	cacheKey := fmt.Sprintf("apikey:%s", pkgutil.HashString(apiKey))
 
 	// Try to get from cache first
 	cachedStatus, err := s.cacheService.Get(ctx, cacheKey)
@@ -443,7 +443,7 @@ func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (strin
 func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cacheKey := fmt.Sprintf("apikey:%s", apiKey)
+	cacheKey := fmt.Sprintf("apikey:%s", pkgutil.HashString(apiKey))
 
 	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
 		if cachedUserID == "revoked" {
