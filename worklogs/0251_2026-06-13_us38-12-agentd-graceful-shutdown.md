@@ -52,6 +52,29 @@ Make workspace-agentd shut down cleanly on SIGTERM/SIGINT: cancel background gor
 
 ---
 
+## Follow-Up Deployment Task
+
+**Set `terminationGracePeriodSeconds: 35` on the workspace pod template.**
+
+This is **not** done in this PR because workspace pods are created dynamically
+by the controller operator, not by a static Helm `Deployment` template —
+`grep -rn 'terminationGracePeriodSeconds' charts/` returns no matches. The pod
+spec is built in `controller/internal/workspace/pod_builder.go:193` (`buildPod()`),
+whose `corev1.PodSpec{}` currently omits the field.
+
+**Rationale:** agentd's self-managed shutdown takes up to ~30s (25s `shutdownCtx`
+budget for HTTP draining + 5s `proc.stop()` SIGKILL fallback). Kubernetes sends
+SIGTERM, waits `terminationGracePeriodSeconds`, then force-kills the pod. With the
+K8s default of 30s, the kubelet may SIGKILL before `proc.stop()` finishes, leaving
+the managed opencode child without SIGTERM. `35` gives a buffer.
+
+**Action (tracked, not blocking this PR):** add
+`TerminationGracePeriodSeconds: ptr.To[int64](35)` (or `func() *int64`) to the
+`PodSpec` in `buildPod()`, with a unit test in `pod_builder_test.go`, in a
+follow-up PR scoped to the controller. See design story
+`design/stories/epic-38-architectural-remediation/US-38.12-add-agentd-graceful-shutdown.md`
+§ "Deployment: terminationGracePeriodSeconds".
+
 ## Blockers
 
 None.
