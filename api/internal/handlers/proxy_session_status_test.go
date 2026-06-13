@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
@@ -19,7 +20,7 @@ func newHandlerWithMockK8s(t *testing.T) *ProxyHandler {
 func TestOnSessionIdle_PublishesToUserBroker(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	broker.RecordWorkspaceOwner("ws-1", "user-1")
 	handler.userBroker = broker
 
@@ -34,7 +35,7 @@ func TestOnSessionIdle_PublishesToUserBroker(t *testing.T) {
 	handler.onSessionIdle("ws-1", "s1")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "idle", evt.Status)
 		assert.Equal(t, "s1", evt.SessionID)
@@ -51,7 +52,7 @@ func TestOnSessionActive_PublishesToUserBroker(t *testing.T) {
 	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
 	handler.wsConfigMu.Unlock()
 
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	broker.RecordWorkspaceOwner("ws-1", "user-1")
 	handler.userBroker = broker
 
@@ -62,7 +63,7 @@ func TestOnSessionActive_PublishesToUserBroker(t *testing.T) {
 	handler.onSessionActive("ws-1", "s1")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "busy", evt.Status)
 		assert.Equal(t, "s1", evt.SessionID)
@@ -75,7 +76,7 @@ func TestOnSessionActive_PublishesToUserBroker(t *testing.T) {
 func TestOnSessionIdle_SkipsUserBrokerWhenOwnerUnknown(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
 	handler.activeMu.Lock()
@@ -89,7 +90,7 @@ func TestOnSessionIdle_SkipsUserBrokerWhenOwnerUnknown(t *testing.T) {
 	handler.onSessionIdle("ws-unknown", "s1")
 
 	select {
-	case <-sub.ch:
+	case <-sub.Ch:
 		t.Fatal("should not publish to user broker when owner unknown")
 	default:
 	}

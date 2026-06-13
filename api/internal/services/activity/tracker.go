@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package activity
 
 import (
 	"context"
@@ -90,8 +90,6 @@ func (t *ActivityTracker) Flush() {
 	for _, item := range toFlush {
 		if err := t.flushOne(context.Background(), item.id, item.time); err != nil {
 			if apierrors.IsNotFound(err) {
-				// Workspace has been deleted — remove its entry from the tracker
-				// so it does not accumulate unboundedly across workspace lifecycles.
 				t.Delete(item.id)
 			} else {
 				t.logger.Error("Failed to flush activity", err, "workspaceID", item.id)
@@ -106,9 +104,6 @@ func (t *ActivityTracker) PendingCount() int {
 	return len(t.activity)
 }
 
-// Delete removes a workspace from both the activity and lastFlush maps.
-// Called when a workspace is permanently deleted (Terminated phase) so the
-// tracker does not accumulate entries for gone workspaces indefinitely.
 func (t *ActivityTracker) Delete(workspaceID string) {
 	t.mu.Lock()
 	delete(t.activity, workspaceID)

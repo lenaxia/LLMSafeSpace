@@ -12,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap/zaptest"
-
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/stretchr/testify/assert"
@@ -39,12 +38,12 @@ func newMockOpencode(t *testing.T, statuses map[string]string) (*opencode.Client
 		}
 		http.NotFound(w, r)
 	}))
-	client := opencode.NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
+	client := opencode.NewClient(srv.URL, "test-pw", nil)
 	return client, srv
 }
 
 func TestWaitUntilIdle_AlreadyIdle_ReturnsImmediately(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "idle",
 		"sess-2": "idle",
@@ -56,7 +55,7 @@ func TestWaitUntilIdle_AlreadyIdle_ReturnsImmediately(t *testing.T) {
 }
 
 func TestWaitUntilIdle_EmptySessions_ReturnsImmediately(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{})
 	defer srv.Close()
 
@@ -65,7 +64,7 @@ func TestWaitUntilIdle_EmptySessions_ReturnsImmediately(t *testing.T) {
 }
 
 func TestWaitUntilIdle_BusyThenIdle_ReturnsAfterEvent(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "busy",
 	})
@@ -75,7 +74,7 @@ func TestWaitUntilIdle_BusyThenIdle_ReturnsAfterEvent(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		// Simulate SSE dispatch
-		tracker.dispatchProperties("ws-1", "session.status", json.RawMessage(
+		tracker.DispatchProperties("ws-1", "session.status", json.RawMessage(
 			`{"sessionID":"sess-1","status":{"type":"idle"}}`,
 		))
 	}()
@@ -85,7 +84,7 @@ func TestWaitUntilIdle_BusyThenIdle_ReturnsAfterEvent(t *testing.T) {
 }
 
 func TestWaitUntilIdle_NeverIdle_TimeoutReturnsDrainError(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "busy",
 		"sess-2": "busy",
@@ -103,7 +102,7 @@ func TestWaitUntilIdle_NeverIdle_TimeoutReturnsDrainError(t *testing.T) {
 }
 
 func TestWaitUntilIdle_ContextCancelled_ReturnsErr(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "busy",
 	})
@@ -121,7 +120,7 @@ func TestWaitUntilIdle_ContextCancelled_ReturnsErr(t *testing.T) {
 }
 
 func TestWaitUntilIdle_NewBusyDuringWait_HoldsTillIdle(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	// Start with one busy
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "busy",
@@ -131,15 +130,15 @@ func TestWaitUntilIdle_NewBusyDuringWait_HoldsTillIdle(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		// sess-1 goes idle but sess-2 becomes busy
-		tracker.dispatchProperties("ws-1", "session.status", json.RawMessage(
+		tracker.DispatchProperties("ws-1", "session.status", json.RawMessage(
 			`{"sessionID":"sess-1","status":{"type":"idle"}}`,
 		))
-		tracker.dispatchProperties("ws-1", "session.status", json.RawMessage(
+		tracker.DispatchProperties("ws-1", "session.status", json.RawMessage(
 			`{"sessionID":"sess-2","status":{"type":"busy"}}`,
 		))
 		time.Sleep(30 * time.Millisecond)
 		// Now sess-2 goes idle too
-		tracker.dispatchProperties("ws-1", "session.status", json.RawMessage(
+		tracker.DispatchProperties("ws-1", "session.status", json.RawMessage(
 			`{"sessionID":"sess-2","status":{"type":"idle"}}`,
 		))
 	}()
@@ -149,11 +148,11 @@ func TestWaitUntilIdle_NewBusyDuringWait_HoldsTillIdle(t *testing.T) {
 }
 
 func TestWaitUntilIdle_SnapshotFails_ReturnsErr(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	// Client pointing at closed server
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	srv.Close()
-	client := opencode.NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
+	client := opencode.NewClient(srv.URL, "test-pw", nil)
 
 	err := WaitUntilIdle(context.Background(), "ws-1", tracker, client, 5*time.Second)
 	require.Error(t, err)
@@ -161,7 +160,7 @@ func TestWaitUntilIdle_SnapshotFails_ReturnsErr(t *testing.T) {
 }
 
 func TestWaitUntilIdle_RetryStatusTreatedAsBusy(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 	client, srv := newMockOpencode(t, map[string]string{
 		"sess-1": "retry",
 	})

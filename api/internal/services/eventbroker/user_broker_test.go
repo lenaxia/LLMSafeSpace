@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package eventbroker
 
 import (
 	"sync"
@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 func TestNewUserEventBroker(t *testing.T) {
@@ -24,11 +26,11 @@ func TestUserBroker_SubscribeAndPublish(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeUser("user-1", s)
 
-	evt := WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active", WorkspaceID: "ws-1"}
+	evt := apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active", WorkspaceID: "ws-1"}
 	b.PublishToUser("user-1", evt)
 
 	select {
-	case got := <-s.ch:
+	case got := <-s.Ch:
 		assert.Equal(t, "workspace.phase", got.Type)
 		assert.Equal(t, "Active", got.Phase)
 		assert.Equal(t, "ws-1", got.WorkspaceID)
@@ -46,13 +48,13 @@ func TestUserBroker_EventIDMonotonicallyIncreasing(t *testing.T) {
 	defer b.UnsubscribeUser("user-1", s)
 
 	for i := 0; i < 5; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 	}
 
 	var lastID uint64
 	for i := 0; i < 5; i++ {
 		select {
-		case got := <-s.ch:
+		case got := <-s.Ch:
 			assert.Greater(t, got.EventID, lastID)
 			lastID = got.EventID
 		case <-time.After(time.Second):
@@ -72,17 +74,17 @@ func TestUserBroker_PerUserIsolation(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeUser("user-2", s2)
 
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
 	select {
-	case <-s1.ch:
+	case <-s1.Ch:
 		// expected
 	case <-time.After(time.Second):
 		t.Fatal("user-1 did not receive event")
 	}
 
 	select {
-	case <-s2.ch:
+	case <-s2.Ch:
 		t.Fatal("user-2 should NOT receive user-1's event")
 	case <-time.After(50 * time.Millisecond):
 		// expected
@@ -100,11 +102,11 @@ func TestUserBroker_MultipleSubscribersForSameUser(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeUser("user-1", s2)
 
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
-	for _, s := range []*subscriber{s1, s2} {
+	for _, s := range []*Subscriber{s1, s2} {
 		select {
-		case got := <-s.ch:
+		case got := <-s.Ch:
 			assert.Equal(t, "Active", got.Phase)
 		case <-time.After(time.Second):
 			t.Fatal("subscriber did not receive event")
@@ -115,8 +117,8 @@ func TestUserBroker_MultipleSubscribersForSameUser(t *testing.T) {
 func TestUserBroker_ErrTooManySubscribers(t *testing.T) {
 	b := NewUserEventBroker()
 
-	subs := make([]*subscriber, 0, maxSubscribersPerUser)
-	for i := 0; i < maxSubscribersPerUser; i++ {
+	subs := make([]*Subscriber, 0, MaxSubscribersPerUser)
+	for i := 0; i < MaxSubscribersPerUser; i++ {
 		s, err := b.SubscribeUser("user-1")
 		require.NoError(t, err)
 		subs = append(subs, s)
@@ -142,10 +144,10 @@ func TestUserBroker_UnsubscribeClosesChannel(t *testing.T) {
 	assert.True(t, s.closed.Load())
 
 	// Publishing after unsubscribe must not deliver to this subscriber
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
 	select {
-	case <-s.ch:
+	case <-s.Ch:
 		t.Fatal("should not receive events after unsubscribe")
 	case <-time.After(50 * time.Millisecond):
 		// expected
@@ -157,7 +159,7 @@ func TestUserBroker_ReplayBasic(t *testing.T) {
 
 	// Publish 5 events with no subscriber (they go to replay buffer only)
 	for i := 0; i < 5; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{
 			Type:  "workspace.phase",
 			Phase: "Active",
 		})
@@ -174,7 +176,7 @@ func TestUserBroker_ReplaySince(t *testing.T) {
 	b := NewUserEventBroker()
 
 	for i := 0; i < 5; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase"})
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 	}
 
 	entries, gapDetected := b.Replay("user-1", 3)
@@ -189,7 +191,7 @@ func TestUserBroker_ReplayGapDetection(t *testing.T) {
 
 	// Fill beyond buffer size to cause wrap
 	for i := 0; i < replayBufferSize+50; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase"})
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 	}
 
 	// Ask for events since ID 1 — those are long gone
@@ -203,7 +205,7 @@ func TestUserBroker_ReplayNoGapWhenLastIDIsZero(t *testing.T) {
 
 	// Fill beyond buffer
 	for i := 0; i < replayBufferSize+10; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase"})
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 	}
 
 	// lastID=0 means "give me all buffered" — not a gap
@@ -229,22 +231,22 @@ func TestUserBroker_OverflowSendsResync(t *testing.T) {
 
 	// Fill the subscriber channel completely
 	for i := 0; i < userChannelBuffer; i++ {
-		b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+		b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 	}
 
 	// This publish should trigger overflow (channel full)
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Suspended"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Suspended"})
 
 	// Drain the channel — the first events are the buffered ones
 	for i := 0; i < userChannelBuffer; i++ {
-		<-s.ch
+		<-s.Ch
 	}
 
 	// Now send another event — it should be preceded by resync
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
 	select {
-	case got := <-s.ch:
+	case got := <-s.Ch:
 		assert.Equal(t, "resync", got.Type)
 	case <-time.After(time.Second):
 		t.Fatal("expected resync event")
@@ -252,18 +254,18 @@ func TestUserBroker_OverflowSendsResync(t *testing.T) {
 }
 
 func TestUserBroker_SendToClosedChannelDoesNotPanic(t *testing.T) {
-	// FP1: verify s.send() safely handles a closed subscriber
-	s := &subscriber{ch: make(chan WorkspaceSSEEvent, 1)}
-	s.markClosed()
+	// FP1: verify s.Send() safely handles a closed subscriber
+	s := &Subscriber{Ch: make(chan apitypes.WorkspaceSSEEvent, 1)}
+	s.MarkClosed()
 
 	// Must not panic and must not send
 	assert.NotPanics(t, func() {
-		s.send(WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+		s.Send(apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 	})
 
 	// Channel should be empty since send was a no-op
 	select {
-	case <-s.ch:
+	case <-s.Ch:
 		t.Fatal("should not have sent to closed subscriber")
 	default:
 		// expected
@@ -279,7 +281,7 @@ func TestUserBroker_ConcurrentPublishMonotonicOrder(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase"})
+			b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 		}()
 	}
 	wg.Wait()
@@ -301,11 +303,11 @@ func TestUserBroker_WorkspaceSubscribeAndPublish(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeWorkspace("ws-1", s)
 
-	evt := WorkspaceSSEEvent{Type: "session.status", SessionID: "s1", Status: "busy", WorkspaceID: "ws-1"}
+	evt := apitypes.WorkspaceSSEEvent{Type: "session.status", SessionID: "s1", Status: "busy", WorkspaceID: "ws-1"}
 	b.PublishToWorkspace("ws-1", evt)
 
 	select {
-	case got := <-s.ch:
+	case got := <-s.Ch:
 		assert.Equal(t, "session.status", got.Type)
 		assert.Equal(t, "s1", got.SessionID)
 	case <-time.After(time.Second):
@@ -324,16 +326,16 @@ func TestUserBroker_WorkspaceIsolation(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeWorkspace("ws-2", s2)
 
-	b.PublishToWorkspace("ws-1", WorkspaceSSEEvent{Type: "session.status"})
+	b.PublishToWorkspace("ws-1", apitypes.WorkspaceSSEEvent{Type: "session.status"})
 
 	select {
-	case <-s1.ch:
+	case <-s1.Ch:
 	case <-time.After(time.Second):
 		t.Fatal("ws-1 subscriber timed out")
 	}
 
 	select {
-	case <-s2.ch:
+	case <-s2.Ch:
 		t.Fatal("ws-2 should not receive ws-1 events")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -362,7 +364,7 @@ func TestUserBroker_CleanupWorkspace(t *testing.T) {
 func TestUserBroker_CleanupUser(t *testing.T) {
 	b := NewUserEventBroker()
 
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 
 	entries, _ := b.Replay("user-1", 0)
 	assert.Len(t, entries, 1)
@@ -385,16 +387,16 @@ func TestUserBroker_ShardedIsolation(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeUser("bob", s2)
 
-	b.PublishToUser("alice", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("alice", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
 	select {
-	case <-s1.ch:
+	case <-s1.Ch:
 	case <-time.After(time.Second):
 		t.Fatal("alice should receive")
 	}
 
 	select {
-	case <-s2.ch:
+	case <-s2.Ch:
 		t.Fatal("bob should not receive alice's event")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -413,7 +415,7 @@ func TestUserBroker_ConcurrentSubscribePublishRace(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			b.PublishToUser("user-race", WorkspaceSSEEvent{Type: "workspace.phase"})
+			b.PublishToUser("user-race", apitypes.WorkspaceSSEEvent{Type: "workspace.phase"})
 		}()
 	}
 
@@ -428,7 +430,7 @@ func TestUserBroker_ConcurrentSubscribePublishRace(t *testing.T) {
 			// Drain a few events
 			for j := 0; j < 3; j++ {
 				select {
-				case <-s.ch:
+				case <-s.Ch:
 				case <-time.After(5 * time.Millisecond):
 				}
 			}
@@ -446,10 +448,10 @@ func TestUserBroker_PublishToUserSetsEventIDOnDeliveredEvent(t *testing.T) {
 	require.NoError(t, err)
 	defer b.UnsubscribeUser("user-1", s)
 
-	b.PublishToUser("user-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
+	b.PublishToUser("user-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Active"})
 
 	select {
-	case got := <-s.ch:
+	case got := <-s.Ch:
 		assert.NotZero(t, got.EventID, "event delivered to subscriber must have event_id set")
 	case <-time.After(time.Second):
 		t.Fatal("timed out")
@@ -460,8 +462,8 @@ func TestUserBroker_UnsubscribeReleasesSlot(t *testing.T) {
 	b := NewUserEventBroker()
 
 	// Fill to max
-	subs := make([]*subscriber, maxSubscribersPerUser)
-	for i := 0; i < maxSubscribersPerUser; i++ {
+	subs := make([]*Subscriber, MaxSubscribersPerUser)
+	for i := 0; i < MaxSubscribersPerUser; i++ {
 		s, err := b.SubscribeUser("user-1")
 		require.NoError(t, err)
 		subs[i] = s
@@ -480,7 +482,7 @@ func TestUserBroker_UnsubscribeReleasesSlot(t *testing.T) {
 	b.UnsubscribeUser("user-1", s)
 
 	// Clean up rest
-	for i := 1; i < maxSubscribersPerUser; i++ {
+	for i := 1; i < MaxSubscribersPerUser; i++ {
 		b.UnsubscribeUser("user-1", subs[i])
 	}
 }

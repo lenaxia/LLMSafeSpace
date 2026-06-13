@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package workspace
 
 import (
 	"sync"
@@ -38,7 +38,7 @@ func TestWorkspaceWatcher_VersionSync_FiredOnCreatingToActive(t *testing.T) {
 	var calls []syncCall
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		mu.Lock()
@@ -89,7 +89,7 @@ func TestWorkspaceWatcher_VersionSync_FiredOnResumingToActive(t *testing.T) {
 
 	var called atomic.Bool
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		called.Store(true)
@@ -123,7 +123,7 @@ func TestWorkspaceWatcher_VersionSync_NotFiredWhenImageTagEmpty(t *testing.T) {
 
 	var called atomic.Bool
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		called.Store(true)
@@ -164,7 +164,7 @@ func TestWorkspaceWatcher_VersionSync_NotFiredOnSuspend(t *testing.T) {
 
 	var callCount atomic.Int32
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		callCount.Add(1)
@@ -241,7 +241,7 @@ func TestWorkspaceWatcher_VersionSync_FiredDuringSeedForActiveWorkspaces(t *test
 	var calls []syncCall
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		mu.Lock()
@@ -267,7 +267,7 @@ func TestWorkspaceWatcher_VersionSync_NilCallbackIsSafe(t *testing.T) {
 	k8s, _, fakeWatch := setupWatcherMocks(t)
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	// Intentionally do NOT call SetVersionSyncCallback
 
@@ -303,7 +303,7 @@ func TestWorkspaceWatcher_VersionSync_FiredOnActiveToActiveWithNewImageTag(t *te
 	var calls []syncCall
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		mu.Lock()
@@ -350,7 +350,7 @@ func TestWorkspaceWatcher_VersionSync_KnownImageTagsClearedOnDelete(t *testing.T
 	var calls []string
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	w.SetVersionSyncCallback(func(id, tag, av string) {
 		mu.Lock()

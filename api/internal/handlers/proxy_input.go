@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/pkg/agent"
 )
 
@@ -113,7 +114,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 			} else {
 				req.RootSessionID = req.SessionID
 			}
-			h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.question", Data: req})
+			h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.question", Data: req})
 		}
 	}
 
@@ -126,7 +127,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 				} else {
 					req.RootSessionID = req.SessionID
 				}
-				h.broker.Publish(workspaceID, WorkspaceSSEEvent{Type: "agent.permission", Data: req})
+				h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.permission", Data: req})
 			}
 		}
 	}

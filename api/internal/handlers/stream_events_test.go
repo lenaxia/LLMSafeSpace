@@ -22,6 +22,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
@@ -106,7 +109,7 @@ func TestStreamEvents_WorkspaceNotFound(t *testing.T) {
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = NewWorkspaceEventBroker()
+	handler.broker = eventbroker.NewWorkspaceEventBroker()
 
 	router := newStreamEventsRouter(handler)
 
@@ -121,7 +124,7 @@ func TestStreamEvents_SetsSSEHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	env := newTestEnv(t)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
 
@@ -178,11 +181,11 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
-	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
+	handler.sseTracker = sse.NewTracker(httpClient, &testLogger{}, handler.onSessionIdle)
 	handler.sseTracker.SetPasswordGetter(handler.getPassword)
 	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
 	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
-	handler.broker = NewWorkspaceEventBroker()
+	handler.broker = eventbroker.NewWorkspaceEventBroker()
 
 	cancel, body, _, _ := doStreamingRequest(newStreamEventsRouter(handler), "/api/v1/workspaces/ws-1/events")
 	defer cancel()
@@ -199,7 +202,7 @@ func TestStreamEvents_PhaseEventDeliveredToClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	env := newTestEnv(t)
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	env.handler.broker = broker
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
@@ -212,7 +215,7 @@ func TestStreamEvents_PhaseEventDeliveredToClient(t *testing.T) {
 		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
-	broker.Publish("ws-1", WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Suspended"})
+	broker.Publish("ws-1", apitypes.WorkspaceSSEEvent{Type: "workspace.phase", Phase: "Suspended"})
 
 	evt := readNextSSEDataLine(t, bufio.NewReader(body))
 	assert.Equal(t, "workspace.phase", evt["type"])
@@ -223,7 +226,7 @@ func TestStreamEvents_SessionStatusEventDeliveredToClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	env := newTestEnv(t)
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	env.handler.broker = broker
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
@@ -236,7 +239,7 @@ func TestStreamEvents_SessionStatusEventDeliveredToClient(t *testing.T) {
 		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
-	broker.Publish("ws-1", WorkspaceSSEEvent{
+	broker.Publish("ws-1", apitypes.WorkspaceSSEEvent{
 		Type:      "session.status",
 		SessionID: "s1",
 		Status:    "idle",
@@ -252,7 +255,7 @@ func TestStreamEvents_ClientDisconnectUnsubscribes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	env := newTestEnv(t)
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	env.handler.broker = broker
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
@@ -281,10 +284,10 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	userBroker := NewUserEventBroker()
+	userBroker := eventbroker.NewUserEventBroker()
 	handler.userBroker = userBroker
 
 	s, subErr := userBroker.SubscribeUser("user-1")
@@ -305,7 +308,7 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 		handler.onPhaseChange(ws)
 
 		select {
-		case evt := <-s.ch:
+		case evt := <-s.Ch:
 			assert.Equal(t, "workspace.phase", evt.Type, "phase=%s", phase)
 			assert.Equal(t, phase, evt.Phase, "phase=%s", phase)
 			assert.Equal(t, "ws-1", evt.WorkspaceID, "phase=%s", phase)
@@ -325,7 +328,7 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub := broker.Subscribe("ws-1")
@@ -334,7 +337,7 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	handler.onSessionIdle("ws-1", "s1")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "s1", evt.SessionID)
 		assert.Equal(t, "idle", evt.Status)
@@ -355,7 +358,7 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub := broker.Subscribe("ws-1")
@@ -365,7 +368,7 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	handler.onRawEvent("ws-1", "message.part.updated", rawData)
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		assert.Equal(t, "message.part.updated", evt.EventType)
 		require.NotNil(t, evt.Data)
@@ -387,7 +390,7 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub := broker.Subscribe("ws-1")
@@ -407,7 +410,7 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 		handler.onRawEvent("ws-1", e.eventType, e.data)
 
 		select {
-		case evt := <-sub.ch:
+		case evt := <-sub.Ch:
 			assert.Equal(t, "opencode.event", evt.Type)
 			assert.Equal(t, e.eventType, evt.EventType)
 		case <-time.After(time.Second):
@@ -439,7 +442,7 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub := broker.Subscribe("ws-1")
@@ -448,7 +451,7 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	handler.onRawEvent("ws-1", "session.status", "not-json-at-all")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		assert.Equal(t, "session.status", evt.EventType)
 		assert.Nil(t, evt.Data)
@@ -467,7 +470,7 @@ func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub := broker.Subscribe("ws-1")
@@ -477,7 +480,7 @@ func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	handler.onRawEvent("ws-1", "message.part.updated", rawData)
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		require.NotNil(t, evt.Data)
 
@@ -506,7 +509,7 @@ func TestStreamEvents_OpenCodeEventDeliveredToSSEClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	env := newTestEnv(t)
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	env.handler.broker = broker
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
@@ -519,7 +522,7 @@ func TestStreamEvents_OpenCodeEventDeliveredToSSEClient(t *testing.T) {
 		return broker.SubscriberCount("ws-1") > 0
 	}, time.Second, 5*time.Millisecond)
 
-	broker.Publish("ws-1", WorkspaceSSEEvent{
+	broker.Publish("ws-1", apitypes.WorkspaceSSEEvent{
 		Type:      "opencode.event",
 		EventType: "message.part.updated",
 		Data: map[string]interface{}{
@@ -547,7 +550,7 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	sub1 := broker.Subscribe("ws-1")
@@ -558,14 +561,14 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	handler.onRawEvent("ws-1", "message.part.updated", `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"s1"}}}`)
 
 	select {
-	case evt := <-sub1.ch:
+	case evt := <-sub1.Ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 	case <-time.After(time.Second):
 		t.Fatal("ws-1 subscriber should receive opencode.event")
 	}
 
 	select {
-	case <-sub2.ch:
+	case <-sub2.Ch:
 		t.Fatal("ws-2 subscriber should NOT receive ws-1's event")
 	case <-time.After(200 * time.Millisecond):
 	}
@@ -583,7 +586,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	broker := NewWorkspaceEventBroker()
+	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
 	handler.wsConfigMu.Lock()
@@ -596,7 +599,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	handler.onSessionActive("ws-1", "s2")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "s2", evt.SessionID)
 		assert.Equal(t, "busy", evt.Status)

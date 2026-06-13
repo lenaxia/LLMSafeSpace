@@ -19,26 +19,19 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
-
-// brokerSubCount is a test helper that returns the number of active subscribers
-// for a user by reading the broker's internal shard directly.
-// Lives here (same package) to avoid exposing count via production API.
-func brokerSubCount(b *UserEventBroker, userID string) int {
-	sh := b.userShard(userID)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	return len(sh.userSubs[userID])
-}
 
 func init() {
 	gin.SetMode(gin.TestMode)
 }
 
 func TestStreamUserEvents_Unauthenticated_Returns401(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -71,12 +64,12 @@ func TestStreamUserEvents_NilBroker_Returns503(t *testing.T) {
 }
 
 func TestStreamUserEvents_TooManyConnections_Returns429(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	// Fill all subscriber slots
-	subs := make([]*subscriber, maxSubscribersPerUser)
-	for i := 0; i < maxSubscribersPerUser; i++ {
+	subs := make([]*eventbroker.Subscriber, eventbroker.MaxSubscribersPerUser)
+	for i := 0; i < eventbroker.MaxSubscribersPerUser; i++ {
 		s, err := broker.SubscribeUser("user-full")
 		require.NoError(t, err)
 		subs[i] = s
@@ -101,7 +94,7 @@ func TestStreamUserEvents_TooManyConnections_Returns429(t *testing.T) {
 }
 
 func TestStreamUserEvents_SSEHeaders(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -129,7 +122,7 @@ func TestStreamUserEvents_SSEHeaders(t *testing.T) {
 }
 
 func TestStreamUserEvents_LiveEventDelivery(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -151,7 +144,7 @@ func TestStreamUserEvents_LiveEventDelivery(t *testing.T) {
 
 	// Publish an event after connection is established
 	time.Sleep(100 * time.Millisecond)
-	broker.PublishToUser("user-live", WorkspaceSSEEvent{
+	broker.PublishToUser("user-live", apitypes.WorkspaceSSEEvent{
 		Type:        "workspace.phase",
 		WorkspaceID: "ws-test",
 		Phase:       "Active",
@@ -164,7 +157,7 @@ func TestStreamUserEvents_LiveEventDelivery(t *testing.T) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
-			var evt WorkspaceSSEEvent
+			var evt apitypes.WorkspaceSSEEvent
 			if err := json.Unmarshal([]byte(data), &evt); err == nil {
 				if evt.Type == "workspace.phase" && evt.Phase == "Active" && evt.WorkspaceID == "ws-test" {
 					foundEvent = true
@@ -178,7 +171,7 @@ func TestStreamUserEvents_LiveEventDelivery(t *testing.T) {
 }
 
 func TestStreamUserEvents_LiveEvent_HasIDLine(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -199,7 +192,7 @@ func TestStreamUserEvents_LiveEvent_HasIDLine(t *testing.T) {
 	defer resp.Body.Close()
 
 	time.Sleep(100 * time.Millisecond)
-	broker.PublishToUser("user-id-line", WorkspaceSSEEvent{
+	broker.PublishToUser("user-id-line", apitypes.WorkspaceSSEEvent{
 		Type:        "workspace.phase",
 		WorkspaceID: "ws-x",
 		Phase:       "Active",
@@ -218,12 +211,12 @@ func TestStreamUserEvents_LiveEvent_HasIDLine(t *testing.T) {
 }
 
 func TestStreamUserEvents_Replay(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	// Pre-populate replay buffer
 	for i := 0; i < 3; i++ {
-		broker.PublishToUser("user-replay", WorkspaceSSEEvent{
+		broker.PublishToUser("user-replay", apitypes.WorkspaceSSEEvent{
 			Type:        "workspace.phase",
 			WorkspaceID: "ws-r",
 			Phase:       "Active",
@@ -269,7 +262,7 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 	// in 300ms (ticker at 50ms). Assertion is ≥1 (not ≥2) to avoid flakiness
 	// under scheduler jitter when tests run with -race and -count>1.
 
-	s := &subscriber{ch: make(chan WorkspaceSSEEvent, 10)}
+	s := &eventbroker.Subscriber{Ch: make(chan apitypes.WorkspaceSSEEvent, 10)}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
@@ -282,7 +275,7 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.send(WorkspaceSSEEvent{Type: heartbeatSentinelType})
+				s.Send(apitypes.WorkspaceSSEEvent{Type: eventbroker.HeartbeatSentinelType})
 			}
 		}
 	}()
@@ -294,8 +287,8 @@ func TestStreamUserEvents_HeartbeatEmitted(t *testing.T) {
 	var heartbeats int
 	for {
 		select {
-		case evt := <-s.ch:
-			if evt.Type == heartbeatSentinelType {
+		case evt := <-s.Ch:
+			if evt.Type == eventbroker.HeartbeatSentinelType {
 				heartbeats++
 			}
 		default:
@@ -307,7 +300,7 @@ done:
 }
 
 func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 
 	// Set up a mock k8s client that returns workspaces for the user
 	k8sMock := k8smocks.NewMockKubernetesClient()
@@ -325,11 +318,9 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 	}, nil)
 
 	// Set up watcher with known phases
-	watcher, _ := NewWorkspaceWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
-	watcher.knownPhasesMu.Lock()
-	watcher.knownPhases["ws-a"] = "Active"
-	watcher.knownPhases["ws-b"] = "Suspended"
-	watcher.knownPhasesMu.Unlock()
+	watcher, _ := workspace.NewWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
+	watcher.SetKnownPhase("ws-a", "Active")
+	watcher.SetKnownPhase("ws-b", "Suspended")
 
 	h := &ProxyHandler{
 		k8sClient:  k8sMock,
@@ -358,7 +349,7 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 
 	// Collect events — expect snapshot events for ws-a and ws-b
 	scanner := bufio.NewScanner(resp.Body)
-	var snapshotEvents []WorkspaceSSEEvent
+	var snapshotEvents []apitypes.WorkspaceSSEEvent
 	deadline := time.After(2 * time.Second)
 
 	for {
@@ -372,7 +363,7 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 		}
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
-			var evt WorkspaceSSEEvent
+			var evt apitypes.WorkspaceSSEEvent
 			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
 				if evt.Type == "workspace.phase" {
 					snapshotEvents = append(snapshotEvents, evt)
@@ -401,7 +392,7 @@ done:
 }
 
 func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
@@ -415,11 +406,8 @@ func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
 		},
 	}, nil)
 
-	watcher, _ := NewWorkspaceWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
-	watcher.knownPhasesMu.Lock()
-	watcher.knownPhases["ws-known"] = "Active"
-	// ws-deleted intentionally NOT in knownPhases (F4: deleted between list and map read)
-	watcher.knownPhasesMu.Unlock()
+	watcher, _ := workspace.NewWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
+	watcher.SetKnownPhase("ws-known", "Active")
 
 	h := &ProxyHandler{
 		k8sClient:  k8sMock,
@@ -447,7 +435,7 @@ func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
-	var events []WorkspaceSSEEvent
+	var events []apitypes.WorkspaceSSEEvent
 	deadline := time.After(1 * time.Second)
 
 	for {
@@ -461,7 +449,7 @@ func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
 		}
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
-			var evt WorkspaceSSEEvent
+			var evt apitypes.WorkspaceSSEEvent
 			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
 				if evt.Type == "workspace.phase" {
 					events = append(events, evt)
@@ -487,7 +475,7 @@ done2:
 // propagates to streamCtx. We then poll the broker's subscriber count to confirm
 // it drops back to zero within a reasonable window.
 func TestStreamUserEvents_GoroutineExitsOnClientDisconnect(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -508,7 +496,7 @@ func TestStreamUserEvents_GoroutineExitsOnClientDisconnect(t *testing.T) {
 
 	// Wait for the handler to be fully in the live loop (subscription registered).
 	require.Eventually(t, func() bool {
-		return brokerSubCount(broker, "user-gc") == 1
+		return broker.UserSubscriberCount("user-gc") == 1
 	}, time.Second, 10*time.Millisecond, "subscription should be registered")
 
 	// Drop the connection — cancels c.Request.Context() server-side.
@@ -517,7 +505,7 @@ func TestStreamUserEvents_GoroutineExitsOnClientDisconnect(t *testing.T) {
 
 	// defer UnsubscribeUser must fire and remove the subscription.
 	require.Eventually(t, func() bool {
-		return brokerSubCount(broker, "user-gc") == 0
+		return broker.UserSubscriberCount("user-gc") == 0
 	}, 2*time.Second, 20*time.Millisecond, "subscription should be unregistered after disconnect")
 }
 
@@ -530,7 +518,7 @@ func TestStreamUserEvents_GoroutineExitsOnClientDisconnect(t *testing.T) {
 // connection returns an error, triggering the streamCancel() path in the live
 // loop. This is the same code path that fires on a real write-deadline eviction.
 func TestStreamUserEvents_WriteErrorCancelsStream(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -551,11 +539,11 @@ func TestStreamUserEvents_WriteErrorCancelsStream(t *testing.T) {
 
 	// Wait for subscription to be established.
 	require.Eventually(t, func() bool {
-		return brokerSubCount(broker, "user-wd") == 1
+		return broker.UserSubscriberCount("user-wd") == 1
 	}, time.Second, 10*time.Millisecond, "subscription should be registered")
 
 	// Publish an event so the live loop has a pending write to perform.
-	broker.PublishToUser("user-wd", WorkspaceSSEEvent{
+	broker.PublishToUser("user-wd", apitypes.WorkspaceSSEEvent{
 		Type:        "workspace.phase",
 		WorkspaceID: "ws-wd",
 		Phase:       "Active",
@@ -568,7 +556,7 @@ func TestStreamUserEvents_WriteErrorCancelsStream(t *testing.T) {
 
 	// Subscription must be unregistered — no zombie connection left.
 	require.Eventually(t, func() bool {
-		return brokerSubCount(broker, "user-wd") == 0
+		return broker.UserSubscriberCount("user-wd") == 0
 	}, 2*time.Second, 20*time.Millisecond, "subscription should be unregistered after write failure")
 }
 
@@ -620,7 +608,7 @@ func TestSSEConnAllowed_ResetsAfterWindow(t *testing.T) {
 // Test 16 (US-37.1): user-scoped SSE delivers session.status event.
 // Full path: PublishToUser → StreamUserEvents → client receives session_id, workspace_id, status.
 func TestStreamUserEvents_DeliversSessionStatusEvent(t *testing.T) {
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	h := &ProxyHandler{logger: &testLogger{}, namespace: "default", userBroker: broker}
 
 	router := gin.New()
@@ -641,7 +629,7 @@ func TestStreamUserEvents_DeliversSessionStatusEvent(t *testing.T) {
 	defer resp.Body.Close()
 
 	time.Sleep(50 * time.Millisecond)
-	broker.PublishToUser("user-sess-status", WorkspaceSSEEvent{
+	broker.PublishToUser("user-sess-status", apitypes.WorkspaceSSEEvent{
 		Type:        "session.status",
 		WorkspaceID: "ws-abc",
 		SessionID:   "sess-xyz",
@@ -655,7 +643,7 @@ func TestStreamUserEvents_DeliversSessionStatusEvent(t *testing.T) {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		var evt WorkspaceSSEEvent
+		var evt apitypes.WorkspaceSSEEvent
 		if err2 := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err2 != nil {
 			continue
 		}

@@ -1,0 +1,159 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+)
+
+func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
+	h.sessionIndex = si
+}
+
+func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil || workspace.Status.PodIP == "" {
+		return
+	}
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+
+	url := fmt.Sprintf("http://%s:%d/session/%s", workspace.Status.PodIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var session struct {
+		Title    string `json:"title"`
+		ParentID string `json:"parentID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		return
+	}
+
+	if session.Title != "" {
+		if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, sessionID, session.Title); err != nil {
+			h.logger.Error("Failed to persist session title", err, "workspaceID", workspaceID, "sessionID", sessionID)
+		}
+	}
+	if session.ParentID != "" {
+		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, sessionID, session.ParentID); err != nil {
+			h.logger.Error("Failed to persist session parent", err, "workspaceID", workspaceID, "sessionID", sessionID)
+		}
+	}
+}
+
+func (h *ProxyHandler) BackfillSessionParents(workspaceID string) {
+	if h.sessionIndex == nil || h.dialect == nil {
+		return
+	}
+	h.parentBackfilledMu.Lock()
+	if _, done := h.parentBackfilled[workspaceID]; done {
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+	h.parentBackfilled[workspaceID] = struct{}{}
+	h.parentBackfilledMu.Unlock()
+
+	go h.runParentBackfill(workspaceID)
+}
+
+func (h *ProxyHandler) runParentBackfill(workspaceID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	workspace, err := func() (*v1.Workspace, error) {
+		if v1Err != nil {
+			return nil, v1Err
+		}
+		return v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
+	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	url := fmt.Sprintf("http://%s:%d%s", workspace.Status.PodIP, opencodePort, h.dialect.SessionListPath())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Debug("Backfill: session list fetch failed", "workspaceID", workspaceID, "error", err)
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		h.parentBackfilledMu.Lock()
+		delete(h.parentBackfilled, workspaceID)
+		h.parentBackfilledMu.Unlock()
+		return
+	}
+
+	var sessions []struct {
+		ID       string `json:"id"`
+		ParentID string `json:"parentID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return
+	}
+
+	written := 0
+	for _, s := range sessions {
+		if s.ID == "" || s.ParentID == "" {
+			continue
+		}
+		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, s.ID, s.ParentID); err != nil {
+			h.logger.Debug("Backfill: upsert parent failed", "workspaceID", workspaceID, "sessionID", s.ID, "error", err)
+			continue
+		}
+		written++
+	}
+	if written > 0 {
+		h.logger.Info("Backfilled session parents", "workspaceID", workspaceID, "count", written)
+	}
+}

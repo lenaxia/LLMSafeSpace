@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package sse
 
 import (
 	"context"
@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestSSETracker(onIdle SessionIdleCallback) *SSETracker {
-	return NewSSETracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, onIdle)
+func newTestSSETracker(onIdle SessionIdleCallback) *Tracker {
+	return NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, onIdle)
 }
 
 // --- Nested format (opencode /event format) ---
@@ -627,7 +627,7 @@ func TestSSETracker_Subscribe_ReceivesIdleEvent(t *testing.T) {
 	}))
 	defer sseServer.Close()
 
-	tracker := NewSSETracker(
+	tracker := NewTracker(
 		&http.Client{
 			Transport: &redirectTransport{server: sseServer},
 		},
@@ -961,7 +961,7 @@ func TestSSETracker_Subscribe_ReceivesStepEndedViaSSE(t *testing.T) {
 	}))
 	defer sseServer.Close()
 
-	tracker := NewSSETracker(
+	tracker := NewTracker(
 		&http.Client{Transport: &redirectTransport{server: sseServer}, Timeout: 2 * time.Second},
 		&testLogger{},
 		func(_, _ string) {},

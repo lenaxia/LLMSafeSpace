@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package activity
 
 import (
 	"fmt"
@@ -18,7 +18,35 @@ import (
 
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
+
+type testLogger struct{}
+
+func (l *testLogger) Debug(msg string, kv ...interface{})                  {}
+func (l *testLogger) Info(msg string, kv ...interface{})                   {}
+func (l *testLogger) Warn(msg string, kv ...interface{})                   {}
+func (l *testLogger) Error(msg string, err error, kv ...interface{})       {}
+func (l *testLogger) Fatal(msg string, err error, kv ...interface{})       {}
+func (l *testLogger) With(kv ...interface{}) pkginterfaces.LoggerInterface { return l }
+func (l *testLogger) Sync() error                                          { return nil }
+
+func makeWorkspaceCRD(name string, maxActiveSessions int) *v1.Workspace {
+	return &v1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: v1.WorkspaceSpec{
+			Owner:             v1.WorkspaceOwner{UserID: "user-1"},
+			MaxActiveSessions: int32(maxActiveSessions),
+		},
+		Status: v1.WorkspaceStatus{
+			Phase: v1.WorkspacePhaseActive,
+			PodIP: "10.0.0.1",
+		},
+	}
+}
 
 func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *ActivityTracker {
 	k8sMock := k8smocks.NewMockKubernetesClient()
@@ -302,4 +330,23 @@ func TestActivityTracker_NewActivityTracker(t *testing.T) {
 	assert.NotNil(t, tracker)
 	assert.Equal(t, "default", tracker.namespace)
 	assert.Equal(t, 0, tracker.PendingCount())
+}
+
+func TestActivityTracker_Delete_RemovesLastFlushEntry(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	tracker.Record("ws-1")
+	require.Equal(t, 1, tracker.PendingCount())
+
+	tracker.mu.Lock()
+	tracker.lastFlush["ws-1"] = time.Now()
+	tracker.mu.Unlock()
+
+	tracker.Delete("ws-1")
+
+	assert.Equal(t, 0, tracker.PendingCount(), "Delete must remove the activity entry")
+	tracker.mu.Lock()
+	_, inLastFlush := tracker.lastFlush["ws-1"]
+	tracker.mu.Unlock()
+	assert.False(t, inLastFlush, "Delete must remove the lastFlush entry")
 }

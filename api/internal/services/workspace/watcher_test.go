@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package workspace
 
 import (
 	"sync/atomic"
@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
@@ -39,14 +40,14 @@ func setupWatcherMocks(t *testing.T) (*k8smocks.MockKubernetesClient, *k8smocks.
 
 func TestWorkspaceWatcher_NilCallback_ReturnsError(t *testing.T) {
 	k8s, _, _ := setupWatcherMocks(t)
-	_, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", nil)
+	_, err := NewWatcher(k8s, &testLogger{}, "default", nil)
 	assert.Error(t, err)
 }
 
 func TestWorkspaceWatcher_GetKnownPhase_Empty(t *testing.T) {
 	k8s, _, _ := setupWatcherMocks(t)
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 
 	_, ok := w.GetKnownPhase("nonexistent")
@@ -61,7 +62,7 @@ func TestWorkspaceWatcher_PhaseChangeCallback(t *testing.T) {
 		callbackCalled.Store(true)
 	}
 
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", callback)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", callback)
 	require.NoError(t, err)
 	require.NoError(t, w.Start())
 	defer w.Stop()
@@ -106,10 +107,10 @@ func TestWorkspaceWatcher_SeedResourceVersion_PopulatesKnownPhases(t *testing.T)
 	}, nil)
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	w.SetUserBroker(broker)
 
 	err = w.seedResourceVersion()
@@ -133,10 +134,10 @@ func TestWorkspaceWatcher_HandleEvent_Deleted(t *testing.T) {
 	k8s, _, fakeWatch := setupWatcherMocks(t)
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 
-	broker := NewUserEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 	w.SetUserBroker(broker)
 
 	require.NoError(t, w.Start())
@@ -174,7 +175,7 @@ func TestWorkspaceWatcher_GetAllKnownPhases(t *testing.T) {
 	k8s, _, fakeWatch := setupWatcherMocks(t)
 
 	noop := func(*v1.Workspace) {}
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	require.NoError(t, w.Start())
 	defer w.Stop()
@@ -208,7 +209,7 @@ func TestWorkspaceWatcher_HandleEvent_PhaseTransitionMetricRecorded(t *testing.T
 	k8s, _, fakeWatch := setupWatcherMocks(t)
 	noop := func(*v1.Workspace) {}
 
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	require.NoError(t, w.Start())
 	defer w.Stop()
@@ -241,7 +242,7 @@ func TestWorkspaceWatcher_HandleEvent_SamePhase_NoMetric(t *testing.T) {
 	k8s, _, fakeWatch := setupWatcherMocks(t)
 	noop := func(*v1.Workspace) {}
 
-	w, err := NewWorkspaceWatcher(k8s, &testLogger{}, "default", noop)
+	w, err := NewWatcher(k8s, &testLogger{}, "default", noop)
 	require.NoError(t, err)
 	require.NoError(t, w.Start())
 	defer w.Stop()

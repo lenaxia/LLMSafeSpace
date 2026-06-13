@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -323,7 +324,7 @@ func TestE2E_DrainMode_AlreadyIdle(t *testing.T) {
 	defer opencodeSrv.Close()
 
 	pods := &e2ePodResolver{ips: map[string]string{"ws-1": "192.0.2.1"}}
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 
 	handler := NewAgentReloadHandler(wsSvc, agentDB, pods, &http.Client{Timeout: 100 * time.Millisecond}, nil)
 	handler.SetSSETracker(tracker)
@@ -371,7 +372,7 @@ func TestE2E_DrainMode_WithRealTracker(t *testing.T) {
 	}))
 	defer opencodeSrv.Close()
 
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := sse.NewTracker(nil, nil, nil)
 
 	// Use the opencode client directly to test WaitUntilIdle
 	client := opencode.NewClient(opencodeSrv.URL, "test-pw", zaptest.NewLogger(t))
