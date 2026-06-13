@@ -437,3 +437,17 @@ func RecordServiceStartupDuration(service string, d time.Duration) {
 func RecordSuspendedWorkspaceCount(count int) {
 	suspendedWorkspaces.Set(float64(count))
 }
+
+var (
+	quotaExceededTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_metering_quota_exceeded_total",
+			Help: "Total quota enforcement triggers",
+		},
+		[]string{"event_type"},
+	)
+)
+
+func RecordQuotaExceeded(eventType string) {
+	quotaExceededTotal.WithLabelValues(eventType).Inc()
+}

@@ -81,14 +81,6 @@ var (
 			Help: "Seconds since last successful export",
 		},
 	)
-	metricQuotaExceeded = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_quota_exceeded_total",
-			Help: "Total quota enforcement triggers",
-		},
-		[]string{"event_type"},
-	)
-	_ = metricQuotaExceeded
 )
 
 type serviceMetrics struct {

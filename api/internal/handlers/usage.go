@@ -203,8 +203,11 @@ func (h *UsageHandler) AdminRetryDLQ(c *gin.Context) {
 		return
 	}
 
-	h.db.ExecContext(c.Request.Context(),
-		`UPDATE usage_events_dlq SET resolved_at=NOW(), resolution='reprocessed' WHERE id=$1`, id)
+	if _, err := h.db.ExecContext(c.Request.Context(),
+		`UPDATE usage_events_dlq SET resolved_at=NOW(), resolution='reprocessed' WHERE id=$1`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark DLQ entry as resolved"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -224,10 +227,13 @@ func (h *UsageHandler) AdminDiscardDLQ(c *gin.Context) {
 	}
 
 	actorID := c.GetString("userID")
-	h.db.ExecContext(c.Request.Context(),
+	if _, aerr := h.db.ExecContext(c.Request.Context(),
 		`INSERT INTO audit_log (actor_id, domain, action, target_id, metadata)
 		 VALUES ($1, 'billing', 'dlq_discarded', $2, $3)`,
-		actorID, id, `{"source":"admin"}`)
+		actorID, id, `{"source":"admin"}`); aerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write audit log"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -239,8 +245,11 @@ func (h *UsageHandler) AdminBillingStatus(c *gin.Context) {
 	}
 
 	var dlqSize int
-	h.db.QueryRowContext(c.Request.Context(),
-		`SELECT COUNT(*) FROM usage_events_dlq WHERE resolved_at IS NULL`).Scan(&dlqSize)
+	if err := h.db.QueryRowContext(c.Request.Context(),
+		`SELECT COUNT(*) FROM usage_events_dlq WHERE resolved_at IS NULL`).Scan(&dlqSize); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query DLQ size"})
+		return
+	}
 
 	rows, err := h.db.QueryContext(c.Request.Context(),
 		`SELECT provider, last_exported_id, last_exported_at FROM billing_export_cursor`)
