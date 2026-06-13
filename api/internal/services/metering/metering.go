@@ -21,12 +21,12 @@ import (
 )
 
 const (
-	channelCapacity = 4096
-	batchSize       = 100
-	flushInterval   = 1 * time.Second
-	maxDLQRetries   = 5
+	channelCapacity   = 4096
+	batchSize         = 100
+	flushInterval     = 1 * time.Second
+	maxDLQRetries     = 5
 	dlqReaperInterval = 60 * time.Second
-	insertTimeout   = 5 * time.Second
+	insertTimeout     = 5 * time.Second
 )
 
 var (
@@ -91,9 +91,9 @@ var (
 )
 
 type serviceMetrics struct {
-	written  atomic.Uint64
-	failed   atomic.Uint64
-	dropped  atomic.Uint64
+	written atomic.Uint64
+	failed  atomic.Uint64
+	dropped atomic.Uint64
 }
 
 type WorkspacePhaseChecker func() map[string]string
@@ -103,10 +103,10 @@ type WorkspaceBillingProvider interface {
 }
 
 type Service struct {
-	logger   pkginterfaces.LoggerInterface
-	config   *config.Config
-	db       *sql.DB
-	dbSvc    interfaces.DatabaseService
+	logger     pkginterfaces.LoggerInterface
+	config     *config.Config
+	db         *sql.DB
+	dbSvc      interfaces.DatabaseService
 	billingSvc WorkspaceBillingProvider
 
 	ch       chan UsageEvent
@@ -783,7 +783,7 @@ func (s *Service) emitComputeBuckets(workspaceID, ownerID string, startTime, now
 			WorkspaceID:    workspaceID,
 			EventType:      "compute_seconds",
 			EventSubtype:   "active",
-			Quantity:        quantity,
+			Quantity:       quantity,
 			Source:         "reconciliation",
 			EventTime:      t,
 		})
@@ -832,7 +832,7 @@ func (s *Service) recordStorageBytes(ctx context.Context) error {
 			WorkspaceID:    r.ID,
 			EventType:      "storage_bytes",
 			EventSubtype:   "pvc",
-			Quantity:        bytes,
+			Quantity:       bytes,
 			Source:         "cron",
 			EventTime:      now,
 		})

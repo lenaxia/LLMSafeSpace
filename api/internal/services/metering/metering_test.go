@@ -61,7 +61,7 @@ func makeEvent(eventType string, quantity int64) types.UsageEvent {
 		ActorID:        "user-1",
 		WorkspaceID:    "ws-1",
 		EventType:      eventType,
-		Quantity:        quantity,
+		Quantity:       quantity,
 		Source:         "api",
 		EventTime:      time.Now(),
 	}

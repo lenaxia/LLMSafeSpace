@@ -104,7 +104,7 @@ func (m *MeteringMiddleware) flush() {
 				ActorID:        userID,
 				EventType:      "api_call",
 				EventSubtype:   "read",
-				Quantity:        bucket.read,
+				Quantity:       bucket.read,
 				Source:         "api",
 				EventTime:      now,
 			})
@@ -116,7 +116,7 @@ func (m *MeteringMiddleware) flush() {
 				ActorID:        userID,
 				EventType:      "api_call",
 				EventSubtype:   "write",
-				Quantity:        bucket.write,
+				Quantity:       bucket.write,
 				Source:         "api",
 				EventTime:      now,
 			})

@@ -620,7 +620,7 @@ const (
 )
 
 type BillingOwner struct {
-	ID   string   `json:"id"`
+	ID   string    `json:"id"`
 	Type OwnerType `json:"type"`
 }
 
@@ -641,13 +641,13 @@ type UsageEvent struct {
 }
 
 type UsageReport struct {
-	OwnerID     string                          `json:"ownerId"`
-	OwnerType   OwnerType                       `json:"ownerType"`
-	PeriodFrom  time.Time                       `json:"periodFrom"`
-	PeriodTo    time.Time                       `json:"periodTo"`
-	Totals      map[string]int64                `json:"totals"`
-	ByWorkspace map[string]map[string]int64     `json:"byWorkspace,omitempty"`
-	ByDay       map[string]map[string]int64     `json:"byDay,omitempty"`
+	OwnerID     string                      `json:"ownerId"`
+	OwnerType   OwnerType                   `json:"ownerType"`
+	PeriodFrom  time.Time                   `json:"periodFrom"`
+	PeriodTo    time.Time                   `json:"periodTo"`
+	Totals      map[string]int64            `json:"totals"`
+	ByWorkspace map[string]map[string]int64 `json:"byWorkspace,omitempty"`
+	ByDay       map[string]map[string]int64 `json:"byDay,omitempty"`
 }
 
 type QuotaStatus struct {

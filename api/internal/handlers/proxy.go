@@ -620,7 +620,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 				WorkspaceID:    workspaceID,
 				EventType:      "llm_request",
 				EventSubtype:   "message",
-				Quantity:        1,
+				Quantity:       1,
 				Source:         "api",
 				EventTime:      time.Now(),
 				RequestContext: map[string]any{

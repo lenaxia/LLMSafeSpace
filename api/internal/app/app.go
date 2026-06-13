@@ -475,15 +475,15 @@ func (a *App) Run() error {
 				}
 				owner := types.BillingOwner{ID: ownerID, Type: types.OwnerTypeUser}
 				meteringSvc.Record(types.UsageEvent{
-					Owner:          owner,
-					ActorID:        ownerID,
-					WorkspaceID:    workspaceID,
-					EventType:      "llm_tokens",
-					EventSubtype:   "input",
-					Quantity:        inputTokens,
-					Source:         "api",
-					EventTime:      time.Now(),
-					Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
+					Owner:        owner,
+					ActorID:      ownerID,
+					WorkspaceID:  workspaceID,
+					EventType:    "llm_tokens",
+					EventSubtype: "input",
+					Quantity:     inputTokens,
+					Source:       "api",
+					EventTime:    time.Now(),
+					Metadata:     map[string]any{"model_id": modelID, "provider_id": providerID},
 				})
 				if outputTokens > 0 {
 					meteringSvc.Record(types.UsageEvent{
@@ -493,7 +493,7 @@ func (a *App) Run() error {
 						WorkspaceID:    workspaceID,
 						EventType:      "llm_tokens",
 						EventSubtype:   "output",
-						Quantity:        outputTokens,
+						Quantity:       outputTokens,
 						Source:         "api",
 						EventTime:      time.Now(),
 						Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
