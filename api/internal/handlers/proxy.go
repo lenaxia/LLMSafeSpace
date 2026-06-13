@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,7 +88,7 @@ type ProxyHandler struct {
 	// versionSyncCb is the callback wired into the CRD watcher to persist
 	// runtime version info (imageTag) to the DB whenever a workspace becomes
 	// Active. Set via SetVersionSyncCallback before Start().
-	versionSyncCb VersionSyncCallback
+	versionSyncCb workspace.VersionSyncCallback
 
 	startOnce sync.Once
 	stopOnce  sync.Once

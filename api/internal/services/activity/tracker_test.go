@@ -65,9 +65,9 @@ func TestActivityTracker_RecordStoresTimestamp(t *testing.T) {
 
 	assert.Equal(t, 1, tracker.PendingCount())
 
-	tracker.Mu.Lock()
-	ts, ok := tracker.Activity["ws-1"]
-	tracker.Mu.Unlock()
+	tracker.mu.Lock()
+	ts, ok := tracker.activity["ws-1"]
+	tracker.mu.Unlock()
 
 	assert.True(t, ok)
 	assert.False(t, ts.IsZero())
@@ -328,6 +328,25 @@ func TestActivityTracker_NewActivityTracker(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	assert.NotNil(t, tracker)
-	assert.Equal(t, "default", tracker.Namespace)
+	assert.Equal(t, "default", tracker.namespace)
 	assert.Equal(t, 0, tracker.PendingCount())
+}
+
+func TestActivityTracker_Delete_RemovesLastFlushEntry(t *testing.T) {
+	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
+
+	tracker.Record("ws-1")
+	require.Equal(t, 1, tracker.PendingCount())
+
+	tracker.mu.Lock()
+	tracker.lastFlush["ws-1"] = time.Now()
+	tracker.mu.Unlock()
+
+	tracker.Delete("ws-1")
+
+	assert.Equal(t, 0, tracker.PendingCount(), "Delete must remove the activity entry")
+	tracker.mu.Lock()
+	_, inLastFlush := tracker.lastFlush["ws-1"]
+	tracker.mu.Unlock()
+	assert.False(t, inLastFlush, "Delete must remove the lastFlush entry")
 }

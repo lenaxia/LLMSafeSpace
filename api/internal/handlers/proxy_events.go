@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -29,6 +30,24 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			WorkspaceID: workspace.Name,
 			Phase:       string(phase),
 		})
+	}
+
+	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
+		if err := h.meteringSvc.RecordLifecycleEvent(
+			context.Background(),
+			workspace.Name,
+			workspace.Spec.Owner.UserID,
+			types.OwnerTypeUser,
+			prior,
+			string(phase),
+			workspace.Spec.SecurityLevel,
+			time.Now(),
+		); err != nil {
+			h.logger.Error("Failed to record lifecycle event", err,
+				"workspace_id", workspace.Name,
+				"phase", string(phase),
+			)
+		}
 	}
 
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
@@ -92,10 +111,10 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 
 	if h.activityTracker != nil {
 		h.activityTracker.Record(workspaceID)
-		if h.sessionIndex != nil {
-			h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
-			go h.fetchAndPersistTitle(workspaceID, sessionID)
-		}
+	}
+	if h.sessionIndex != nil {
+		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+		go h.fetchAndPersistTitle(workspaceID, sessionID)
 	}
 }
 

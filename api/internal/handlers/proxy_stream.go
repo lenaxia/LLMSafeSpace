@@ -13,8 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {

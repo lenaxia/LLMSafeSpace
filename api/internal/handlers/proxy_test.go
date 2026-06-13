@@ -1619,17 +1619,9 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 
 	tracker.Flush()
 
-	// ws-deleted must be gone; ws-alive must have been flushed and remain in lastFlush.
-	tracker.Mu.Lock()
-	_, deletedPresent := tracker.Activity["ws-deleted"]
-	_, alivePresent := tracker.Activity["ws-alive"]
-	tracker.Mu.Unlock()
-
-	assert.False(t, deletedPresent, "NotFound workspace must be removed from activity map")
-	// ws-alive's entry may or may not be in `activity` depending on lastFlush — either way
-	// UpdateStatus must have been called for it exactly once.
+	// ws-deleted must be gone; ws-alive must remain.
+	assert.Equal(t, 1, tracker.PendingCount(), "NotFound workspace must be removed, ws-alive must remain")
 	wsMock.AssertNumberOfCalls(t, "UpdateStatus", 1)
-	_ = alivePresent
 }
 
 // TestActivityTracker_B5_Delete_RemovesEntry verifies the Delete method
@@ -1643,10 +1635,6 @@ func TestActivityTracker_B5_Delete_RemovesEntry(t *testing.T) {
 	tracker.Delete("ws-1")
 
 	assert.Equal(t, 0, tracker.PendingCount(), "Delete must remove the activity entry")
-	tracker.Mu.Lock()
-	_, inLastFlush := tracker.LastFlush["ws-1"]
-	tracker.Mu.Unlock()
-	assert.False(t, inLastFlush, "Delete must remove the lastFlush entry")
 }
 
 // TestProxy_B5_OnPhaseTerminated_DeletesActivityEntry verifies that when the

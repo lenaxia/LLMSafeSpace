@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
@@ -45,6 +46,9 @@ func (h *ProxyHandler) Start() error {
 			return
 		}
 		watcher.SetUserBroker(h.userBroker)
+		if h.versionSyncCb != nil {
+			watcher.SetVersionSyncCallback(h.versionSyncCb)
+		}
 		if err := watcher.Start(); err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
@@ -88,4 +92,26 @@ func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID
 
 func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {
 	h.agentStateChecker = c
+}
+
+func (h *ProxyHandler) SetVersionSyncCallback(cb workspace.VersionSyncCallback) {
+	h.versionSyncCb = cb
+}
+
+func (h *ProxyHandler) SetMeteringService(svc interfaces.MeteringService) {
+	h.meteringSvc = svc
+}
+
+func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
+	if h.userBroker == nil {
+		return ""
+	}
+	return h.userBroker.WorkspaceOwner(workspaceID)
+}
+
+func (h *ProxyHandler) GetAllKnownPhases() map[string]string {
+	if h.watcher == nil {
+		return nil
+	}
+	return h.watcher.GetAllKnownPhases()
 }
