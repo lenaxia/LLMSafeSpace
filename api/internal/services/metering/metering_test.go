@@ -322,6 +322,13 @@ func TestRecord_Concurrency(t *testing.T) {
 	defer cleanup()
 	defer svc.Stop()
 
+	mock.ExpectBegin()
+	for i := 0; i < 100; i++ {
+		mock.ExpectExec("INSERT INTO usage_events").
+			WillReturnResult(sqlmock.NewResult(int64(i+1), 1))
+	}
+	mock.ExpectCommit()
+
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -333,13 +340,6 @@ func TestRecord_Concurrency(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-
-	mock.ExpectBegin()
-	for i := 0; i < 100; i++ {
-		mock.ExpectExec("INSERT INTO usage_events").
-			WillReturnResult(sqlmock.NewResult(int64(i+1), 1))
-	}
-	mock.ExpectCommit()
 
 	assert.Eventually(t, func() bool {
 		return svc.metrics.written.Load()+svc.metrics.failed.Load()+svc.metrics.dropped.Load() >= 100
