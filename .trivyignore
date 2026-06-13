@@ -18,3 +18,10 @@
 #
 # We do NOT use a global ignore; instead .trivyignore.yaml scopes by path.
 # Keep this file for global CVE accepts only.
+
+# GHSA-gv7w-rqvm-qjhr — esbuild: missing binary integrity verification in Deno
+# Not exploitable: esbuild is used as a Vite transpiler (server-side bundling),
+# not as a Deno module resolver. The fix requires esbuild >= 0.28.1 which is
+# incompatible with Vite 5 (drops destructuring transpile for ES2020 targets).
+# Re-evaluate when upgrading to Vite 6+.
+GHSA-gv7w-rqvm-qjhr exp:2026-09-13
