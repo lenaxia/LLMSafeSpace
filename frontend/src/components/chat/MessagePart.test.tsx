@@ -271,6 +271,16 @@ describe("CodeBlock (via MessagePart)", () => {
     });
   });
 
+  it("renders plain pre fallback when highlight() rejects", async () => {
+    mockHighlight.mockRejectedValue(new Error("shiki init failed"));
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => {
+      const pre = document.querySelector("pre");
+      expect(pre).toBeInTheDocument();
+      expect(pre?.textContent).toContain("func main(){}");
+    });
+  });
+
   it("copy button copies raw code", async () => {
     const user = userEvent.setup();
     render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
@@ -286,6 +296,23 @@ describe("CodeBlock (via MessagePart)", () => {
     await waitFor(() => screen.getByRole("button", { name: /copy code/i }));
     await user.click(screen.getByRole("button", { name: /copy code/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument());
+  });
+
+  it("copy button stays in idle state on clipboard failure", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<MessagePart part={{ type: "text", text: "```go\nfunc main(){}\n```" }} isUser={false} />);
+    await waitFor(() => screen.getByRole("button", { name: /copy code/i }));
+    await user.click(screen.getByRole("button", { name: /copy code/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("func main(){}"));
+    expect(screen.queryByRole("button", { name: /copied/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("copy button reverts after 2s", async () => {

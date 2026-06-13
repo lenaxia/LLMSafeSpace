@@ -53,9 +53,10 @@ export async function highlight(code: string, lang: string): Promise<string | nu
       themes: { light: "github-light", dark: "github-dark" },
       defaultColor: false,
     });
-  } catch {
-    // Unknown language, network failure, or grammar parse error.
-    // Caller renders plain <pre><code> as fallback.
+  } catch (err) {
+    if (typeof console !== "undefined") {
+      console.error("[shiki] highlight failed:", { lang, error: err });
+    }
     return null;
   }
 }
