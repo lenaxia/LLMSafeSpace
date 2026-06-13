@@ -73,4 +73,4 @@ Could not run tests (build environment out of disk space). All verification was 
 - `design/stories/epic-17-security-review/THREAT-MODEL.md` — full rewrite (v2.0)
 - `design/stories/epic-17-security-review/README.md` — full rewrite
 - `design/stories/epic-17-security-review/security-report-g33-g47.md` — new file
-- `worklogs/0235_2026-06-12_epic17-threat-model-revalidation.md` — this file
+- `worklogs/0241_2026-06-12_epic17-threat-model-revalidation.md` — this file
