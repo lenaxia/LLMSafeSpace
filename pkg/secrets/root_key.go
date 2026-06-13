@@ -76,7 +76,7 @@ func SealRootKey(path string, passphrase, rootKey []byte) error {
 		return fmt.Errorf("generating salt: %w", err)
 	}
 
-	kek, err := DeriveKEK(passphrase, salt, sealedKeyInfoStr)
+	kek, err := DeriveKEKFromPassword(passphrase, salt)
 	if err != nil {
 		return fmt.Errorf("deriving KEK: %w", err)
 	}
@@ -101,7 +101,7 @@ func unsealKey(passphrase, sealedData []byte) ([]byte, error) {
 	salt := sealedData[:sealedSaltSize]
 	ct := sealedData[sealedSaltSize:]
 
-	kek, err := DeriveKEK(passphrase, salt, sealedKeyInfoStr)
+	kek, err := DeriveKEKFromPassword(passphrase, salt)
 	if err != nil {
 		return nil, fmt.Errorf("deriving KEK: %w", err)
 	}

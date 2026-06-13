@@ -507,7 +507,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 				if !keyRec.DekSynced {
 					s.logger.Warn("API key DEK re-sync in progress", "key_id", keyRec.ID)
 				} else {
-					apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+					apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
 					if deriveErr != nil {
 						s.logger.Error("Failed to derive API KEK", deriveErr)
 					} else {
@@ -529,7 +529,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 		if dbErr != nil {
 			s.logger.Error("Failed to get API key record for DEK check", dbErr, "key_hash", keyHash)
 		} else if keyRec != nil && keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
-			apiKEK, deriveErr := secrets.DeriveKEK([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+			apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
 			if deriveErr != nil {
 				s.logger.Error("Failed to derive API KEK", deriveErr)
 			} else {
@@ -835,7 +835,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, fmt.Errorf("failed to generate KEK salt: %w", err)
 		}
 
-		apiKEK, err := secrets.DeriveKEK([]byte(keyStr), kekSalt, "llmsafespace-apikey-kek")
+		apiKEK, err := secrets.DeriveKEKFromKey([]byte(keyStr), kekSalt, "llmsafespace-apikey-kek")
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive API KEK: %w", err)
 		}

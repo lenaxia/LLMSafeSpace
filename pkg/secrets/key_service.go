@@ -122,7 +122,7 @@ func (s *KeyService) InitializeUserKeys(ctx context.Context, userID string, pass
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
 
-	kek, err := DeriveKEK(password, salt, kekInfo)
+	kek, err := DeriveKEKFromPassword(password, salt)
 	if err != nil {
 		return "", fmt.Errorf("derive KEK: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *KeyService) InitializeUserKeys(ctx context.Context, userID string, pass
 		return "", fmt.Errorf("generate recovery salt: %w", err)
 	}
 
-	recoveryKEK, err := DeriveKEK(recoveryKey, recoverySalt, recInfo)
+	recoveryKEK, err := DeriveKEKFromKey(recoveryKey, recoverySalt, recInfo)
 	if err != nil {
 		return "", fmt.Errorf("derive recovery KEK: %w", err)
 	}
@@ -184,7 +184,7 @@ func (s *KeyService) UnlockDEK(ctx context.Context, userID string, password []by
 		return nil
 	}
 
-	kek, err := DeriveKEK(password, record.Salt, kekInfo)
+	kek, err := DeriveKEKFromPassword(password, record.Salt)
 	if err != nil {
 		return fmt.Errorf("derive KEK: %w", err)
 	}
@@ -257,7 +257,7 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 	}
 
 	// Unwrap with old password
-	oldKEK, err := DeriveKEK(oldPassword, record.Salt, kekInfo)
+	oldKEK, err := DeriveKEKFromPassword(oldPassword, record.Salt)
 	if err != nil {
 		return fmt.Errorf("derive old KEK: %w", err)
 	}
@@ -278,7 +278,7 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 	if err != nil {
 		return fmt.Errorf("generate new salt: %w", err)
 	}
-	newKEK, err := DeriveKEK(newPassword, newSalt, kekInfo)
+	newKEK, err := DeriveKEKFromPassword(newPassword, newSalt)
 	if err != nil {
 		return fmt.Errorf("derive new KEK: %w", err)
 	}
@@ -333,7 +333,7 @@ func (s *KeyService) ResetWithRecoveryKey(ctx context.Context, userID string, re
 		return "", errors.New("invalid recovery key format")
 	}
 
-	recoveryKEK, err := DeriveKEK(recoveryKey, record.RecoverySalt, recInfo)
+	recoveryKEK, err := DeriveKEKFromKey(recoveryKey, record.RecoverySalt, recInfo)
 	if err != nil {
 		return "", fmt.Errorf("derive recovery KEK: %w", err)
 	}
@@ -350,7 +350,7 @@ func (s *KeyService) ResetWithRecoveryKey(ctx context.Context, userID string, re
 	if err != nil {
 		return "", fmt.Errorf("generate new salt: %w", err)
 	}
-	newKEK, err := DeriveKEK(newPassword, newSalt, kekInfo)
+	newKEK, err := DeriveKEKFromPassword(newPassword, newSalt)
 	if err != nil {
 		return "", fmt.Errorf("derive new KEK: %w", err)
 	}
@@ -373,7 +373,7 @@ func (s *KeyService) ResetWithRecoveryKey(ctx context.Context, userID string, re
 	if err != nil {
 		return "", fmt.Errorf("generate new recovery salt: %w", err)
 	}
-	newRecoveryKEK, err := DeriveKEK(newRecoveryKey, newRecoverySalt, recInfo)
+	newRecoveryKEK, err := DeriveKEKFromKey(newRecoveryKey, newRecoverySalt, recInfo)
 	if err != nil {
 		return "", fmt.Errorf("derive new recovery KEK: %w", err)
 	}
@@ -450,7 +450,7 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 		return RotationResult{}, ErrUserKeysMissing
 	}
 
-	kek, err := DeriveKEK(password, record.Salt, kekInfo)
+	kek, err := DeriveKEKFromPassword(password, record.Salt)
 	if err != nil {
 		return RotationResult{}, fmt.Errorf("derive KEK: %w", err)
 	}
@@ -491,7 +491,7 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 	if err != nil {
 		return RotationResult{}, fmt.Errorf("generate new recovery salt: %w", err)
 	}
-	newRecoveryKEK, err := DeriveKEK(newRecoveryKey, newRecoverySalt, recInfo)
+	newRecoveryKEK, err := DeriveKEKFromKey(newRecoveryKey, newRecoverySalt, recInfo)
 	if err != nil {
 		return RotationResult{}, fmt.Errorf("derive new recovery KEK: %w", err)
 	}
@@ -567,7 +567,7 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 			continue
 		}
 
-		apiKEK, deriveErr := DeriveKEK(rawKey, key.KekSalt, "llmsafespace-apikey-kek")
+		apiKEK, deriveErr := DeriveKEKFromKey(rawKey, key.KekSalt, "llmsafespace-apikey-kek")
 		zeroBytes(rawKey)
 		if deriveErr != nil {
 			if s.logger != nil {

@@ -297,7 +297,7 @@ func TestCreateAPIKey_DEKRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	rawKey := apiKey.Key
-	apiKEK, err := secrets.DeriveKEK([]byte(rawKey), storedKey.KekSalt, "llmsafespace-apikey-kek")
+	apiKEK, err := secrets.DeriveKEKFromKey([]byte(rawKey), storedKey.KekSalt, "llmsafespace-apikey-kek")
 	require.NoError(t, err)
 
 	recoveredDEK, err := secrets.DecryptSecret(apiKEK, storedKey.WrappedDEK)
@@ -463,7 +463,7 @@ func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
 
 	kekSalt := make([]byte, 32)
 	rand.Read(kekSalt)
-	apiKEK, _ := secrets.DeriveKEK([]byte(rawKey), kekSalt, "llmsafespace-apikey-kek")
+	apiKEK, _ := secrets.DeriveKEKFromKey([]byte(rawKey), kekSalt, "llmsafespace-apikey-kek")
 	wrappedDEK, _ := secrets.EncryptSecret(apiKEK, originalDEK)
 
 	keyRecord := &types.APIKey{

@@ -8,56 +8,47 @@ import (
 	"testing"
 )
 
-func TestDeriveKEK_Deterministic(t *testing.T) {
+func TestDeriveKEKFromPasswordProduces32Bytes(t *testing.T) {
 	password := []byte("test-password-123")
-	salt := []byte("0123456789abcdef0123456789abcdef") // 32 bytes
+	salt := bytes.Repeat([]byte{0x01}, 32)
 
-	kek1, err := DeriveKEK(password, salt, kekInfo)
+	kek, err := DeriveKEKFromPassword(password, salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
 	}
-	kek2, err := DeriveKEK(password, salt, kekInfo)
+	if len(kek) != 32 {
+		t.Errorf("KEK should be 32 bytes, got %d", len(kek))
+	}
+}
+
+func TestDeriveKEKFromPasswordDeterministic(t *testing.T) {
+	password := []byte("test-password-123")
+	salt := bytes.Repeat([]byte{0x01}, 32)
+
+	kek1, err := DeriveKEKFromPassword(password, salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
+	}
+	kek2, err := DeriveKEKFromPassword(password, salt)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
 	}
 
 	if !bytes.Equal(kek1, kek2) {
-		t.Error("DeriveKEK should be deterministic for same inputs")
-	}
-	if len(kek1) != 32 {
-		t.Errorf("KEK should be 32 bytes, got %d", len(kek1))
+		t.Error("DeriveKEKFromPassword should be deterministic for same inputs")
 	}
 }
 
-func TestDeriveKEK_DifferentSalts(t *testing.T) {
-	password := []byte("test-password-123")
-	salt1 := []byte("0123456789abcdef0123456789abcdef")
-	salt2 := []byte("fedcba9876543210fedcba9876543210")
+func TestDeriveKEKFromPasswordDifferentPasswords(t *testing.T) {
+	salt := bytes.Repeat([]byte{0x01}, 32)
 
-	kek1, err := DeriveKEK(password, salt1, kekInfo)
+	kek1, err := DeriveKEKFromPassword([]byte("password-1"), salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
 	}
-	kek2, err := DeriveKEK(password, salt2, kekInfo)
+	kek2, err := DeriveKEKFromPassword([]byte("password-2"), salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
-	}
-
-	if bytes.Equal(kek1, kek2) {
-		t.Error("Different salts should produce different KEKs")
-	}
-}
-
-func TestDeriveKEK_DifferentPasswords(t *testing.T) {
-	salt := []byte("0123456789abcdef0123456789abcdef")
-
-	kek1, err := DeriveKEK([]byte("password-1"), salt, kekInfo)
-	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
-	}
-	kek2, err := DeriveKEK([]byte("password-2"), salt, kekInfo)
-	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
 	}
 
 	if bytes.Equal(kek1, kek2) {
@@ -65,17 +56,136 @@ func TestDeriveKEK_DifferentPasswords(t *testing.T) {
 	}
 }
 
-func TestDeriveKEK_DifferentInfo(t *testing.T) {
-	password := []byte("test-password")
+func TestDeriveKEKFromPasswordDifferentSalts(t *testing.T) {
+	password := []byte("test-password-123")
+	salt1 := bytes.Repeat([]byte{0x01}, 32)
+	salt2 := bytes.Repeat([]byte{0x02}, 32)
+
+	kek1, err := DeriveKEKFromPassword(password, salt1)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
+	}
+	kek2, err := DeriveKEKFromPassword(password, salt2)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
+	}
+
+	if bytes.Equal(kek1, kek2) {
+		t.Error("Different salts should produce different KEKs")
+	}
+}
+
+func TestDeriveKEKFromPasswordRejectsWrongSaltLength(t *testing.T) {
+	tests := []struct {
+		name string
+		salt []byte
+	}{
+		{"nil salt", nil},
+		{"empty salt", []byte{}},
+		{"31-byte salt", make([]byte, 31)},
+		{"33-byte salt", make([]byte, 33)},
+		{"16-byte salt", make([]byte, 16)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DeriveKEKFromPassword([]byte("password"), tt.salt)
+			if err == nil {
+				t.Error("expected error for wrong salt length")
+			}
+		})
+	}
+}
+
+func TestDeriveKEKFromPasswordV0MatchesOldHKDFOutput(t *testing.T) {
+	password := []byte("test-password-123")
 	salt := []byte("0123456789abcdef0123456789abcdef")
 
-	kek1, err := DeriveKEK(password, salt, kekInfo)
+	hkdfKEK, err := DeriveKEKFromPasswordV0(password, salt, kekInfo)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPasswordV0 failed: %v", err)
 	}
-	kek2, err := DeriveKEK(password, salt, recInfo)
+	if len(hkdfKEK) != 32 {
+		t.Errorf("V0 KEK should be 32 bytes, got %d", len(hkdfKEK))
+	}
+
+	v0again, err := DeriveKEKFromPasswordV0(password, salt, kekInfo)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPasswordV0 second call failed: %v", err)
+	}
+	if !bytes.Equal(hkdfKEK, v0again) {
+		t.Error("V0 should be deterministic")
+	}
+}
+
+func TestDeriveKEKFromPasswordDifferentFromV0(t *testing.T) {
+	password := []byte("test-password-123")
+	salt := []byte("0123456789abcdef0123456789abcdef")
+
+	argonKEK, err := DeriveKEKFromPassword(password, salt)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
+	}
+	hkdfKEK, err := DeriveKEKFromPasswordV0(password, salt, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromPasswordV0 failed: %v", err)
+	}
+
+	if bytes.Equal(argonKEK, hkdfKEK) {
+		t.Error("Argon2id and HKDF should produce different outputs")
+	}
+}
+
+func TestDeriveKEKFromKeyDeterministic(t *testing.T) {
+	key := []byte("test-key-material-1234567890123456")
+	salt := []byte("0123456789abcdef0123456789abcdef")
+
+	kek1, err := DeriveKEKFromKey(key, salt, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
+	}
+	kek2, err := DeriveKEKFromKey(key, salt, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
+	}
+
+	if !bytes.Equal(kek1, kek2) {
+		t.Error("DeriveKEKFromKey should be deterministic for same inputs")
+	}
+	if len(kek1) != 32 {
+		t.Errorf("KEK should be 32 bytes, got %d", len(kek1))
+	}
+}
+
+func TestDeriveKEKFromKeyDifferentSalts(t *testing.T) {
+	key := []byte("test-key-material-1234567890123456")
+	salt1 := []byte("0123456789abcdef0123456789abcdef")
+	salt2 := []byte("fedcba9876543210fedcba9876543210")
+
+	kek1, err := DeriveKEKFromKey(key, salt1, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
+	}
+	kek2, err := DeriveKEKFromKey(key, salt2, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
+	}
+
+	if bytes.Equal(kek1, kek2) {
+		t.Error("Different salts should produce different KEKs")
+	}
+}
+
+func TestDeriveKEKFromKeyDifferentInfo(t *testing.T) {
+	key := []byte("test-key-material")
+	salt := []byte("0123456789abcdef0123456789abcdef")
+
+	kek1, err := DeriveKEKFromKey(key, salt, kekInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
+	}
+	kek2, err := DeriveKEKFromKey(key, salt, recInfo)
+	if err != nil {
+		t.Fatalf("DeriveKEKFromKey failed: %v", err)
 	}
 
 	if bytes.Equal(kek1, kek2) {
@@ -320,25 +430,21 @@ func TestEncryptDecryptSecret_LargePlaintext(t *testing.T) {
 }
 
 func TestFullKeyWrappingFlow(t *testing.T) {
-	// Simulate account creation
 	password := []byte("user-password-secure-123")
 	salt, _ := GenerateSalt()
 	dek, _ := GenerateDEK()
 
-	// Derive KEK from password
-	kek, err := DeriveKEK(password, salt, kekInfo)
+	kek, err := DeriveKEKFromPassword(password, salt)
 	if err != nil {
-		t.Fatalf("DeriveKEK failed: %v", err)
+		t.Fatalf("DeriveKEKFromPassword failed: %v", err)
 	}
 
-	// Wrap DEK with KEK
 	wrappedDEK, err := WrapDEK(kek, dek)
 	if err != nil {
 		t.Fatalf("WrapDEK failed: %v", err)
 	}
 
-	// Simulate login: derive KEK again, unwrap DEK
-	kek2, _ := DeriveKEK(password, salt, kekInfo)
+	kek2, _ := DeriveKEKFromPassword(password, salt)
 	unwrappedDEK, err := UnwrapDEK(kek2, wrappedDEK)
 	if err != nil {
 		t.Fatalf("UnwrapDEK failed: %v", err)
@@ -348,11 +454,9 @@ func TestFullKeyWrappingFlow(t *testing.T) {
 		t.Error("Full flow: unwrapped DEK should match original")
 	}
 
-	// Encrypt a secret with the DEK
 	secret := []byte("sk-anthropic-key-12345")
 	ciphertext, _ := EncryptSecret(unwrappedDEK, secret)
 
-	// Decrypt the secret
 	decrypted, err := DecryptSecret(unwrappedDEK, ciphertext)
 	if err != nil {
 		t.Fatalf("DecryptSecret failed: %v", err)
@@ -363,34 +467,29 @@ func TestFullKeyWrappingFlow(t *testing.T) {
 }
 
 func TestPasswordChangeFlow(t *testing.T) {
-	// Setup: create account with password1
 	password1 := []byte("old-password")
 	salt1, _ := GenerateSalt()
 	dek, _ := GenerateDEK()
 
-	kek1, _ := DeriveKEK(password1, salt1, kekInfo)
+	kek1, _ := DeriveKEKFromPassword(password1, salt1)
 	wrappedDEK, _ := WrapDEK(kek1, dek)
 
-	// Encrypt a secret
 	secret := []byte("my-secret")
 	ciphertext, _ := EncryptSecret(dek, secret)
 
-	// Password change: unwrap with old, re-wrap with new
 	unwrapped, _ := UnwrapDEK(kek1, wrappedDEK)
 
 	password2 := []byte("new-password")
 	salt2, _ := GenerateSalt()
-	kek2, _ := DeriveKEK(password2, salt2, kekInfo)
+	kek2, _ := DeriveKEKFromPassword(password2, salt2)
 	newWrappedDEK, _ := WrapDEK(kek2, unwrapped)
 
-	// Login with new password
-	kek2Again, _ := DeriveKEK(password2, salt2, kekInfo)
+	kek2Again, _ := DeriveKEKFromPassword(password2, salt2)
 	dekAfterChange, err := UnwrapDEK(kek2Again, newWrappedDEK)
 	if err != nil {
 		t.Fatalf("UnwrapDEK after password change failed: %v", err)
 	}
 
-	// Secret should still be decryptable (DEK unchanged)
 	decrypted, err := DecryptSecret(dekAfterChange, ciphertext)
 	if err != nil {
 		t.Fatalf("DecryptSecret after password change failed: %v", err)
@@ -401,23 +500,19 @@ func TestPasswordChangeFlow(t *testing.T) {
 }
 
 func TestRecoveryKeyFlow(t *testing.T) {
-	// Setup
 	password := []byte("original-password")
 	salt, _ := GenerateSalt()
 	recoverySalt, _ := GenerateSalt()
 	dek, _ := GenerateDEK()
 	recoveryKey, _ := GenerateRecoveryKey()
 
-	// Wrap DEK with password KEK
-	kek, _ := DeriveKEK(password, salt, kekInfo)
+	kek, _ := DeriveKEKFromPassword(password, salt)
 	_, _ = WrapDEK(kek, dek)
 
-	// Wrap DEK with recovery KEK
-	recoveryKEK, _ := DeriveKEK(recoveryKey, recoverySalt, recInfo)
+	recoveryKEK, _ := DeriveKEKFromKey(recoveryKey, recoverySalt, recInfo)
 	wrappedDEKRecovery, _ := WrapDEK(recoveryKEK, dek)
 
-	// Simulate password reset with recovery key
-	recoveryKEK2, _ := DeriveKEK(recoveryKey, recoverySalt, recInfo)
+	recoveryKEK2, _ := DeriveKEKFromKey(recoveryKey, recoverySalt, recInfo)
 	recoveredDEK, err := UnwrapDEK(recoveryKEK2, wrappedDEKRecovery)
 	if err != nil {
 		t.Fatalf("Recovery unwrap failed: %v", err)
@@ -427,14 +522,12 @@ func TestRecoveryKeyFlow(t *testing.T) {
 		t.Error("Recovered DEK should match original")
 	}
 
-	// Re-wrap with new password
 	newPassword := []byte("new-password-after-reset")
 	newSalt, _ := GenerateSalt()
-	newKEK, _ := DeriveKEK(newPassword, newSalt, kekInfo)
+	newKEK, _ := DeriveKEKFromPassword(newPassword, newSalt)
 	newWrappedDEK, _ := WrapDEK(newKEK, recoveredDEK)
 
-	// Verify new password works
-	newKEK2, _ := DeriveKEK(newPassword, newSalt, kekInfo)
+	newKEK2, _ := DeriveKEKFromPassword(newPassword, newSalt)
 	finalDEK, err := UnwrapDEK(newKEK2, newWrappedDEK)
 	if err != nil {
 		t.Fatalf("UnwrapDEK with new password after recovery failed: %v", err)
