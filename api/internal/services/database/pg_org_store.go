@@ -351,7 +351,7 @@ func (s *PgOrgStore) RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	for adminRows.Next() {
 		adminCount++
 	}
-	closeErr := adminRows.Close()
+	closeErr := adminRows.Close() //nolint:sqlclosecheck // must close before next tx query; defer would close too late
 	if err := adminRows.Err(); err != nil {
 		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}
@@ -416,7 +416,7 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	for adminRows.Next() {
 		adminCount++
 	}
-	closeErr := adminRows.Close()
+	closeErr := adminRows.Close() //nolint:sqlclosecheck // must close before next tx query; defer would close too late
 	if err := adminRows.Err(); err != nil {
 		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}
