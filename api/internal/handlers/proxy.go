@@ -270,6 +270,15 @@ func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
 		return
 	}
+	wid := c.Param("id")
+	if h.isSessionActive(wid, sid) {
+		c.Header("Retry-After", "1")
+		c.JSON(http.StatusConflict, gin.H{
+			"error":      "session is busy; retry after idle",
+			"retryAfter": 1,
+		})
+		return
+	}
 	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid)
 }
 
@@ -902,6 +911,16 @@ func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
 	}
 }
 
+func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
+	h.activeMu.Lock()
+	defer h.activeMu.Unlock()
+	sessions, ok := h.activeSess[workspaceID]
+	if !ok {
+		return false
+	}
+	return sessions[sessionID]
+}
+
 func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
 	h.activeMu.Lock()
 	defer h.activeMu.Unlock()
@@ -1054,16 +1073,10 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	}
 
 	if h.activityTracker != nil {
-		h.wsConfigMu.RLock()
-		cfg, ok := h.wsConfig[workspaceID]
-		h.wsConfigMu.RUnlock()
-		if ok && cfg.workspaceID != "" {
-			h.activityTracker.Record(cfg.workspaceID)
-			// Record message in session index
-			if h.sessionIndex != nil {
-				h.sessionIndex.RecordMessage(cfg.workspaceID, sessionID, "", time.Now())
-				go h.fetchAndPersistTitle(cfg.workspaceID, sessionID)
-			}
+		h.activityTracker.Record(workspaceID)
+		if h.sessionIndex != nil {
+			h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+			go h.fetchAndPersistTitle(workspaceID, sessionID)
 		}
 	}
 }

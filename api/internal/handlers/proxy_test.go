@@ -666,6 +666,8 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/message", strings.NewReader(`{"content":"hello"}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	env.handler.removeActiveSession("ws-1", "sess-1")
+
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/prompt", strings.NewReader(`{"prompt":"do something"}`))
 	assert.Equal(t, http.StatusNoContent, w.Code)
@@ -1438,7 +1440,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 		"activity should be recorded (pending for flush) when proxy succeeds")
 }
 
-func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
+func TestProxy_OnSessionIdle_RecordsActivityWithoutWsConfig(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	tracker := NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
@@ -1450,10 +1452,10 @@ func TestProxy_OnSessionIdle_ActivitySkippedWhenCacheEvicted(t *testing.T) {
 
 	handler.onSessionIdle("ws-1", "s1")
 
-	assert.Equal(t, 0, tracker.PendingCount(),
-		"activity should not be recorded when wsConfig cache is absent (workspace evicted)")
+	assert.Equal(t, 1, tracker.PendingCount(),
+		"activity should be recorded on idle even without wsConfig entry (US-6.5 fix)")
 	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
-		"session should still be removed from active set even when cache is absent")
+		"session should still be removed from active set")
 }
 
 // --- Epic 25 B2: mid-stream upstream read error → SSE error event ---
@@ -2134,4 +2136,235 @@ func TestProxy_DeleteSession_DeepNestingEndpointMapping(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "DELETE", capturedMethod)
 	assert.Equal(t, "/session/sess_abc-123", capturedPath)
+}
+
+type recordingActivitySessionIndex struct {
+	mu            sync.Mutex
+	recorded      []activityRecordCall
+	titleUpserts  []upsertTitleCall
+	parentUpserts []upsertParentCall
+	deleteCalled  bool
+	deleteWID     string
+	deleteSID     string
+}
+
+type activityRecordCall struct {
+	workspaceID string
+	sessionID   string
+	title       string
+}
+
+type upsertTitleCall struct {
+	workspaceID string
+	sessionID   string
+	title       string
+}
+
+type upsertParentCall struct {
+	workspaceID string
+	sessionID   string
+	parentID    string
+}
+
+func (r *recordingActivitySessionIndex) RecordMessage(workspaceID, sessionID, title string, _ time.Time) {
+	r.mu.Lock()
+	r.recorded = append(r.recorded, activityRecordCall{workspaceID, sessionID, title})
+	r.mu.Unlock()
+}
+func (r *recordingActivitySessionIndex) ListByWorkspace(_ context.Context, _ string) ([]types.SessionListItem, error) {
+	return nil, nil
+}
+func (r *recordingActivitySessionIndex) DeleteByWorkspace(_ context.Context, _ string) error {
+	return nil
+}
+func (r *recordingActivitySessionIndex) DeleteSession(_ context.Context, workspaceID, sessionID string) error {
+	r.mu.Lock()
+	r.deleteCalled = true
+	r.deleteWID = workspaceID
+	r.deleteSID = sessionID
+	r.mu.Unlock()
+	return nil
+}
+func (r *recordingActivitySessionIndex) UpdateLastSeen(_ context.Context, _, _ string) error {
+	return nil
+}
+func (r *recordingActivitySessionIndex) UpsertTitle(_ context.Context, workspaceID, sessionID, title string) error {
+	r.mu.Lock()
+	r.titleUpserts = append(r.titleUpserts, upsertTitleCall{workspaceID, sessionID, title})
+	r.mu.Unlock()
+	return nil
+}
+func (r *recordingActivitySessionIndex) UpsertParent(_ context.Context, workspaceID, sessionID, parentID string) error {
+	r.mu.Lock()
+	r.parentUpserts = append(r.parentUpserts, upsertParentCall{workspaceID, sessionID, parentID})
+	r.mu.Unlock()
+	return nil
+}
+func (r *recordingActivitySessionIndex) UpsertContextUsed(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+func (r *recordingActivitySessionIndex) Start() error { return nil }
+func (r *recordingActivitySessionIndex) Stop() error  { return nil }
+
+func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock).Maybe()
+	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
+	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
+
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+
+	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	handler.activityTracker = tracker
+	si := &recordingActivitySessionIndex{}
+	handler.sessionIndex = si
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	handler.activeMu.Unlock()
+
+	handler.onSessionIdle("ws-1", "s1")
+
+	si.mu.Lock()
+	assert.Len(t, si.recorded, 1, "session index RecordMessage should be called once")
+	if len(si.recorded) > 0 {
+		assert.Equal(t, "ws-1", si.recorded[0].workspaceID)
+		assert.Equal(t, "s1", si.recorded[0].sessionID)
+	}
+	si.mu.Unlock()
+
+	assert.Equal(t, 1, tracker.PendingCount(), "activity tracker should record activity")
+	assert.Equal(t, 0, handler.activeSessionCount("ws-1"), "session should be removed from active set")
+}
+
+func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/s1" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"title": "Test Session", "parentID": "p1"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	k8sMock.On("Clientset").Return(k8sfake.NewSimpleClientset())
+
+	ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	secret := makePasswordSecret("ws-1", "test-password")
+	_, err = k8sMock.Clientset().CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	handler.activityTracker = tracker
+	si := &recordingActivitySessionIndex{}
+	handler.sessionIndex = si
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	handler.activeMu.Unlock()
+
+	handler.onSessionIdle("ws-1", "s1")
+
+	assert.Eventually(t, func() bool {
+		si.mu.Lock()
+		defer si.mu.Unlock()
+		return len(si.titleUpserts) > 0
+	}, 2*time.Second, 10*time.Millisecond, "fetchAndPersistTitle should upsert title")
+
+	si.mu.Lock()
+	assert.Len(t, si.titleUpserts, 1)
+	if len(si.titleUpserts) > 0 {
+		assert.Equal(t, "ws-1", si.titleUpserts[0].workspaceID)
+		assert.Equal(t, "s1", si.titleUpserts[0].sessionID)
+		assert.Equal(t, "Test Session", si.titleUpserts[0].title)
+	}
+	si.mu.Unlock()
+}
+
+func TestProxy_SendPromptAsync_Returns409WhenSessionActive(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	env.handler.activeMu.Lock()
+	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	env.handler.activeMu.Unlock()
+
+	body := strings.NewReader(`{"parts":[{"type":"text","text":"hello"}]}`)
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", body)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "session is busy; retry after idle", resp["error"])
+	assert.Equal(t, float64(1), resp["retryAfter"])
+}
+
+func TestProxy_SendPromptAsync_ProceedsWhenSessionNotActive(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	body := strings.NewReader(`{"parts":[{"type":"text","text":"hello"}]}`)
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", body)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestProxy_IsSessionActive_ReturnsFalseForUnknownWorkspace(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	assert.False(t, handler.isSessionActive("unknown-ws", "s1"),
+		"isSessionActive should return false for unknown workspace")
+}
+
+func TestProxy_IsSessionActive_ReturnsTrueForActiveSession(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
+	handler.activeMu.Unlock()
+
+	assert.True(t, handler.isSessionActive("ws-1", "s1"), "s1 should be active")
+	assert.True(t, handler.isSessionActive("ws-1", "s2"), "s2 should be active")
+	assert.False(t, handler.isSessionActive("ws-1", "s3"), "s3 should not be active")
+}
+
+func TestProxy_SendPromptAsync_409DoesNotAffectSendMessage(t *testing.T) {
+	env := newTestEnv(t)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	env.handler.activeMu.Lock()
+	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	env.handler.activeMu.Unlock()
+
+	body := strings.NewReader(`{"parts":[{"type":"text","text":"hello"}]}`)
+	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", body)
+
+	assert.NotEqual(t, http.StatusConflict, w.Code,
+		"SendMessage (synchronous) should NOT get 409 guard")
 }

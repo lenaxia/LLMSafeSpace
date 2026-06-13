@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { ApiClientError } from "../api/client";
 
 vi.mock("../api/messages", () => ({
@@ -494,5 +494,91 @@ describe("useMessageQueue", () => {
 
     const id: string = result.current.queuedMessages[0]!.id;
     expect(id).not.toContain("-");
+  });
+
+  // ── US-41.3: 409 Conflict handling ──────────────────────────────────────────
+
+  it("409 response transitions message to pending (not error)", async () => {
+    const err = new ApiClientError(409, { error: "session is busy", retryAfter: 1 } as any);
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    const { result } = render();
+    act(() => { result.current.enqueue("will-409"); });
+
+    await act(async () => { result.current.notifyIdle(); });
+
+    expect(result.current.queuedMessages).toHaveLength(1);
+    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+    expect(result.current.queuedMessages[0]!.error).toBeUndefined();
+  });
+
+  it("message in pending after 409 is retried on next notifyIdle", async () => {
+    let callCount = 0;
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.reject(new ApiClientError(409, { error: "session is busy" } as any));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { result } = render();
+    act(() => { result.current.enqueue("retry-me"); });
+
+    await act(async () => { result.current.notifyIdle(); });
+
+    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+
+    await act(async () => { result.current.notifyIdle(); });
+
+    await waitFor(() => {
+      expect(result.current.queuedMessages).toHaveLength(0);
+    });
+    expect(callCount).toBe(2);
+  });
+
+  it("after MAX_RETRIES 409s, message transitions to error", async () => {
+    const err = new ApiClientError(409, { error: "session is busy" } as any);
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    const { result } = render();
+    act(() => { result.current.enqueue("max-retries"); });
+
+    for (let i = 0; i < 5; i++) {
+      await act(async () => { result.current.notifyIdle(); });
+    }
+
+    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+
+    await act(async () => { result.current.notifyIdle(); });
+
+    expect(result.current.queuedMessages[0]!.status).toBe("error");
+    expect(result.current.queuedMessages[0]!.error).toBe("Session busy — retry manually");
+  });
+
+  it("queue item is removed on successful send after prior 409 retries", async () => {
+    let callCount = 0;
+    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      if (callCount <= 2) {
+        return Promise.reject(new ApiClientError(409, { error: "session is busy" } as any));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { result } = render();
+    act(() => { result.current.enqueue("eventually-works"); });
+
+    await act(async () => { result.current.notifyIdle(); });
+    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+
+    await act(async () => { result.current.notifyIdle(); });
+    expect(result.current.queuedMessages[0]!.status).toBe("pending");
+
+    await act(async () => { result.current.notifyIdle(); });
+    await waitFor(() => {
+      expect(result.current.queuedMessages).toHaveLength(0);
+    });
+    expect(callCount).toBe(3);
   });
 });

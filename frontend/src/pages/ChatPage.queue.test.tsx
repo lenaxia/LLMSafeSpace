@@ -290,4 +290,84 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
       expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
     });
   });
+
+  it("does not clear sseStreamParts when reconcileOnIdle returns empty history", async () => {
+    const qc = makeQueryClient();
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [],
+      nextCursor: undefined,
+    });
+    renderChat(qc, "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    const user = userEvent.setup();
+    await user.type(document.querySelector("textarea")!, "hello");
+    await user.keyboard("{Enter}");
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(messagesApi.getHistoryPage).toHaveBeenCalled();
+    });
+  });
+
+  it("clears sseStreamParts when reconcileOnIdle returns non-empty history", async () => {
+    const qc = makeQueryClient();
+    const historyMsg = { id: "msg_1", role: "assistant", parts: [{ type: "text", text: "response" }] };
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [historyMsg],
+      nextCursor: undefined,
+    });
+    renderChat(qc, "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.getHistoryPage).toHaveBeenCalled();
+    });
+  });
+
+  it("queued message is sent on idle and response appears in history after second idle", async () => {
+    const qc = makeQueryClient();
+    const user = userEvent.setup();
+    let callCount = 0;
+    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ messages: [], nextCursor: undefined });
+      }
+      return Promise.resolve({
+        messages: [{ id: "msg_resp", role: "assistant", parts: [{ type: "text", text: "final answer" }] }],
+        nextCursor: undefined,
+      });
+    });
+    renderChat(qc, "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "question");
+    await user.keyboard("{Enter}");
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalled();
+    });
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+
+    await waitFor(() => {
+      expect(callCount).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

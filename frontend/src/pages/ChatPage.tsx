@@ -305,27 +305,25 @@ export function ChatPage() {
         return { pages: inf.pages.slice(0, 1), pageParams: inf.pageParams.slice(0, 1) };
       });
       await queryClient.refetchQueries({ queryKey: ["messages", workspaceId, sessionId] });
-      setSseStreamParts([]);
-      setLocalMessages([]);
-      setSessionErrors([]);
+      const freshHistory = queryClient.getQueryData<{ pages: Array<{ messages: Message[] }> }>(
+        ["messages", workspaceId, sessionId],
+      );
+      const msgs = freshHistory?.pages.flatMap((p) => p.messages) ?? [];
+      if (msgs.length > 0) {
+        setSseStreamParts([]);
+        setLocalMessages([]);
+        setSessionErrors([]);
+      }
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
       activePartTypeRef.current = null;
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
-      // Reconcile queue against fresh history — removes pills for messages
-      // that have been committed to the server (matched by messageID).
-      const freshHistory = queryClient.getQueryData<{ pages: Array<{ messages: Message[] }> }>(
-        ["messages", workspaceId, sessionId],
-      );
       if (freshHistory) {
-        const msgs = freshHistory.pages.flatMap((p) => p.messages);
         queue.reconcile(msgs);
       }
     } catch {
-      // History fetch failed — keep streaming parts AND localMessages visible
-      // so the user doesn't lose context.
     }
   }, [workspaceId, sessionId, queryClient, queue]);
 
