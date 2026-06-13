@@ -29,6 +29,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type App struct {
@@ -93,6 +94,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		wsSvc.SetSessionIndex(sessionIndexSvc)
 	}
 	proxyHandler.SetSessionIndex(sessionIndexSvc)
+
+	if svc.Metering != nil {
+		proxyHandler.SetMeteringService(svc.Metering)
+	}
 
 	// Initialize settings services (backed by the same DB service).
 	dbSvc := svc.Database.(*database.Service)
@@ -357,6 +362,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 	}
 
+	usageHandler := handlers.NewUsageHandler(svc.Metering, svc.Database)
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
 		LoggingConfig:                   server.DefaultRouterConfig().LoggingConfig,
@@ -373,6 +380,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		TerminalHandler:                 terminalHandler,
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,
+		UsageHandler:                    usageHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
@@ -454,8 +462,43 @@ func (a *App) Run() error {
 	// SetOnInference was never called and inference metrics remained permanently zero.
 	if tracker := a.proxyHandler.GetSSETracker(); tracker != nil {
 		if metricsSvc, ok := a.services.Metrics.(*metrics.Service); ok {
+			meteringSvc := a.services.Metering
+			ph := a.proxyHandler
 			tracker.SetOnInference(func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64) {
 				metricsSvc.RecordInference(modelID, providerID, inputTokens, outputTokens, costDollars)
+				if meteringSvc == nil {
+					return
+				}
+				ownerID := ph.GetWorkspaceOwner(workspaceID)
+				if ownerID == "" {
+					return
+				}
+				owner := types.BillingOwner{ID: ownerID, Type: types.OwnerTypeUser}
+				meteringSvc.Record(types.UsageEvent{
+					Owner:          owner,
+					ActorID:        ownerID,
+					WorkspaceID:    workspaceID,
+					EventType:      "llm_tokens",
+					EventSubtype:   "input",
+					Quantity:        inputTokens,
+					Source:         "api",
+					EventTime:      time.Now(),
+					Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
+				})
+				if outputTokens > 0 {
+					meteringSvc.Record(types.UsageEvent{
+						IdempotencyKey: fmt.Sprintf("tokens:%s:%s:out:%d", workspaceID, modelID, time.Now().UnixNano()),
+						Owner:          owner,
+						ActorID:        ownerID,
+						WorkspaceID:    workspaceID,
+						EventType:      "llm_tokens",
+						EventSubtype:   "output",
+						Quantity:        outputTokens,
+						Source:         "api",
+						EventTime:      time.Now(),
+						Metadata:       map[string]any{"model_id": modelID, "provider_id": providerID},
+					})
+				}
 			})
 			tracker.SetSessionMetrics(metricsSvc)
 		}

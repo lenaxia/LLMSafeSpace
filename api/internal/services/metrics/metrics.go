@@ -304,3 +304,136 @@ func RecordAuthFailure(reason string) {
 func (s *Service) RecordSessionCompleted(_ string, durationSeconds float64) {
 	sessionDurationSeconds.WithLabelValues().Observe(durationSeconds)
 }
+
+// --- Dependency Health Metrics (US-12.12) ---
+
+var (
+	dbQueryDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_db_query_duration_seconds",
+			Help:    "Database query latency by operation",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
+		},
+		[]string{"operation"},
+	)
+	dbErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_db_errors_total",
+			Help: "Database errors by operation and error type",
+		},
+		[]string{"operation", "error_type"},
+	)
+	dbPoolActiveConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llmsafespace_db_pool_active_connections",
+			Help: "In-use database pool connections",
+		},
+	)
+	dbPoolIdleConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llmsafespace_db_pool_idle_connections",
+			Help: "Idle database pool connections",
+		},
+	)
+	dbPoolMaxConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llmsafespace_db_pool_max_connections",
+			Help: "Maximum database pool connections",
+		},
+	)
+	redisCommandDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_redis_command_duration_seconds",
+			Help:    "Redis command latency",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
+		},
+		[]string{"command"},
+	)
+	redisErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_redis_errors_total",
+			Help: "Redis errors by command",
+		},
+		[]string{"command"},
+	)
+	authAttemptsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_auth_attempts_total",
+			Help: "Authentication attempts by method and result",
+		},
+		[]string{"method", "result"},
+	)
+	authLockoutsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_auth_lockouts_total",
+			Help: "Brute-force lockout triggers",
+		},
+	)
+	dependencyUp = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "llmsafespace_dependency_up",
+			Help: "Dependency health (1=up, 0=down)",
+		},
+		[]string{"dependency"},
+	)
+	serviceStartupDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_service_startup_duration_seconds",
+			Help:    "Service startup duration",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 10),
+		},
+		[]string{"service"},
+	)
+	suspendedWorkspaces = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llmsafespace_workspaces_suspended_total",
+			Help: "Currently suspended workspaces",
+		},
+	)
+)
+
+func RecordDBQueryDuration(operation string, d time.Duration) {
+	dbQueryDuration.WithLabelValues(operation).Observe(d.Seconds())
+}
+
+func RecordDBError(operation, errorType string) {
+	dbErrorsTotal.WithLabelValues(operation, errorType).Inc()
+}
+
+func RecordDBPoolStats(active, idle, max int) {
+	dbPoolActiveConns.Set(float64(active))
+	dbPoolIdleConns.Set(float64(idle))
+	dbPoolMaxConns.Set(float64(max))
+}
+
+func RecordRedisCommandDuration(command string, d time.Duration) {
+	redisCommandDuration.WithLabelValues(command).Observe(d.Seconds())
+}
+
+func RecordRedisError(command string) {
+	redisErrorsTotal.WithLabelValues(command).Inc()
+}
+
+func RecordAuthAttempt(method, result string) {
+	authAttemptsTotal.WithLabelValues(method, result).Inc()
+}
+
+func RecordAuthLockout() {
+	authLockoutsTotal.Inc()
+}
+
+func RecordDependencyUp(dependency string, up bool) {
+	v := 0.0
+	if up {
+		v = 1.0
+	}
+	dependencyUp.WithLabelValues(dependency).Set(v)
+}
+
+func RecordServiceStartupDuration(service string, d time.Duration) {
+	serviceStartupDuration.WithLabelValues(service).Observe(d.Seconds())
+}
+
+func RecordSuspendedWorkspaceCount(count int) {
+	suspendedWorkspaces.Set(float64(count))
+}

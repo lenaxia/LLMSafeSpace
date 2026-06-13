@@ -327,6 +327,7 @@ func (s *contractMockServices) GetWorkspace() interfaces.WorkspaceService { retu
 func (s *contractMockServices) GetRateLimiter() interfaces.RateLimiterService {
 	return s.rl
 }
+func (s *contractMockServices) GetMetering() interfaces.MeteringService { return nil }
 
 func newContractFixture(t *testing.T) *gin.Engine {
 	t.Helper()

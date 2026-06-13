@@ -26,6 +26,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 const (
@@ -90,6 +91,8 @@ type ProxyHandler struct {
 	// suspend/restart cycle re-runs the backfill against the new pod.
 	parentBackfilled   map[string]struct{}
 	parentBackfilledMu sync.Mutex
+
+	meteringSvc interfaces.MeteringService
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -606,6 +609,28 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	if h.sessionIndex != nil && sessionID != "" && isWriteOp {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 	}
+
+	if proxyErr == nil && h.meteringSvc != nil && workspaceID != "" {
+		userID := c.GetString("userID")
+		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+			h.meteringSvc.Record(types.UsageEvent{
+				IdempotencyKey: fmt.Sprintf("llmreq:%s:%d", workspaceID, time.Now().UnixNano()),
+				Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
+				ActorID:        userID,
+				WorkspaceID:    workspaceID,
+				EventType:      "llm_request",
+				EventSubtype:   "message",
+				Quantity:        1,
+				Source:         "api",
+				EventTime:      time.Now(),
+				RequestContext: map[string]any{
+					"ip":         c.ClientIP(),
+					"request_id": c.GetString("request_id"),
+					"session_id": sessionID,
+				},
+			})
+		}
+	}
 }
 
 // doProxy sends the request to the sandbox and writes the response back to
@@ -992,6 +1017,19 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			WorkspaceID: workspace.Name,
 			Phase:       string(phase),
 		})
+	}
+
+	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
+		_ = h.meteringSvc.RecordLifecycleEvent(
+			context.Background(),
+			workspace.Name,
+			workspace.Spec.Owner.UserID,
+			types.OwnerTypeUser,
+			prior,
+			string(phase),
+			workspace.Spec.SecurityLevel,
+			time.Now(),
+		)
 	}
 
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
@@ -1636,4 +1674,15 @@ func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID
 // with agentNeedsRefresh hints (Epic 27b US-27b.5).
 func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {
 	h.agentStateChecker = c
+}
+
+func (h *ProxyHandler) SetMeteringService(svc interfaces.MeteringService) {
+	h.meteringSvc = svc
+}
+
+func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
+	if h.userBroker == nil {
+		return ""
+	}
+	return h.userBroker.WorkspaceOwner(workspaceID)
 }

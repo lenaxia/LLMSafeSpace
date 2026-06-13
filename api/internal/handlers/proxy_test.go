@@ -34,6 +34,7 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
 )
 
 type testLogger struct{}
@@ -2440,4 +2441,48 @@ func TestProxy_IsSessionActive_ConcurrentReads(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestProxy_OnPhaseChange_RecordsLifecycleEvent(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	meteringSvc := new(mocks.MockMeteringService)
+	handler.SetMeteringService(meteringSvc)
+
+	ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "user-1")
+	ws.Spec.SecurityLevel = "standard"
+
+	meteringSvc.On("RecordLifecycleEvent",
+		mock.Anything,
+		"ws-1",
+		"user-1",
+		types.OwnerTypeUser,
+		"",
+		string(v1.WorkspacePhaseActive),
+		"standard",
+		mock.AnythingOfType("time.Time"),
+	).Return(nil)
+
+	handler.onPhaseChange(ws)
+
+	meteringSvc.AssertCalled(t, "RecordLifecycleEvent",
+		mock.Anything,
+		"ws-1",
+		"user-1",
+		types.OwnerTypeUser,
+		"",
+		string(v1.WorkspacePhaseActive),
+		"standard",
+		mock.AnythingOfType("time.Time"),
+	)
+}
+
+func TestProxy_OnPhaseChange_NoMeteringService_NoPanic(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "user-1")
+
+	assert.NotPanics(t, func() {
+		handler.onPhaseChange(ws)
+	})
 }

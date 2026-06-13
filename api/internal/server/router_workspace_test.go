@@ -32,6 +32,7 @@ func (s *mockServices) GetWorkspace() interfaces.WorkspaceService {
 	return s.workspace
 }
 func (s *mockServices) GetRateLimiter() interfaces.RateLimiterService { return nil }
+func (s *mockServices) GetMetering() interfaces.MeteringService     { return nil }
 
 // newRouterFixture builds a Gin engine wired with mock services.
 // The auth middleware rejects requests without an Authorization header (401)

@@ -79,6 +79,7 @@ type DatabaseService interface {
 	UpsertSessionParent(ctx context.Context, workspaceID, sessionID, parentID string) error
 	UpsertSessionContextUsed(ctx context.Context, workspaceID, sessionID string, contextUsed int64) error
 	UpdateSessionLastSeen(ctx context.Context, workspaceID, sessionID string) error
+	ListAllWorkspaceOwners(ctx context.Context) (map[string]string, error)
 	Ping(ctx context.Context) error
 	Start() error
 	Stop() error
@@ -152,6 +153,19 @@ type SessionIndexService interface {
 	Stop() error
 }
 
+type MeteringService interface {
+	Record(event types.UsageEvent)
+	RecordLifecycleEvent(ctx context.Context, workspaceID, ownerID string, ownerType types.OwnerType, fromPhase, toPhase, resourceTier string, eventTime time.Time) error
+	GetUsage(ctx context.Context, owner types.BillingOwner, from, to time.Time) (*types.UsageReport, error)
+	GetUsageByWorkspace(ctx context.Context, owner types.BillingOwner, workspaceID string, from, to time.Time) (*types.UsageReport, error)
+	GetQuotaStatus(ctx context.Context, owner types.BillingOwner) ([]types.QuotaStatus, error)
+	CheckQuota(ctx context.Context, owner types.BillingOwner, eventType string) (allowed bool, remaining int64, err error)
+	IncrementQuotaCounter(ctx context.Context, owner types.BillingOwner, eventType string) error
+	ExportUsage(ctx context.Context) (int, error)
+	Start() error
+	Stop() error
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService
@@ -159,6 +173,7 @@ type Services interface {
 	GetMetrics() MetricsService
 	GetWorkspace() WorkspaceService
 	GetRateLimiter() RateLimiterService
+	GetMetering() MeteringService
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient

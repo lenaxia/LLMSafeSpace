@@ -45,6 +45,7 @@ func (s *healthMockServices) GetWorkspace() interfaces.WorkspaceService {
 	return nil
 }
 func (s *healthMockServices) GetRateLimiter() interfaces.RateLimiterService { return nil }
+func (s *healthMockServices) GetMetering() interfaces.MeteringService     { return nil }
 
 func newHealthFixture(t *testing.T) (*gin.Engine, *healthMockServices) {
 	t.Helper()
