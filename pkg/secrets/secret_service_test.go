@@ -221,6 +221,24 @@ func (m *mockSecretStore) QueryAudit(_ context.Context, userID string, _ AuditQu
 	return result, nil
 }
 
+func (m *mockSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) ([]CredentialBinding, error) {
+	return nil, nil
+}
+
+func (m *mockSecretStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }
+
+func (m *mockSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSecretStore) BindCredentialToAllUserWorkspaces(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSecretStore) HasUserProviderCredential(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
 // duplicateError wraps the package's ErrDuplicateSecret sentinel so
 // errors.Is on the result of mockSecretStore.CreateSecret correctly
 // classifies the error in handler tests. Without the Unwrap method,

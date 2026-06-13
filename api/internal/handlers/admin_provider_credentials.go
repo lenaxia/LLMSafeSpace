@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,16 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
-
-// isDuplicateErr checks for PostgreSQL unique constraint violation (23505).
-func isDuplicateErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "23505")
-}
-
-// isNotFound checks for pgx.ErrNoRows or similar "not found" sentinel errors.
-func isNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no rows")
-}
 
 // AdminCredentialStore abstracts DB operations for admin provider credentials.
 type AdminCredentialStore interface {
@@ -134,7 +125,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateAdminCredential(c.Request.Context(), row); err != nil {
-		if isDuplicateErr(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
 			return
 		}
@@ -302,7 +293,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.store.UpdateAdminCredential(c.Request.Context(), existing); err != nil {
-		if isDuplicateErr(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a credential for that provider already exists"})
 			return
 		}
@@ -335,7 +326,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 func (h *AdminProviderCredentialsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.store.DeleteAdminCredential(c.Request.Context(), id); err != nil {
-		if isNotFound(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrCredentialNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 			return
 		}

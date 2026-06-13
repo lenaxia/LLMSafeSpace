@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -237,7 +238,7 @@ func TestUserProviderCredentials_Create_EmptyProvider(t *testing.T) {
 
 func TestUserProviderCredentials_Create_Duplicate(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.nextErr = errors.New("ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)")
+	store.nextErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	dek := make([]byte, 32)
 	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
 	h := &UserProviderCredentialsHandler{
@@ -586,3 +587,88 @@ func (c *testDEKCacheForHandler) GetDEK(_ context.Context, sessionID string) ([]
 }
 
 func (c *testDEKCacheForHandler) EvictDEK(_ context.Context, _ string) error { return nil }
+
+// setupUserCredRouterUnauthenticated builds the credential routes without the
+// auth middleware that injects userID/sessionID, simulating an unauthenticated
+// request. Every handler must return 401 rather than touching the store.
+func setupUserCredRouterUnauthenticated(h *UserProviderCredentialsHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := r.Group("/api/v1/provider-credentials")
+	g.POST("", h.Create)
+	g.GET("", h.List)
+	g.GET("/:id", h.Get)
+	g.DELETE("/:id", h.Delete)
+	g.GET("/:id/bindings", h.ListBindings)
+	g.POST("/:id/bind/:workspaceId", h.Bind)
+	g.DELETE("/:id/bind/:workspaceId", h.Unbind)
+	return r
+}
+
+// TestUserProviderCredentials_AuthGuards_Return401 verifies that every endpoint
+// enforces authentication and returns 401 (never reaching the store) when the
+// caller has no authenticated session. Guards against a regression that drops
+// the extractAuth guard from any handler.
+func TestUserProviderCredentials_AuthGuards_Return401(t *testing.T) {
+	store := newFakeUserCredStore()
+	h := &UserProviderCredentialsHandler{store: store}
+	router := setupUserCredRouterUnauthenticated(h)
+
+	createBody := bytes.NewBufferString(`{"provider":"anthropic","apiKey":"k"}`)
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   *bytes.Buffer
+	}{
+		{"Create", http.MethodPost, "/api/v1/provider-credentials", createBody},
+		{"List", http.MethodGet, "/api/v1/provider-credentials", nil},
+		{"Get", http.MethodGet, "/api/v1/provider-credentials/c1", nil},
+		{"Delete", http.MethodDelete, "/api/v1/provider-credentials/c1", nil},
+		{"ListBindings", http.MethodGet, "/api/v1/provider-credentials/c1/bindings", nil},
+		{"Bind", http.MethodPost, "/api/v1/provider-credentials/c1/bind/ws-1", nil},
+		{"Unbind", http.MethodDelete, "/api/v1/provider-credentials/c1/bind/ws-1", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body *bytes.Buffer
+			if tc.body != nil {
+				body = tc.body
+			} else {
+				body = bytes.NewBuffer(nil)
+			}
+			req, _ := http.NewRequest(tc.method, tc.path, body)
+			if tc.body != nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code, "%s must return 401 when unauthenticated", tc.name)
+		})
+	}
+}
+
+// TestUserProviderCredentials_Create_RequiresSessionID verifies that Create in
+// particular rejects requests that carry a userID but no sessionID (the other
+// handlers only require userID, so this guards the Create-specific check).
+func TestUserProviderCredentials_Create_RequiresSessionID(t *testing.T) {
+	store := newFakeUserCredStore()
+	h := &UserProviderCredentialsHandler{store: store}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1") // userID present, sessionID absent
+		c.Next()
+	})
+	r.POST("/api/v1/provider-credentials", h.Create)
+
+	body := `{"provider":"anthropic","apiKey":"k"}`
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Empty(t, store.creds, "no credential should be persisted without a session")
+}

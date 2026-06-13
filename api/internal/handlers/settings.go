@@ -82,7 +82,7 @@ func (h *SettingsHandler) SetAdminSetting(c *gin.Context) {
 
 // GetUserSettings returns all user settings merged with defaults.
 func (h *SettingsHandler) GetUserSettings(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -117,7 +117,7 @@ func (h *SettingsHandler) GetUserSettingsSchema(c *gin.Context) {
 
 // SetUserSetting updates a single user setting.
 func (h *SettingsHandler) SetUserSetting(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return

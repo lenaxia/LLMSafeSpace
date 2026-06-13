@@ -33,7 +33,7 @@ func (h *UsageHandler) SetDB(db *sql.DB) {
 }
 
 func (h *UsageHandler) GetUsage(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -55,7 +55,7 @@ func (h *UsageHandler) GetUsage(c *gin.Context) {
 }
 
 func (h *UsageHandler) GetWorkspaceUsage(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	workspaceID := c.Param("id")
 	if userID == "" || workspaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing user or workspace"})
@@ -84,7 +84,7 @@ func (h *UsageHandler) GetWorkspaceUsage(c *gin.Context) {
 }
 
 func (h *UsageHandler) GetQuotaStatus(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -236,7 +236,7 @@ func (h *UsageHandler) AdminDiscardDLQ(c *gin.Context) {
 		return
 	}
 
-	actorID := c.GetString("userID")
+	actorID, _ := extractAuth(c)
 	if _, aerr := h.db.ExecContext(c.Request.Context(),
 		`INSERT INTO audit_log (actor_id, domain, action, target_id, metadata)
 		 VALUES ($1, 'billing', 'dlq_discarded', $2, $3)`,

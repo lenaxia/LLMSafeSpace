@@ -136,7 +136,7 @@ func (h *TerminalHandler) SetExecConfig(cfg *rest.Config, cs kubernetes.Interfac
 
 // HandleTicket handles POST /workspaces/:id/terminal/ticket.
 func (h *TerminalHandler) HandleTicket(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return

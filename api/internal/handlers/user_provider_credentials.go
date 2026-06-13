@@ -72,8 +72,7 @@ func (h *UserProviderCredentialsHandler) SetCredentialStateWriter(w CredentialSt
 // A future improvement should re-encrypt provider_credentials as part of the
 // password-rotation flow.
 func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
-	userID := c.GetString("userID")
-	sessionID := c.GetString("sessionID")
+	userID, sessionID := extractAuth(c)
 	if userID == "" || sessionID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -136,7 +135,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateUserCredential(c.Request.Context(), row); err != nil {
-		if isDuplicateErr(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
 			return
 		}
@@ -169,7 +168,11 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 
 // List handles GET /api/v1/provider-credentials.
 func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	rows, err := h.store.ListUserCredentials(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
@@ -195,7 +198,11 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 
 // Get handles GET /api/v1/provider-credentials/:id.
 func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	row, err := h.store.GetUserCredential(c.Request.Context(), userID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
@@ -219,7 +226,11 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 // Notifies all workspaces that had this credential bound so running pods
 // pick up the revocation on their next secret reload (C-3 fix).
 func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	credID := c.Param("id")
 
 	// Snapshot bound workspaces BEFORE the FK cascade removes the bindings.
@@ -246,7 +257,11 @@ func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
 
 // Bind handles POST /api/v1/provider-credentials/:id/bind/:workspaceId.
 func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
 
@@ -282,7 +297,11 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 // Unbind handles DELETE /api/v1/provider-credentials/:id/bind/:workspaceId.
 // Returns 409 Conflict if the binding is auto-managed (H-1 fix: auto-bindings protected).
 func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	credID := c.Param("id")
 	wsID := c.Param("workspaceId")
 
@@ -323,7 +342,11 @@ func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 // Returns workspace IDs with their binding source type (explicit vs auto) so the
 // UI can show which workspaces have user-initiated vs seeded bindings (M-1 fix).
 func (h *UserProviderCredentialsHandler) ListBindings(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 	credID := c.Param("id")
 
 	cred, err := h.store.GetUserCredential(c.Request.Context(), userID, credID)

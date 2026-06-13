@@ -11,9 +11,7 @@ import (
 type AgentType string
 
 const (
-	AgentTypeOpenCode   AgentType = "opencode"
-	AgentTypeClaudeCode AgentType = "claude-code"
-	AgentTypeCodex      AgentType = "codex"
+	AgentTypeOpenCode AgentType = "opencode"
 )
 
 type CredentialState string

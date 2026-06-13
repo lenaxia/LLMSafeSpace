@@ -21,9 +21,8 @@ type InjectedSecret struct {
 // PrepareSecretsForInjection decrypts all secrets bound to a workspace
 // and returns the JSON payload for the ephemeral K8s Secret.
 //
-// When deriveAdminKey is wired (US-30.5+), uses the new multi-source path
-// that queries workspace_credential_bindings and merges by provider priority.
-// Otherwise falls back to the legacy path (user_secrets only).
+// Uses the multi-source path that queries workspace_credential_bindings
+// and merges by provider priority.
 //
 // ARCHITECTURAL NOTE — user credential injection in non-interactive contexts (C-1):
 //
@@ -40,10 +39,6 @@ type InjectedSecret struct {
 // user credentials without the user's session. The reload banner (Epic 27a)
 // prompts the user to refresh credentials when they next open the workspace.
 func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
-	if s.deriveAdminKey == nil {
-		return s.prepareSecretsLegacy(ctx, userID, sessionID, workspaceID)
-	}
-
 	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
 		return nil, err
 	}
@@ -218,53 +213,4 @@ func buildSecretsJSON(providerData []LLMProviderData, nonLLM []InjectedSecret) (
 	}
 	out = append(out, nonLLM...)
 	return json.Marshal(out)
-}
-
-// prepareSecretsLegacy is the original PrepareSecretsForInjection implementation.
-// Used when deriveAdminKey is not wired (pre-US-30.5 deployments).
-func (s *SecretService) prepareSecretsLegacy(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
-	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
-		return nil, err
-	}
-	// Get bound secrets
-	boundSecrets, err := s.store.GetBindings(ctx, workspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("get bindings: %w", err)
-	}
-
-	if len(boundSecrets) == 0 {
-		return json.Marshal([]InjectedSecret{})
-	}
-
-	dek, err := s.keys.GetDEK(ctx, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("encryption unavailable: %w", err)
-	}
-
-	injected := make([]InjectedSecret, 0, len(boundSecrets))
-	for _, secret := range boundSecrets {
-		// Only decrypt secrets owned by this user
-		if secret.UserID != userID {
-			continue
-		}
-
-		plaintext, err := DecryptSecret(dek, secret.Ciphertext)
-		if err != nil {
-			// Log and skip — don't fail the entire activation for one bad secret
-			continue
-		}
-
-		injected = append(injected, InjectedSecret{
-			Type:      secret.Type,
-			Name:      secret.Name,
-			Metadata:  secret.Metadata,
-			Plaintext: string(plaintext),
-		})
-
-		// Audit the read
-		sid := secret.ID
-		s.audit(ctx, userID, "read", &sid, &workspaceID, map[string]string{"name": secret.Name, "reason": "pod_injection"})
-	}
-
-	return json.Marshal(injected)
 }
