@@ -349,8 +349,8 @@ func TestRedisBackend_ErrorPath(t *testing.T) {
 	// down so every subsequent command fails. MaxRetries=0 + a short dial
 	// timeout keeps the failure fast and deterministic.
 	client := redis.NewClient(&redis.Options{
-		Addr:       mr.Addr(),
-		MaxRetries: 0,
+		Addr:        mr.Addr(),
+		MaxRetries:  0,
 		DialTimeout: 100 * time.Millisecond,
 	})
 	mr.Close()
