@@ -43,25 +43,25 @@ type opencodeEvent struct {
 }
 
 type Tracker struct {
-	HttpClient        *http.Client
-	Logger            pkginterfaces.LoggerInterface
-	onSessionIdle     SessionIdleCallback
-	onSessionActive   SessionIdleCallback
-	onRawEvent        RawEventCallback
-	onInference       InferenceCallback
-	tokensMu          sync.Mutex
-	sessionTokenSeen  map[string]int64
-	sessionCostSeen   map[string]float64
-	startTimeMu       sync.Mutex
-	sessionStartTime  map[string]time.Time
-	sessionMetrics    SessionMetricsRecorder
-	subscriptions     map[string]context.CancelFunc
-	subMu             sync.Mutex
-	passwordGetter    func(ctx context.Context, workspaceID string) (string, error)
-	podIPResolver     func(workspaceID string) string
-	drainMu           sync.Mutex
-	drainSubs         map[string]map[uint64]*drainSub
-	drainSubCounter   uint64
+	HttpClient       *http.Client
+	Logger           pkginterfaces.LoggerInterface
+	onSessionIdle    SessionIdleCallback
+	onSessionActive  SessionIdleCallback
+	onRawEvent       RawEventCallback
+	onInference      InferenceCallback
+	tokensMu         sync.Mutex
+	sessionTokenSeen map[string]int64
+	sessionCostSeen  map[string]float64
+	startTimeMu      sync.Mutex
+	sessionStartTime map[string]time.Time
+	sessionMetrics   SessionMetricsRecorder
+	subscriptions    map[string]context.CancelFunc
+	subMu            sync.Mutex
+	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
+	podIPResolver    func(workspaceID string) string
+	drainMu          sync.Mutex
+	drainSubs        map[string]map[uint64]*drainSub
+	drainSubCounter  uint64
 }
 
 type drainSub struct {
