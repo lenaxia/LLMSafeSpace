@@ -2411,13 +2411,17 @@ func TestProxy_ProxyToWorkspace_NoDoubleReleaseOnMaxSessions(t *testing.T) {
 	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
 	env.handler.activeMu.Unlock()
 
+	env.handler.connMu.Lock()
+	env.handler.connCount["ws-1"] = 5
+	env.handler.connMu.Unlock()
+
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s2/message", strings.NewReader(`{"msg":"hi"}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
 	env.handler.connMu.Lock()
 	count := env.handler.connCount["ws-1"]
 	env.handler.connMu.Unlock()
-	assert.Equal(t, 0, count, "connection count should be 0 after failed max-sessions check, not underflowed")
+	assert.Equal(t, 5, count, "connection count should be 5 (acquire 5→6, defer release 6→5), not underflowed to 4 by double-release")
 }
 
 func TestProxy_IsSessionActive_ConcurrentReads(t *testing.T) {

@@ -1238,8 +1238,8 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 // GetActiveSessions returns the active session IDs for a workspace.
 // This is a per-replica view (not globally consistent across API replicas).
 func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	sessions := h.activeSess[workspaceID]
 	if sessions == nil {
 		return nil
