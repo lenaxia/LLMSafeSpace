@@ -351,7 +351,7 @@ func (s *PgOrgStore) RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	for adminRows.Next() {
 		adminCount++
 	}
-	adminRows.Close()
+	_ = adminRows.Close()
 	if err := adminRows.Err(); err != nil {
 		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}
@@ -413,7 +413,7 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	for adminRows.Next() {
 		adminCount++
 	}
-	adminRows.Close()
+	_ = adminRows.Close()
 	if err := adminRows.Err(); err != nil {
 		return false, fmt.Errorf("iterate admin rows: %w", err)
 	}

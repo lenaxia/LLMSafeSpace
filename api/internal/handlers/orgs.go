@@ -366,10 +366,7 @@ func (h *OrgsHandler) AddMember(c *gin.Context) {
 		return
 	}
 
-	pendingKeyWrap := false
-	if req.Role == types.OrgRoleAdmin {
-		pendingKeyWrap = true
-	}
+	pendingKeyWrap := req.Role == types.OrgRoleAdmin
 
 	if err := h.orgStore.AddOrgMember(ctx, orgID, req.UserID, req.Role, pendingKeyWrap); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add member"})

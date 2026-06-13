@@ -70,7 +70,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	plaintext, err := json.Marshal(secrets.LLMProviderData{
+	plaintext, err := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // G117 false positive — APIKey is encrypted before storage
 		Provider: req.Provider,
 		APIKey:   req.APIKey,
 		BaseURL:  req.BaseURL,
@@ -171,7 +171,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		if req.BaseURL != nil {
 			pd.BaseURL = *req.BaseURL
 		}
-		newPlaintext, err := json.Marshal(pd)
+		newPlaintext, err := json.Marshal(pd) //nolint:gosec // G117 false positive — pd contains encrypted credential data
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 			return

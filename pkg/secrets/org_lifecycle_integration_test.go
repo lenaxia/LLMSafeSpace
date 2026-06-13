@@ -51,14 +51,6 @@ func createTestOrg(t *testing.T, pool *pgxpool.Pool, orgID, adminUserID string) 
 	}
 }
 
-func ensureTestOrgWorkspace(t *testing.T, pool *pgxpool.Pool, wsID, userID, orgID string) {
-	t.Helper()
-	ctx := context.Background()
-	pool.Exec(ctx, `INSERT INTO workspaces (id, name, user_id, runtime, storage_size, org_id, created_at, updated_at)
-		VALUES ($1, $2, $3, 'base', '5Gi', $4, NOW(), NOW()) ON CONFLICT DO NOTHING`,
-		wsID, "test-ws-"+wsID[:8], userID, orgID)
-}
-
 func ensureTestUserWithKeys(t *testing.T, pool *pgxpool.Pool, userID string) []byte {
 	t.Helper()
 	ensureTestUser(t, pool, userID)
