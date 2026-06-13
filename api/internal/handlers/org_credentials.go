@@ -203,7 +203,19 @@ func (h *OrgCredentialsHandler) Delete(c *gin.Context) {
 func (h *OrgCredentialsHandler) CreateAutoApply(c *gin.Context) {
 	orgID := c.Param("id")
 	credID := c.Param("credID")
-	if err := h.credStore.CreateOrgAutoApply(c.Request.Context(), credID, orgID, 5); err != nil {
+	ctx := c.Request.Context()
+
+	cred, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
+		return
+	}
+	if cred == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organisation"})
+		return
+	}
+
+	if err := h.credStore.CreateOrgAutoApply(ctx, credID, orgID, 5); err != nil {
 		if isDuplicateErr(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "auto-apply rule already exists"})
 			return
@@ -217,7 +229,22 @@ func (h *OrgCredentialsHandler) CreateAutoApply(c *gin.Context) {
 // ListAutoApply handles GET /api/v1/orgs/:id/credentials/:credID/auto-apply.
 func (h *OrgCredentialsHandler) ListAutoApply(c *gin.Context) {
 	orgID := c.Param("id")
-	rules, err := h.credStore.ListOrgAutoApply(c.Request.Context(), orgID)
+	ctx := c.Request.Context()
+
+	credID := c.Param("credID")
+	if credID != "" {
+		cred, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
+			return
+		}
+		if cred == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organisation"})
+			return
+		}
+	}
+
+	rules, err := h.credStore.ListOrgAutoApply(ctx, orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list auto-apply rules"})
 		return

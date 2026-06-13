@@ -27,6 +27,8 @@ type OrgStore interface {
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
+	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
+	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
@@ -301,7 +303,12 @@ func (s *PgOrgStore) RemoveOrgMember(ctx context.Context, orgID, userID string) 
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
@@ -317,7 +324,106 @@ func (s *PgOrgStore) RemoveOrgMember(ctx context.Context, orgID, userID string) 
 		return fmt.Errorf("delete org membership: %w", err)
 	}
 
+	committed = true
 	return tx.Commit()
+}
+
+func (s *PgOrgStore) RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var adminCount int
+	err = tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
+		orgID,
+	).Scan(&adminCount)
+	if err != nil {
+		return false, fmt.Errorf("count org admins: %w", err)
+	}
+
+	var targetRole string
+	err = tx.QueryRowContext(ctx,
+		`SELECT role FROM org_memberships WHERE org_id = $1 AND user_id = $2`,
+		orgID, targetUserID,
+	).Scan(&targetRole)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get target member role: %w", err)
+	}
+
+	if targetRole == "admin" && adminCount <= 1 {
+		return false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
+		orgID, targetUserID,
+	); err != nil {
+		return false, fmt.Errorf("delete org key member: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM org_memberships WHERE org_id = $1 AND user_id = $2`,
+		orgID, targetUserID,
+	); err != nil {
+		return false, fmt.Errorf("delete org membership: %w", err)
+	}
+
+	committed = true
+	return true, tx.Commit()
+}
+
+func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var adminCount int
+	err = tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'admin' FOR UPDATE`,
+		orgID,
+	).Scan(&adminCount)
+	if err != nil {
+		return false, fmt.Errorf("count org admins: %w", err)
+	}
+
+	if adminCount <= 1 {
+		return false, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE org_memberships SET role = 'member' WHERE org_id = $1 AND user_id = $2`,
+		orgID, targetUserID,
+	); err != nil {
+		return false, fmt.Errorf("demote org admin: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
+		orgID, targetUserID,
+	); err != nil {
+		return false, fmt.Errorf("delete org key member: %w", err)
+	}
+
+	committed = true
+	return true, tx.Commit()
 }
 
 func (s *PgOrgStore) CountOrgAdmins(ctx context.Context, orgID string) (int, error) {

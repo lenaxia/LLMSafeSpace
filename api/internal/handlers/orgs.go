@@ -31,6 +31,8 @@ type orgStore interface {
 	ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error)
 	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
+	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
+	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
@@ -301,6 +303,9 @@ func (h *OrgsHandler) ListWorkspaces(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
+			if limit > 100 {
+				limit = 100
+			}
 		}
 	}
 	if v := c.Query("offset"); v != "" {
@@ -394,12 +399,6 @@ func (h *OrgsHandler) RemoveMember(c *gin.Context) {
 		return
 	}
 
-	adminCount, err := h.orgStore.CountOrgAdmins(ctx, orgID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count admins"})
-		return
-	}
-
 	targetMember, err := h.orgStore.GetOrgMember(ctx, orgID, targetUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
@@ -410,14 +409,21 @@ func (h *OrgsHandler) RemoveMember(c *gin.Context) {
 		return
 	}
 
-	if targetMember.Role == types.OrgRoleAdmin && adminCount <= 1 {
-		c.JSON(http.StatusConflict, gin.H{"error": "cannot remove the last org admin"})
-		return
-	}
-
-	if err := h.orgStore.RemoveOrgMember(ctx, orgID, targetUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove member"})
-		return
+	if targetMember.Role == types.OrgRoleAdmin {
+		removed, err := h.orgStore.RemoveOrgAdminIfNotLast(ctx, orgID, targetUserID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove admin"})
+			return
+		}
+		if !removed {
+			c.JSON(http.StatusConflict, gin.H{"error": "cannot remove the last org admin"})
+			return
+		}
+	} else {
+		if err := h.orgStore.RemoveOrgMember(ctx, orgID, targetUserID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove member"})
+			return
+		}
 	}
 
 	c.Status(http.StatusNoContent)
@@ -520,22 +526,15 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 		return
 	}
 
-	adminCount, err := h.orgStore.CountOrgAdmins(ctx, orgID)
+	demoted, err := h.orgStore.DemoteOrgAdminIfNotLast(ctx, orgID, targetUserID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count admins"})
-		return
-	}
-	if adminCount <= 1 {
-		c.JSON(http.StatusConflict, gin.H{"error": "cannot demote the last org admin"})
-		return
-	}
-
-	if err := h.orgStore.UpdateOrgMemberRole(ctx, orgID, targetUserID, types.OrgRoleMember); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to demote admin"})
 		return
 	}
-
-	_ = h.orgStore.DeleteOrgKeyMember(ctx, orgID, targetUserID)
+	if !demoted {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot demote the last org admin"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
 }
