@@ -1043,7 +1043,7 @@ func (s *Service) ListAllWorkspaceOwners(ctx context.Context) (map[string]string
 	if err != nil {
 		return nil, fmt.Errorf("failed to list workspace owners: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]string)
 	for rows.Next() {
@@ -1068,7 +1068,7 @@ func (s *Service) ListAllWorkspacesForBilling(ctx context.Context) ([]WorkspaceB
 	if err != nil {
 		return nil, fmt.Errorf("failed to list workspaces for billing: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []WorkspaceBillingRecord
 	for rows.Next() {
