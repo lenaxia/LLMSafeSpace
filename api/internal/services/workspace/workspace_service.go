@@ -295,11 +295,8 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 	if meta == nil {
 		return nil, apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
 	}
-	if meta.UserID != userID {
-		return nil, apierrors.NewForbiddenError(
-			"user does not own this workspace",
-			fmt.Errorf("user %s does not own workspace %s", userID, workspaceID),
-		)
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
 	}
 
 	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})

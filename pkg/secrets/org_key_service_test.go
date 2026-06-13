@@ -323,7 +323,7 @@ func TestUnlockAllOrgDEKs_PartialFailure_ContinuesOtherOrgs(t *testing.T) {
 	// Manually insert a stale-wrapped record for org-bad (wrong KEK)
 	badDEK := make([]byte, dekSize)
 	badSalt, _ := GenerateSalt()
-	badKEK, _ := DeriveKEK([]byte("differentpassword"), badSalt, orgKEKInfo)
+	badKEK, _ := DeriveKEK([]byte("differentpassword"), badSalt, OrgKEKInfo)
 	badWrapped, _ := WrapDEK(badKEK, badDEK)
 	_ = store.UpsertOrgKeyMember(ctx, &OrgKeyMemberRecord{
 		OrgID: "org-bad", UserID: userID, WrappedDEK: badWrapped, KeyVersion: 1,
