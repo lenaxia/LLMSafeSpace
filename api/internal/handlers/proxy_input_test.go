@@ -4,11 +4,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -558,6 +560,76 @@ func TestNormalizedEvents_E2E_PermissionResolved_ViaProcessEvent(t *testing.T) {
 	assert.Equal(t, "per_abc", data["request_id"])
 	assert.Equal(t, "ses_xyz", data["session_id"])
 	assert.Equal(t, "always", data["reply"])
+}
+
+// TestEpic25G1_fetchFromPod_LimitReader verifies that fetchFromPod truncates
+// response bodies at 1 MiB, preventing unbounded memory allocation from a
+// misbehaving upstream pod. (Epic 25 G1)
+func TestEpic25G1_fetchFromPod_LimitReader(t *testing.T) {
+	const respSize = 1<<20 + 200000 // 1.2 MiB
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.Repeat("x", respSize)))
+	}))
+	defer backend.Close()
+
+	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	require.NoError(t, err)
+
+	// Replace httpClient with one that rewrites all requests to the test backend.
+	handler.httpClient = &http.Client{
+		Transport: &urlRewriteTransport{target: backend.URL},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	body, err := handler.fetchFromPod(ctx, "localhost", "test-pw", "/test")
+	require.NoError(t, err)
+	assert.Equal(t, 1<<20, len(body), "response body must be truncated to 1 MiB (got %d)", len(body))
+}
+
+type urlRewriteTransport struct {
+	target    string
+	transport http.RoundTripper
+}
+
+func (t *urlRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, _ := url.Parse(t.target)
+	req.URL.Scheme = u.Scheme
+	req.URL.Host = u.Host
+	if t.transport == nil {
+		t.transport = http.DefaultTransport
+	}
+	return t.transport.RoundTrip(req)
+}
+
+func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+
+	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	// Create a workspace CRD with MaxActiveSessions=10 and AutoApprovePermissions=false
+	ws := makeWorkspaceCRD("ws-1", 10)
+	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	require.NoError(t, err)
+
+	// Call shouldAutoApprovePermissions — this is the production code path
+	// that populates wsConfig from the workspace CRD.
+	result := handler.shouldAutoApprovePermissions("ws-1")
+	assert.False(t, result, "workspace CRD has AutoApprovePermissions=false")
+
+	// Verify wsConfig was populated with all fields from the CRD.
+	handler.wsConfigMu.RLock()
+	cfg := handler.wsConfig["ws-1"]
+	handler.wsConfigMu.RUnlock()
+	assert.Equal(t, 10, cfg.maxActiveSessions)
+	assert.False(t, cfg.autoApprovePermissions)
 }
 
 func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {

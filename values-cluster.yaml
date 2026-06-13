@@ -7,12 +7,13 @@
 # Image tags are passed via make helm-deploy IMAGE_TAG=<tag> RELEASE_NS=default.
 #
 # Pin all components to the same commit so they reconcile against
-# matching CRD schema and protocol expectations. ts-1781228611 includes:
-#   - fix(observability): all inference/billing metrics wired, inference parsing
+# matching CRD schema and protocol expectations. ts-1781285219 includes:
+#   - fix(repolint): worklog 0233→0234 rename — sequence collision fix (ci: #1074)
+  - ci: kick off run after worklog collision fix
 #     bug fixed, Grafana datasource default set, dashboard descriptions added (#118)
 api:
   image:
-    tag: ts-1781228611
+    tag: ts-1781285219
     pullPolicy: Always
   ingress:
     # API is exposed via the frontend ingress at /api; no separate
@@ -21,7 +22,7 @@ api:
 
 controller:
   image:
-    tag: ts-1781228611
+    tag: ts-1781285219
     pullPolicy: Always
 
 # inferenceRelayURL is the Cloudflare Worker base URL for free-tier inference.
@@ -43,7 +44,7 @@ mcp:
 frontend:
   enabled: true
   image:
-    tag: ts-1781228611
+    tag: ts-1781285219
     pullPolicy: Always
   ingress:
     enabled: true
@@ -58,7 +59,7 @@ frontend:
 runtimeEnvironments:
   base:
     image:
-      tag: ts-1781228611
+      tag: ts-1781285219
 
 # Webhook image-registry allow-list — required so the controller's
 # RuntimeEnvironment validating webhook accepts ghcr.io images.

@@ -47,7 +47,6 @@ const (
 )
 
 type workspaceConfig struct {
-	workspaceID            string
 	maxActiveSessions      int
 	autoApprovePermissions bool
 }
@@ -72,7 +71,7 @@ type ProxyHandler struct {
 	priorPhaseMu sync.Mutex
 
 	activeSess map[string]map[string]bool
-	activeMu   sync.Mutex
+	activeMu   sync.RWMutex
 
 	connCount map[string]int
 	connMu    sync.Mutex
@@ -268,6 +267,15 @@ func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	sid := c.Param("sessionId")
 	if err := validateSessionID(sid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+	if h.isSessionActive(wid, sid) {
+		c.Header("Retry-After", "1")
+		c.JSON(http.StatusConflict, gin.H{
+			"error":      "session is busy; retry after idle",
+			"retryAfter": 1,
+		})
 		return
 	}
 	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid)
@@ -515,7 +523,6 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 
 	if isWriteOp && sessionID != "" {
 		if !h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions) {
-			h.releaseConnection(workspaceID)
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":             "active session limit reached",
@@ -902,9 +909,19 @@ func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
 	}
 }
 
+func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
+	sessions, ok := h.activeSess[workspaceID]
+	if !ok {
+		return false
+	}
+	return sessions[sessionID]
+}
+
 func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	return len(h.activeSess[workspaceID])
 }
 
@@ -1054,17 +1071,11 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	}
 
 	if h.activityTracker != nil {
-		h.wsConfigMu.RLock()
-		cfg, ok := h.wsConfig[workspaceID]
-		h.wsConfigMu.RUnlock()
-		if ok && cfg.workspaceID != "" {
-			h.activityTracker.Record(cfg.workspaceID)
-			// Record message in session index
-			if h.sessionIndex != nil {
-				h.sessionIndex.RecordMessage(cfg.workspaceID, sessionID, "", time.Now())
-				go h.fetchAndPersistTitle(cfg.workspaceID, sessionID)
-			}
-		}
+		h.activityTracker.Record(workspaceID)
+	}
+	if h.sessionIndex != nil {
+		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
+		go h.fetchAndPersistTitle(workspaceID, sessionID)
 	}
 }
 
@@ -1227,8 +1238,8 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 // GetActiveSessions returns the active session IDs for a workspace.
 // This is a per-replica view (not globally consistent across API replicas).
 func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
-	h.activeMu.Lock()
-	defer h.activeMu.Unlock()
+	h.activeMu.RLock()
+	defer h.activeMu.RUnlock()
 	sessions := h.activeSess[workspaceID]
 	if sessions == nil {
 		return nil
@@ -1253,11 +1264,11 @@ func (h *ProxyHandler) SetActiveSessionsForTest(workspaceID string, sessionIDs [
 func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.wsConfigMu.RLock()
 	cfg, ok := h.wsConfig[workspaceID]
-	h.wsConfigMu.RUnlock()
 	maxSessions := defaultMaxActiveSessions
-	if ok {
+	if ok && cfg.maxActiveSessions > 0 {
 		maxSessions = cfg.maxActiveSessions
 	}
+	h.wsConfigMu.RUnlock()
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
 	if h.broker != nil {
@@ -1410,11 +1421,15 @@ func (h *ProxyHandler) resolveRootSessionID(workspaceID, sessionID string) strin
 // Uses the wsConfig cache; falls back to a K8s read on cache miss.
 func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	h.wsConfigMu.RLock()
-	if cfg, ok := h.wsConfig[workspaceID]; ok {
-		h.wsConfigMu.RUnlock()
-		return cfg.autoApprovePermissions
+	cfg, ok := h.wsConfig[workspaceID]
+	autoApprove := false
+	if ok {
+		autoApprove = cfg.autoApprovePermissions
 	}
 	h.wsConfigMu.RUnlock()
+	if ok {
+		return autoApprove
+	}
 
 	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
 	if err != nil {
@@ -1422,8 +1437,9 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	}
 
 	h.wsConfigMu.Lock()
-	cfg := h.wsConfig[workspaceID]
+	cfg = h.wsConfig[workspaceID]
 	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
+	cfg.maxActiveSessions = int(workspace.Spec.MaxActiveSessions)
 	h.wsConfig[workspaceID] = cfg
 	h.wsConfigMu.Unlock()
 

@@ -88,6 +88,12 @@ paths = [
   # and is not valid against any running instance (verified by inspection
   # 2026-06-11).
   '''frontend/src/components/settings/ApiKeysTab\.test\.tsx''',
+  # Epic-38 architectural remediation stories contain Go code snippets
+  # with synthetic API key literals (e.g. "ak_live_abcdef123456") used
+  # as test fixture examples in implementation guidance. These are
+  # documentation placeholders — not real credentials and not valid
+  # against any running instance (verified by inspection 2026-06-12).
+  '''design/stories/epic-38-architectural-remediation/.*''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
