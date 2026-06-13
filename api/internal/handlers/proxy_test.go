@@ -32,6 +32,8 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
+
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 )
 
 type testLogger struct{}
@@ -2137,6 +2139,8 @@ func TestProxy_DeleteSession_DeepNestingEndpointMapping(t *testing.T) {
 	assert.Equal(t, "DELETE", capturedMethod)
 	assert.Equal(t, "/session/sess_abc-123", capturedPath)
 }
+
+var _ interfaces.SessionIndexService = (*recordingActivitySessionIndex)(nil)
 
 type recordingActivitySessionIndex struct {
 	mu            sync.Mutex
