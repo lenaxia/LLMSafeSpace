@@ -92,7 +92,11 @@ func New(cfg *config.Config, log *logger.Logger, k8sClient interfaces.Kubernetes
 		return nil, fmt.Errorf("failed to initialize workspace service: %w", err)
 	}
 
-	rateLimiterService := ratelimit.NewWithCache(log, cacheService)
+	// Reuse the cache service's Redis connection pool for the rate limiter
+	// instead of opening a second client/pool to the same Redis instance.
+	// The cache service owns the client lifecycle (it closes the pool on
+	// Stop), so the rate limiter treats it as borrowed and does not close it.
+	rateLimiterService := ratelimit.NewWithRedisClient(log, cacheService.GetClient())
 
 	var meteringService interfaces.MeteringService
 	ms, err := metering.New(cfg, log, dbService.DB)
@@ -129,6 +133,9 @@ func (s *Services) Start() error {
 	if err := s.Workspace.Start(); err != nil {
 		return fmt.Errorf("failed to start workspace service: %w", err)
 	}
+	if err := s.RateLimiter.Start(); err != nil {
+		return fmt.Errorf("failed to start rate limiter service: %w", err)
+	}
 	if s.Metering != nil {
 		if err := s.Metering.Start(); err != nil {
 			return fmt.Errorf("failed to start metering service: %w", err)
@@ -143,6 +150,9 @@ func (s *Services) Stop() error {
 		if err := s.Metering.Stop(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if err := s.RateLimiter.Stop(); err != nil {
+		errs = append(errs, err)
 	}
 	if err := s.Workspace.Stop(); err != nil {
 		errs = append(errs, err)
