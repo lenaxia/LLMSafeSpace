@@ -67,6 +67,15 @@ func (s *Service) Ping(ctx context.Context) error {
 	return s.client.Ping(ctx).Err()
 }
 
+// GetClient returns the underlying Redis client so other services can reuse
+// the same connection pool instead of opening a duplicate client to the same
+// Redis instance (e.g. the rate limiter). The client remains owned by the
+// cache service and is closed when the cache service stops; callers must not
+// close it themselves.
+func (s *Service) GetClient() *redis.Client {
+	return s.client
+}
+
 // Get gets a value from the cache
 func (s *Service) Get(ctx context.Context, key string) (string, error) {
 	val, err := s.client.Get(ctx, key).Result()
