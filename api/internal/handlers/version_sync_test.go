@@ -203,10 +203,10 @@ func TestWorkspaceWatcher_VersionSync_FiredDuringSeedForActiveWorkspaces(t *test
 	k8s := k8smocks.NewMockKubernetesClient()
 	llm := k8smocks.NewMockLLMSafespaceV1Interface()
 	ws := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm)
+	k8s.On("LlmsafespaceV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(ws)
 
-	ws.On("List", mock.Anything).Return(&v1.WorkspaceList{
+	ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
 		ListMeta: metav1.ListMeta{ResourceVersion: "100"},
 		Items: []v1.Workspace{
 			{

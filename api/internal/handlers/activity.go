@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -132,13 +133,17 @@ func (t *ActivityTracker) runFlushLoop() {
 
 func (t *ActivityTracker) flushOne(ctx context.Context, workspaceID string, activityTime time.Time) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		ws, err := t.k8sClient.LlmsafespaceV1().Workspaces(t.namespace).Get(workspaceID, metav1.GetOptions{})
+		v1Client, err := t.k8sClient.LlmsafespaceV1()
+		if err != nil {
+			return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+		}
+		ws, err := v1Client.Workspaces(t.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		now := metav1.NewTime(activityTime)
 		ws.Status.LastActivityAt = &now
-		_, err = t.k8sClient.LlmsafespaceV1().Workspaces(t.namespace).UpdateStatus(ws)
+		_, err = v1Client.Workspaces(t.namespace).UpdateStatus(ctx, ws)
 		return err
 	})
 }

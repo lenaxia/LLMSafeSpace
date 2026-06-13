@@ -313,9 +313,9 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
-	wsMock.On("List", mock.MatchedBy(func(opts metav1.ListOptions) bool {
+	wsMock.On("List", mock.Anything, mock.MatchedBy(func(opts metav1.ListOptions) bool {
 		return opts.LabelSelector == labelUserID+"=user-snap"
 	})).Return(&v1.WorkspaceList{
 		Items: []v1.Workspace{
@@ -406,9 +406,9 @@ func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
-	wsMock.On("List", mock.Anything).Return(&v1.WorkspaceList{
+	wsMock.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
 		Items: []v1.Workspace{
 			{ObjectMeta: metav1.ObjectMeta{Name: "ws-known"}},
 			{ObjectMeta: metav1.ObjectMeta{Name: "ws-deleted"}}, // not in knownPhases

@@ -195,7 +195,12 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 	}
 	resultCh := make(chan listResult, 1)
 	go func() {
-		list, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).List(metav1.ListOptions{
+		v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+		if v1Err != nil {
+			resultCh <- listResult{err: v1Err}
+			return
+		}
+		list, err := v1Client.Workspaces(h.namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: labelUserID + "=" + userID,
 		})
 		if err != nil {

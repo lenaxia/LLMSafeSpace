@@ -23,7 +23,7 @@ import (
 func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *ActivityTracker {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	return NewActivityTracker(k8sMock, &testLogger{}, "default")
 }
@@ -59,11 +59,11 @@ func TestActivityTracker_Flush_UpdatesWorkspaceStatus(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
 
 	var captured *v1.Workspace
-	wsMock.On("UpdateStatus", mock.Anything).Run(func(args mock.Arguments) {
-		captured = args.Get(0).(*v1.Workspace)
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(1).(*v1.Workspace)
 	}).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
@@ -80,8 +80,8 @@ func TestActivityTracker_Flush_SkipsStaleWorkspace(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 	tracker.Flush()
@@ -95,11 +95,11 @@ func TestActivityTracker_Flush_CoalescesRecords(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
 
 	var captured *v1.Workspace
-	wsMock.On("UpdateStatus", mock.Anything).Run(func(args mock.Arguments) {
-		captured = args.Get(0).(*v1.Workspace)
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(1).(*v1.Workspace)
 	}).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
@@ -124,17 +124,17 @@ func TestActivityTracker_Flush_MultipleWorkspaces(t *testing.T) {
 	ws2 := makeWorkspaceCRD("ws-2", 3)
 	ws3 := makeWorkspaceCRD("ws-3", 10)
 
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws1, nil).Once()
-	wsMock.On("Get", "ws-2", metav1.GetOptions{}).Return(ws2, nil).Once()
-	wsMock.On("Get", "ws-3", metav1.GetOptions{}).Return(ws3, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws1, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-2", metav1.GetOptions{}).Return(ws2, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-3", metav1.GetOptions{}).Return(ws3, nil).Once()
 
-	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
 		return w.Name == "ws-1"
 	})).Return(ws1, nil).Once()
-	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
 		return w.Name == "ws-2"
 	})).Return(ws2, nil).Once()
-	wsMock.On("UpdateStatus", mock.MatchedBy(func(w *v1.Workspace) bool {
+	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
 		return w.Name == "ws-3"
 	})).Return(ws3, nil).Once()
 
@@ -154,8 +154,8 @@ func TestActivityTracker_StartBeginsFlushLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 
@@ -174,8 +174,8 @@ func TestActivityTracker_Stop_FinalFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 
@@ -226,8 +226,8 @@ func TestActivityTracker_ConcurrentRecordAndFlush(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
-	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil)
 
 	var wg sync.WaitGroup
 	const recorders = 50
@@ -254,15 +254,15 @@ func TestActivityTracker_Flush_RetryOnConflict(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Twice()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Twice()
 
 	conflictErr := apierrors.NewConflict(
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-1",
 		fmt.Errorf("object has been modified"),
 	)
-	wsMock.On("UpdateStatus", mock.Anything).Return(nil, conflictErr).Once()
-	wsMock.On("UpdateStatus", mock.Anything).Return(ws, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(nil, conflictErr).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 	tracker.Flush()
@@ -276,7 +276,7 @@ func TestActivityTracker_Flush_GetError(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 	tracker := newTestTracker(wsMock)
 
-	wsMock.On("Get", "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+	wsMock.On("Get", mock.Anything, "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
 	tracker.Record("ws-missing")
 	tracker.Flush()

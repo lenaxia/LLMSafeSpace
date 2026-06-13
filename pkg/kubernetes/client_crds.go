@@ -57,22 +57,9 @@ var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
 
 func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	config := *c
-	// Strip the request timeout for the typed client. The base rest.Config
-	// in pkg/kubernetes/client.go sets a 30s Timeout for unary REST calls,
-	// but the same setting kills long-lived Watch streams (their HTTP
-	// connection is closed at 30s and the watcher.ResultChan() is closed
-	// with eventCount=0). Watch responses have their own server-side
-	// timeoutSeconds; the client-side Timeout should be 0 (no timeout)
 	config.Timeout = 0
 	config.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
 	config.APIPath = "/apis"
-	// WithoutConversion() is required for CRD types that don't define a
-	// separate internal hub version. Without it, the rest client's watch
-	// decoder calls DecoderToVersion(serializer, nil), which (with conversion
-	// enabled) tries to convert to the internal version of the object's
-	// group — and fails with "no kind ... is registered for the internal
-	// version of group llmsafespace.dev". See client_test.go for the
-	// regression test that locks in this requirement.
 	config.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme).WithoutConversion()
 	config.UserAgent = rest.DefaultKubernetesUserAgent()
 
@@ -84,8 +71,8 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 	return &LLMSafespaceV1Client{restClient: client}, nil
 }
 
-func (c *LLMSafespaceV1Client) RuntimeEnvironments(namespace string) interfaces.RuntimeEnvironmentInterface {
-	return &runtimeEnvironments{client: c.restClient, ns: namespace}
+func (c *LLMSafespaceV1Client) RuntimeEnvironments() interfaces.RuntimeEnvironmentInterface {
+	return &runtimeEnvironments{client: c.restClient}
 }
 
 func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
@@ -94,85 +81,77 @@ func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.Workspace
 
 type runtimeEnvironments struct {
 	client rest.Interface
-	ns     string
 }
 
-func (r *runtimeEnvironments) Create(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+func (r *runtimeEnvironments) Create(ctx context.Context, runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
 	result := &v1.RuntimeEnvironment{}
 	err := r.client.Post().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		Body(runtimeEnv).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (r *runtimeEnvironments) Update(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+func (r *runtimeEnvironments) Update(ctx context.Context, runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
 	result := &v1.RuntimeEnvironment{}
 	err := r.client.Put().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		Name(runtimeEnv.Name).
 		Body(runtimeEnv).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (r *runtimeEnvironments) UpdateStatus(runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
+func (r *runtimeEnvironments) UpdateStatus(ctx context.Context, runtimeEnv *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error) {
 	result := &v1.RuntimeEnvironment{}
 	err := r.client.Put().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		Name(runtimeEnv.Name).
 		SubResource("status").
 		Body(runtimeEnv).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (r *runtimeEnvironments) Delete(name string, options metav1.DeleteOptions) error {
+func (r *runtimeEnvironments) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return r.client.Delete().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		Name(name).
 		Body(&options).
-		Do(context.TODO()).
+		Do(ctx).
 		Error()
 }
 
-func (r *runtimeEnvironments) Get(name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error) {
+func (r *runtimeEnvironments) Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error) {
 	result := &v1.RuntimeEnvironment{}
 	err := r.client.Get().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (r *runtimeEnvironments) List(opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error) {
+func (r *runtimeEnvironments) List(ctx context.Context, opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error) {
 	result := &v1.RuntimeEnvironmentList{}
 	err := r.client.Get().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (r *runtimeEnvironments) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+func (r *runtimeEnvironments) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	opts.Watch = true
 	return r.client.Get().
-		Namespace(r.ns).
 		Resource("runtimeenvironments").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
+		Watch(ctx)
 }
 
 type workspaces struct {
@@ -180,30 +159,30 @@ type workspaces struct {
 	ns     string
 }
 
-func (w *workspaces) Create(workspace *v1.Workspace) (*v1.Workspace, error) {
+func (w *workspaces) Create(ctx context.Context, workspace *v1.Workspace) (*v1.Workspace, error) {
 	result := &v1.Workspace{}
 	err := w.client.Post().
 		Namespace(w.ns).
 		Resource("workspaces").
 		Body(workspace).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (w *workspaces) Update(workspace *v1.Workspace) (*v1.Workspace, error) {
+func (w *workspaces) Update(ctx context.Context, workspace *v1.Workspace) (*v1.Workspace, error) {
 	result := &v1.Workspace{}
 	err := w.client.Put().
 		Namespace(w.ns).
 		Resource("workspaces").
 		Name(workspace.Name).
 		Body(workspace).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (w *workspaces) UpdateStatus(workspace *v1.Workspace) (*v1.Workspace, error) {
+func (w *workspaces) UpdateStatus(ctx context.Context, workspace *v1.Workspace) (*v1.Workspace, error) {
 	result := &v1.Workspace{}
 	err := w.client.Put().
 		Namespace(w.ns).
@@ -211,49 +190,49 @@ func (w *workspaces) UpdateStatus(workspace *v1.Workspace) (*v1.Workspace, error
 		Name(workspace.Name).
 		SubResource("status").
 		Body(workspace).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (w *workspaces) Delete(name string, options metav1.DeleteOptions) error {
+func (w *workspaces) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return w.client.Delete().
 		Namespace(w.ns).
 		Resource("workspaces").
 		Name(name).
 		Body(&options).
-		Do(context.TODO()).
+		Do(ctx).
 		Error()
 }
 
-func (w *workspaces) Get(name string, options metav1.GetOptions) (*v1.Workspace, error) {
+func (w *workspaces) Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Workspace, error) {
 	result := &v1.Workspace{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("workspaces").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (w *workspaces) List(opts metav1.ListOptions) (*v1.WorkspaceList, error) {
+func (w *workspaces) List(ctx context.Context, opts metav1.ListOptions) (*v1.WorkspaceList, error) {
 	result := &v1.WorkspaceList{}
 	err := w.client.Get().
 		Namespace(w.ns).
 		Resource("workspaces").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Do(context.TODO()).
+		Do(ctx).
 		Into(result)
 	return result, err
 }
 
-func (w *workspaces) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+func (w *workspaces) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	opts.Watch = true
 	return w.client.Get().
 		Namespace(w.ns).
 		Resource("workspaces").
 		VersionedParams(&opts, scheme.ParameterCodec).
-		Watch(context.TODO())
+		Watch(ctx)
 }

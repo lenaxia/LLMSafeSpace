@@ -532,7 +532,11 @@ type k8sWorkspaceGetterAdapter struct {
 }
 
 func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
-	return a.client.LlmsafespaceV1().Workspaces(a.namespace).Get(id, metav1.GetOptions{})
+	v1Client, err := a.client.LlmsafespaceV1()
+	if err != nil {
+		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	return v1Client.Workspaces(a.namespace).Get(context.Background(), id, metav1.GetOptions{})
 }
 
 // GetWorkspacePassword reads the workspace password from its K8s Secret.

@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -168,7 +169,11 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 // callback is invoked immediately so the DB reflects the current image tag
 // without waiting for the next phase transition (covers the API-restart case).
 func (w *WorkspaceWatcher) seedResourceVersion() error {
-	list, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).List(metav1.ListOptions{})
+	v1Client, err := w.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	list, err := v1Client.Workspaces(w.namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -228,7 +233,11 @@ func (w *WorkspaceWatcher) watchOnce() (bool, error) {
 	}
 
 	startedAt := time.Now()
-	watcher, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).Watch(opts)
+	v1Client, err := w.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return false, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	watcher, err := v1Client.Workspaces(w.namespace).Watch(context.Background(), opts)
 	if err != nil {
 		return false, fmt.Errorf("starting workspace watch: %w", err)
 	}

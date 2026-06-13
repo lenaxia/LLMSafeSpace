@@ -4,6 +4,8 @@
 package interfaces
 
 import (
+	"context"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
@@ -21,30 +23,30 @@ type KubernetesClient interface {
 	DynamicClient() dynamic.Interface
 	RESTConfig() *rest.Config
 	InformerFactory() informers.SharedInformerFactory
-	LlmsafespaceV1() LLMSafespaceV1Interface
+	LlmsafespaceV1() (LLMSafespaceV1Interface, error)
 }
 
 type LLMSafespaceV1Interface interface {
-	RuntimeEnvironments(namespace string) RuntimeEnvironmentInterface
+	RuntimeEnvironments() RuntimeEnvironmentInterface
 	Workspaces(namespace string) WorkspaceInterface
 }
 
 type RuntimeEnvironmentInterface interface {
-	Create(*v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
-	Update(*v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
-	UpdateStatus(*v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error)
-	List(opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
+	Create(ctx context.Context, obj *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
+	Update(ctx context.Context, obj *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
+	UpdateStatus(ctx context.Context, obj *v1.RuntimeEnvironment) (*v1.RuntimeEnvironment, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.RuntimeEnvironment, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.RuntimeEnvironmentList, error)
+	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
 }
 
 type WorkspaceInterface interface {
-	Create(*v1.Workspace) (*v1.Workspace, error)
-	Update(*v1.Workspace) (*v1.Workspace, error)
-	UpdateStatus(*v1.Workspace) (*v1.Workspace, error)
-	Delete(name string, options metav1.DeleteOptions) error
-	Get(name string, options metav1.GetOptions) (*v1.Workspace, error)
-	List(opts metav1.ListOptions) (*v1.WorkspaceList, error)
-	Watch(opts metav1.ListOptions) (watch.Interface, error)
+	Create(ctx context.Context, obj *v1.Workspace) (*v1.Workspace, error)
+	Update(ctx context.Context, obj *v1.Workspace) (*v1.Workspace, error)
+	UpdateStatus(ctx context.Context, obj *v1.Workspace) (*v1.Workspace, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Workspace, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.WorkspaceList, error)
+	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
 }

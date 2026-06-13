@@ -89,7 +89,11 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
 		return
 	}

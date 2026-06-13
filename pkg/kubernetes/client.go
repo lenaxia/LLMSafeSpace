@@ -6,6 +6,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +32,10 @@ type Client struct {
 	logger          interfaces.LoggerInterface
 	config          *config.KubernetesConfig
 	stopCh          chan struct{}
+
+	v1Once   sync.Once
+	v1Client *LLMSafespaceV1Client
+	v1Err    error
 }
 
 // Ensure Client implements interfaces.KubernetesClient
@@ -119,15 +124,15 @@ func NewForTesting(
 
 // Start starts the informer factories and leader election
 func (c *Client) Start() error {
-	// Start informer factory if it exists
 	if c.informerFactory != nil {
 		c.informerFactory.Start(c.stopCh)
 		c.logger.Info("Started informer factory")
 	}
 
-	// Configure leader election if enabled
 	if c.config.LeaderElection.Enabled {
-		go c.runLeaderElection()
+		if err := c.runLeaderElection(context.Background()); err != nil {
+			return fmt.Errorf("failed to start leader election: %w", err)
+		}
 	}
 
 	return nil
@@ -140,8 +145,7 @@ func (c *Client) Stop() {
 }
 
 // runLeaderElection starts the leader election process
-func (c *Client) runLeaderElection() {
-	// Create leader election config
+func (c *Client) runLeaderElection(ctx context.Context) error {
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
 			Name:      "llmsafespace-api-leader",
@@ -153,8 +157,7 @@ func (c *Client) runLeaderElection() {
 		},
 	}
 
-	// Configure leader election
-	leaderelection.RunOrDie(context.Background(), leaderelection.LeaderElectionConfig{
+	elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
 		LeaseDuration:   c.config.LeaderElection.LeaseDuration,
@@ -172,6 +175,12 @@ func (c *Client) runLeaderElection() {
 			},
 		},
 	})
+	if err != nil {
+		return fmt.Errorf("failed to create leader elector: %w", err)
+	}
+
+	go elector.Run(ctx)
+	return nil
 }
 
 // Clientset returns the Kubernetes clientset
@@ -203,11 +212,18 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 // Without these ContentConfig fields rest.RESTClientFor returns an error
 // (or returns a partially-initialized client that nil-panics on Watch),
 // which silently breaks the WorkspaceWatcher and the proxy ownership middleware.
-func (c *Client) LlmsafespaceV1() interfaces.LLMSafespaceV1Interface {
-	client, err := newLLMSafespaceV1Client(c.restConfig)
-	if err != nil {
-		c.logger.Error("failed to construct LlmsafespaceV1 REST client", err)
-		return nil
+func (c *Client) LlmsafespaceV1() (interfaces.LLMSafespaceV1Interface, error) {
+	c.v1Once.Do(func() {
+		client, err := newLLMSafespaceV1Client(c.restConfig)
+		if err != nil {
+			c.logger.Error("failed to construct LlmsafespaceV1 REST client", err)
+			c.v1Err = err
+			return
+		}
+		c.v1Client = client
+	})
+	if c.v1Err != nil {
+		return nil, c.v1Err
 	}
-	return client
+	return c.v1Client, nil
 }

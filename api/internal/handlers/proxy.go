@@ -368,9 +368,13 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		return
 	}
 
-	// Verify the workspace exists (but do not require it to be Active — the
-	// client may legitimately connect while the workspace is resuming).
-	_, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		h.logger.Error("Failed to get LLMSafespaceV1 client for SSE", err, "workspaceID", workspaceID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	_, err = v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
 	if err != nil {
 		h.logger.Error("Failed to get workspace CRD for SSE", err, "workspaceID", workspaceID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
@@ -492,8 +496,14 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		}
 	}
 	if workspace == nil {
+		v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+		if v1Err != nil {
+			h.logger.Error("Failed to get LLMSafespaceV1 client", v1Err, "workspaceID", workspaceID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		var err error
-		workspace, err = h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+		workspace, err = v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
 		if err != nil {
 			h.logger.Error("Failed to get workspace CRD", err, "workspaceID", workspaceID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
@@ -600,7 +610,13 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	// already partially written and a retry would produce a double-write.
 	// c.Writer.Written() returns true once WriteHeader has been called.
 	if proxyErr != nil && isConnectionError(proxyErr) && !c.Writer.Written() {
-		freshWS, getErr := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+		freshWS, getErr := func() (*v1.Workspace, error) {
+			v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+			if v1Err != nil {
+				return nil, v1Err
+			}
+			return v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
+		}()
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
 			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes, stripPatch)
@@ -1166,7 +1182,11 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	if err != nil || workspace.Status.PodIP == "" {
 		return
 	}
@@ -1245,7 +1265,13 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	workspace, err := func() (*v1.Workspace, error) {
+		if v1Err != nil {
+			return nil, v1Err
+		}
+		return v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
 		// Pod not reachable — drop the marker so the next call retries.
 		h.parentBackfilledMu.Lock()
@@ -1505,9 +1531,13 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 		return autoApprove
 	}
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
-		return false // fail closed
+		return false
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return false
 	}
 
 	h.wsConfigMu.Lock()
@@ -1525,7 +1555,13 @@ func (h *ProxyHandler) autoApprovePermission(workspaceID, requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	workspace, err := func() (*v1.Workspace, error) {
+		if v1Err != nil {
+			return nil, v1Err
+		}
+		return v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil || workspace.Status.PodIP == "" {
 		h.logger.Warn("Cannot auto-approve permission: workspace not reachable",
 			"workspaceID", workspaceID, "requestID", requestID)
@@ -1633,7 +1669,11 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return ""
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return ""
 	}
@@ -1646,7 +1686,11 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 // GetWorkspaceCRD retrieves a Workspace CRD by name. Used by the ownership
 // middleware in the router to verify sandbox ownership before proxying.
 func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
-	return h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	return v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
 }
 
 func isConnectionError(err error) bool {

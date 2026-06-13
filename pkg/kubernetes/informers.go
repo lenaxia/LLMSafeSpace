@@ -4,6 +4,8 @@
 package kubernetes
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,6 +21,12 @@ type InformerFactory struct {
 	client        interfaces.LLMSafespaceV1Interface
 	defaultResync time.Duration
 	namespace     string
+	ctx           context.Context
+
+	mu               sync.Mutex
+	started          bool
+	runtimeEnvInf    cache.SharedIndexInformer
+	workspaceInf     cache.SharedIndexInformer
 }
 
 func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
@@ -26,17 +34,18 @@ func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync
 		client:        client,
 		defaultResync: defaultResync,
 		namespace:     namespace,
+		ctx:           context.Background(),
 	}
 }
 
-func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer {
+func (f *InformerFactory) newRuntimeEnvInformerLocked() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.RuntimeEnvironments(f.namespace).List(options)
+				return f.client.RuntimeEnvironments().List(f.ctx, options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.RuntimeEnvironments(f.namespace).Watch(options)
+				return f.client.RuntimeEnvironments().Watch(f.ctx, options)
 			},
 		},
 		&v1.RuntimeEnvironment{},
@@ -45,14 +54,14 @@ func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer
 	)
 }
 
-func (f *InformerFactory) WorkspaceInformer() cache.SharedIndexInformer {
+func (f *InformerFactory) newWorkspaceInformerLocked() cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return f.client.Workspaces(f.namespace).List(options)
+				return f.client.Workspaces(f.namespace).List(f.ctx, options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return f.client.Workspaces(f.namespace).Watch(options)
+				return f.client.Workspaces(f.namespace).Watch(f.ctx, options)
 			},
 		},
 		&v1.Workspace{},
@@ -61,12 +70,39 @@ func (f *InformerFactory) WorkspaceInformer() cache.SharedIndexInformer {
 	)
 }
 
+func (f *InformerFactory) RuntimeEnvironmentInformer() cache.SharedIndexInformer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runtimeEnvInf != nil {
+		return f.runtimeEnvInf
+	}
+	f.runtimeEnvInf = f.newRuntimeEnvInformerLocked()
+	return f.runtimeEnvInf
+}
+
+func (f *InformerFactory) WorkspaceInformer() cache.SharedIndexInformer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.workspaceInf != nil {
+		return f.workspaceInf
+	}
+	f.workspaceInf = f.newWorkspaceInformerLocked()
+	return f.workspaceInf
+}
+
 func (f *InformerFactory) StartInformers(stopCh <-chan struct{}) {
-	informers := []cache.SharedIndexInformer{
-		f.RuntimeEnvironmentInformer(),
-		f.WorkspaceInformer(),
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.started {
+		return
 	}
-	for _, informer := range informers {
-		go informer.Run(stopCh)
+	f.started = true
+	if f.runtimeEnvInf == nil {
+		f.runtimeEnvInf = f.newRuntimeEnvInformerLocked()
 	}
+	if f.workspaceInf == nil {
+		f.workspaceInf = f.newWorkspaceInformerLocked()
+	}
+	go f.runtimeEnvInf.Run(stopCh)
+	go f.workspaceInf.Run(stopCh)
 }

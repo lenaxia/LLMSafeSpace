@@ -4,6 +4,7 @@
 package kubernetes_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -77,8 +78,10 @@ func TestMockKubernetesClient_InformerFactory_Nil(t *testing.T) {
 func TestMockKubernetesClient_LlmsafespaceV1(t *testing.T) {
 	m := kmocks.NewMockKubernetesClient()
 	v1iface := kmocks.NewMockLLMSafespaceV1Interface()
-	m.On("LlmsafespaceV1").Return(v1iface)
-	assert.Equal(t, v1iface, m.LlmsafespaceV1())
+	m.On("LlmsafespaceV1").Return(v1iface, nil)
+	got, err := m.LlmsafespaceV1()
+	assert.NoError(t, err)
+	assert.Equal(t, v1iface, got)
 	m.AssertExpectations(t)
 }
 
@@ -87,8 +90,8 @@ func TestMockKubernetesClient_LlmsafespaceV1(t *testing.T) {
 func TestMockLLMSafespaceV1_RuntimeEnvironments(t *testing.T) {
 	m := kmocks.NewMockLLMSafespaceV1Interface()
 	rte := kmocks.NewMockRuntimeEnvironmentInterface()
-	m.On("RuntimeEnvironments", "default").Return(rte)
-	assert.Equal(t, rte, m.RuntimeEnvironments("default"))
+	m.On("RuntimeEnvironments").Return(rte)
+	assert.Equal(t, rte, m.RuntimeEnvironments())
 	m.AssertExpectations(t)
 }
 
@@ -97,8 +100,8 @@ func TestMockLLMSafespaceV1_RuntimeEnvironments(t *testing.T) {
 func TestMockRuntimeEnvironmentInterface_Create(t *testing.T) {
 	m := kmocks.NewMockRuntimeEnvironmentInterface()
 	rte := &v1.RuntimeEnvironment{ObjectMeta: metav1.ObjectMeta{Name: "python-310"}}
-	m.On("Create", rte).Return(rte, nil)
-	got, err := m.Create(rte)
+	m.On("Create", mock.Anything, rte).Return(rte, nil)
+	got, err := m.Create(context.Background(), rte)
 	assert.NoError(t, err)
 	assert.Equal(t, "python-310", got.Name)
 	m.AssertExpectations(t)
@@ -106,8 +109,8 @@ func TestMockRuntimeEnvironmentInterface_Create(t *testing.T) {
 
 func TestMockRuntimeEnvironmentInterface_Get_Nil(t *testing.T) {
 	m := kmocks.NewMockRuntimeEnvironmentInterface()
-	m.On("Get", "missing", mock.Anything).Return((*v1.RuntimeEnvironment)(nil), errors.New("not found"))
-	got, err := m.Get("missing", metav1.GetOptions{})
+	m.On("Get", mock.Anything, "missing", mock.Anything).Return((*v1.RuntimeEnvironment)(nil), errors.New("not found"))
+	got, err := m.Get(context.Background(), "missing", metav1.GetOptions{})
 	assert.Nil(t, got)
 	assert.Error(t, err)
 	m.AssertExpectations(t)
@@ -116,8 +119,8 @@ func TestMockRuntimeEnvironmentInterface_Get_Nil(t *testing.T) {
 func TestMockRuntimeEnvironmentInterface_List(t *testing.T) {
 	m := kmocks.NewMockRuntimeEnvironmentInterface()
 	list := &v1.RuntimeEnvironmentList{Items: []v1.RuntimeEnvironment{{ObjectMeta: metav1.ObjectMeta{Name: "python-310"}}}}
-	m.On("List", mock.Anything).Return(list, nil)
-	got, err := m.List(metav1.ListOptions{})
+	m.On("List", mock.Anything, mock.Anything).Return(list, nil)
+	got, err := m.List(context.Background(), metav1.ListOptions{})
 	assert.NoError(t, err)
 	assert.Len(t, got.Items, 1)
 	m.AssertExpectations(t)

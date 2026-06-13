@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -171,7 +172,7 @@ func TestProxyInput_WorkspaceNotActive(t *testing.T) {
 
 func TestProxyInput_WorkspaceNotFound(t *testing.T) {
 	env := newInputTestEnv(t)
-	env.wsMock.On("Get", "ws-nonexistent", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+	env.wsMock.On("Get", mock.Anything, "ws-nonexistent", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-nonexistent/question", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -312,13 +313,13 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	ws := &v1.Workspace{
 		Spec:   v1.WorkspaceSpec{AutoApprovePermissions: false},
 		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive, PodIP: "10.0.0.1"},
 	}
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	handler.broker = NewWorkspaceEventBroker()
@@ -476,13 +477,13 @@ func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	ws := &v1.Workspace{
 		Spec:   v1.WorkspaceSpec{AutoApprovePermissions: false},
 		Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive, PodIP: "10.0.0.1"},
 	}
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
@@ -609,12 +610,12 @@ func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	// Create a workspace CRD with MaxActiveSessions=10 and AutoApprovePermissions=false
 	ws := makeWorkspaceCRD("ws-1", 10)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)

@@ -26,7 +26,7 @@ func TestGetWorkspaceStatus_IncludesSessions(t *testing.T) {
 		{ID: "ses_a", Title: "Auth refactor", Status: "idle"},
 		{ID: "ses_b", Title: "Fix proxy", Status: "busy"},
 	}
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -47,7 +47,7 @@ func TestGetWorkspaceStatus_NoSessions_OmitsField(t *testing.T) {
 	crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	crd.Status.Phase = v1.WorkspacePhaseActive
 	crd.Status.Sessions = nil
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -64,7 +64,7 @@ func TestGetWorkspaceStatus_IncludesDiskUsage(t *testing.T) {
 	crd.Status.Phase = v1.WorkspacePhaseActive
 	crd.Status.DiskUsedBytes = 1_073_741_824   // 1 GiB
 	crd.Status.DiskTotalBytes = 10_737_418_240 // 10 GiB
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -81,7 +81,7 @@ func TestGetWorkspaceStatus_ZeroDisk_OmitsField(t *testing.T) {
 	crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	crd.Status.Phase = v1.WorkspacePhaseActive
 	// DiskUsedBytes and DiskTotalBytes default to 0
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -102,7 +102,7 @@ func TestGetWorkspaceStatus_SessionsAndDiskTogether(t *testing.T) {
 	}
 	crd.Status.DiskUsedBytes = 500_000
 	crd.Status.DiskTotalBytes = 1_000_000
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
