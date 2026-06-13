@@ -142,6 +142,37 @@ func TestImageTagFromPod_SHATagInImageID(t *testing.T) {
 	}
 }
 
+func TestImageTagFromPod_RegistryWithPort_TagAndDigest(t *testing.T) {
+	// Private registry with port number — colon in host must not be mistaken for tag separator.
+	// registry.local:5000/org/img:ts-123@sha256:abc → tag is "ts-123", not "5000/org/img"
+	pod := podWithImageID("registry.local:5000/org/img:ts-123@sha256:32320b07abcd")
+	got := imageTagFromPod(pod)
+	if got != "ts-123" {
+		t.Errorf("registry with port tag+digest: want ts-123, got %q", got)
+	}
+}
+
+func TestImageTagFromPod_RegistryWithPort_DigestOnly_FallsBackToSpec(t *testing.T) {
+	// Private registry with port, digest-only ImageID — must fall back to spec.
+	pod := podWithImageIDAndSpecImage(
+		"registry.local:5000/org/img@sha256:32320b07abcd",
+		"registry.local:5000/org/img:ts-123",
+	)
+	got := imageTagFromPod(pod)
+	if got != "ts-123" {
+		t.Errorf("registry with port digest-only: want ts-123 (spec fallback), got %q", got)
+	}
+}
+
+func TestImageTagFromPod_SpecImage_RegistryWithPort(t *testing.T) {
+	// Spec image with registry port — tagFromSpecImage must extract the tag, not the port.
+	pod := podWithImageIDAndSpecImage("", "registry.local:5000/org/img:ts-123")
+	got := imageTagFromPod(pod)
+	if got != "ts-123" {
+		t.Errorf("spec registry with port: want ts-123, got %q", got)
+	}
+}
+
 // helpers
 
 func podWithImageID(imageID string) *corev1.Pod {
