@@ -41,7 +41,7 @@ func newRealRateLimitService(t *testing.T) (*ratelimit.Service, func()) {
 
 func rateLimitTestLogger() *logmock.MockLogger {
 	l := logmock.NewMockLogger()
-	l.On("Warn", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	l.On("Warn", mock.Anything, mock.Anything).Maybe()
 	l.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	return l
 }

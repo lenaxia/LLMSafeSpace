@@ -70,4 +70,4 @@ None.
 - `api/internal/services/ratelimit/ratelimit.go` — Backend-based service (atomic Lua ops, bounded token buckets).
 - `api/internal/services/ratelimit/ratelimit_test.go` — new unit tests + fixed test helper.
 - `api/internal/middleware/tests/rate_limit_integration_test.go` — new end-to-end integration tests.
-- `worklogs/0251_2026-06-13_epic38-us1-rate-limiter-fix.md` (this file).
+- `worklogs/0257_2026-06-13_epic38-us1-rate-limiter-fix.md` (this file).
