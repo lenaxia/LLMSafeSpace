@@ -304,7 +304,10 @@ func TestOrgCredentialStore_AutoApply(t *testing.T) {
 	createTestOrg(t, pool, orgID, adminID)
 	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
 
-	credID, _ := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil)
+	if err != nil {
+		t.Fatalf("CreateOrgCredential: %v", err)
+	}
 
 	err := store.CreateOrgAutoApply(ctx, orgID, credID, 15)
 	if err != nil {
@@ -365,7 +368,10 @@ func TestBindCredentialToAllOrgWorkspaces(t *testing.T) {
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID1)
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID2)
 
-	credID, _ := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil)
+	if err != nil {
+		t.Fatalf("CreateOrgCredential: %v", err)
+	}
 
 	err := store.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID)
 	if err != nil {
@@ -420,6 +426,11 @@ func TestOrgLifecycle_FullFlow(t *testing.T) {
 	newAdminID := "org-test-admin-2"
 	newAdminSalt := ensureTestUserWithKeys(t, pool, newAdminID)
 	t.Cleanup(func() { cleanupOrgUser(t, pool, newAdminID) })
+
+	if _, err := pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', true) ON CONFLICT DO NOTHING`,
+		orgID, newAdminID); err != nil {
+		t.Fatalf("insert membership for new admin: %v", err)
+	}
 
 	newAdminPass := []byte("new-admin-passphrase")
 	err = svc.WrapOrgDEKForNewAdmin(ctx, orgID, newAdminID, newAdminPass)
@@ -683,6 +694,11 @@ func TestRotateOrgDEK_DeletesOtherAdminKeys(t *testing.T) {
 	otherAdminID := "org-test-admin-other"
 	ensureTestUserWithKeys(t, pool, otherAdminID)
 	t.Cleanup(func() { cleanupOrgUser(t, pool, otherAdminID) })
+
+	if _, err := pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', true) ON CONFLICT DO NOTHING`,
+		orgID, otherAdminID); err != nil {
+		t.Fatalf("insert membership for other admin: %v", err)
+	}
 
 	otherAdminPass := []byte("other-admin-pass")
 	err = svc.WrapOrgDEKForNewAdmin(ctx, orgID, otherAdminID, otherAdminPass)
