@@ -72,6 +72,16 @@ describe("MessagePart", () => {
     expect(del.tagName).toBe("DEL");
   });
 
+  it("renders code block containing HTML-special characters safely", async () => {
+    const md = '```html\n<div class="xss">hello</div>\n```';
+    render(<MessagePart part={{ type: "text", text: md }} isUser={false} />);
+    await waitFor(() => {
+      const code = screen.getByText('<div class="xss">hello</div>');
+      expect(code).toBeInTheDocument();
+      expect(code.tagName).toBe("CODE");
+    });
+  });
+
   it("renders thinking part with collapsible details", () => {
     render(<MessagePart part={{ type: "thinking", text: "Let me reason about this" }} isUser={false} />);
     expect(screen.getByText("Thinking")).toBeInTheDocument();
@@ -342,5 +352,71 @@ describe("CodeBlock (via MessagePart)", () => {
     />);
     await waitFor(() => expect(mockHighlight).toHaveBeenCalledTimes(1), { timeout: 10000 });
     expect(mockHighlight).toHaveBeenCalledWith("func main(){}", "go");
+  });
+});
+
+describe("streaming fence + CodeBlock integration", () => {
+  beforeEach(() => {
+    mockHighlight.mockReset();
+    mockHighlight.mockResolvedValue(null);
+  });
+
+  it("renders a streaming code block as plain pre without calling highlight", () => {
+    // Simulate mid-stream: unclosed fence, isStreaming=true.
+    render(<MessagePart
+      part={{ type: "text", text: "```go\nfunc main(){" }}
+      isUser={false}
+      isStreaming={true}
+    />);
+    // closeOpenFence appends closing ```, so the text becomes:
+    // "```go\nfunc main(){\n```" — a complete code block.
+    // CodeBlock should render but NOT call highlight() (streaming guard).
+    expect(mockHighlight).not.toHaveBeenCalled();
+    // The code content should still be visible as plain text.
+    const pre = document.querySelector("pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre?.textContent).toContain("func main(){");
+  });
+
+  it("closes streaming fence and highlights after streaming ends", async () => {
+    const { rerender } = render(<MessagePart
+      part={{ type: "text", text: "intro text\n```go\nfunc main(){" }}
+      isUser={false}
+      isStreaming={true}
+    />);
+    expect(mockHighlight).not.toHaveBeenCalled();
+
+    // Streaming completes — the full text is already closed.
+    rerender(<MessagePart
+      part={{ type: "text", text: "intro text\n```go\nfunc main(){}\n```" }}
+      isUser={false}
+      isStreaming={false}
+    />);
+    await waitFor(() =>
+      expect(mockHighlight).toHaveBeenCalledWith("func main(){}", "go")
+    );
+  });
+
+  it("handles multiple streaming code blocks without calling highlight", () => {
+    // Two unclosed fences — closeOpenFence closes the second one.
+    render(<MessagePart
+      part={{ type: "text", text: "```go\ncode1\n```\n```py\ncode2" }}
+      isUser={false}
+      isStreaming={true}
+    />);
+    expect(mockHighlight).not.toHaveBeenCalled();
+  });
+
+  it("renders tilde-fence code block during streaming correctly", () => {
+    render(<MessagePart
+      part={{ type: "text", text: "~~~py\ndef foo():" }}
+      isUser={false}
+      isStreaming={true}
+    />);
+    // closeOpenFence should append ~~~ to close the tilde fence.
+    const pre = document.querySelector("pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre?.textContent).toContain("def foo():");
+    expect(mockHighlight).not.toHaveBeenCalled();
   });
 });

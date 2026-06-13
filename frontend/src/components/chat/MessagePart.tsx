@@ -254,9 +254,9 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
               }
               return <CodeBlock code={code} lang={lang} wordWrap={wordWrap} isStreaming={isStreaming ?? false} />;
             },
-            code({ className, children, ...props }) {
+            code({ className, style, children }) {
               return (
-                <code className={cn("break-all", className)} {...props}>
+                <code className={cn("break-all", className)} style={style}>
                   {children}
                 </code>
               );

@@ -30,3 +30,7 @@ export function renderWithProviders(
 }
 
 export { renderWithProviders as render };
+
+// Only use when ThemeProvider context or Router/QueryClient is undesirable.
+// Prefer the default wrapped `render` export for most component tests.
+export { render as renderBare } from "@testing-library/react";
