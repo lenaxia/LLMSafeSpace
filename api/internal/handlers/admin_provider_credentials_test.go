@@ -7,13 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,7 +87,7 @@ func (f *fakeAdminCredStore) DeleteAdminCredential(_ context.Context, id string)
 		return err
 	}
 	if _, ok := f.creds[id]; !ok {
-		return fmt.Errorf("no rows in result set") // simulate pgx.ErrNoRows
+		return &pgconn.PgError{Code: "P0002", Message: "no rows in result set"}
 	}
 	delete(f.creds, id)
 	return nil
@@ -298,7 +297,7 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"key1"}`),
 	}
 	// updateErr is consumed ONLY by UpdateAdminCredential; GetAdminCredential won't touch it.
-	store.updateErr = errors.New("ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)")
+	store.updateErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
 	router := setupAdminCredRouter(h)
 
@@ -314,7 +313,6 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 // TestAdminProviderCredentials_AutoApply_NilStore_Returns503 verifies M-7 fix:
 // all three auto-apply handlers return 503 when the store is nil.
 func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
-	_ = fmt.Sprintf // suppress unused import warning
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })

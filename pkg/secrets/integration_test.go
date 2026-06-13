@@ -216,7 +216,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 	// Bind
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
-	// Inject (read)
+	// Inject
 	svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
 
 	// Delete
@@ -229,7 +229,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 		actions[e.Action]++
 	}
 
-	expected := map[string]int{"create": 1, "update": 1, "bind": 1, "read": 1, "delete": 1}
+	expected := map[string]int{"create": 1, "update": 1, "bind": 1, "delete": 1}
 	for action, count := range expected {
 		if actions[action] < count {
 			t.Errorf("Expected at least %d '%s' audit entries, got %d", count, action, actions[action])

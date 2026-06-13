@@ -305,3 +305,21 @@ func (m *testSecretStore) QueryAudit(_ context.Context, userID string, _ secrets
 	}
 	return result, nil
 }
+
+func (m *testSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) ([]secrets.CredentialBinding, error) {
+	return nil, nil
+}
+
+func (m *testSecretStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }
+
+func (m *testSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *testSecretStore) BindCredentialToAllUserWorkspaces(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *testSecretStore) HasUserProviderCredential(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}

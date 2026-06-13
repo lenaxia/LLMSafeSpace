@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -237,7 +238,7 @@ func TestUserProviderCredentials_Create_EmptyProvider(t *testing.T) {
 
 func TestUserProviderCredentials_Create_Duplicate(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.nextErr = errors.New("ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)")
+	store.nextErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	dek := make([]byte, 32)
 	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
 	h := &UserProviderCredentialsHandler{
