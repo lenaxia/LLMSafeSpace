@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -1016,4 +1017,57 @@ func TestConcurrentServerShutdown(t *testing.T) {
 	elapsed := time.Since(start)
 	assert.Less(t, elapsed, 2*blockDuration,
 		"concurrent shutdown should complete in less than %v, got %v", 2*blockDuration, elapsed)
+}
+
+func TestFetchFreeModels_RespectsContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := fetchFreeModels(ctx, srv.URL, "pw")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Less(t, elapsed, 1*time.Second,
+		"fetchFreeModels should return promptly after context cancellation, got %v", elapsed)
+}
+
+func TestStartRelayInjector_ExitsOnContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	killed := make(chan struct{}, 1)
+	startRelayInjector(ctx, relayInjectorConfig{
+		RelayURL:     "https://relay.example.com/s",
+		HealthCheck:  func() bool { return false },
+		KillOpenCode: func() { killed <- struct{}{} },
+	})
+
+	baseline := runtime.NumGoroutine()
+	cancel()
+
+	exited := false
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() < baseline {
+			exited = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	assert.True(t, exited, "relay injector goroutine should exit within 1s after context cancellation")
+
+	select {
+	case <-killed:
+		t.Fatal("KillOpenCode must not be called when health check never passes")
+	default:
+	}
 }

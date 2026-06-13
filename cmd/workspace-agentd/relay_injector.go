@@ -434,7 +434,11 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 				return
 			}
 			lg.Info("relay injector: no free models yet (catalog still initializing), retrying in 5s")
-			time.Sleep(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
 		}
 		lg.Info("relay injector: fetched free models", zap.Int("count", len(models)))
 
