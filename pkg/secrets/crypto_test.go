@@ -5,7 +5,12 @@ package secrets
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"io"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/hkdf"
 )
 
 func TestDeriveKEKFromPasswordProduces32Bytes(t *testing.T) {
@@ -97,24 +102,22 @@ func TestDeriveKEKFromPasswordRejectsWrongSaltLength(t *testing.T) {
 }
 
 func TestDeriveKEKFromPasswordV0MatchesOldHKDFOutput(t *testing.T) {
-	password := []byte("test-password-123")
-	salt := []byte("0123456789abcdef0123456789abcdef")
+	password := []byte("test-password")
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+	info := "user-kek-v1"
 
-	hkdfKEK, err := DeriveKEKFromPasswordV0(password, salt, kekInfo)
-	if err != nil {
-		t.Fatalf("DeriveKEKFromPasswordV0 failed: %v", err)
-	}
-	if len(hkdfKEK) != 32 {
-		t.Errorf("V0 KEK should be 32 bytes, got %d", len(hkdfKEK))
-	}
+	kek, err := DeriveKEKFromPasswordV0(password, salt, info)
+	require.NoError(t, err)
 
-	v0again, err := DeriveKEKFromPasswordV0(password, salt, kekInfo)
-	if err != nil {
-		t.Fatalf("DeriveKEKFromPasswordV0 second call failed: %v", err)
-	}
-	if !bytes.Equal(hkdfKEK, v0again) {
-		t.Error("V0 should be deterministic")
-	}
+	reader := hkdf.New(sha256.New, password, salt, []byte(info))
+	expected := make([]byte, 32)
+	_, err = io.ReadFull(reader, expected)
+	require.NoError(t, err)
+
+	require.Equal(t, expected, kek, "V0 HKDF path must produce identical output to the old DeriveKEK")
 }
 
 func TestDeriveKEKFromPasswordDifferentFromV0(t *testing.T) {
