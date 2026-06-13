@@ -733,6 +733,9 @@ func (s *Service) reconcileComputeTime(ctx context.Context) error {
 			s.logger.Error("Failed to get last active transition", err, "workspace_id", workspaceID)
 			continue
 		}
+		if enteredActiveAt.IsZero() {
+			continue
+		}
 
 		lastComputeTime, err := s.getLastComputeEvent(ctx, workspaceID)
 		if err != nil {
