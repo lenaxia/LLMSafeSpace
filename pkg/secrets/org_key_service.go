@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
@@ -37,14 +38,22 @@ const orgKEKInfo = "llmsafespace-org-kek"
 // Parallel to KeyService (which handles user DEKs) but purpose-built for the
 // per-admin-wrapped org DEK model.
 type OrgKeyService struct {
-	store  OrgKeyStore
-	cache  DEKCache
-	logger pkginterfaces.LoggerInterface
+	store     OrgKeyStore
+	cache     DEKCache
+	credStore OrgCredentialReEncryptor
+	logger    pkginterfaces.LoggerInterface
 }
 
-// NewOrgKeyService creates a new OrgKeyService.
+type OrgCredentialReEncryptor interface {
+	ReEncryptOrgCredentials(ctx context.Context, tx pgx.Tx, orgID string, oldDEK, newDEK []byte) (int, error)
+}
+
 func NewOrgKeyService(store OrgKeyStore, cache DEKCache) *OrgKeyService {
 	return &OrgKeyService{store: store, cache: cache}
+}
+
+func (s *OrgKeyService) SetCredentialStore(crs OrgCredentialReEncryptor) {
+	s.credStore = crs
 }
 
 // SetLogger installs the logger. Optional; non-fatal failures are silent without it.
@@ -309,4 +318,94 @@ func (s *OrgKeyService) GetOrgDEK(ctx context.Context, orgID string) ([]byte, er
 		return nil, ErrOrgDEKUnavailable
 	}
 	return dek, nil
+}
+
+func (s *OrgKeyService) RotateOrgDEK(ctx context.Context, orgID, adminUserID string, adminPassword []byte) (int, error) {
+	oldDEK, err := s.cache.GetDEK(ctx, OrgCacheKey(orgID))
+	if err != nil {
+		return 0, fmt.Errorf("get old org DEK: %w", err)
+	}
+	if oldDEK == nil {
+		return 0, ErrOrgDEKUnavailable
+	}
+
+	newDEK, err := GenerateDEK()
+	if err != nil {
+		return 0, fmt.Errorf("generate new org DEK: %w", err)
+	}
+
+	adminSalt, err := s.store.GetUserSalt(ctx, adminUserID)
+	if err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("get admin salt: %w", err)
+	}
+
+	adminKEK, err := DeriveKEK(adminPassword, adminSalt, orgKEKInfo)
+	if err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("derive admin KEK: %w", err)
+	}
+	defer zeroBytes(adminKEK)
+
+	wrappedNewDEK, err := WrapDEK(adminKEK, newDEK)
+	if err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("wrap new org DEK: %w", err)
+	}
+
+	tx, err := s.store.BeginTx(ctx)
+	if err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback(ctx)
+		}
+	}()
+
+	var reencrypted int
+	if s.credStore != nil {
+		reencrypted, err = s.credStore.ReEncryptOrgCredentials(ctx, tx, orgID, oldDEK, newDEK)
+		if err != nil {
+			zeroBytes(newDEK)
+			return 0, fmt.Errorf("re-encrypt org credentials: %w", err)
+		}
+	}
+
+	if err := s.store.DeleteAllOrgKeyMembersTx(ctx, tx, orgID); err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("delete old key members: %w", err)
+	}
+
+	if err := s.store.UpsertOrgKeyMemberTx(ctx, tx, &OrgKeyMemberRecord{
+		OrgID:      orgID,
+		UserID:     adminUserID,
+		WrappedDEK: wrappedNewDEK,
+		KeyVersion: 1,
+	}); err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("insert rotating admin key member: %w", err)
+	}
+
+	if err := s.store.SetPendingKeyWrapForOtherAdminsTx(ctx, tx, orgID, adminUserID); err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("set pending for other admins: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		zeroBytes(newDEK)
+		return 0, fmt.Errorf("commit rotation transaction: %w", err)
+	}
+	committed = true
+
+	if err := s.cache.CacheDEK(ctx, OrgCacheKey(orgID), newDEK, 7*24*time.Hour); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("RotateOrgDEK: failed to cache new org DEK (non-fatal; will be re-cached on next login)",
+				"orgID", orgID, "error", err.Error())
+		}
+	}
+
+	return reencrypted, nil
 }

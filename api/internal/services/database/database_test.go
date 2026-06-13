@@ -319,7 +319,7 @@ func TestCreateWorkspace(t *testing.T) {
 		}
 
 		mock.ExpectExec("INSERT INTO workspaces").
-			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, ws.CreatedAt, ws.UpdatedAt).
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, ws.OrgID, ws.CreatedAt, ws.UpdatedAt).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		err := service.CreateWorkspace(ctx, ws)
@@ -341,7 +341,7 @@ func TestCreateWorkspace(t *testing.T) {
 		}
 
 		mock.ExpectExec("INSERT INTO workspaces").
-			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, ws.OrgID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		err := service.CreateWorkspace(ctx, ws)
@@ -363,7 +363,7 @@ func TestCreateWorkspace(t *testing.T) {
 		}
 
 		mock.ExpectExec("INSERT INTO workspaces").
-			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WithArgs(ws.ID, ws.UserID, ws.Name, ws.Runtime, ws.StorageSize, ws.OrgID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnError(sql.ErrConnDone)
 
 		err := service.CreateWorkspace(ctx, ws)
@@ -382,8 +382,8 @@ func TestGetWorkspace(t *testing.T) {
 		now := time.Now()
 		wsID := "ws-uuid-found"
 
-		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since"}).
-			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now, "", false, nil)
+		rows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since", "org_id"}).
+			AddRow(wsID, "user-1", "My Workspace", "python:3.11", "10Gi", "sha-abc123", "1.15.12", now, now, "", false, nil, nil)
 
 		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(wsID).
@@ -494,13 +494,13 @@ func TestListWorkspaces(t *testing.T) {
 		offset := 0
 		now := time.Now()
 
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL").
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces w").
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since"}).
-			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now, "", false, nil).
-			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now, "", true, &now)
+		wsRows := sqlmock.NewRows([]string{"id", "user_id", "name", "runtime", "storage_size", "image_tag", "agent_version", "created_at", "updated_at", "default_model", "agent_needs_refresh", "credentials_pending_since", "org_id"}).
+			AddRow("ws-1", userID, "Workspace One", "python:3.11", "5Gi", "sha-abc", "1.15.12", now, now, "", false, nil, nil).
+			AddRow("ws-2", userID, "Workspace Two", "nodejs:18", "10Gi", "", "", now.Add(-time.Hour), now, "", true, &now, nil)
 
 		mock.ExpectQuery("SELECT w.id, w.user_id, w.name, w.runtime, w.storage_size, w.image_tag, w.agent_version, w.created_at, w.updated_at").
 			WithArgs(userID, limit, offset).
@@ -522,7 +522,7 @@ func TestListWorkspaces(t *testing.T) {
 		ctx := context.Background()
 		userID := "user-empty"
 
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1 AND deleted_at IS NULL").
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces w").
 			WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
@@ -539,7 +539,7 @@ func TestListWorkspaces(t *testing.T) {
 
 		ctx := context.Background()
 
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces WHERE user_id = \\$1").
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workspaces w").
 			WithArgs("user-err").
 			WillReturnError(sql.ErrConnDone)
 

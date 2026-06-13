@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -45,10 +46,10 @@ type orgAuthService interface {
 
 // OrgsHandler handles org CRUD endpoints.
 type OrgsHandler struct {
-	orgStore   orgStore
-	orgKeySvc  *secrets.OrgKeyService
-	dekCache   secrets.DEKCache
-	authSvc    orgAuthService
+	orgStore  orgStore
+	orgKeySvc *secrets.OrgKeyService
+	dekCache  secrets.DEKCache
+	authSvc   orgAuthService
 }
 
 // NewOrgsHandler creates a new OrgsHandler.
@@ -337,7 +338,6 @@ func (h *OrgsHandler) ListMembers(c *gin.Context) {
 // AddMember handles POST /api/v1/orgs/:id/members.
 func (h *OrgsHandler) AddMember(c *gin.Context) {
 	orgID := c.Param("id")
-	userID := h.authSvc.GetUserID(c)
 	ctx := c.Request.Context()
 
 	var req types.AddOrgMemberRequest
@@ -554,12 +554,21 @@ func (h *OrgsHandler) RotateKey(c *gin.Context) {
 		return
 	}
 
-	// orgKeySvc.RotateOrgDEK is defined in US-11.9; for now wire the
-	// placeholder so the endpoint compiles and returns 501 until implemented.
-	_ = orgID
-	_ = userID
-	_ = ctx
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "org DEK rotation not yet implemented"})
+	reencrypted, err := h.orgKeySvc.RotateOrgDEK(ctx, orgID, userID, []byte(req.Password))
+	if err != nil {
+		if errors.Is(err, secrets.ErrOrgDEKUnavailable) {
+			c.JSON(http.StatusConflict, gin.H{"error": "org DEK not available — please log out and back in to refresh your org key"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate org DEK"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "org DEK rotated successfully",
+		"credentials":   reencrypted,
+		"pendingAdmins": true,
+	})
 }
 
 func zeroBytes(b []byte) {

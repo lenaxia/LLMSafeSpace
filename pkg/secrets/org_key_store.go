@@ -22,27 +22,23 @@ type OrgKeyMemberRecord struct {
 
 // OrgKeyStore abstracts DB operations for org key material.
 type OrgKeyStore interface {
-	// GetOrgKeyMember returns the wrapped DEK for (orgID, userID). Returns nil, nil if not found.
 	GetOrgKeyMember(ctx context.Context, orgID, userID string) (*OrgKeyMemberRecord, error)
-	// UpsertOrgKeyMember inserts or updates a wrapped DEK row for (orgID, userID).
-	// The org_memberships row for (orgID, userID) must already exist (composite FK).
 	UpsertOrgKeyMember(ctx context.Context, record *OrgKeyMemberRecord) error
-	// DeleteOrgKeyMember removes the wrapped DEK for (orgID, userID).
 	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
-	// ListOrgKeyMembers returns all wrapped DEK rows for an org (used by RotateOrgDEK).
 	ListOrgKeyMembers(ctx context.Context, orgID string) ([]*OrgKeyMemberRecord, error)
-	// DeleteAllOrgKeyMembers deletes every org_key_members row for an org in one operation.
-	// Used by RotateOrgDEK to atomically clear all admin key rows before inserting the
-	// rotating admin's new row.
 	DeleteAllOrgKeyMembers(ctx context.Context, orgID string) error
-	// GetOrgKeyMembersForUser returns all org_key_members rows for a given user across
-	// all orgs. Used by the login path to batch-fetch all org DEK records in one query.
-	// Returns empty slice (not error) if user has no rows.
 	GetOrgKeyMembersForUser(ctx context.Context, userID string) ([]*OrgKeyMemberRecord, error)
-	// GetUserSalt returns the salt from user_keys for a given userID.
-	// Needed to derive KEK during key handshake and rotation without requiring the caller
-	// to reach into the user key service.
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
+	// BeginTx starts a new pgx transaction. Used by RotateOrgDEK to wrap
+	// re-encryption + key member updates atomically.
+	BeginTx(ctx context.Context) (pgx.Tx, error)
+	// UpsertOrgKeyMemberTx is like UpsertOrgKeyMember but within a transaction.
+	UpsertOrgKeyMemberTx(ctx context.Context, tx pgx.Tx, record *OrgKeyMemberRecord) error
+	// DeleteAllOrgKeyMembersTx is like DeleteAllOrgKeyMembers but within a transaction.
+	DeleteAllOrgKeyMembersTx(ctx context.Context, tx pgx.Tx, orgID string) error
+	// SetPendingKeyWrapForOtherAdminsTx sets pending_key_wrap=true for all admins
+	// in orgID except excludeUserID, within tx.
+	SetPendingKeyWrapForOtherAdminsTx(ctx context.Context, tx pgx.Tx, orgID, excludeUserID string) error
 }
 
 // PgOrgKeyStore implements OrgKeyStore using PostgreSQL.
@@ -161,4 +157,47 @@ func (s *PgOrgKeyStore) GetUserSalt(ctx context.Context, userID string) ([]byte,
 		return nil, fmt.Errorf("query user salt: %w", err)
 	}
 	return salt, nil
+}
+
+func (s *PgOrgKeyStore) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	return tx, nil
+}
+
+func (s *PgOrgKeyStore) UpsertOrgKeyMemberTx(ctx context.Context, tx pgx.Tx, record *OrgKeyMemberRecord) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO org_key_members (org_id, user_id, wrapped_dek, key_version)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (org_id, user_id) DO UPDATE
+		   SET wrapped_dek = EXCLUDED.wrapped_dek,
+		       key_version = EXCLUDED.key_version,
+		       updated_at  = now()`,
+		record.OrgID, record.UserID, record.WrappedDEK, record.KeyVersion)
+	if err != nil {
+		return fmt.Errorf("upsert org_key_members (tx): %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgKeyStore) DeleteAllOrgKeyMembersTx(ctx context.Context, tx pgx.Tx, orgID string) error {
+	_, err := tx.Exec(ctx, `DELETE FROM org_key_members WHERE org_id = $1`, orgID)
+	if err != nil {
+		return fmt.Errorf("delete all org_key_members (tx): %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgKeyStore) SetPendingKeyWrapForOtherAdminsTx(ctx context.Context, tx pgx.Tx, orgID, excludeUserID string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE org_memberships
+		SET pending_key_wrap = true
+		WHERE org_id = $1 AND user_id != $2 AND role = 'admin'
+	`, orgID, excludeUserID)
+	if err != nil {
+		return fmt.Errorf("set pending_key_wrap for other admins (tx): %w", err)
+	}
+	return nil
 }

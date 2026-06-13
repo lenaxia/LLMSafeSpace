@@ -96,7 +96,7 @@ func TestListWorkspaceSessions_WrongOwner_Forbidden(t *testing.T) {
 
 	_, err := f.svc.ListWorkspaceSessions(context.Background(), "user-1", "ws-1")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "does not own")
+	assert.Contains(t, err.Error(), "does not have access to workspace")
 }
 
 func TestRenameSession_DelegatesToSessionIndex(t *testing.T) {
@@ -147,7 +147,7 @@ func TestRenameWorkspace_WrongOwner_Forbidden(t *testing.T) {
 
 	err := f.svc.RenameWorkspace(context.Background(), "user-1", "ws-1", "new-name")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "does not own")
+	assert.Contains(t, err.Error(), "does not have admin access to workspace")
 }
 
 func TestMarkSessionSeen_DelegatesToSessionIndex(t *testing.T) {
@@ -174,7 +174,7 @@ func TestMarkSessionSeen_WrongOwner_Forbidden(t *testing.T) {
 
 	err := f.svc.MarkSessionSeen(context.Background(), "user-1", "ws-1", "s1")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "does not own")
+	assert.Contains(t, err.Error(), "does not have access to workspace")
 }
 
 func TestMarkSessionSeen_NilSessionIndex_NoError(t *testing.T) {

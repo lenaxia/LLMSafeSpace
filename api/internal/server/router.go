@@ -64,6 +64,9 @@ type RouterConfig struct {
 	// OrgsHandler handles org CRUD routes (optional)
 	OrgsHandler *handlers.OrgsHandler
 
+	// OrgCredentialsHandler handles org credential routes (optional)
+	OrgCredentialsHandler *handlers.OrgCredentialsHandler
+
 	// TerminalHandler is the handler for WebSocket terminal proxy (optional)
 	TerminalHandler *handlers.TerminalHandler
 
@@ -269,7 +272,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler)
 	}
 
 	// Metrics endpoint.
@@ -892,7 +895,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -915,4 +918,14 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
 	orgAdminGroup.POST("/rotate-key", h.RotateKey)
+
+	if credH != nil {
+		orgAdminGroup.POST("/credentials", credH.Create)
+		orgAdminGroup.GET("/credentials", credH.List)
+		orgAdminGroup.PUT("/credentials/:credID", credH.Update)
+		orgAdminGroup.DELETE("/credentials/:credID", credH.Delete)
+		orgAdminGroup.POST("/credentials/:credID/auto-apply", credH.CreateAutoApply)
+		orgAdminGroup.GET("/credentials/:credID/auto-apply", credH.ListAutoApply)
+		orgAdminGroup.DELETE("/credentials/:credID/auto-apply", credH.DeleteAutoApply)
+	}
 }

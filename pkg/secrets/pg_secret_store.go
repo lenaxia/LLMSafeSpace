@@ -709,3 +709,55 @@ func (l *AsyncAuditLogger) HasUserProviderCredential(ctx context.Context, userID
 	}
 	return false, nil
 }
+
+// ReEncryptOrgCredentials re-encrypts all provider_credentials rows where
+// owner_type='org' AND owner_id=orgID atomically within tx.
+func (s *PgSecretStore) ReEncryptOrgCredentials(ctx context.Context, tx pgx.Tx, orgID string, oldDEK, newDEK []byte) (int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, ciphertext FROM provider_credentials
+		WHERE owner_type = 'org' AND owner_id = $1
+		FOR UPDATE
+	`, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("query org credentials for re-encrypt: %w", err)
+	}
+
+	type row struct {
+		id         string
+		ciphertext []byte
+	}
+	var toUpdate []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.ciphertext); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan credential: %w", err)
+		}
+		toUpdate = append(toUpdate, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate credentials: %w", err)
+	}
+
+	count := 0
+	for _, r := range toUpdate {
+		plaintext, err := DecryptSecret(oldDEK, r.ciphertext)
+		if err != nil {
+			return count, fmt.Errorf("decrypt credential %s: %w", r.id, err)
+		}
+		newCiphertext, err := EncryptSecret(newDEK, plaintext)
+		zeroBytes(plaintext)
+		if err != nil {
+			return count, fmt.Errorf("re-encrypt credential %s: %w", r.id, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE provider_credentials SET ciphertext = $1, key_version = key_version + 1, updated_at = now()
+			WHERE id = $2
+		`, newCiphertext, r.id); err != nil {
+			return count, fmt.Errorf("update credential %s: %w", r.id, err)
+		}
+		count++
+	}
+	return count, nil
+}

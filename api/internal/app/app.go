@@ -113,6 +113,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
 	var orgsHandler *handlers.OrgsHandler
+	var orgCredsHandler *handlers.OrgCredentialsHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -258,6 +259,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		pgOrgKeyStore := secrets.NewPgOrgKeyStore(secretsPool)
 		orgKeyService := secrets.NewOrgKeyService(pgOrgKeyStore, dekCache)
 		orgKeyService.SetLogger(log)
+		orgKeyService.SetCredentialStore(pgStore)
 		orgAwareKS := secrets.NewOrgAwareKeyService(keyService, orgKeyService)
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(orgAwareKS)
@@ -266,6 +268,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 		pgOrgStore := database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, orgKeyService, svc.GetAuth())
 		rotateKeyHandler.SetOrgKeyService(orgKeyService)
 
 		if rkp != nil {
@@ -386,6 +389,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SecretsHandler:                  secretsHandler,
 		RotateKeyHandler:                rotateKeyHandler,
 		OrgsHandler:                     orgsHandler,
+		OrgCredentialsHandler:           orgCredsHandler,
 		TerminalHandler:                 terminalHandler,
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,

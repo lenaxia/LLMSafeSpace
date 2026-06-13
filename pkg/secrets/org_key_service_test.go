@@ -9,19 +9,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // --- mock implementations for OrgKeyStore ---
 
 type mockOrgKeyStore struct {
-	mu         sync.Mutex
-	members    map[string]*OrgKeyMemberRecord // key: orgID+":"+userID
-	salts      map[string][]byte              // key: userID
-	saltErr    error
-	getErr     error
-	upsertErr  error
-	deleteErr  error
-	listErr    error
+	mu           sync.Mutex
+	members      map[string]*OrgKeyMemberRecord // key: orgID+":"+userID
+	salts        map[string][]byte              // key: userID
+	saltErr      error
+	getErr       error
+	upsertErr    error
+	deleteErr    error
+	listErr      error
 	deleteAllErr error
 }
 
@@ -130,8 +132,20 @@ func (m *mockOrgKeyStore) GetUserSalt(_ context.Context, userID string) ([]byte,
 	return s, nil
 }
 
-func (m *mockOrgKeyStore) BeginTx(_ context.Context) (interface{}, error) {
+func (m *mockOrgKeyStore) BeginTx(_ context.Context) (pgx.Tx, error) {
 	return nil, errors.New("BeginTx not implemented in mock")
+}
+
+func (m *mockOrgKeyStore) UpsertOrgKeyMemberTx(_ context.Context, _ pgx.Tx, _ *OrgKeyMemberRecord) error {
+	return errors.New("UpsertOrgKeyMemberTx not implemented in mock")
+}
+
+func (m *mockOrgKeyStore) DeleteAllOrgKeyMembersTx(_ context.Context, _ pgx.Tx, _ string) error {
+	return errors.New("DeleteAllOrgKeyMembersTx not implemented in mock")
+}
+
+func (m *mockOrgKeyStore) SetPendingKeyWrapForOtherAdminsTx(_ context.Context, _ pgx.Tx, _, _ string) error {
+	return errors.New("SetPendingKeyWrapForOtherAdminsTx not implemented in mock")
 }
 
 // --- helpers ---
@@ -267,6 +281,7 @@ func TestUnlockOrgDEK_NilRecord_NoOp(t *testing.T) {
 
 func TestUnlockAllOrgDEKs_BatchQuery(t *testing.T) {
 	store, cache, svc, userID, salt := newOrgKeyTestEnv(t)
+	_ = store
 	ctx := context.Background()
 	password := []byte("batchpw")
 
@@ -344,6 +359,7 @@ func TestUnlockAllOrgDEKs_DBError_NonFatal(t *testing.T) {
 
 func TestWrapOrgDEKForNewAdmin_DEKNotInCache(t *testing.T) {
 	store, _, svc, userID, _ := newOrgKeyTestEnv(t)
+	_ = store
 	ctx := context.Background()
 	orgID := "org-wrap-test"
 
