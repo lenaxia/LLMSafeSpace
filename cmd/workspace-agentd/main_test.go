@@ -6,8 +6,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -916,4 +918,102 @@ func TestFillGaps_SkipsIfAlreadyRunning(t *testing.T) {
 	}, state)
 
 	assert.Equal(t, 0, callCount, "should not fetch when already running")
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	srv := &http.Server{
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- srv.Serve(ln)
+	}()
+
+	resp, err := http.Get("http://" + ln.Addr().String() + "/")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = srv.Shutdown(shutdownCtx)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		assert.Equal(t, http.ErrServerClosed, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within 5s")
+	}
+}
+
+func TestBackgroundContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	exited := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(exited)
+	}()
+
+	cancel()
+
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not exit after context cancellation")
+	}
+}
+
+func TestConcurrentServerShutdown(t *testing.T) {
+	blockDuration := 500 * time.Millisecond
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(blockDuration)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv1 := &http.Server{Handler: handler}
+	srv2 := &http.Server{Handler: handler}
+
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	go srv1.Serve(ln1)
+	go srv2.Serve(ln2)
+	defer srv1.Close()
+	defer srv2.Close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	go func() { _, _ = http.Get("http://" + ln1.Addr().String() + "/") }()
+	go func() { _, _ = http.Get("http://" + ln2.Addr().String() + "/") }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_ = srv1.Shutdown(shutdownCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		_ = srv2.Shutdown(shutdownCtx)
+	}()
+	wg.Wait()
+
+	elapsed := time.Since(start)
+	assert.Less(t, elapsed, 2*blockDuration,
+		"concurrent shutdown should complete in less than %v, got %v", 2*blockDuration, elapsed)
 }

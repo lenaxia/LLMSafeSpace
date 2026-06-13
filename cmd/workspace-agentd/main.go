@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -748,6 +749,11 @@ func main() {
 
 	supervise := len(os.Args) > 1 && os.Args[1] == "--supervise"
 
+	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	bgCtx, bgCancel := context.WithCancel(rootCtx)
+	var bgWg sync.WaitGroup
+
 	pw, err := os.ReadFile(agentd.PasswordPath)
 	if err != nil {
 		log.Warn("failed to read password file", zap.String("path", agentd.PasswordPath), zap.Error(err))
@@ -768,15 +774,23 @@ func main() {
 	startedAt := time.Now()
 	cache := &providerCache{}
 	sseTracker := newSessionStatusTracker()
-	go sseTracker.subscribe(context.Background(), client)
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		sseTracker.subscribe(bgCtx, client)
+	}()
 
 	fillState := &fillGapsState{}
-	go fillGaps(context.Background(), client, sseTracker, func() []agentd.SessionInfo {
-		cache.mu.Lock()
-		sessions := cache.sessions
-		cache.mu.Unlock()
-		return sessions
-	}, fillState)
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		fillGaps(bgCtx, client, sseTracker, func() []agentd.SessionInfo {
+			cache.mu.Lock()
+			sessions := cache.sessions
+			cache.mu.Unlock()
+			return sessions
+		}, fillState)
+	}()
 
 	// S18.10: Gate recorder measures time-to-each-startup-milestone from boot.
 	// Gates: opencode_up, providers_connected, readyz_first_200.
@@ -786,7 +800,11 @@ func main() {
 	// opencode's IsHealthy every 5s; /v1/readyz reads from this cache without
 	// making inline opencode calls.
 	healthCache := newHealthzCache()
-	go refreshIsHealthyLoop(context.Background(), client, healthCache, log, gr)
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		refreshIsHealthyLoop(bgCtx, client, healthCache, log, gr)
+	}()
 
 	// Epic 26: Phase-2 relay injection.
 	// After opencode is healthy, fetch the live free model list and rewrite
@@ -799,7 +817,7 @@ func main() {
 		if xdgData != "" {
 			authJSONPath = filepath.Join(xdgData, "opencode", "auth.json")
 		}
-		startRelayInjector(relayInjectorConfig{
+		startRelayInjector(rootCtx, relayInjectorConfig{
 			RelayURL:         relayURL,
 			OpenCodeBaseURL:  getAgentAddr(),
 			OpenCodePassword: password,
@@ -900,10 +918,11 @@ func main() {
 		Handler:           adminMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	srvErr := make(chan error, 2)
 	go func() {
 		log.Info("workspace-agentd admin server starting", zap.String("addr", agentd.AgentdAdminAddr))
 		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("workspace-agentd admin server failed", zap.Error(err))
+			srvErr <- fmt.Errorf("admin server: %w", err)
 		}
 	}()
 
@@ -914,9 +933,56 @@ func main() {
 		Handler:           userMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	if err := userSrv.ListenAndServe(); err != nil {
-		log.Fatal("workspace-agentd user server failed", zap.Error(err))
+	go func() {
+		if err := userSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			srvErr <- fmt.Errorf("user server: %w", err)
+		}
+	}()
+
+	select {
+	case <-rootCtx.Done():
+		log.Info("workspace-agentd received shutdown signal")
+	case err := <-srvErr:
+		log.Error("workspace-agentd server error", zap.Error(err))
 	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer shutdownCancel()
+
+	var srvWg sync.WaitGroup
+	srvWg.Add(2)
+	go func() {
+		defer srvWg.Done()
+		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+			log.Warn("workspace-agentd admin server shutdown error", zap.Error(err))
+		}
+	}()
+	go func() {
+		defer srvWg.Done()
+		if err := userSrv.Shutdown(shutdownCtx); err != nil {
+			log.Warn("workspace-agentd user server shutdown error", zap.Error(err))
+		}
+	}()
+	srvWg.Wait()
+
+	bgCancel()
+
+	bgWaitDone := make(chan struct{})
+	go func() {
+		bgWg.Wait()
+		close(bgWaitDone)
+	}()
+	select {
+	case <-bgWaitDone:
+	case <-time.After(5 * time.Second):
+		log.Warn("workspace-agentd background goroutines did not exit within 5s")
+	}
+
+	if proc != nil {
+		proc.stop()
+	}
+
+	log.Info("workspace-agentd shutdown complete")
 }
 
 // managedProcess supervises the opencode serve process.

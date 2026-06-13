@@ -241,9 +241,9 @@ func shouldSkipRelay(authJSONPath string) (bool, string) {
 // all[] contains every provider from models.dev regardless of auth;
 // connected[] is the subset we actually have credentials for.
 // We must use connected[] to distinguish accessible models from catalog noise.
-func fetchFreeModels(baseURL, password string) ([]relayModel, error) {
+func fetchFreeModels(ctx context.Context, baseURL, password string) ([]relayModel, error) {
 	url := baseURL + "/provider"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil) //nolint:gosec // G107: internal pod URL
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod URL
 	if err != nil {
 		return nil, fmt.Errorf("build GET /provider request: %w", err)
 	}
@@ -372,7 +372,7 @@ type relayInjectorConfig struct {
 //
 // If INFERENCE_RELAY_BASEURL is not set or the user has a personal opencode
 // API key, the goroutine exits without making any changes.
-func startRelayInjector(cfg relayInjectorConfig) {
+func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 	if cfg.RelayURL == "" {
 		return
 	}
@@ -383,10 +383,19 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		// Wait up to 5 minutes for opencode to be healthy.
 		deadline := time.Now().Add(5 * time.Minute)
 		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if cfg.HealthCheck() {
 				break
 			}
-			time.Sleep(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
 		}
 		if !cfg.HealthCheck() {
 			lg.Warn("relay injector: opencode did not become healthy in time, skipping relay config")
@@ -411,7 +420,7 @@ func startRelayInjector(cfg relayInjectorConfig) {
 		fetchDeadline := time.Now().Add(30 * time.Second)
 		for {
 			var fetchErr error
-			models, fetchErr = fetchFreeModels(cfg.OpenCodeBaseURL, cfg.OpenCodePassword)
+			models, fetchErr = fetchFreeModels(ctx, cfg.OpenCodeBaseURL, cfg.OpenCodePassword)
 			if fetchErr != nil {
 				lg.Warn("relay injector: failed to fetch free models, skipping", zap.Error(fetchErr))
 				return

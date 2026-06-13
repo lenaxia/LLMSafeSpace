@@ -6,6 +6,7 @@ package main
 // Tests for relay_injector.go — the Epic 26 post-boot relay config injection.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -228,7 +229,7 @@ func TestFetchFreeModels_FiltersCorrectly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models, err := fetchFreeModels(srv.URL, "testpassword")
+	models, err := fetchFreeModels(context.Background(), srv.URL, "testpassword")
 	require.NoError(t, err)
 	// opencode provider: free-1 and free-nokey pass (cost.input==0); paid-1 excluded
 	// anthropic: excluded (not in connected[])
@@ -257,7 +258,7 @@ func TestFetchFreeModels_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchFreeModels(srv.URL, "pw")
+	_, err := fetchFreeModels(context.Background(), srv.URL, "pw")
 	assert.Error(t, err)
 }
 
@@ -301,7 +302,7 @@ func TestUpdateAuthJSONForRelay_CreatesFileIfMissing(t *testing.T) {
 
 func TestStartRelayInjector_SkipsWhenNoRelayURL(t *testing.T) {
 	killed := false
-	startRelayInjector(relayInjectorConfig{
+	startRelayInjector(context.Background(), relayInjectorConfig{
 		RelayURL:     "",
 		KillOpenCode: func() { killed = true },
 		HealthCheck:  func() bool { return true },
@@ -317,7 +318,7 @@ func TestStartRelayInjector_SkipsWhenPersonalKey(t *testing.T) {
 		[]byte(`{"opencode":{"type":"api","key":"sk-personal-abc123"}}`), 0o600))
 
 	killed := false
-	startRelayInjector(relayInjectorConfig{
+	startRelayInjector(context.Background(), relayInjectorConfig{
 		RelayURL:     "https://relay.safespaces.dev/secret",
 		AuthJSONPath: authPath,
 		HealthCheck:  func() bool { return true },
@@ -352,7 +353,7 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 	defer srv.Close()
 
 	killed := make(chan struct{}, 1)
-	startRelayInjector(relayInjectorConfig{
+	startRelayInjector(context.Background(), relayInjectorConfig{
 		RelayURL:         "https://relay.safespaces.dev/mysecret",
 		OpenCodeBaseURL:  srv.URL,
 		OpenCodePassword: "testpw",
@@ -445,7 +446,7 @@ func TestStartRelayInjector_RetriesWhenZeroModels(t *testing.T) {
 		KillOpenCode:     func() { close(killed) },
 	}
 
-	startRelayInjector(cfg)
+	startRelayInjector(context.Background(), cfg)
 
 	select {
 	case <-killed:
@@ -522,7 +523,7 @@ func TestStartRelayInjector_SetsActiveRelayModels(t *testing.T) {
 	defer srv.Close()
 
 	killed := make(chan struct{}, 1)
-	startRelayInjector(relayInjectorConfig{
+	startRelayInjector(context.Background(), relayInjectorConfig{
 		RelayURL:         "https://relay.safespaces.dev/secret",
 		OpenCodeBaseURL:  srv.URL,
 		OpenCodePassword: "pw",
@@ -562,7 +563,7 @@ func TestStartRelayInjector_DoesNotSetModelsWhenSkipped(t *testing.T) {
 		[]byte(`{"opencode":{"type":"api","key":"sk-personal-key"}}`), 0o600))
 
 	killed := false
-	startRelayInjector(relayInjectorConfig{
+	startRelayInjector(context.Background(), relayInjectorConfig{
 		RelayURL:     "https://relay.safespaces.dev/secret",
 		AuthJSONPath: authPath,
 		HealthCheck:  func() bool { return true },
