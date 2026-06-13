@@ -60,6 +60,14 @@ func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
 	s.credProvisioner = cp
 }
 
+func (s *Service) workspaceCRDClient() (pkginterfaces.WorkspaceInterface, error) {
+	v1Client, err := s.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	return v1Client.Workspaces(s.config.Namespace), nil
+}
+
 // markDeleted soft-deletes a workspace metadata row in the background.
 // It accepts a context for symmetry with the caller and to silence
 // contextcheck, but deliberately does NOT propagate it: the caller is
@@ -191,7 +199,13 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	s.logger.Info("Creating workspace in Kubernetes", "userID", userID, "name", req.Name)
 
-	created, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Create(crd)
+	created, err := func() (*v1.Workspace, error) {
+		wsClient, err := s.workspaceCRDClient()
+		if err != nil {
+			return nil, err
+		}
+		return wsClient.Create(ctx, crd)
+	}()
 	if err != nil {
 		s.logger.Error("Failed to create workspace in Kubernetes", err, "userID", userID)
 		return nil, apierrors.NewInternalError("workspace_creation_failed", err)
@@ -209,7 +223,13 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	if err := s.dbService.CreateWorkspace(ctx, meta); err != nil {
 		s.logger.Error("Failed to store workspace metadata", err, "workspaceID", created.Name)
-		if delErr := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Delete(created.Name, metav1.DeleteOptions{}); delErr != nil {
+		if delErr := func() error {
+			wsClient, wErr := s.workspaceCRDClient()
+			if wErr != nil {
+				return wErr
+			}
+			return wsClient.Delete(ctx, created.Name, metav1.DeleteOptions{})
+		}(); delErr != nil {
 			s.logger.Error("Failed to clean up workspace after metadata error", delErr, "workspaceID", created.Name)
 		}
 		return nil, apierrors.NewInternalError("metadata_creation_failed", err)
@@ -274,7 +294,13 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 		)
 	}
 
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			s.markDeleted(ctx, workspaceID)
@@ -362,9 +388,15 @@ func (s *Service) fetchUserWorkspacePhases(ctx context.Context, userID string) m
 	if s.k8sClient == nil || userID == "" {
 		return nil
 	}
-	list, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).List(metav1.ListOptions{
-		LabelSelector: "user-id=" + userID,
-	})
+	list, err := func() (*v1.WorkspaceList, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.List(ctx, metav1.ListOptions{
+			LabelSelector: "user-id=" + userID,
+		})
+	}()
 	if err != nil {
 		s.logger.Warn("Failed to list workspaces from CRDs for phase enrichment",
 			"userID", userID, "error", err.Error())
@@ -391,7 +423,13 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		return err
 	}
 
-	if err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Delete(workspaceID, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
+	if err := func() error {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return wErr
+		}
+		return wsClient.Delete(ctx, workspaceID, metav1.DeleteOptions{})
+	}(); err != nil && !k8serrors.IsNotFound(err) {
 		s.logger.Error("Failed to delete workspace CRD", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_deletion_failed", err)
 	}
@@ -415,7 +453,13 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		return err
 	}
 
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		return apierrors.NewInternalError("workspace_get_failed", err)
 	}
@@ -433,7 +477,13 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 	}
 
 	crd.Status.Phase = v1.WorkspacePhaseSuspending
-	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
+	if _, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.UpdateStatus(ctx, crd)
+	}(); err != nil {
 		s.logger.Error("Failed to update workspace status to Suspending", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_suspend_failed", err)
 	}
@@ -476,7 +526,13 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 		return err
 	}
 
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		return apierrors.NewInternalError("workspace_get_failed", err)
 	}
@@ -489,17 +545,16 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 		)
 	}
 
-	// Re-emit the ephemeral secrets manifest BEFORE bumping the restart
-	// generation. The controller observes the bump asynchronously and
-	// deletes the pod; the next pod-create reads workspace-secrets-<id>
-	// from the apiserver. Refreshing first guarantees the new pod sees
-	// the latest secret payload regardless of how fast the controller
-	// reconciles. Failure here is non-fatal — see refreshEphemeralSecrets
-	// godoc.
 	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
 
 	crd.Spec.RestartGeneration++
-	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Update(crd); err != nil {
+	if _, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Update(ctx, crd)
+	}(); err != nil {
 		s.logger.Error("Failed to bump RestartGeneration", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_restart_failed", err)
 	}
@@ -523,7 +578,13 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 		return nil, err
 	}
 
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			s.markDeleted(ctx, workspaceID)
@@ -741,7 +802,13 @@ func (s *Service) EnsureSession(ctx context.Context, userID, workspaceID string)
 		return nil, err
 	}
 
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		return nil, apierrors.NewInternalError("workspace_get_failed", err)
 	}
@@ -793,7 +860,13 @@ func (s *Service) waitForWorkspaceActive(ctx context.Context, workspaceID string
 	defer ticker.Stop()
 
 	for {
-		crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+		crd, err := func() (*v1.Workspace, error) {
+			wsClient, wErr := s.workspaceCRDClient()
+			if wErr != nil {
+				return nil, wErr
+			}
+			return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+		}()
 		if err != nil {
 			return "", apierrors.NewInternalError("workspace_get_failed", err)
 		}
@@ -869,7 +942,13 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	}
 
 	// Fetch current CRD state and transition to Resuming.
-	crd, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).Get(workspaceID, metav1.GetOptions{})
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
 	if err != nil {
 		return nil, apierrors.NewInternalError("workspace_get_failed", err)
 	}
@@ -893,7 +972,13 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	crd.Status.Phase = v1.WorkspacePhaseResuming
 	now := metav1.Now()
 	crd.Status.LastActivityAt = &now
-	if _, err := s.k8sClient.LlmsafespaceV1().Workspaces(s.config.Namespace).UpdateStatus(crd); err != nil {
+	if _, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.UpdateStatus(ctx, crd)
+	}(); err != nil {
 		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
 		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
 	}

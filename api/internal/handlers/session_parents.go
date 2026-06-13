@@ -122,7 +122,11 @@ func (h *ProxyHandler) fetchSessionParent(ctx context.Context, workspaceID, sess
 		return "", fmt.Errorf("invalid sessionID: %w", err)
 	}
 
-	workspace, err := h.k8sClient.LlmsafespaceV1().Workspaces(h.namespace).Get(workspaceID, metav1.GetOptions{})
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return "", fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get workspace: %w", err)
 	}

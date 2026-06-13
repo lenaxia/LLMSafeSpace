@@ -54,7 +54,7 @@ func newEnsureFixture(t *testing.T) *ensureFixture {
 
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	k8s.On("LlmsafespaceV1").Return(v1i)
+	k8s.On("LlmsafespaceV1").Return(v1i, nil)
 	v1i.On("Workspaces", "default").Return(ws)
 
 	clientset := k8sfake.NewSimpleClientset()
@@ -74,7 +74,7 @@ func TestEnsureSession_TerminatedWorkspace_ReturnsError(t *testing.T) {
 		Spec:       v1.WorkspaceSpec{Runtime: "python:3.11", Owner: v1.WorkspaceOwner{UserID: "user-1"}},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseTerminated},
 	}
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{UserID: "user-1"}, nil)
 
 	_, err := f.svc.EnsureSession(context.Background(), "user-1", "ws-1")
@@ -90,7 +90,7 @@ func TestEnsureSession_FailedWorkspace_ReturnsError(t *testing.T) {
 		Spec:       v1.WorkspaceSpec{Runtime: "python:3.11", Owner: v1.WorkspaceOwner{UserID: "user-1"}},
 		Status:     v1.WorkspaceStatus{Phase: v1.WorkspacePhaseFailed},
 	}
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{UserID: "user-1"}, nil)
 
 	_, err := f.svc.EnsureSession(context.Background(), "user-1", "ws-1")
@@ -144,7 +144,7 @@ func TestEnsureSession_ActiveWorkspace_ReturnsSession(t *testing.T) {
 			PodIP: "127.0.0.1",
 		},
 	}
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(&types.WorkspaceMetadata{UserID: "user-1"}, nil)
 
 	secret := &corev1.Secret{

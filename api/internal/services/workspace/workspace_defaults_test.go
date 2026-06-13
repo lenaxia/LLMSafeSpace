@@ -63,7 +63,7 @@ func TestCreateWorkspace_EmptyRuntime_UsesDefaultImage(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == "ghcr.io/lenaxia/llmsafespace/base:v2"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -80,7 +80,7 @@ func TestCreateWorkspace_ExplicitRuntime_NotOverridden(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == "python:3.11"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -95,7 +95,7 @@ func TestCreateWorkspace_NoSettings_EmptyRuntimePassesThrough(t *testing.T) {
 	f := newDefaultsFixture(t, nil) // no settings
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == ""
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -113,7 +113,7 @@ func TestCreateWorkspace_EmptyStorageSize_UsesDefault(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Storage.Size == "2Gi"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "2Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -143,7 +143,7 @@ func TestCreateWorkspace_DefaultResources_Applied(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Resources != nil &&
 			ws.Spec.Resources.CPU == "1000m" &&
 			ws.Spec.Resources.Memory == "1Gi"
@@ -160,7 +160,7 @@ func TestCreateWorkspace_NoResourceSettings_NilResources(t *testing.T) {
 	f := newDefaultsFixture(t, nil) // no settings service at all
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Resources == nil
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -178,7 +178,7 @@ func TestCreateWorkspace_DefaultSecurityLevel_Applied(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.SecurityLevel == "high"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -197,7 +197,7 @@ func TestCreateWorkspace_DefaultStorageClass_Applied(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Storage.StorageClassName == "fast-ssd"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -214,7 +214,7 @@ func TestCreateWorkspace_ExplicitStorageClass_NotOverridden(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Storage.StorageClassName == "slow-hdd"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -234,7 +234,7 @@ func TestCreateWorkspace_AutoSuspend_FromSettings(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.AutoSuspend != nil &&
 			ws.Spec.AutoSuspend.Enabled == false &&
 			ws.Spec.AutoSuspend.IdleTimeoutSeconds == 1800
@@ -253,7 +253,7 @@ func TestCreateWorkspace_TTLDays_ConvertedToSeconds(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.TTLSecondsAfterSuspended == 7*86400
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -273,7 +273,7 @@ func TestCreateWorkspace_DefaultNetworkAccess_Applied(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.NetworkAccess != nil &&
 			ws.Spec.NetworkAccess.Ingress == true &&
 			len(ws.Spec.NetworkAccess.Egress) == 2 &&
@@ -300,7 +300,7 @@ func TestCreateWorkspace_SettingsError_GracefulDegradation(t *testing.T) {
 	ctx := context.Background()
 
 	// Should still create workspace with request values (no defaults applied)
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == "base" && ws.Spec.Storage.Size == "1Gi"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -330,7 +330,7 @@ func TestCreateWorkspace_PartialResources_OnlyCPU(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Resources != nil && ws.Spec.Resources.CPU == "2000m"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -347,7 +347,7 @@ func TestCreateWorkspace_TTLZero_NotSetOnCRD(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.TTLSecondsAfterSuspended == 0
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -365,7 +365,7 @@ func TestCreateWorkspace_EmptyEgressDomains_NoNetworkAccess(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.NetworkAccess == nil
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -394,7 +394,7 @@ func TestCreateWorkspace_AutoSuspendTimeout_MinutesToSeconds(t *testing.T) {
 			})
 			ctx := context.Background()
 
-			f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+			f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 				return ws.Spec.AutoSuspend != nil &&
 					ws.Spec.AutoSuspend.IdleTimeoutSeconds == tt.expectSeconds
 			})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
@@ -426,7 +426,7 @@ func TestCreateWorkspace_AllDefaults_AppliedTogether(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == "custom:latest" &&
 			ws.Spec.Storage.Size == "5Gi" &&
 			ws.Spec.Storage.StorageClassName == "premium" &&
@@ -460,7 +460,7 @@ func TestCreateWorkspace_ExplicitValues_OverrideAllDefaults(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.Runtime == "python:3.11" &&
 			ws.Spec.Storage.Size == "10Gi" &&
 			ws.Spec.Storage.StorageClassName == "fast"
@@ -487,9 +487,9 @@ func TestCreateWorkspace_DefaultMaxActiveSessions_Applied(t *testing.T) {
 	})
 
 	mockCRD := &v1.Workspace{}
-	f.k8s.On("LlmsafespaceV1").Return(f.v1iface)
+	f.k8s.On("LlmsafespaceV1").Return(f.v1iface, nil)
 	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
-	f.ws.On("Create", mock.Anything).Return(mockCRD, nil)
+	f.ws.On("Create", mock.Anything, mock.Anything).Return(mockCRD, nil)
 	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
 	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
 	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -498,7 +498,7 @@ func TestCreateWorkspace_DefaultMaxActiveSessions_Applied(t *testing.T) {
 	_, _ = f.svc.CreateWorkspace(context.Background(), "user-1", req)
 
 	// The CRD passed to Create should have MaxActiveSessions = 8
-	f.ws.AssertCalled(t, "Create", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.AssertCalled(t, "Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.MaxActiveSessions == 8
 	}))
 }

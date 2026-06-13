@@ -56,7 +56,7 @@ func newFixture(t *testing.T) *fixture {
 
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	k8s.On("LlmsafespaceV1").Return(v1i)
+	k8s.On("LlmsafespaceV1").Return(v1i, nil)
 	v1i.On("Workspaces", "default").Return(ws)
 
 	svc, err := New(log, k8s, db, cache, met, &Config{Namespace: "default"})
@@ -163,8 +163,8 @@ func TestRestartWorkspace_FromFailed_BumpsRestartGeneration(t *testing.T) {
 	failedCrd.Status.Phase = v1.WorkspacePhaseFailed
 	failedCrd.Spec.RestartGeneration = 2
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(failedCrd, nil)
-	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(failedCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.RestartGeneration == 3
 	})).Return(failedCrd, nil)
 
@@ -187,8 +187,8 @@ func TestRestartWorkspace_FromActive_BumpsRestartGeneration(t *testing.T) {
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	activeCrd.Spec.RestartGeneration = 0
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.RestartGeneration == 1
 	})).Return(activeCrd, nil)
 
@@ -220,7 +220,7 @@ func TestRestartWorkspace_FromTerminating_Rejected(t *testing.T) {
 			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 			crd.Status.Phase = phase
 			f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+			f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 
 			err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
 			assert.Error(t, err)
@@ -234,7 +234,7 @@ func TestRestartWorkspace_K8sGetFails(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("boom"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("boom"))
 
 	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
 	assert.Error(t, err)
@@ -248,8 +248,8 @@ func TestRestartWorkspace_K8sUpdateFails(t *testing.T) {
 	failedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	failedCrd.Status.Phase = v1.WorkspacePhaseFailed
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(failedCrd, nil)
-	f.ws.On("Update", mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("etcd unavailable"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(failedCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("etcd unavailable"))
 
 	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
 	assert.Error(t, err)
@@ -418,8 +418,8 @@ func TestRestartWorkspace_RefreshesEphemeralSecrets(t *testing.T) {
 	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("Update", mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
 
 	ctx := workspaceCtxWithSession(context.Background(), "sess-1")
 	err := f.svc.RestartWorkspace(ctx, "user1", "ws-1")
@@ -450,8 +450,8 @@ func TestRestartWorkspace_RefreshFailureDoesNotBlockBump(t *testing.T) {
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	activeCrd.Spec.RestartGeneration = 5
 	f.db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("Update", mock.MatchedBy(func(ws *v1.Workspace) bool {
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
 		return ws.Spec.RestartGeneration == 6
 	})).Return(activeCrd, nil)
 
@@ -467,7 +467,7 @@ func TestCreateWorkspace_HappyPath(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+	f.ws.On("Create", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(
 		crdWorkspace("ws-1", "default", "user1", "10Gi"), nil,
 	)
 	f.db.On("CreateWorkspace", ctx, mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
@@ -517,7 +517,7 @@ func TestCreateWorkspace_K8sCreateFails_ReturnsInternal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
+	f.ws.On("Create", mock.Anything, mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
 
 	req := types.CreateWorkspaceRequest{Name: "my-workspace", StorageSize: "10Gi"}
 	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
@@ -531,16 +531,16 @@ func TestCreateWorkspace_DBCreateFails_CleansUpK8s(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.Anything).Return(crdWorkspace("ws-x", "default", "user1", "10Gi"), nil)
+	f.ws.On("Create", mock.Anything, mock.Anything).Return(crdWorkspace("ws-x", "default", "user1", "10Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(errors.New("db write failed"))
-	f.ws.On("Delete", "ws-x", mock.Anything).Return(nil)
+	f.ws.On("Delete", mock.Anything, "ws-x", mock.Anything).Return(nil)
 
 	req := types.CreateWorkspaceRequest{Name: "my-workspace", StorageSize: "10Gi"}
 	_, err := f.svc.CreateWorkspace(ctx, "user1", req)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "metadata_creation_failed")
-	f.ws.AssertCalled(t, "Delete", "ws-x", mock.Anything)
+	f.ws.AssertCalled(t, "Delete", mock.Anything, "ws-x", mock.Anything)
 }
 
 // ===== seedEphemeralSecrets =====
@@ -671,7 +671,7 @@ func TestCreateWorkspace_SeedsEphemeralSecrets(t *testing.T) {
 	}
 	f.svc.SetSecretInjector(inj)
 
-	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+	f.ws.On("Create", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(
 		crdWorkspace("ws-new", "default", "user1", "5Gi"), nil,
 	)
 	f.db.On("CreateWorkspace", mock.Anything, mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
@@ -711,7 +711,7 @@ func TestCreateWorkspace_SeedsEphemeralSecrets_NoSession_FallsBackToSeed(t *test
 	}
 	f.svc.SetSecretInjector(inj)
 
-	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+	f.ws.On("Create", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(
 		crdWorkspace("ws-new", "default", "user1", "5Gi"), nil,
 	)
 	f.db.On("CreateWorkspace", mock.Anything, mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
@@ -736,7 +736,7 @@ func TestGetWorkspace_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "10Gi"), nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crdWorkspace("ws-1", "default", "user1", "10Gi"), nil)
 
 	result, err := f.svc.GetWorkspace(ctx, "user1", "ws-1")
 
@@ -802,7 +802,7 @@ func TestListWorkspaces_HappyPath(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Name: "ws-1"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "ws-2"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseSuspended}},
 	}}
-	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(crdList, nil)
+	f.ws.On("List", mock.Anything, metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(crdList, nil)
 
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
 
@@ -819,7 +819,7 @@ func TestListWorkspaces_Empty_ReturnsEmptyList(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return([]*types.WorkspaceMetadata{}, &types.PaginationMetadata{Total: 0, Limit: 10}, nil)
-	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("List", mock.Anything, metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
 
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
 
@@ -855,7 +855,7 @@ func TestListWorkspaces_K8sListFails_ReturnsItemsWithEmptyPhase(t *testing.T) {
 		{ID: "ws-1", UserID: "user1", Name: "ws1", StorageSize: "10Gi", CreatedAt: now},
 	}
 	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 1, Limit: 10}, nil)
-	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).
+	f.ws.On("List", mock.Anything, metav1.ListOptions{LabelSelector: "user-id=user1"}).
 		Return((*v1.WorkspaceList)(nil), errors.New("apiserver down"))
 
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
@@ -876,7 +876,7 @@ func TestListWorkspaces_CRDMissing_PhaseEmpty(t *testing.T) {
 		{ID: "ws-1", UserID: "user1", Name: "ws1", StorageSize: "10Gi", CreatedAt: now},
 	}
 	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 1, Limit: 10}, nil)
-	f.ws.On("List", metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("List", mock.Anything, metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(&v1.WorkspaceList{}, nil)
 
 	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
 
@@ -892,7 +892,7 @@ func TestDeleteWorkspace_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Delete", "ws-1", mock.Anything).Return(nil)
+	f.ws.On("Delete", mock.Anything, "ws-1", mock.Anything).Return(nil)
 	done := make(chan struct{})
 	f.db.On("MarkWorkspaceDeleted", ctx, "ws-1").Run(func(_ mock.Arguments) { close(done) })
 
@@ -942,8 +942,8 @@ func TestSuspendWorkspace_HappyPath(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -976,12 +976,12 @@ func TestActivateWorkspace_HappyPath_TransitionsToResuming(t *testing.T) {
 	suspendedCrd.Status.LastActivityAt = &staleActivity
 
 	var captured *v1.Workspace
-	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
-	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).
-		Run(func(args mock.Arguments) { captured = args.Get(0).(*v1.Workspace) }).
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*v1.Workspace) }).
 		Return(suspendedCrd, nil)
 	// enforceMaxActiveWorkspaces calls List
-	f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
 	// refreshEphemeralSecrets is fire-and-forget; no mock needed
 
 	resp, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
@@ -1013,8 +1013,8 @@ func TestActivateWorkspace_K8sGetFails(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
 
 	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
 
@@ -1030,9 +1030,9 @@ func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
-	f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
-	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
 		Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
 
 	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
@@ -1052,7 +1052,7 @@ func TestGetWorkspaceStatus_HappyPath(t *testing.T) {
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	activeCrd.Status.PVCName = "workspace-ws-1"
 	activeCrd.Status.ActiveSessions = 2
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -1073,7 +1073,7 @@ func TestGetWorkspaceStatus_IncludesSessionContextUsed(t *testing.T) {
 		{ID: "ses_1", Title: "main", Status: "idle", ContextUsed: 42000},
 		{ID: "ses_2", Title: "other", Status: "busy", ContextUsed: 99000},
 	}
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -1092,7 +1092,7 @@ func TestGetWorkspaceStatus_IncludesContextTotal(t *testing.T) {
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	activeCrd.Status.ContextUsed = 0
 	activeCrd.Status.ContextTotal = 200000
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -1110,7 +1110,7 @@ func TestGetWorkspaceStatus_ContextTotal_ZeroNotDropped(t *testing.T) {
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	activeCrd.Status.ContextUsed = 0
 	activeCrd.Status.ContextTotal = 0
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
 
 	result, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -1149,7 +1149,7 @@ func TestSuspendWorkspace_K8sGetFails(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -1165,8 +1165,8 @@ func TestSuspendWorkspace_K8sUpdateFails(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
-	f.ws.On("Get", "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -1181,7 +1181,7 @@ func TestGetWorkspaceStatus_K8sGetFails(t *testing.T) {
 	ctx := context.Background()
 
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return((*v1.Workspace)(nil), errors.New("k8s unavailable"))
 
 	_, err := f.svc.GetWorkspaceStatus(ctx, "user1", "ws-1")
 
@@ -1215,9 +1215,9 @@ func TestE2E_SuspendWorkspace_OnlyActiveAllowed(t *testing.T) {
 
 			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 			crd.Status.Phase = tt.phase
-			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+			f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 			if !tt.wantErr {
-				f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+				f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
 			}
 
 			err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
@@ -1252,13 +1252,13 @@ func TestE2E_ActivateWorkspace_OnlySuspendedOrActiveAllowed(t *testing.T) {
 			ctx := context.Background()
 
 			f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-			f.ws.On("List", mock.Anything).Return(&v1.WorkspaceList{}, nil)
+			f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
 
 			crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 			crd.Status.Phase = tt.phase
-			f.ws.On("Get", "ws-1", mock.Anything).Return(crd, nil)
+			f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 			if tt.phase == v1.WorkspacePhaseSuspended {
-				f.ws.On("UpdateStatus", mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+				f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
 			}
 
 			_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
@@ -1279,7 +1279,7 @@ func TestSuspendWorkspace_Idempotent_AlreadySuspended(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
-	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -1294,7 +1294,7 @@ func TestSuspendWorkspace_Idempotent_AlreadySuspending(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	suspendingCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	suspendingCrd.Status.Phase = v1.WorkspacePhaseSuspending
-	f.ws.On("Get", "ws-1", mock.Anything).Return(suspendingCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendingCrd, nil)
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -1306,7 +1306,7 @@ func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.ws.On("Create", mock.AnythingOfType("*v1.Workspace")).Return(
+	f.ws.On("Create", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(
 		crdWorkspace("ws-new", "default", "user1", "10Gi"), nil,
 	)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
@@ -1323,7 +1323,7 @@ func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {
 	assert.Equal(t, "user1", result.UserID)
 	assert.Equal(t, "10Gi", result.StorageSize)
 
-	f.ws.AssertCalled(t, "Create", mock.MatchedBy(func(crd *v1.Workspace) bool {
+	f.ws.AssertCalled(t, "Create", mock.Anything, mock.MatchedBy(func(crd *v1.Workspace) bool {
 		return crd.Spec.Owner.UserID == "user1" &&
 			crd.Spec.Storage.Size == "10Gi" &&
 			crd.Spec.Storage.StorageClassName == "fast-ssd" &&

@@ -478,8 +478,8 @@ type mockK8sForMaxActive struct {
 	workspaces map[string]*v1.Workspace
 }
 
-func (m *mockK8sForMaxActive) LlmsafespaceV1() pkginterfaces.LLMSafespaceV1Interface {
-	return &mockLLMV1ForMaxActive{workspaces: m.workspaces}
+func (m *mockK8sForMaxActive) LlmsafespaceV1() (pkginterfaces.LLMSafespaceV1Interface, error) {
+	return &mockLLMV1ForMaxActive{workspaces: m.workspaces}, nil
 }
 
 type mockLLMV1ForMaxActive struct {
@@ -496,14 +496,14 @@ type mockWSInterfaceForMaxActive struct {
 	workspaces map[string]*v1.Workspace
 }
 
-func (m *mockWSInterfaceForMaxActive) Get(name string, _ metav1.GetOptions) (*v1.Workspace, error) {
+func (m *mockWSInterfaceForMaxActive) Get(ctx context.Context, name string, _ metav1.GetOptions) (*v1.Workspace, error) {
 	if ws, ok := m.workspaces[name]; ok {
 		return ws, nil
 	}
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *mockWSInterfaceForMaxActive) List(_ metav1.ListOptions) (*v1.WorkspaceList, error) {
+func (m *mockWSInterfaceForMaxActive) List(ctx context.Context, _ metav1.ListOptions) (*v1.WorkspaceList, error) {
 	out := &v1.WorkspaceList{}
 	for _, ws := range m.workspaces {
 		out.Items = append(out.Items, *ws)
@@ -511,7 +511,7 @@ func (m *mockWSInterfaceForMaxActive) List(_ metav1.ListOptions) (*v1.WorkspaceL
 	return out, nil
 }
 
-func (m *mockWSInterfaceForMaxActive) UpdateStatus(ws *v1.Workspace) (*v1.Workspace, error) {
+func (m *mockWSInterfaceForMaxActive) UpdateStatus(ctx context.Context, ws *v1.Workspace) (*v1.Workspace, error) {
 	m.workspaces[ws.Name] = ws
 	return ws, nil
 }

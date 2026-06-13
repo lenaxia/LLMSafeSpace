@@ -124,7 +124,7 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -168,12 +168,12 @@ func (e *testEnv) setupPasswordWithT(t *testing.T, workspaceID, password string)
 
 func (e *testEnv) setupWorkspaceWithT(t *testing.T, name string, maxSessions int) {
 	ws := makeWorkspaceCRD(name, maxSessions)
-	e.wsMock.On("Get", name, metav1.GetOptions{}).Return(ws, nil).Maybe()
+	e.wsMock.On("Get", mock.Anything, name, metav1.GetOptions{}).Return(ws, nil).Maybe()
 }
 
 func (e *testEnv) setupWorkspacePodWithT(t *testing.T, workspaceID, podIP, phase, _ string) {
 	ws := makeWorkspaceCRDWithStatus(workspaceID, podIP, phase, "")
-	e.wsMock.On("Get", workspaceID, metav1.GetOptions{}).Return(ws, nil).Maybe()
+	e.wsMock.On("Get", mock.Anything, workspaceID, metav1.GetOptions{}).Return(ws, nil).Maybe()
 }
 func (e *testEnv) doRequestWithT(t *testing.T, method, path string, body io.Reader) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
@@ -298,7 +298,7 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -306,15 +306,15 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 
 	oldCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	newCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.2", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
 
 	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
@@ -339,22 +339,22 @@ func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
@@ -392,7 +392,7 @@ func TestProxy_WorkspaceNotRunning(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newTestEnv(t)
 			sb := makeWorkspaceCRDWithStatus("ws-1", tt.podIP, tt.phase, "ws-1")
-			env.wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(sb, nil).Once()
+			env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(sb, nil).Once()
 
 			w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions", nil)
 			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -403,7 +403,7 @@ func TestProxy_WorkspaceNotRunning(t *testing.T) {
 
 func TestProxy_WorkspaceNotFound(t *testing.T) {
 	env := newTestEnv(t)
-	env.wsMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+	env.wsMock.On("Get", mock.Anything, "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/sb-missing/sessions", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -727,7 +727,7 @@ func TestProxy_WorkspaceNotFound_UsesDefaults(t *testing.T) {
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-missing")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	for i := 0; i < 6; i++ {
-		env.wsMock.On("Get", "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+		env.wsMock.On("Get", mock.Anything, "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 	}
 
 	for i := 0; i < 5; i++ {
@@ -1031,7 +1031,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1042,12 +1042,12 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 1)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
@@ -1061,7 +1061,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	proxy := router.Group("/api/v1/workspaces/:id")
 	proxy.POST("/sessions/:sessionId/message", handler.SendMessage)
 
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
@@ -1071,7 +1071,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "session s1 should be active")
 
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
@@ -1086,7 +1086,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 		return handler.activeSessionCount("ws-1") == 0
 	}, 3*time.Second, 50*time.Millisecond, "SSE idle event should clear session s1")
 
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
@@ -1139,7 +1139,7 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1150,10 +1150,10 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
@@ -1179,11 +1179,11 @@ func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
@@ -1197,11 +1197,11 @@ func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "", "Suspended", "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
@@ -1215,10 +1215,10 @@ func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
-	wsMock.On("Get", "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+	wsMock.On("Get", mock.Anything, "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
@@ -1356,7 +1356,7 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1367,10 +1367,10 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{
 		Transport: &alwaysFailTransport{},
@@ -1408,7 +1408,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1419,10 +1419,10 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
@@ -1493,13 +1493,13 @@ func TestProxy_B2_MidStreamReadError_WritesSSEErrorEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
@@ -1541,13 +1541,13 @@ func TestProxy_B2_CleanStreamEnd_NoSSEError(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(crd, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(crd, nil)
 	secret := makePasswordSecret("ws-1", "test-password")
 	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
@@ -1692,7 +1692,7 @@ func TestActivityTracker_B5_NotFound_RemovesMapEntry(t *testing.T) {
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
-	wsMock.On("Get", "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr)
+	wsMock.On("Get", mock.Anything, "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr)
 
 	tracker.Record("ws-deleted")
 	require.Equal(t, 1, tracker.PendingCount(), "entry must be present before flush")
@@ -1716,9 +1716,9 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
-	wsMock.On("Get", "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr).Once()
-	wsMock.On("Get", "ws-alive", metav1.GetOptions{}).Return(existing, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything).Return(existing, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr).Once()
+	wsMock.On("Get", mock.Anything, "ws-alive", metav1.GetOptions{}).Return(existing, nil).Once()
+	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(existing, nil).Once()
 
 	tracker.Record("ws-deleted")
 	tracker.Record("ws-alive")
@@ -2215,10 +2215,10 @@ func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock).Maybe()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil, nil, nil).Maybe()
 	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
 	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
 
 	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 
@@ -2263,12 +2263,12 @@ func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	k8sMock.On("Clientset").Return(k8sfake.NewSimpleClientset())
 
 	ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
-	wsMock.On("Get", "ws-1", metav1.GetOptions{}).Return(ws, nil)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
