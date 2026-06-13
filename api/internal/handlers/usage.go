@@ -189,12 +189,14 @@ func (h *UsageHandler) AdminRetryDLQ(c *gin.Context) {
 
 	_, err = h.db.ExecContext(c.Request.Context(),
 		`INSERT INTO usage_events (idempotency_key, owner_id, owner_type, actor_id, workspace_id,
-			event_type, event_subtype, quantity, metadata, request_context, source, event_time)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			event_type, event_subtype, quantity, resource_tier, region, metadata, request_context,
+			source, event_time, period)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
 		event.IdempotencyKey, event.Owner.ID, string(event.Owner.Type), event.ActorID, event.WorkspaceID,
-		event.EventType, event.EventSubtype, event.Quantity,
+		event.EventType, event.EventSubtype, event.Quantity, event.ResourceTier, event.Region,
 		mustMarshal(event.Metadata), mustMarshal(event.RequestContext), event.Source, event.EventTime,
+		event.EventTime,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retry event"})

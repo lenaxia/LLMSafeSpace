@@ -651,6 +651,10 @@ func (s *Service) reapDLQ(ctx context.Context) error {
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		s.logger.Error("DLQ reaper rows iteration error", err)
+	}
+
 	s.updateDLQGauge(ctx)
 	return nil
 }
@@ -871,7 +875,14 @@ func (s *Service) recordStorageBytes(ctx context.Context) error {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	for _, r := range records {
-		bytes, _ := parseStorageSize(r.StorageSize)
+		bytes, perr := parseStorageSize(r.StorageSize)
+		if perr != nil {
+			s.logger.Warn("Skipping workspace with unparseable storage size",
+				"workspace_id", r.ID,
+				"storage_size", r.StorageSize,
+			)
+			continue
+		}
 		if bytes <= 0 {
 			continue
 		}
@@ -896,7 +907,10 @@ func parseStorageSize(s string) (int64, error) {
 	}
 	var value float64
 	var unit string
-	_, _ = fmt.Sscanf(s, "%f%s", &value, &unit)
+	n, err := fmt.Sscanf(s, "%f%s", &value, &unit)
+	if n < 2 || err != nil {
+		return 0, fmt.Errorf("unparseable storage size: %q", s)
+	}
 	switch unit {
 	case "Ki":
 		return int64(value * 1024), nil
@@ -907,7 +921,7 @@ func parseStorageSize(s string) (int64, error) {
 	case "Ti":
 		return int64(value * 1024 * 1024 * 1024 * 1024), nil
 	default:
-		return int64(value), nil
+		return 0, fmt.Errorf("unknown storage unit %q in size %q", unit, s)
 	}
 }
 

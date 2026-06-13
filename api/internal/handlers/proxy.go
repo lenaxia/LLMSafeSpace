@@ -563,6 +563,21 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 
 	podIP := workspace.Status.PodIP
+
+	if h.meteringSvc != nil && workspaceID != "" {
+		userID := c.GetString("userID")
+		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+			owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
+			allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
+			if qerr != nil {
+				h.logger.Warn("Quota check failed, allowing request", "error", qerr, "user_id", userID)
+			} else if !allowed {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded", "event_type": "llm_request"})
+				return
+			}
+		}
+	}
+
 	// NOTE: stripPatch is intentionally false (streaming mode). If re-enabled,
 	// you MUST strip Accept-Encoding from the upstream request because opencode
 	// v1.15+ compresses JSON responses >1KB via gzip/deflate, which would break
