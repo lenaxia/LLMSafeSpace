@@ -312,8 +312,8 @@ export function ChatPage() {
       if (msgs.length > 0) {
         setSseStreamParts([]);
         setLocalMessages([]);
-        setSessionErrors([]);
       }
+      setSessionErrors([]);
       isReconnectMode.current = false;
       knownLivePartIds.current.clear();
       sentTextRef.current = "";
