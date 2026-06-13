@@ -108,7 +108,7 @@ The controller maintains **exactly 1 OCI VM and 1 GCP VM** at all times. The rou
 │    └─ Service: relay-router (ClusterIP)                            │
 │    └─ WireGuard interface: wg0 (10.42.42.1)                        │
 │    └─ Healthy relays list (computed from health checks)            │
-│    └─ Session routing: hash(workspaceID) % len(healthyRelays)      │
+│    └─ Session routing: rendezvous hash(workspaceID)              │
 │                                                                    │
 │  InferenceRelay Controller (same binary as workspace controller)   │
 │    └─ Watches InferenceRelay CR                                    │
@@ -201,22 +201,19 @@ A Go HTTP server running as a Deployment (2 replicas, pod anti-affinity). This i
 
 **Responsibilities:**
 
-1. **Sticky session routing:** Each workspace is deterministically assigned to a relay:
-   ```
-   relayIndex = fnv32(workspaceID) % len(healthyRelays)
-   ```
-   No stored session state — both router replicas compute the same assignment independently. Stickiness is implicit from the hash.
+1. **Sticky session routing (rendezvous hashing):** Each workspace is deterministically assigned to a relay using rendezvous (HRW) hashing — `max(hash(workspaceID, relayID))` across healthy relays. Unlike simple modulo hashing, rendezvous hashing minimizes disruption when the relay set changes: adding or removing one relay only moves the workspaces that were assigned to that specific relay, not half the fleet. No shared session state — both router replicas compute the same assignment independently. Stickiness is implicit from the hash.
 
 2. **Health checking:** Each router replica independently health-checks each relay every 15s via `GET http://10.42.42.x:8080/healthz` over the WG tunnel. A relay is marked unhealthy after 3 consecutive failures (45s).
 
-3. **429 detection:** The router observes upstream response status codes on proxied requests. If a relay's 429 rate exceeds the threshold (default 50%) over a 5-minute window, the router:
-   - Marks the relay as `draining` — stops assigning new sessions to it
-   - Writes a condition to the InferenceRelay CR status (or calls a controller endpoint) requesting rotation
+3. **Proactive 429 detection (two-tier):**
+   - **Tier 1 — Immediate probe (first 429):** When the router receives the first 429 from a relay, it immediately sends a probe request (`GET /models`) to that relay. If the probe also returns 429, the relay is marked `suspect` and new sessions are weighted away from it (but not fully drained — could be transient).
+   - **Tier 2 — Storm detection:** If a relay's 429 rate exceeds the threshold (default 50%) over a 5-minute window, OR if 3 consecutive probes return 429, the router marks the relay as `draining` — stops assigning new sessions entirely, writes a rotation request to the InferenceRelay CR status.
    - Existing in-flight streams on the draining relay are left to complete (or fail naturally if the IP is hard-blocked)
+   - This prevents the scenario where dozens of users hit 429s before the 5-minute window elapses
 
-4. **Failover:** When a relay transitions from healthy → unhealthy, `healthyRelays` shrinks. The hash modulo changes, so new requests for workspaces previously on the failed relay now route to the surviving relay. In-flight streams to the failed relay break — opencode's retry logic handles this.
+4. **Failover:** When a relay transitions from healthy → unhealthy, it is removed from the healthy relay set. With rendezvous hashing, only workspaces previously assigned to the failed relay are remapped to the survivor. In-flight streams to the failed relay break — opencode's retry logic handles this.
 
-5. **Rebalancing:** When a relay rejoins (replacement VM provisioned and healthy), `healthyRelays` grows. The hash modulo changes back. New sessions naturally distribute across both relays. Existing sessions on the surviving relay are NOT force-migrated — they move on their next natural session boundary.
+5. **Rebalancing:** When a relay rejoins (replacement VM provisioned and healthy), it is added back to the healthy relay set. With rendezvous hashing, only a proportional share of workspaces migrate to the new relay on their next session. Existing sessions on the surviving relay are NOT force-migrated — they move on their next natural session boundary.
 
 **How the router learns relay IPs:**
 The controller writes a ConfigMap (`relay-router-peers`) that the router mounts as a volume and watches (via fsnotify or poll):
@@ -246,35 +243,55 @@ Runs as a new reconciler inside the existing workspace controller binary (gated 
 **Lifecycle states:**
 
 ```
-                         provision
+                          provision
     ┌──────────┐     ──────────────→     ┌──────────────┐
     │ Absent   │                          │ Provisioning │
     └──────────┘                          └──────┬───────┘
-                                                 │ health check passes
-                                                 ▼
+                                                  │ health check passes
+                                                  ▼
     ┌──────────┐     destroy +       ┌──────────────┐
     │ Draining │←─── reprovision ────│  Healthy     │
     └────┬─────┘     (on 429/fail)   └──────┬───────┘
          │                                    │ health check fails (3x)
          │                                    ▼
          │                              ┌──────────────┐
-         └──────────────────────────────│ Unhealthy    │
-                                        └──────┬───────┘
-                                               │ stays unhealthy >15m
-                                               ▼
-                                        destroy + reprovision
+         │                              │ Unhealthy    │
+         │                              └──────┬───────┘
+         │                                     │ stays unhealthy >15m
+         │                                     ▼
+         │                              destroy + reprovision
+         │
+         │  3 consecutive provisioning failures
+         ▼
+    ┌──────────────────┐
+    │ ProvisioningFailed│  ← circuit breaker: stop retrying, set condition,
+    └────────┬─────────┘    fire alert, wait for operator intervention
+             │ operator fixes template/credentials, deletes condition
+             ▼
+         reprovision
 ```
+
+**Provisioning failure circuit breaker:**
+If a provider slot fails to reach healthy state after 3 consecutive provisioning attempts, the controller:
+1. Stops the destroy/provision loop for that slot
+2. Sets a `ProvisioningFailed` condition on the InferenceRelay CR with details (last error, attempt count, provider)
+3. Fires a Prometheus alert (`llmsafespace_relay_provisioning_failed`)
+4. The surviving relay carries all traffic (via router failover)
+5. The controller does NOT retry until the operator clears the condition (indicating the root cause — bad template, credentials, capacity — has been fixed)
+
+This prevents infinite provisioning loops from burning cloud API quotas or creating/destroying VMs in a tight loop when cloud-init is broken.
 
 **Reconcile loop:**
 1. Read `InferenceRelay` CR spec
 2. For each provider in `spec.providers` (always OCI + GCP):
    a. Check if a relay VM exists for this provider
-   b. If not, provision one (generate WG keypair, render cloud-init, call provider API)
+   b. If not, provision one (generate WG keypair, render cloud-init, call provider API). Increment provisioning attempt counter.
    c. Health-check existing VM over WG tunnel
    d. If unhealthy for >15m, destroy and reprovision
    e. If router reports 429 rotation needed, mark draining, provision replacement
+   f. **If 3 consecutive provisioning attempts fail to reach healthy, set `ProvisioningFailed` condition and stop retrying** (circuit breaker)
 3. Update ConfigMap `relay-router-peers` with current relay IPs and health status
-4. Update CR status with observed state
+4. Update CR status with observed state, conditions, and metrics
 
 ### Layer 5: InferenceRelay CRD
 
@@ -351,7 +368,10 @@ type WireGuardConfig struct {
     Port int `json:"port,omitempty"`
 
     // RouterEndpoint is the routable address relay VMs connect back to.
-    // For clusters behind NAT, this is the public IP or hostname of the
+    // Must be a DNS name (e.g. "relay-gw.safespaces.dev"), not a bare IP.
+    // Using a DNS name allows the operator to re-point relay VMs to a new
+    // cluster node via DNS update (5m TTL) without destroying/recreating VMs.
+    // For clusters behind NAT, this resolves to the public IP of the
     // node port / load balancer exposing the router's WG port.
     RouterEndpoint string `json:"routerEndpoint"`
 }
@@ -412,11 +432,18 @@ type RelayInstanceStatus struct {
     Region     string       `json:"region"`
     WgIP       string       `json:"wgIP"`
     PublicIP   string       `json:"publicIP"`
-    State      string       `json:"state"` // "provisioning", "healthy", "draining", "unhealthy", "terminated"
+    State      string       `json:"state"` // "provisioning", "healthy", "draining", "unhealthy", "terminated", "provisioning-failed"
     Healthy    bool         `json:"healthy"`
     LastCheck  *metav1.Time `json:"lastCheck,omitempty"`
     Requests429 int         `json:"429Count,omitempty"`
     TotalRequests int       `json:"totalRequests,omitempty"`
+    // ProvisioningAttempts is the count of consecutive failed provisioning
+    // attempts for this provider slot. Reset to 0 on success. When it reaches 3,
+    // the circuit breaker trips and sets state to "provisioning-failed".
+    ProvisioningAttempts int `json:"provisioningAttempts,omitempty"`
+    // LastProvisionError is the error message from the most recent failed
+    // provisioning attempt. Populated when ProvisioningAttempts > 0.
+    LastProvisionError string `json:"lastProvisionError,omitempty"`
 }
 ```
 
@@ -472,14 +499,25 @@ Shared across providers. Renders a single `user-data` script that:
 #!/bin/bash
 set -euo pipefail
 
-# Download relay binary
+# Download relay binary (try GitHub Releases first, then GCS/OCI mirror fallback)
 ARCH=$(uname -m)
 case "$ARCH" in
   aarch64) BINARY=relay-proxy-arm64 ;;
   x86_64)  BINARY=relay-proxy-amd64 ;;
 esac
-curl -fsSL "https://github.com/lenaxia/llmsafespace/releases/latest/download/$BINARY" -o /usr/local/bin/relay-proxy
-chmod +x /usr/local/bin/relay-proxy
+download_binary() {
+  for url in \
+    "https://github.com/lenaxia/llmsafespace/releases/latest/download/$BINARY" \
+    "https://storage.googleapis.com/llmsafespace-artifacts/$BINARY" \
+    "https://objectstorage.us-ashburn-1.oraclecloud.com/n/llmsafespace/b/artifacts/o/$BINARY"; do
+    if curl -fsSL --connect-timeout 10 "$url" -o /usr/local/bin/relay-proxy; then
+      chmod +x /usr/local/bin/relay-proxy
+      return 0
+    fi
+  done
+  return 1
+}
+download_binary || { echo "FATAL: could not download relay binary from any source"; exit 1; }
 
 # Configure WireGuard
 apt-get update && apt-get install -y wireguard-tools
@@ -577,7 +615,7 @@ All free-tier claims below were verified against provider documentation on 2026-
 | DQ4 | What happens when both relays are unhealthy? | **Direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs), accepting the throttle risk. Returns a `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502. | Free-tier traffic from server IPs may be throttled, but partial availability beats total outage. The controller will be working on reprovisioning in parallel. |
 | DQ5 | Destroy-and-recreate vs in-place rotation? | **Always destroy-and-recreate.** No in-place IP swapping, key rotation, or config pushing. Relay VMs are stateless. The other VM carries traffic during the ~60s provisioning window. | Simpler driver interface (no RotateIP), simpler cloud-init (no runtime reconfiguration), identical flow for failure recovery and key/IP rotation. |
 | DQ6 | Should the controller run inside the existing workspace controller binary or as a separate deployment? | **Same binary, new reconciler, gated by a feature flag.** | The relay controller and workspace controller are coupled (router URL injection). Same binary simplifies deployment and avoids a second controller pod. |
-| DQ7 | Should we weight traffic toward OCI (10 TB egress) over GCP (1 GB egress)? | **Yes — OCI gets 2/3 of new sessions, GCP gets 1/3.** Implemented as weighted consistent hashing: `hash(workspaceID) % 3 < 2 → OCI, else GCP`. | GCP's 1 GB/mo egress would be exhausted quickly if it carried 50% of traffic. OCI's 10 TB can handle the load. GCP is primarily for failover and IP diversity. |
+| DQ7 | Should we weight traffic toward OCI (10 TB egress) over GCP (1 GB egress)? | **Yes — OCI gets 2/3 of new sessions, GCP gets 1/3.** Implemented as weighted rendezvous hashing: each relay gets a weight (OCI=2, GCP=1), and the HRW selection incorporates weight. | GCP's 1 GB/mo egress would be exhausted quickly if it carried 50% of traffic. OCI's 10 TB can handle the load. GCP is primarily for failover and IP diversity. |
 | DQ8 | What happens when GCP egress quota (1 GB/mo) is exhausted? | **Controller detects via GCP billing API or the relay's own byte counter, marks GCP relay as `quota-exhausted`, removes from pool.** All traffic routes to OCI until the monthly reset. | GCP egress resets monthly. The controller can optionally destroy and recreate the GCP VM at month boundary to reset billing counters (though egress is per-billing-account, not per-VM). |
 
 ---
@@ -609,11 +647,12 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | US-42.6 | GCP provider driver (provision, destroy, status) | Medium (1d) | US-42.2, US-42.4 |
 | US-42.7 | Relay-router: sticky routing + health checking + 429 detection | Medium-Large (2d) | US-42.3 |
 | US-42.8 | Router WireGuard sidecar + NodePort Service | Small-Medium (1d) | US-42.4, US-42.7 |
-| US-42.9 | InferenceRelay reconciler (lifecycle: provision, health, destroy+recreate, ConfigMap sync) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
+| US-42.9 | InferenceRelay reconciler (lifecycle: provision, health, destroy+recreate, ConfigMap sync, provisioning circuit breaker) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
 | US-42.10 | Helm chart integration (CRD, router Deployment+Service, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
 | US-42.11 | Fallback mode: direct routing when all relays unhealthy | Small (0.5d) | US-42.7 |
+| US-42.12 | Observability: Prometheus metrics + alert rules + CR conditions | Small (0.5d) | US-42.9 |
 
-**Total estimated effort:** 11-15 days
+**Total estimated effort:** 11.5-15.5 days
 
 **Day-one gate (US-42.2):** Before any controller work, manually deploy a relay VM on OCI and one on GCP, curl `opencode.ai/zen/v1` from each. If either provider's IPs are blocked by Zen, the entire epic premise fails. This is the cheapest possible validation.
 
@@ -638,7 +677,8 @@ US-42.3 (CRD types) ───────────┐  │   │
                                └── US-42.9 (reconciler) ◄────────────────┴──┘
                                           │
                                           ├── US-42.10 (Helm)
-                                          └── US-42.11 (fallback mode)
+                                          ├── US-42.11 (fallback mode)
+                                          └── US-42.12 (observability)
 ```
 
 **Critical path:** US-42.1 → US-42.2 (validation gate) → US-42.5 (OCI driver) → US-42.9 (reconciler) → US-42.10 (Helm)
@@ -659,8 +699,8 @@ Build the relay-router with mock relays. WireGuard sidecar + NodePort. Test stic
 **Phase 3 — Provider drivers (day 5-8):** US-42.5, US-42.6
 OCI and GCP drivers. Can be developed in parallel. End of phase 3: controller can provision a VM, establish WG tunnel, health-check it.
 
-**Phase 4 — Reconciler + integration (day 8-11):** US-42.9, US-42.10, US-42.11
-Full lifecycle management. Helm chart. Fallback mode. End-to-end: `kubectl apply` → VMs provisioned → WG tunnels up → router routing → pods getting free-tier inference.
+**Phase 4 — Reconciler + integration (day 8-11):** US-42.9, US-42.10, US-42.11, US-42.12
+Full lifecycle management with provisioning circuit breaker. Helm chart. Fallback mode. Prometheus metrics + alert rules. End-to-end: `kubectl apply` → VMs provisioned → WG tunnels up → router routing → pods getting free-tier inference.
 
 ---
 
@@ -693,7 +733,7 @@ spec:
   wireGuard:
     cidr: "10.42.42.0/24"
     port: 51820
-    routerEndpoint: "203.0.113.10:31820"  # cluster public IP + NodePort
+    routerEndpoint: "relay-gw.safespaces.dev:31820"  # DNS name + NodePort
   providers:
     - provider: oci
       region: us-ashburn-1
@@ -724,6 +764,46 @@ spec:
 5. **Keep CF Worker code** in repo for historical reference
 
 No workspace pod restarts needed beyond the normal pod lifecycle — the relay injector reads `INFERENCE_RELAY_BASEURL` at pod startup and the next pod rotation picks up the new URL.
+
+---
+
+## Observability & Alerting
+
+The controller and router expose Prometheus metrics and CR conditions. The following alert rules must be shipped with the Helm chart (in `monitoring.prometheusRules`):
+
+| Alert | Expression | Severity | Action |
+|-------|-----------|----------|--------|
+| `RelayFleetDegraded` | `llmsafespace_relay_healthy_replicas < 2` | Warning | One relay is down — system is running on a single provider. Check InferenceRelay CR status for the failed instance. |
+| `RelayFleetCritical` | `llmsafespace_relay_healthy_replicas == 0` | Critical | Both relays are down — all free-tier traffic is falling back to direct (throttled) routing. Page on-call immediately. |
+| `RelayProvisioningFailed` | `llmsafespace_relay_provisioning_failed == 1` | Critical | A provider slot has failed to provision 3 times. Circuit breaker is tripped — the controller has stopped retrying. Operator must fix the root cause (bad template, credentials, capacity) and clear the `ProvisioningFailed` condition. |
+| `Relay429RateHigh` | `rate(relay_requests_total{status="429"}[5m]) / rate(relay_requests_total[5m]) > 0.3` | Warning | A relay is receiving significant 429s from upstream. Rotation may be imminent. |
+| `RelayDraining` | `llmsafespace_relay_draining == 1` | Info | A relay is in draining state — rotation in progress. Informational, no action needed unless it persists >30m. |
+| `GCPQuotaExhausted` | `llmsafespace_relay_quota_exhausted{provider="gcp"} == 1` | Warning | GCP monthly egress (1 GB) is exhausted. All traffic is on OCI. Resets at month boundary. |
+
+**Metrics exposed by the controller:**
+- `llmsafespace_relay_healthy_replicas` (gauge) — count of healthy relay VMs
+- `llmsafespace_relay_provisioning_failed` (gauge, labels: provider) — circuit breaker tripped (0/1)
+- `llmsafespace_relay_draining` (gauge, labels: provider) — relay in drain state (0/1)
+- `llmsafespace_relay_quota_exhausted` (gauge, labels: provider) — egress quota exhausted (0/1)
+- `llmsafespace_relay_provision_duration_seconds` (histogram, labels: provider) — time to provision + health-check a relay
+- `llmsafespace_relay_rotation_total` (counter, labels: provider, reason) — rotation events (429, failure, manual)
+
+**Metrics exposed by the relay binary (scraped by router over WG):**
+- `relay_requests_total` (counter, labels: status) — proxied request count by HTTP status
+- `relay_keepalive_total` (counter) — keepalive probes sent
+
+**Metrics exposed by the router:**
+- `relay_router_requests_total` (counter, labels: relay, status) — requests routed per relay
+- `relay_router_active_streams` (gauge) — in-flight streaming connections
+- `relay_router_relay_healthy` (gauge, labels: relay) — router's view of relay health (0/1)
+- `relay_router_fallback_active` (gauge) — 1 when in direct-fallback mode
+
+**CR conditions (operator-visible via `kubectl describe inferencerelay`):**
+- `Ready` — fleet is operational (at least 1 healthy relay)
+- `Degraded` — one relay unhealthy, surviving on single provider
+- `ProvisioningFailed` — circuit breaker tripped on a provider slot (includes message with last error)
+- `Rotating` — a destroy-and-recreate rotation is in progress
+- `FallbackActive` — both relays down, router is proxying directly to upstream
 
 ---
 
