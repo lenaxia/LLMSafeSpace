@@ -43,6 +43,8 @@ func createTestOrg(t *testing.T, pool *pgxpool.Pool, orgID, adminUserID string) 
 	ctx := context.Background()
 	pool.Exec(ctx, `INSERT INTO organizations (id, name, slug, created_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
 		orgID, "Test Org "+orgID[:8], "test-"+orgID[:8], adminUserID)
+	pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', false) ON CONFLICT DO NOTHING`,
+		orgID, adminUserID)
 }
 
 func ensureTestOrgWorkspace(t *testing.T, pool *pgxpool.Pool, wsID, userID, orgID string) {
