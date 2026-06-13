@@ -42,7 +42,7 @@ func createTestOrg(t *testing.T, pool *pgxpool.Pool, orgID, adminUserID string) 
 	t.Helper()
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, name, slug, created_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-		orgID, "Test Org "+orgID[:8], "test-"+orgID[:8], adminUserID); err != nil {
+		orgID, "Test Org "+orgID, "test-"+orgID, adminUserID); err != nil {
 		t.Fatalf("createTestOrg: insert organization: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', false) ON CONFLICT DO NOTHING`,
