@@ -357,7 +357,7 @@ func TestBindCredentialToAllOrgWorkspaces(t *testing.T) {
 	ensureTestWorkspace(t, pool, wsID1, adminID)
 	ensureTestWorkspace(t, pool, wsID2, memberID)
 	t.Cleanup(func() {
-		cleanupOrg(t, pool, orgID)
+		cleanupOrg(t, pool, orgID) //nolint:contextcheck // test cleanup
 		pool.Exec(ctx, "DELETE FROM workspaces WHERE id IN ($1, $2)", wsID1, wsID2)
 		pool.Exec(ctx, "DELETE FROM users WHERE id IN ($1, $2)", adminID, memberID)
 	})
@@ -540,8 +540,8 @@ func TestSeedWorkspaceCredentials_OrgVsPersonal(t *testing.T) {
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", otherOrgID, otherOrgWS)
 
 	t.Cleanup(func() {
-		cleanupOrg(t, pool, orgID)
-		cleanupOrg(t, pool, otherOrgID)
+		cleanupOrg(t, pool, orgID)      //nolint:contextcheck // test cleanup
+		cleanupOrg(t, pool, otherOrgID) //nolint:contextcheck // test cleanup
 		pool.Exec(ctx, "DELETE FROM workspace_credential_bindings WHERE workspace_id IN ($1, $2, $3)", personalWS, orgWS, otherOrgWS)
 		pool.Exec(ctx, "DELETE FROM workspaces WHERE id IN ($1, $2, $3)", personalWS, orgWS, otherOrgWS)
 		pool.Exec(ctx, "DELETE FROM users WHERE id = $1", adminID)

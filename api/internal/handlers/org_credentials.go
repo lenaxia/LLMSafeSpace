@@ -41,14 +41,14 @@ func NewOrgCredentialsHandler(store orgCredentialStore, orgKeySvc *secrets.OrgKe
 type createOrgCredentialRequest struct {
 	Name           string   `json:"name"           binding:"required,min=1,max=128"`
 	Provider       string   `json:"provider"       binding:"required"`
-	APIKey         string   `json:"apiKey"         binding:"required"              log:"-"`
+	APIKey         string   `json:"apiKey"         binding:"required"              log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL        string   `json:"baseURL"`
 	ModelAllowlist []string `json:"modelAllowlist"`
 }
 
 type updateOrgCredentialRequest struct {
 	Name           *string  `json:"name"`
-	APIKey         *string  `json:"apiKey"          log:"-"`
+	APIKey         *string  `json:"apiKey"          log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL        *string  `json:"baseURL"`
 	ModelAllowlist []string `json:"modelAllowlist"`
 }
@@ -211,7 +211,7 @@ func (h *OrgCredentialsHandler) CreateAutoApply(c *gin.Context) {
 		return
 	}
 	if cred == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organisation"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organization"})
 		return
 	}
 
@@ -239,7 +239,7 @@ func (h *OrgCredentialsHandler) ListAutoApply(c *gin.Context) {
 			return
 		}
 		if cred == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organisation"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found in this organization"})
 			return
 		}
 	}

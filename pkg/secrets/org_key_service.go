@@ -361,7 +361,7 @@ func (s *OrgKeyService) RotateOrgDEK(ctx context.Context, orgID, adminUserID str
 	committed := false
 	defer func() {
 		if !committed {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 		}
 	}()
 
