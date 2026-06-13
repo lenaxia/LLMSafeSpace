@@ -10,6 +10,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -23,7 +24,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 
 	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
 		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
-		h.userBroker.PublishToUser(workspace.Spec.Owner.UserID, WorkspaceSSEEvent{
+		h.userBroker.PublishToUser(workspace.Spec.Owner.UserID, apitypes.WorkspaceSSEEvent{
 			Type:        "workspace.phase",
 			WorkspaceID: workspace.Name,
 			Phase:       string(phase),
@@ -71,7 +72,7 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	h.removeActiveSession(workspaceID, sessionID)
 
 	if h.broker != nil {
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "idle",
@@ -80,7 +81,7 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 
 	if h.userBroker != nil {
 		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
-			h.userBroker.PublishToUser(userID, WorkspaceSSEEvent{
+			h.userBroker.PublishToUser(userID, apitypes.WorkspaceSSEEvent{
 				Type:        "session.status",
 				WorkspaceID: workspaceID,
 				SessionID:   sessionID,
@@ -109,7 +110,7 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
 	if h.broker != nil {
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "busy",
@@ -118,7 +119,7 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 
 	if h.userBroker != nil {
 		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
-			h.userBroker.PublishToUser(userID, WorkspaceSSEEvent{
+			h.userBroker.PublishToUser(userID, apitypes.WorkspaceSSEEvent{
 				Type:        "session.status",
 				WorkspaceID: workspaceID,
 				SessionID:   sessionID,
@@ -132,7 +133,7 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 	if h.broker != nil {
 		var parsed interface{}
 		_ = json.Unmarshal([]byte(rawData), &parsed)
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "opencode.event",
 			EventType: eventType,
 			Data:      parsed,
@@ -171,7 +172,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			return
 		}
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.question",
 			Data: req,
 		})
@@ -181,7 +182,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			SessionID string `json:"sessionID"`
 		}
 		_ = json.Unmarshal(properties, &resolution)
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.question.resolved",
 			Data: map[string]string{
 				"request_id": resolution.ID,
@@ -201,7 +202,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 		}
 
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.permission",
 			Data: req,
 		})
@@ -212,7 +213,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			Reply     string `json:"reply"`
 		}
 		_ = json.Unmarshal(properties, &resolution)
-		h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.permission.resolved",
 			Data: map[string]string{
 				"request_id": resolution.ID,

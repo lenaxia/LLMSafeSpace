@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 )
 
@@ -27,7 +28,7 @@ func (e *ErrDrainTimeout) Error() string {
 func WaitUntilIdle(
 	ctx context.Context,
 	workspaceID string,
-	tracker *SSETracker,
+	tracker *sse.Tracker,
 	opencodeClient *opencode.Client,
 	timeout time.Duration,
 ) error {

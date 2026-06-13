@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -90,7 +91,7 @@ func TestE2E_StepEndedEvent_PersistsContextUsed(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -116,7 +117,7 @@ func TestE2E_StepEndedEvent_PersistsContextUsed(t *testing.T) {
 	assert.Equal(t, int64(1050), v, "contextUsed = input + cacheRead + cacheWrite = 800+200+50")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "opencode.event", evt.Type)
 		assert.Equal(t, "session.next.step.ended", evt.EventType)
 	case <-time.After(2 * time.Second):
@@ -130,7 +131,7 @@ func TestE2E_StepEndedEvent_MultipleSessions_TrackedIndependently(t *testing.T) 
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -164,7 +165,7 @@ func TestE2E_StepEndedEvent_OverwritesPreviousValue(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -195,7 +196,7 @@ func TestE2E_StepEndedEvent_MissingTokens_NoPersistence(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 
 	env.handler.onRawEvent("ws-1", "session.next.step.ended", `{
 		"type": "session.next.step.ended",
@@ -234,7 +235,7 @@ func TestE2E_ContextUsed_JSONWireFormatThroughRouter(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)

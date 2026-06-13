@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -118,7 +119,7 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 			h.sessionParents.invalidate(workspaceID)
 		}
 		if h.broker != nil {
-			h.broker.Publish(workspaceID, WorkspaceSSEEvent{
+			h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 				Type:      "session.status",
 				SessionID: sid,
 				Status:    "deleted",

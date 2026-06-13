@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package workspace
 
 import (
 	"context"
@@ -26,24 +26,29 @@ type PhaseChangeCallback func(workspace *v1.Workspace)
 // agentVersion may be empty when the controller has not yet written it.
 type VersionSyncCallback func(workspaceID, imageTag, agentVersion string)
 
+type WorkspaceOwnerTracker interface {
+	RecordWorkspaceOwner(workspaceID, userID string)
+	CleanupWorkspace(workspaceID string)
+}
+
 // Watch tuning. The apiserver enforces a max watch lifetime of about 60 minutes
 // (default). We pick a shorter explicit timeout so reconnects happen at
 // predictable intervals; bookmarks keep us in sync with resourceVersion in the
 // meantime so reconnects are O(1).
 const (
-	watchTimeoutSeconds    = 290 // ~5 min, leaves slack under apiserver's 5-10m default
+	watchTimeoutSeconds    = 290
 	watchBackoffInitial    = 2 * time.Second
 	watchBackoffMax        = 30 * time.Second
 	watchBackoffMultiplier = 2
 )
 
-type WorkspaceWatcher struct {
+type Watcher struct {
 	k8sClient            pkginterfaces.KubernetesClient
 	logger               pkginterfaces.LoggerInterface
 	namespace            string
 	onPhaseChange        PhaseChangeCallback
 	onVersionSync        VersionSyncCallback // nil-safe; set via SetVersionSyncCallback
-	userBroker           *UserEventBroker
+	userBroker           WorkspaceOwnerTracker
 	stopCh               chan struct{}
 	stopOnce             sync.Once
 	knownPhases          map[string]string
@@ -55,19 +60,19 @@ type WorkspaceWatcher struct {
 	lastResourceVersionM sync.Mutex
 }
 
-func NewWorkspaceWatcher(
+func NewWatcher(
 	k8sClient pkginterfaces.KubernetesClient,
 	logger pkginterfaces.LoggerInterface,
 	namespace string,
 	onPhaseChange PhaseChangeCallback,
-) (*WorkspaceWatcher, error) {
+) (*Watcher, error) {
 	if k8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client cannot be nil")
 	}
 	if onPhaseChange == nil {
 		return nil, fmt.Errorf("phase change callback cannot be nil")
 	}
-	return &WorkspaceWatcher{
+	return &Watcher{
 		k8sClient:      k8sClient,
 		logger:         logger,
 		namespace:      namespace,
@@ -78,9 +83,7 @@ func NewWorkspaceWatcher(
 	}, nil
 }
 
-// SetUserBroker sets the user event broker for ownership tracking.
-// Must be called before Start().
-func (w *WorkspaceWatcher) SetUserBroker(broker *UserEventBroker) {
+func (w *Watcher) SetUserBroker(broker WorkspaceOwnerTracker) {
 	w.userBroker = broker
 }
 
@@ -88,31 +91,35 @@ func (w *WorkspaceWatcher) SetUserBroker(broker *UserEventBroker) {
 // Active with a non-empty imageTag. Must be called before Start(); calling
 // after Start() is a data race (the watch goroutine reads onVersionSync without
 // a lock). Follows the same contract as SetUserBroker.
-func (w *WorkspaceWatcher) SetVersionSyncCallback(cb VersionSyncCallback) {
+func (w *Watcher) SetVersionSyncCallback(cb VersionSyncCallback) {
 	w.onVersionSync = cb
 }
 
-func (w *WorkspaceWatcher) Start() error {
+func (w *Watcher) Start() error {
 	go w.runWatchLoop()
 	return nil
 }
 
-func (w *WorkspaceWatcher) Stop() {
+func (w *Watcher) Stop() {
 	w.stopOnce.Do(func() {
 		close(w.stopCh)
 	})
 }
 
-func (w *WorkspaceWatcher) GetKnownPhase(name string) (string, bool) {
+func (w *Watcher) SetKnownPhase(name, phase string) {
+	w.knownPhasesMu.Lock()
+	defer w.knownPhasesMu.Unlock()
+	w.knownPhases[name] = phase
+}
+
+func (w *Watcher) GetKnownPhase(name string) (string, bool) {
 	w.knownPhasesMu.RLock()
 	defer w.knownPhasesMu.RUnlock()
 	phase, ok := w.knownPhases[name]
 	return phase, ok
 }
 
-// GetAllKnownPhases returns a copy of the full known phases map.
-// One RLock acquisition for the entire read — O(N) with a single lock (G8).
-func (w *WorkspaceWatcher) GetAllKnownPhases() map[string]string {
+func (w *Watcher) GetAllKnownPhases() map[string]string {
 	w.knownPhasesMu.RLock()
 	defer w.knownPhasesMu.RUnlock()
 	result := make(map[string]string, len(w.knownPhases))
@@ -122,11 +129,7 @@ func (w *WorkspaceWatcher) GetAllKnownPhases() map[string]string {
 	return result
 }
 
-// runWatchLoop drives the Watch lifecycle: List once to seed
-// lastResourceVersion, then loop calling watchOnce() and reconnecting on clean
-// close or error. Backoff is exponential on error and immediate on clean close
-// (apiserver-driven cycling is the common case and not an error).
-func (w *WorkspaceWatcher) runWatchLoop() {
+func (w *Watcher) runWatchLoop() {
 	if err := w.seedResourceVersion(); err != nil {
 		w.logger.Warn("Initial List for workspace watcher failed; will rely on Watch alone",
 			"error", err.Error())
@@ -152,9 +155,6 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 			continue
 		}
 
-		// Clean close. apiserver cycles long-lived watches roughly every
-		// 5–10 minutes; this is normal. Reconnect immediately and reset
-		// backoff. Log at debug so it doesn't clutter normal operation.
 		if cleanClose {
 			w.logger.Debug("Workspace watch closed cleanly, reconnecting")
 			backoff = watchBackoffInitial
@@ -168,7 +168,7 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 // For workspaces already Active with a non-empty imageTag, the version sync
 // callback is invoked immediately so the DB reflects the current image tag
 // without waiting for the next phase transition (covers the API-restart case).
-func (w *WorkspaceWatcher) seedResourceVersion() error {
+func (w *Watcher) seedResourceVersion() error {
 	v1Client, err := w.k8sClient.LlmsafespaceV1()
 	if err != nil {
 		return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
@@ -216,11 +216,7 @@ func (w *WorkspaceWatcher) seedResourceVersion() error {
 	return nil
 }
 
-// watchOnce runs a single Watch session until it ends. Returns (cleanClose,
-// error): cleanClose==true means the channel closed without observing an
-// error event; error!=nil means the Watch couldn't start or an apiserver
-// error event was observed.
-func (w *WorkspaceWatcher) watchOnce() (bool, error) {
+func (w *Watcher) watchOnce() (bool, error) {
 	w.watchRestartMu.Lock()
 	defer w.watchRestartMu.Unlock()
 
@@ -259,9 +255,6 @@ func (w *WorkspaceWatcher) watchOnce() (bool, error) {
 			eventCount++
 
 			if event.Type == watch.Error {
-				// apiserver returned an error event (often Status with code
-				// 410 Gone — resource version too old). Drop the cached
-				// version so the next Watch re-Lists from current state.
 				status, _ := event.Object.(*metav1.Status)
 				w.handleWatchError(status)
 				if status != nil && status.Code == 410 {
@@ -275,9 +268,7 @@ func (w *WorkspaceWatcher) watchOnce() (bool, error) {
 	}
 }
 
-// handleEvent updates phase tracking. Bookmark events carry only
-// resourceVersion; we record it and otherwise skip them.
-func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
+func (w *Watcher) handleEvent(event watch.Event) {
 	if event.Type == watch.Bookmark {
 		if obj, ok := event.Object.(*v1.Workspace); ok && obj.ResourceVersion != "" {
 			w.setResourceVersion(obj.ResourceVersion)
@@ -296,7 +287,6 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 
 	name := workspace.Name
 
-	// C5: handle deletion — remove from knownPhases and clean up broker ownership
 	if event.Type == watch.Deleted {
 		w.knownPhasesMu.Lock()
 		delete(w.knownPhases, name)
@@ -313,7 +303,6 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	newPhase := string(workspace.Status.Phase)
 	newImageTag := workspace.Status.ImageTag
 
-	// FM7: record workspace ownership on every event
 	if w.userBroker != nil && workspace.Spec.Owner.UserID != "" {
 		w.userBroker.RecordWorkspaceOwner(name, workspace.Spec.Owner.UserID)
 	}
@@ -349,7 +338,7 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	}
 }
 
-func (w *WorkspaceWatcher) handleWatchError(status *metav1.Status) {
+func (w *Watcher) handleWatchError(status *metav1.Status) {
 	if status == nil {
 		w.logger.Warn("Workspace watch returned error event with nil status")
 		return
@@ -360,13 +349,13 @@ func (w *WorkspaceWatcher) handleWatchError(status *metav1.Status) {
 		"code", status.Code)
 }
 
-func (w *WorkspaceWatcher) getResourceVersion() string {
+func (w *Watcher) getResourceVersion() string {
 	w.lastResourceVersionM.Lock()
 	defer w.lastResourceVersionM.Unlock()
 	return w.lastResourceVersion
 }
 
-func (w *WorkspaceWatcher) setResourceVersion(rv string) {
+func (w *Watcher) setResourceVersion(rv string) {
 	w.lastResourceVersionM.Lock()
 	defer w.lastResourceVersionM.Unlock()
 	w.lastResourceVersion = rv
@@ -387,8 +376,6 @@ func nextBackoff(current time.Duration) time.Duration {
 	return next
 }
 
-// sleepCancellable sleeps for d or until stopCh closes. Returns true if the
-// full duration elapsed, false if stopCh closed first.
 func sleepCancellable(stopCh <-chan struct{}, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()

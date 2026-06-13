@@ -6,6 +6,11 @@ package handlers
 import (
 	"context"
 	"fmt"
+
+	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 )
 
 func (h *ProxyHandler) EnableSessionParentResolution() {
@@ -18,22 +23,22 @@ func (h *ProxyHandler) EnableSessionParentResolution() {
 func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
-		h.broker = NewWorkspaceEventBroker()
-		h.userBroker = NewUserEventBroker()
+		h.broker = eventbroker.NewWorkspaceEventBroker()
+		h.userBroker = eventbroker.NewUserEventBroker()
 
-		h.activityTracker = NewActivityTracker(h.k8sClient, h.logger, h.namespace)
+		h.activityTracker = activity.NewActivityTracker(h.k8sClient, h.logger, h.namespace)
 		if err := h.activityTracker.Start(); err != nil {
 			startErr = fmt.Errorf("starting activity tracker: %w", err)
 			return
 		}
 
-		h.sseTracker = NewSSETracker(h.httpClient, h.logger, h.onSessionIdle)
+		h.sseTracker = sse.NewTracker(h.httpClient, h.logger, h.onSessionIdle)
 		h.sseTracker.SetPasswordGetter(h.getPassword)
 		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
 		h.sseTracker.SetOnSessionActive(h.onSessionActive)
 		h.sseTracker.SetOnRawEvent(h.onRawEvent)
 
-		watcher, err := NewWorkspaceWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
+		watcher, err := workspace.NewWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
 		if err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("creating CRD watcher: %w", err)
@@ -73,7 +78,7 @@ func (h *ProxyHandler) Stop() error {
 	return nil
 }
 
-func (h *ProxyHandler) GetSSETracker() *SSETracker {
+func (h *ProxyHandler) GetSSETracker() *sse.Tracker {
 	return h.sseTracker
 }
 

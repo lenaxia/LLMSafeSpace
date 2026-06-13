@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
@@ -58,7 +59,7 @@ type AgentReloadHandler struct {
 	httpClient     *http.Client
 	logger         pkginterfaces.LoggerInterface
 	zapLogger      *zap.Logger
-	sseTracker     *SSETracker
+	sseTracker     *sse.Tracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
 }
@@ -78,24 +79,17 @@ func NewAgentReloadHandler(
 	httpClient *http.Client,
 	logger pkginterfaces.LoggerInterface,
 ) *AgentReloadHandler {
-	var zl *zap.Logger
-	if logger != nil {
-		if z, ok := logger.(interface{ ZapLogger() *zap.Logger }); ok {
-			zl = z.ZapLogger()
-		}
-	}
 	return &AgentReloadHandler{
 		workspaceSvc: wsSvc,
 		db:           db,
 		podResolver:  podResolver,
 		httpClient:   httpClient,
 		logger:       logger,
-		zapLogger:    zl,
 	}
 }
 
 // SetSSETracker injects the tracker for drain mode support.
-func (h *AgentReloadHandler) SetSSETracker(t *SSETracker) { h.sseTracker = t }
+func (h *AgentReloadHandler) SetSSETracker(t *sse.Tracker) { h.sseTracker = t }
 
 // SetPasswordGetter injects the password getter for drain mode (needs opencode client).
 func (h *AgentReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
@@ -167,7 +161,6 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		opencodeCl := opencode.NewClient(
 			fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort),
 			pw,
-			h.zapLogger,
 		)
 		if err := WaitUntilIdle(c.Request.Context(), workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
@@ -283,7 +276,7 @@ type BulkReloadHandler struct {
 	httpClient     *http.Client
 	logger         pkginterfaces.LoggerInterface
 	zapLogger      *zap.Logger
-	sseTracker     *SSETracker
+	sseTracker     *sse.Tracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
 }
@@ -297,12 +290,6 @@ func NewBulkReloadHandler(
 	httpClient *http.Client,
 	logger pkginterfaces.LoggerInterface,
 ) *BulkReloadHandler {
-	var zl *zap.Logger
-	if logger != nil {
-		if z, ok := logger.(interface{ ZapLogger() *zap.Logger }); ok {
-			zl = z.ZapLogger()
-		}
-	}
 	return &BulkReloadHandler{
 		pendingLister: pendingLister,
 		workspaceSvc:  wsSvc,
@@ -310,12 +297,11 @@ func NewBulkReloadHandler(
 		podResolver:   podResolver,
 		httpClient:    httpClient,
 		logger:        logger,
-		zapLogger:     zl,
 	}
 }
 
 // SetSSETracker injects the SSE tracker for drain mode.
-func (h *BulkReloadHandler) SetSSETracker(t *SSETracker) { h.sseTracker = t }
+func (h *BulkReloadHandler) SetSSETracker(t *sse.Tracker) { h.sseTracker = t }
 
 // SetMetrics injects the metrics recorder.
 func (h *BulkReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m }
@@ -432,7 +418,7 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 		if err != nil {
 			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "get_password_failed", "message": err.Error()}}
 		}
-		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw, h.zapLogger)
+		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw)
 		if err := WaitUntilIdle(ctx, workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
 			if errors.As(err, &drainErr) {

@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -162,7 +164,15 @@ func TestPersistTitleFromEvent_EmptyProperties(t *testing.T) {
 	assert.Empty(t, mock.titles)
 }
 
-// --- sseEvent ID field parsing tests ---
+type testSSEEvent struct {
+	ID         string          `json:"id"`
+	Type       string          `json:"type"`
+	Properties json.RawMessage `json:"properties"`
+}
+
+func newTestSSETracker(onIdle sse.SessionIdleCallback) *sse.Tracker {
+	return sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, onIdle)
+}
 
 func TestSSETracker_ProcessEvent_V115Format_ParsesIDField(t *testing.T) {
 	var mu sync.Mutex
@@ -177,14 +187,14 @@ func TestSSETracker_ProcessEvent_V115Format_ParsesIDField(t *testing.T) {
 
 	// v1.15 format with id field
 	event := `{"id":"evt_01jw123","type":"session.status","properties":{"sessionID":"ses_abc","status":{"type":"idle"}}}`
-	tracker.processEvent("ws-1", event)
+	tracker.ProcessEvent("ws-1", event)
 
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, event, capturedRawData)
 
 	// Verify the event was parsed correctly (id field didn't break parsing)
-	var parsed sseEvent
+	var parsed testSSEEvent
 	require.NoError(t, json.Unmarshal([]byte(event), &parsed))
 	assert.Equal(t, "evt_01jw123", parsed.ID)
 	assert.Equal(t, "session.status", parsed.Type)
@@ -202,7 +212,7 @@ func TestSSETracker_ProcessEvent_V115Format_SessionIdleStillWorks(t *testing.T) 
 
 	// v1.15 format with id field — should still trigger idle callback
 	event := `{"id":"evt_01jw456","type":"session.status","properties":{"sessionID":"ses_xyz","status":{"type":"idle"}}}`
-	tracker.processEvent("ws-1", event)
+	tracker.ProcessEvent("ws-1", event)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -223,7 +233,7 @@ func TestSSETracker_ProcessEvent_V115Format_HeartbeatIgnored(t *testing.T) {
 
 	// v1.15 heartbeat format
 	event := `{"id":"evt_hb001","type":"server.heartbeat","properties":{}}`
-	tracker.processEvent("ws-1", event)
+	tracker.ProcessEvent("ws-1", event)
 
 	mu.Lock()
 	defer mu.Unlock()

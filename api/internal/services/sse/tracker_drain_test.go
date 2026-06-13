@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package sse
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestSubscribeDrain_MultipleSubscribers_AllReceiveEvents(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := NewTracker(nil, nil, nil)
 
 	var mu sync.Mutex
 	var received1, received2 []string
@@ -45,7 +45,7 @@ func TestSubscribeDrain_MultipleSubscribers_AllReceiveEvents(t *testing.T) {
 }
 
 func TestSubscribeDrain_Unsubscribe_StopsCallbacks(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := NewTracker(nil, nil, nil)
 
 	var received []string
 	cancel := tracker.SubscribeDrain("ws-1",
@@ -68,7 +68,7 @@ func TestSubscribeDrain_Unsubscribe_StopsCallbacks(t *testing.T) {
 }
 
 func TestSubscribeDrain_PerWorkspace_NoCrossTalk(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := NewTracker(nil, nil, nil)
 
 	var wsAEvents, wsBEvents []string
 	cancelA := tracker.SubscribeDrain("ws-A",
@@ -94,7 +94,7 @@ func TestSubscribeDrain_PerWorkspace_NoCrossTalk(t *testing.T) {
 }
 
 func TestSubscribeDrain_RetryTreatedAsActive(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := NewTracker(nil, nil, nil)
 
 	var events []string
 	cancel := tracker.SubscribeDrain("ws-1",
@@ -111,7 +111,7 @@ func TestSubscribeDrain_RetryTreatedAsActive(t *testing.T) {
 }
 
 func TestSubscribeDrain_NonSessionStatusEvent_Ignored(t *testing.T) {
-	tracker := NewSSETracker(nil, nil, nil)
+	tracker := NewTracker(nil, nil, nil)
 
 	var events []string
 	cancel := tracker.SubscribeDrain("ws-1",

@@ -12,6 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 )
 
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {
@@ -75,11 +78,11 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		select {
 		case <-streamCtx.Done():
 			return
-		case evt, open := <-sub.ch:
+		case evt, open := <-sub.Ch:
 			if !open {
 				return
 			}
-			if evt.Type == heartbeatSentinelType {
+			if evt.Type == eventbroker.HeartbeatSentinelType {
 				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {
 					streamCancel()
 					return
@@ -89,7 +92,7 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 				continue
 			}
 			if evt.Type == "resync" {
-				resyncEvt := WorkspaceSSEEvent{Type: "resync", WorkspaceID: workspaceID}
+				resyncEvt := apitypes.WorkspaceSSEEvent{Type: "resync", WorkspaceID: workspaceID}
 				data, marshalErr := json.Marshal(resyncEvt)
 				if marshalErr != nil {
 					h.logger.Warn("SSE resync marshal failed", "error", marshalErr, "workspaceID", workspaceID)

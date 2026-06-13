@@ -35,6 +35,9 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 )
 
 type testLogger struct{}
@@ -250,7 +253,7 @@ func TestProxy_StreamingResponse(t *testing.T) {
 	// StreamEvents is now broker-based; it no longer proxies to the pod.
 	// Verify: with a broker attached, the endpoint sets SSE headers and returns 200.
 	env := newTestEnv(t)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	cancel, body, header, code := doStreamingRequest(env.router, "/api/v1/workspaces/ws-1/events")
@@ -1051,7 +1054,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
 	)
 
-	handler.sseTracker = NewSSETracker(httpClient, &testLogger{}, handler.onSessionIdle)
+	handler.sseTracker = sse.NewTracker(httpClient, &testLogger{}, handler.onSessionIdle)
 	handler.sseTracker.SetPasswordGetter(handler.getPassword)
 	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
 	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
@@ -1230,7 +1233,7 @@ func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.sseTracker = NewSSETracker(
+	handler.sseTracker = sse.NewTracker(
 		&http.Client{},
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
@@ -1256,7 +1259,7 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.sseTracker = NewSSETracker(
+	handler.sseTracker = sse.NewTracker(
 		&http.Client{},
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
@@ -1288,7 +1291,7 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 func TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.sseTracker = NewSSETracker(
+	handler.sseTracker = sse.NewTracker(
 		&http.Client{},
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
@@ -1327,7 +1330,7 @@ func TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker(t *testing.T) {
 func TestProxy_OnPhaseChange_ActiveToActive_NoReset(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.sseTracker = NewSSETracker(
+	handler.sseTracker = sse.NewTracker(
 		&http.Client{},
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
@@ -1378,7 +1381,7 @@ func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 	handler.activityTracker = tracker
 
 	gin.SetMode(gin.TestMode)
@@ -1427,7 +1430,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
 
-	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 	handler.activityTracker = tracker
 
 	gin.SetMode(gin.TestMode)
@@ -1446,7 +1449,7 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 func TestProxy_OnSessionIdle_RecordsActivityWithoutWsConfig(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	tracker := NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
 	handler.activityTracker = tracker
 
 	handler.activeMu.Lock()
@@ -1617,10 +1620,10 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 	tracker.Flush()
 
 	// ws-deleted must be gone; ws-alive must have been flushed and remain in lastFlush.
-	tracker.mu.Lock()
-	_, deletedPresent := tracker.activity["ws-deleted"]
-	_, alivePresent := tracker.activity["ws-alive"]
-	tracker.mu.Unlock()
+	tracker.Mu.Lock()
+	_, deletedPresent := tracker.Activity["ws-deleted"]
+	_, alivePresent := tracker.Activity["ws-alive"]
+	tracker.Mu.Unlock()
 
 	assert.False(t, deletedPresent, "NotFound workspace must be removed from activity map")
 	// ws-alive's entry may or may not be in `activity` depending on lastFlush — either way
@@ -1640,9 +1643,9 @@ func TestActivityTracker_B5_Delete_RemovesEntry(t *testing.T) {
 	tracker.Delete("ws-1")
 
 	assert.Equal(t, 0, tracker.PendingCount(), "Delete must remove the activity entry")
-	tracker.mu.Lock()
-	_, inLastFlush := tracker.lastFlush["ws-1"]
-	tracker.mu.Unlock()
+	tracker.Mu.Lock()
+	_, inLastFlush := tracker.LastFlush["ws-1"]
+	tracker.Mu.Unlock()
 	assert.False(t, inLastFlush, "Delete must remove the lastFlush entry")
 }
 
@@ -1653,7 +1656,7 @@ func TestActivityTracker_B5_Delete_RemovesEntry(t *testing.T) {
 func TestProxy_B5_OnPhaseTerminated_DeletesActivityEntry(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	tracker := NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
 	handler.activityTracker = tracker
 
 	// Pre-populate the tracker so there is an entry to delete.
@@ -1708,6 +1711,14 @@ func makeWorkspaceCRDWithStatus(name, podIP, phase, _ string) *v1.Workspace {
 			PodIP: podIP,
 		},
 	}
+}
+
+func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *activity.ActivityTracker {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	return activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 }
 
 func TestProxy_DeleteSession_ProxiesDELETE(t *testing.T) {
@@ -1905,7 +1916,7 @@ func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -1917,7 +1928,7 @@ func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		assert.Equal(t, "session.status", evt.Type)
 		assert.Equal(t, "s1", evt.SessionID)
 		assert.Equal(t, "deleted", evt.Status)
@@ -1932,7 +1943,7 @@ func TestProxy_DeleteSession_NoSSEWhenOpencodeFails(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -1946,7 +1957,7 @@ func TestProxy_DeleteSession_NoSSEWhenOpencodeFails(t *testing.T) {
 	assert.False(t, si.called, "session index should NOT be called when opencode fails")
 
 	select {
-	case evt := <-sub.ch:
+	case evt := <-sub.Ch:
 		t.Fatalf("unexpected SSE event when opencode fails: %+v", evt)
 	default:
 	}
@@ -1959,7 +1970,7 @@ func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = NewWorkspaceEventBroker()
+	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
 	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
@@ -2113,7 +2124,7 @@ func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 
 	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 
-	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 	handler.activityTracker = tracker
 	si := &recordingActivitySessionIndex{}
 	handler.sessionIndex = si
@@ -2168,7 +2179,7 @@ func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
 	_, err = k8sMock.Clientset().CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	tracker := NewActivityTracker(k8sMock, &testLogger{}, "default")
+	tracker := activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 	handler.activityTracker = tracker
 	si := &recordingActivitySessionIndex{}
 	handler.sessionIndex = si

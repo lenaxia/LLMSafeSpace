@@ -14,6 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 )
 
 const (
@@ -106,10 +109,10 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 		}
 	}
 
-	// Start snapshot goroutine (concurrent with live loop; sends into s.ch)
+	// Start snapshot goroutine (concurrent with live loop; sends into s.Ch)
 	go h.snapshotUserWorkspaces(streamCtx, s, uid)
 
-	// Start heartbeat goroutine (sends _heartbeat sentinels into s.ch)
+	// Start heartbeat goroutine (sends _heartbeat sentinels into s.Ch)
 	go heartbeatLoop(streamCtx, s)
 
 	// Live loop — sole writer to c.Writer from this point (F1)
@@ -117,11 +120,11 @@ func (h *ProxyHandler) StreamUserEvents(c *gin.Context) {
 		select {
 		case <-streamCtx.Done():
 			return
-		case evt, open := <-s.ch:
+		case evt, open := <-s.Ch:
 			if !open {
 				return // defensive: ch is never closed (markClosed+context cancellation used instead)
 			}
-			if evt.Type == heartbeatSentinelType {
+			if evt.Type == eventbroker.HeartbeatSentinelType {
 				if _, writeErr := fmt.Fprint(c.Writer, ":\n\n"); writeErr != nil {
 					streamCancel()
 					return
@@ -182,8 +185,8 @@ func sseConnAllowed(ip string) bool {
 }
 
 // snapshotUserWorkspaces lists the user's workspaces and emits their current phases
-// into s.ch. On k8s list failure, emits resync. Runs concurrently with live loop.
-func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber, userID string) {
+// into s.Ch. On k8s list failure, emits resync. Runs concurrently with live loop.
+func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *eventbroker.Subscriber, userID string) {
 	if h.k8sClient == nil {
 		return // no k8s client — skip snapshot (tests or degraded mode)
 	}
@@ -223,11 +226,11 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 	case <-ctx.Done():
 		return
 	case <-timer.C:
-		s.send(WorkspaceSSEEvent{Type: "resync"})
+		s.Send(apitypes.WorkspaceSSEEvent{Type: "resync"})
 		return
 	case res := <-resultCh:
 		if res.err != nil {
-			s.send(WorkspaceSSEEvent{Type: "resync"})
+			s.Send(apitypes.WorkspaceSSEEvent{Type: "resync"})
 			return
 		}
 		wsIDs = res.items
@@ -247,7 +250,7 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 		if phase == "" {
 			continue // F4: skip workspaces with empty phase
 		}
-		s.send(WorkspaceSSEEvent{
+		s.Send(apitypes.WorkspaceSSEEvent{
 			Type:        "workspace.phase",
 			WorkspaceID: wsID,
 			Phase:       phase,
@@ -256,9 +259,9 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *subscriber
 	}
 }
 
-// heartbeatLoop sends heartbeat sentinels into s.ch every heartbeatInterval.
+// heartbeatLoop sends heartbeat sentinels into s.Ch every heartbeatInterval.
 // Exits when ctx is canceled.
-func heartbeatLoop(ctx context.Context, s *subscriber) {
+func heartbeatLoop(ctx context.Context, s *eventbroker.Subscriber) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 	for {
@@ -266,13 +269,13 @@ func heartbeatLoop(ctx context.Context, s *subscriber) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.send(WorkspaceSSEEvent{Type: heartbeatSentinelType})
+			s.Send(apitypes.WorkspaceSSEEvent{Type: eventbroker.HeartbeatSentinelType})
 		}
 	}
 }
 
 // writeSSEEvent writes a single SSE event with id: line to the writer.
-func writeSSEEvent(w gin.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, id uint64, evt WorkspaceSSEEvent) error {
+func writeSSEEvent(w gin.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, id uint64, evt apitypes.WorkspaceSSEEvent) error {
 	data, err := json.Marshal(evt)
 	if err != nil {
 		return err
@@ -287,7 +290,7 @@ func writeSSEEvent(w gin.ResponseWriter, flusher http.Flusher, rc *http.Response
 
 // writeSSEResync writes a resync event (no id: line).
 func writeSSEResync(w gin.ResponseWriter, flusher http.Flusher, rc *http.ResponseController) error {
-	resyncEvt := WorkspaceSSEEvent{Type: "resync"}
+	resyncEvt := apitypes.WorkspaceSSEEvent{Type: "resync"}
 	data, err := json.Marshal(resyncEvt)
 	if err != nil {
 		return err

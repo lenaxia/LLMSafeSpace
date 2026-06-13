@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package handlers
+package sse
 
 import (
 	"bufio"
@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
@@ -22,11 +23,8 @@ type SessionIdleCallback func(workspaceID, sessionID string)
 
 type RawEventCallback func(workspaceID, eventType, rawData string)
 
-// InferenceCallback fires when a session.updated event carries token output.
-// modelID/providerID identify the model; input/output are delta tokens.
 type InferenceCallback func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64)
 
-// SessionMetricsRecorder records session duration observations.
 type SessionMetricsRecorder interface {
 	RecordSessionCompleted(workspaceID string, durationSeconds float64)
 }
@@ -44,31 +42,26 @@ type opencodeEvent struct {
 	} `json:"payload"`
 }
 
-type SSETracker struct {
-	httpClient      *http.Client
-	logger          pkginterfaces.LoggerInterface
-	onSessionIdle   SessionIdleCallback
-	onSessionActive SessionIdleCallback
-	onRawEvent      RawEventCallback
-	// onInference fires when a session produces new output tokens (billing/metering).
-	onInference InferenceCallback
-	// sessionTokenSeen and sessionCostSeen track cumulative output tokens and cost
-	// per "workspaceID:sessionID" key for delta computation. Guarded by tokensMu.
-	tokensMu         sync.Mutex
-	sessionTokenSeen map[string]int64
-	sessionCostSeen  map[string]float64
-	// sessionStartTime tracks when each session first went busy (for duration metric).
-	startTimeMu      sync.Mutex
-	sessionStartTime map[string]time.Time
-	sessionMetrics   SessionMetricsRecorder
-	subscriptions    map[string]context.CancelFunc
-	subMu            sync.Mutex
-	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
-	podIPResolver    func(workspaceID string) string
-	// Drain subscribers (Epic 27b)
-	drainMu         sync.Mutex
-	drainSubs       map[string]map[uint64]*drainSub
-	drainSubCounter uint64
+type Tracker struct {
+	HttpClient        *http.Client
+	Logger            pkginterfaces.LoggerInterface
+	onSessionIdle     SessionIdleCallback
+	onSessionActive   SessionIdleCallback
+	onRawEvent        RawEventCallback
+	onInference       InferenceCallback
+	tokensMu          sync.Mutex
+	sessionTokenSeen  map[string]int64
+	sessionCostSeen   map[string]float64
+	startTimeMu       sync.Mutex
+	sessionStartTime  map[string]time.Time
+	sessionMetrics    SessionMetricsRecorder
+	subscriptions     map[string]context.CancelFunc
+	subMu             sync.Mutex
+	passwordGetter    func(ctx context.Context, workspaceID string) (string, error)
+	podIPResolver     func(workspaceID string) string
+	drainMu           sync.Mutex
+	drainSubs         map[string]map[uint64]*drainSub
+	drainSubCounter   uint64
 }
 
 type drainSub struct {
@@ -76,14 +69,14 @@ type drainSub struct {
 	onActive func(workspaceID, sessionID string)
 }
 
-func NewSSETracker(
+func NewTracker(
 	httpClient *http.Client,
 	logger pkginterfaces.LoggerInterface,
 	onSessionIdle SessionIdleCallback,
-) *SSETracker {
-	return &SSETracker{
-		httpClient:       httpClient,
-		logger:           logger,
+) *Tracker {
+	return &Tracker{
+		HttpClient:       httpClient,
+		Logger:           logger,
 		onSessionIdle:    onSessionIdle,
 		subscriptions:    make(map[string]context.CancelFunc),
 		sessionTokenSeen: make(map[string]int64),
@@ -92,33 +85,31 @@ func NewSSETracker(
 	}
 }
 
-func (t *SSETracker) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
+func (t *Tracker) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
 	t.passwordGetter = getter
 }
 
-func (t *SSETracker) SetPodIPResolver(resolver func(workspaceID string) string) {
+func (t *Tracker) SetPodIPResolver(resolver func(workspaceID string) string) {
 	t.podIPResolver = resolver
 }
 
-func (t *SSETracker) SetOnSessionActive(callback SessionIdleCallback) {
+func (t *Tracker) SetOnSessionActive(callback SessionIdleCallback) {
 	t.onSessionActive = callback
 }
 
-// SetOnInference installs the callback fired when a session produces token output.
-func (t *SSETracker) SetOnInference(cb InferenceCallback) {
+func (t *Tracker) SetOnInference(cb InferenceCallback) {
 	t.onInference = cb
 }
 
-// SetSessionMetrics installs the recorder for session duration observations.
-func (t *SSETracker) SetSessionMetrics(r SessionMetricsRecorder) {
+func (t *Tracker) SetSessionMetrics(r SessionMetricsRecorder) {
 	t.sessionMetrics = r
 }
 
-func (t *SSETracker) SetOnRawEvent(callback RawEventCallback) {
+func (t *Tracker) SetOnRawEvent(callback RawEventCallback) {
 	t.onRawEvent = callback
 }
 
-func (t *SSETracker) EnsureWatching(workspaceID string) {
+func (t *Tracker) EnsureWatching(workspaceID string) {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 
@@ -126,9 +117,6 @@ func (t *SSETracker) EnsureWatching(workspaceID string) {
 		return
 	}
 
-	// cancel is stored in t.subscriptions and invoked by StopWatching;
-	// gosec's G118 cannot see across the map indirection so it flags
-	// this as a leak. Suppressed because the lifecycle is correct.
 	//nolint:gosec // G118 false positive; cancel stored in subscriptions map
 	ctx, cancel := context.WithCancel(context.Background())
 	t.subscriptions[workspaceID] = cancel
@@ -136,7 +124,7 @@ func (t *SSETracker) EnsureWatching(workspaceID string) {
 	go t.subscribe(ctx, workspaceID)
 }
 
-func (t *SSETracker) StopWatching(workspaceID string) {
+func (t *Tracker) StopWatching(workspaceID string) {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 
@@ -146,7 +134,7 @@ func (t *SSETracker) StopWatching(workspaceID string) {
 	}
 }
 
-func (t *SSETracker) Stop() {
+func (t *Tracker) Stop() {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 
@@ -156,16 +144,13 @@ func (t *SSETracker) Stop() {
 	}
 }
 
-func (t *SSETracker) SubscriptionCount() int {
+func (t *Tracker) SubscriptionCount() int {
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
 	return len(t.subscriptions)
 }
 
-// SubscribeDrain registers callbacks for session-status events in the given
-// workspace. Multiple concurrent drain subscriptions per workspace are supported.
-// Returns a cancel function the caller MUST invoke when done.
-func (t *SSETracker) SubscribeDrain(
+func (t *Tracker) SubscribeDrain(
 	workspaceID string,
 	onIdle func(workspaceID, sessionID string),
 	onActive func(workspaceID, sessionID string),
@@ -193,7 +178,7 @@ func (t *SSETracker) SubscribeDrain(
 	}
 }
 
-func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
+func (t *Tracker) subscribe(ctx context.Context, workspaceID string) {
 	backoff := 2 * time.Second
 	maxBackoff := 30 * time.Second
 
@@ -205,7 +190,7 @@ func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
 		}
 
 		if err := t.connectAndRead(ctx, workspaceID); err != nil {
-			t.logger.Debug("SSE subscription ended", "error", err, "workspaceID", workspaceID)
+			t.Logger.Debug("SSE subscription ended", "error", err, "workspaceID", workspaceID)
 		} else {
 			backoff = 2 * time.Second
 		}
@@ -222,7 +207,7 @@ func (t *SSETracker) subscribe(ctx context.Context, workspaceID string) {
 	}
 }
 
-func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) error {
+func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error {
 	if t.passwordGetter == nil {
 		return fmt.Errorf("password getter not configured")
 	}
@@ -246,7 +231,7 @@ func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) err
 	idleTimer := time.AfterFunc(sseIdleTimeout, cancelIdle)
 	defer idleTimer.Stop()
 
-	targetURL := fmt.Sprintf("http://%s:%d/event", podIP, opencodePort)
+	targetURL := fmt.Sprintf("http://%s:%d/event", podIP, agentd.AgentPort)
 	req, err := http.NewRequestWithContext(idleCtx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating SSE request: %w", err)
@@ -255,7 +240,7 @@ func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) err
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
-	resp, err := t.httpClient.Do(req)
+	resp, err := t.HttpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("SSE connection: %w", err)
 	}
@@ -289,17 +274,18 @@ func (t *SSETracker) connectAndRead(ctx context.Context, workspaceID string) err
 	return fmt.Errorf("SSE stream ended for workspace %s", workspaceID)
 }
 
-func (t *SSETracker) processEvent(workspaceID, data string) {
+func (t *Tracker) ProcessEvent(workspaceID, data string) {
+	t.processEvent(workspaceID, data)
+}
+
+func (t *Tracker) processEvent(workspaceID, data string) {
 	data = strings.TrimSpace(data)
 	if data == "" {
 		return
 	}
 
-	// Parse the flat opencode event format:
-	// {"type":"session.status","properties":{"sessionID":"ses_...","status":{"type":"idle"}}}
 	var evt sseEvent
 	if err := json.Unmarshal([]byte(data), &evt); err != nil || evt.Type == "" {
-		// Try legacy nested format: {"payload":{"type":"...","properties":{...}}}
 		var nested opencodeEvent
 		if json.Unmarshal([]byte(data), &nested) == nil && nested.Payload.Type != "" {
 			if t.onRawEvent != nil {
@@ -316,7 +302,11 @@ func (t *SSETracker) processEvent(workspaceID, data string) {
 	t.dispatchProperties(workspaceID, evt.Type, evt.Properties)
 }
 
-func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props json.RawMessage) {
+func (t *Tracker) DispatchProperties(workspaceID, eventType string, props json.RawMessage) {
+	t.dispatchProperties(workspaceID, eventType, props)
+}
+
+func (t *Tracker) dispatchProperties(workspaceID, eventType string, props json.RawMessage) {
 	if eventType == "session.updated" && len(props) > 0 && t.onInference != nil {
 		t.handleSessionUpdated(workspaceID, props)
 	}
@@ -379,26 +369,7 @@ func (t *SSETracker) dispatchProperties(workspaceID, eventType string, props jso
 	}
 }
 
-// handleSessionUpdated fires the inference callback when a session.updated event
-// carries new token output. Uses per-session cumulative output tracking to emit deltas.
-//
-// Real wire format from opencode 1.15.12 (validated against live pod 2026-06-11):
-//
-//	{"type":"session.updated","properties":{
-//	  "sessionID":"ses_...",
-//	  "info":{
-//	    "id":"ses_...",
-//	    "cost":0,
-//	    "tokens":{"input":509911,"output":20861,"reasoning":41,"cache":{"read":9229154,"write":0}},
-//	    "model":{"id":"glm-5.1","providerID":"thekao cloud","variant":"default"}
-//	  }
-//	}}
-//
-// Fields are under properties.info, NOT at properties top-level.
-// Delta tracking uses cumulative output and cost — both are monotonically
-// increasing cumulative fields in the opencode session object. Input tokens
-// are not delta-tracked (they vary due to cache reads across events).
-func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
+func (t *Tracker) handleSessionUpdated(workspaceID string, props []byte) {
 	var p struct {
 		SessionID string `json:"sessionID"`
 		Info      struct {
@@ -430,15 +401,10 @@ func (t *SSETracker) handleSessionUpdated(workspaceID string, props []byte) {
 	t.tokensMu.Unlock()
 
 	outputDelta := p.Info.Tokens.Output - prevOutput
-	// On first observation prevOutput==0: report the full input count alongside
-	// the full output count. On subsequent events: only the output delta
-	// is meaningful; input varies due to cache reads and is not delta-trackable.
 	inputTokens := p.Info.Tokens.Input
 	if prevOutput > 0 {
 		inputTokens = 0
 	}
-	// Cost is a cumulative session-level value — emit the delta to avoid
-	// double-counting on repeated session.updated events.
 	costDelta := p.Info.Cost - prevCost
 	if costDelta < 0 {
 		costDelta = 0

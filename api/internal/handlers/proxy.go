@@ -17,7 +17,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -39,6 +43,7 @@ const (
 )
 
 type workspaceConfig struct {
+	workspaceID            string
 	maxActiveSessions      int
 	autoApprovePermissions bool
 }
@@ -66,12 +71,12 @@ type ProxyHandler struct {
 	connCount map[string]int
 	connMu    sync.Mutex
 
-	activityTracker *ActivityTracker
-	watcher         *WorkspaceWatcher
-	sseTracker      *SSETracker
+	activityTracker *activity.ActivityTracker
+	watcher         *workspace.Watcher
+	sseTracker      *sse.Tracker
 	sessionIndex    interfaces.SessionIndexService
-	broker          *WorkspaceEventBroker
-	userBroker      *UserEventBroker
+	broker          *eventbroker.WorkspaceEventBroker
+	userBroker      *eventbroker.UserEventBroker
 	sessionParents  *sessionParentCache
 
 	parentBackfilled   map[string]struct{}
