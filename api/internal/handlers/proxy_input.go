@@ -146,7 +146,7 @@ func (h *ProxyHandler) fetchFromPod(ctx context.Context, podIP, password, path s
 	if resp.StatusCode != http.StatusOK {
 		return nil, err
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
 // parseQuestionList parses the response from GET /question into normalized requests.

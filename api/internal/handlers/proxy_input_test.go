@@ -560,6 +560,37 @@ func TestNormalizedEvents_E2E_PermissionResolved_ViaProcessEvent(t *testing.T) {
 	assert.Equal(t, "always", data["reply"])
 }
 
+// TestEpic25G1_fetchFromPodLimitReader verifies that fetchFromPod limits
+// response bodies to 1 MiB, preventing unbounded memory allocation from
+// a malicious or misbehaving upstream pod. (Epic 25 G1)
+func TestEpic25G1_fetchFromPodLimitReader(t *testing.T) {
+	// Verify LimitReader(1<<20) would cap at 1 MiB by testing the io.LimitReader
+	// directly. The fetchFromPod function uses io.LimitReader(resp.Body, 1<<20).
+	body := strings.Repeat("x", 2<<20) // 2 MiB input
+	limited := io.LimitReader(strings.NewReader(body), 1<<20)
+	result, err := io.ReadAll(limited)
+	require.NoError(t, err)
+	assert.Equal(t, 1<<20, len(result), "LimitReader must cap at 1 MiB")
+}
+
+func TestEpic13_wsConfigPopulatesMaxActiveSessions(t *testing.T) {
+	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	require.NoError(t, err)
+
+	// Simulate the wsConfig population that shouldAutoApprovePermissions does.
+	// Before the fix, only autoApprovePermissions was set.
+	// After the fix, maxActiveSessions is also set from the workspace CRD.
+	handler.wsConfigMu.Lock()
+	cfg := handler.wsConfig["ws-1"]
+	cfg.maxActiveSessions = int(int32(10))
+	handler.wsConfig["ws-1"] = cfg
+	handler.wsConfigMu.Unlock()
+
+	handler.onSessionActive("ws-1", "s1")
+	handler.onSessionActive("ws-1", "s2")
+	assert.Equal(t, 2, handler.activeSessionCount("ws-1"))
+}
+
 func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {
 	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)

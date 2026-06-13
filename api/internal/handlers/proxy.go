@@ -1424,6 +1424,7 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	h.wsConfigMu.Lock()
 	cfg := h.wsConfig[workspaceID]
 	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
+	cfg.maxActiveSessions = int(workspace.Spec.MaxActiveSessions)
 	h.wsConfig[workspaceID] = cfg
 	h.wsConfigMu.Unlock()
 
