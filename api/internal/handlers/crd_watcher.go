@@ -18,6 +18,13 @@ import (
 
 type PhaseChangeCallback func(workspace *v1.Workspace)
 
+// VersionSyncCallback is called with (workspaceID, imageTag, agentVersion)
+// whenever a workspace becomes Active (phase transition or seed) and has a
+// non-empty imageTag. It is the authoritative trigger for persisting runtime
+// version info to the DB, replacing the lazy side-effect in GetWorkspaceStatus.
+// agentVersion may be empty when the controller has not yet written it.
+type VersionSyncCallback func(workspaceID, imageTag, agentVersion string)
+
 // Watch tuning. The apiserver enforces a max watch lifetime of about 60 minutes
 // (default). We pick a shorter explicit timeout so reconnects happen at
 // predictable intervals; bookmarks keep us in sync with resourceVersion in the
@@ -34,11 +41,14 @@ type WorkspaceWatcher struct {
 	logger               pkginterfaces.LoggerInterface
 	namespace            string
 	onPhaseChange        PhaseChangeCallback
+	onVersionSync        VersionSyncCallback // nil-safe; set via SetVersionSyncCallback
 	userBroker           *UserEventBroker
 	stopCh               chan struct{}
 	stopOnce             sync.Once
 	knownPhases          map[string]string
 	knownPhasesMu        sync.RWMutex
+	knownImageTags       map[string]string // tracks last-seen imageTag per workspace
+	knownImageTagsMu     sync.RWMutex
 	watchRestartMu       sync.Mutex
 	lastResourceVersion  string
 	lastResourceVersionM sync.Mutex
@@ -57,12 +67,13 @@ func NewWorkspaceWatcher(
 		return nil, fmt.Errorf("phase change callback cannot be nil")
 	}
 	return &WorkspaceWatcher{
-		k8sClient:     k8sClient,
-		logger:        logger,
-		namespace:     namespace,
-		onPhaseChange: onPhaseChange,
-		stopCh:        make(chan struct{}),
-		knownPhases:   make(map[string]string),
+		k8sClient:      k8sClient,
+		logger:         logger,
+		namespace:      namespace,
+		onPhaseChange:  onPhaseChange,
+		stopCh:         make(chan struct{}),
+		knownPhases:    make(map[string]string),
+		knownImageTags: make(map[string]string),
 	}, nil
 }
 
@@ -70,6 +81,14 @@ func NewWorkspaceWatcher(
 // Must be called before Start().
 func (w *WorkspaceWatcher) SetUserBroker(broker *UserEventBroker) {
 	w.userBroker = broker
+}
+
+// SetVersionSyncCallback sets the callback invoked when a workspace becomes
+// Active and has a non-empty imageTag. Safe to call before or after Start();
+// the callback is read under no lock so it must be set before Start() to
+// avoid races (or at worst it will be missed for the first batch of events).
+func (w *WorkspaceWatcher) SetVersionSyncCallback(cb VersionSyncCallback) {
+	w.onVersionSync = cb
 }
 
 func (w *WorkspaceWatcher) Start() error {
@@ -145,6 +164,9 @@ func (w *WorkspaceWatcher) runWatchLoop() {
 // seedResourceVersion does an initial List to populate lastResourceVersion and
 // knownPhases so the first Watch starts from a known position. Also records
 // workspace ownership in the user broker for snapshot delivery (FM3, FM7).
+// For workspaces already Active with a non-empty imageTag, the version sync
+// callback is invoked immediately so the DB reflects the current image tag
+// without waiting for the next phase transition (covers the API-restart case).
 func (w *WorkspaceWatcher) seedResourceVersion() error {
 	list, err := w.k8sClient.LlmsafespaceV1().Workspaces(w.namespace).List(metav1.ListOptions{})
 	if err != nil {
@@ -153,16 +175,26 @@ func (w *WorkspaceWatcher) seedResourceVersion() error {
 	w.setResourceVersion(list.ResourceVersion)
 
 	w.knownPhasesMu.Lock()
+	w.knownImageTagsMu.Lock()
 	for i := range list.Items {
 		ws := &list.Items[i]
 		phase := string(ws.Status.Phase)
 		if phase != "" {
 			w.knownPhases[ws.Name] = phase
 		}
+		if ws.Status.ImageTag != "" {
+			w.knownImageTags[ws.Name] = ws.Status.ImageTag
+		}
 		if w.userBroker != nil && ws.Spec.Owner.UserID != "" {
 			w.userBroker.RecordWorkspaceOwner(ws.Name, ws.Spec.Owner.UserID)
 		}
+		// Sync version info for Active workspaces on startup so the DB is
+		// up-to-date without waiting for the next phase transition.
+		if ws.Status.Phase == v1.WorkspacePhaseActive && ws.Status.ImageTag != "" && w.onVersionSync != nil {
+			w.onVersionSync(ws.Name, ws.Status.ImageTag, "")
+		}
 	}
+	w.knownImageTagsMu.Unlock()
 	w.knownPhasesMu.Unlock()
 
 	return nil
@@ -249,6 +281,9 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 		w.knownPhasesMu.Lock()
 		delete(w.knownPhases, name)
 		w.knownPhasesMu.Unlock()
+		w.knownImageTagsMu.Lock()
+		delete(w.knownImageTags, name)
+		w.knownImageTagsMu.Unlock()
 		if w.userBroker != nil {
 			w.userBroker.CleanupWorkspace(name)
 		}
@@ -256,6 +291,7 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	}
 
 	newPhase := string(workspace.Status.Phase)
+	newImageTag := workspace.Status.ImageTag
 
 	// FM7: record workspace ownership on every event
 	if w.userBroker != nil && workspace.Spec.Owner.UserID != "" {
@@ -270,6 +306,26 @@ func (w *WorkspaceWatcher) handleEvent(event watch.Event) {
 	if existed && oldPhase != newPhase {
 		metrics.RecordWorkspacePhaseTransition(oldPhase, newPhase)
 		w.onPhaseChange(workspace)
+	}
+
+	// Fire version sync when imageTag changes or when a workspace becomes Active
+	// with a non-empty imageTag. This covers:
+	//   - Creating/Resuming → Active: controller writes imageTag at the same time
+	//     as the phase update, so newImageTag is set here.
+	//   - Active → Active with updated imageTag: controller may update imageTag
+	//     independently of phase (e.g. after an image refresh); we detect this
+	//     by comparing against the last-known tag.
+	// Guard: only fire when imageTag is non-empty and actually changed.
+	if newImageTag != "" && w.onVersionSync != nil {
+		w.knownImageTagsMu.Lock()
+		oldTag := w.knownImageTags[name]
+		if oldTag != newImageTag {
+			w.knownImageTags[name] = newImageTag
+			w.knownImageTagsMu.Unlock()
+			w.onVersionSync(name, newImageTag, "")
+		} else {
+			w.knownImageTagsMu.Unlock()
+		}
 	}
 }
 

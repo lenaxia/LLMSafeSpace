@@ -114,6 +114,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		wsSvc.SetInstanceSettings(instanceSettings)
 	}
 
+	// Wire version sync: whenever the watcher observes a workspace becoming
+	// Active with a new imageTag, persist it to the DB immediately. This
+	// replaces the lazy side-effect in GetWorkspaceStatus which only updated
+	// the DB when the status endpoint was polled for that specific workspace.
+	proxyHandler.SetVersionSyncCallback(func(workspaceID, imageTag, agentVersion string) {
+		dbSvc.SyncWorkspaceVersionInfo(context.Background(), workspaceID, imageTag, agentVersion)
+	})
+
 	// Create settings handler for API routes.
 	settingsHandler := handlers.NewSettingsHandler(instanceSettings, userSettings)
 

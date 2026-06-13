@@ -95,6 +95,11 @@ type ProxyHandler struct {
 
 	meteringSvc interfaces.MeteringService
 
+	// versionSyncCb is the callback wired into the CRD watcher to persist
+	// runtime version info (imageTag) to the DB whenever a workspace becomes
+	// Active. Set via SetVersionSyncCallback before Start().
+	versionSyncCb VersionSyncCallback
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 }
@@ -188,6 +193,9 @@ func (h *ProxyHandler) Start() error {
 			return
 		}
 		watcher.SetUserBroker(h.userBroker)
+		if h.versionSyncCb != nil {
+			watcher.SetVersionSyncCallback(h.versionSyncCb)
+		}
 		if err := watcher.Start(); err != nil {
 			_ = h.activityTracker.Stop()
 			startErr = fmt.Errorf("starting CRD watcher: %w", err)
@@ -1142,6 +1150,12 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 // SetSessionIndex injects the session index service for recording message activity.
 func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
 	h.sessionIndex = si
+}
+
+// SetVersionSyncCallback sets the callback invoked when a workspace becomes
+// Active with a new imageTag. Must be called before Start().
+func (h *ProxyHandler) SetVersionSyncCallback(cb VersionSyncCallback) {
+	h.versionSyncCb = cb
 }
 
 // fetchAndPersistTitle fetches the session title from the opencode agent and
