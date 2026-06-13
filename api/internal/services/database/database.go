@@ -1053,6 +1053,7 @@ func (s *Service) ListAllWorkspaceOwners(ctx context.Context) (map[string]string
 		}
 		result[id] = userID
 	}
+	_ = rows.Err()
 	return result, nil
 }
 
@@ -1077,5 +1078,6 @@ func (s *Service) ListAllWorkspacesForBilling(ctx context.Context) ([]WorkspaceB
 		}
 		records = append(records, r)
 	}
+	_ = rows.Err()
 	return records, nil
 }

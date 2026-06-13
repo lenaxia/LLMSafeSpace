@@ -610,7 +610,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 	}
 
-	if proxyErr == nil && h.meteringSvc != nil && workspaceID != "" {
+	if h.meteringSvc != nil && workspaceID != "" {
 		userID := c.GetString("userID")
 		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
 			h.meteringSvc.Record(types.UsageEvent{

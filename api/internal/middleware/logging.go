@@ -15,9 +15,6 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
-const maxBodyLogSize = 1024 // 1KB
-
-// LoggingConfig defines configuration for the logging middleware
 type LoggingConfig struct {
 	// LogRequestBody indicates whether to log request bodies
 	LogRequestBody bool

@@ -5,7 +5,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -144,16 +143,4 @@ func parsePeriod(c *gin.Context) (from, to time.Time) {
 		to = now
 	}
 	return from, to
-}
-
-func parseIntQueryParam(c *gin.Context, key string, defaultVal int) int {
-	val := c.Query(key)
-	if val == "" {
-		return defaultVal
-	}
-	n, err := strconv.Atoi(val)
-	if err != nil {
-		return defaultVal
-	}
-	return n
 }

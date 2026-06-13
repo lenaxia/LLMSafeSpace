@@ -88,6 +88,7 @@ var (
 		},
 		[]string{"event_type"},
 	)
+	_ = metricQuotaExceeded
 )
 
 type serviceMetrics struct {
@@ -245,7 +246,7 @@ func (s *Service) GetUsage(ctx context.Context, owner BillingOwner, from, to tim
 	if err != nil {
 		return nil, fmt.Errorf("query usage: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var eventType, wsID string
@@ -291,7 +292,7 @@ func (s *Service) GetUsageByWorkspace(ctx context.Context, owner BillingOwner, w
 	if err != nil {
 		return nil, fmt.Errorf("query workspace usage: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var eventType string
@@ -317,7 +318,7 @@ func (s *Service) GetQuotaStatus(ctx context.Context, owner BillingOwner) ([]Quo
 	if err != nil {
 		return nil, fmt.Errorf("query quota limits: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var statuses []QuotaStatus
 	for rows.Next() {
@@ -462,7 +463,7 @@ func (s *Service) flushBatch(events []UsageEvent) {
 		args := s.eventArgs(evt)
 		_, err := tx.ExecContext(ctx, insertEventSQL, args...)
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			s.handleFlushFailure(events, fmt.Errorf("exec insert: %w", err))
 			return
 		}
@@ -507,7 +508,7 @@ func (s *Service) handleFlushFailure(events []UsageEvent, flushErr error) {
 	for _, evt := range events {
 		payload, _ := json.Marshal(evt)
 		if _, err := tx.ExecContext(ctx, dlqInsertSQL, payload, flushErr.Error()); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			s.logger.Error("DLQ write also failed: exec", err)
 			s.dropAll(events)
 			return
@@ -555,7 +556,7 @@ func (s *Service) reapDLQ(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("query DLQ: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var entry DLQEntry
@@ -795,7 +796,7 @@ func (s *Service) emitComputeBuckets(workspaceID, ownerID string, startTime, now
 func (s *Service) storageMeteringLoop() {
 	for {
 		next := nextMidnightUTC()
-		timer := time.NewTimer(next.Sub(time.Now()))
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-s.stopCtx.Done():
 			timer.Stop()
@@ -846,7 +847,7 @@ func parseStorageSize(s string) (int64, error) {
 	}
 	var value float64
 	var unit string
-	fmt.Sscanf(s, "%f%s", &value, &unit)
+	_, _ = fmt.Sscanf(s, "%f%s", &value, &unit)
 	switch unit {
 	case "Ki":
 		return int64(value * 1024), nil
