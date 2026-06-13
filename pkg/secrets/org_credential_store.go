@@ -47,13 +47,10 @@ type OrgCredentialStore interface {
 // the other PgSecretStore credential methods.
 
 func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string) (string, error) {
-	if modelAllowlist == nil {
-		modelAllowlist = []string{}
-	}
 	var id string
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at)
-		VALUES ('org', $1, $2, $3, $4, 1, $5, now(), now())
+		VALUES ('org', $1, $2, $3, $4, 1, COALESCE($5, '{}'::text[]), now(), now())
 		RETURNING id
 	`, orgID, name, provider, ciphertext, modelAllowlist).Scan(&id)
 	if err != nil {

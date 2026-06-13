@@ -41,10 +41,14 @@ func cleanupOrgUser(t *testing.T, pool *pgxpool.Pool, userID string) {
 func createTestOrg(t *testing.T, pool *pgxpool.Pool, orgID, adminUserID string) {
 	t.Helper()
 	ctx := context.Background()
-	pool.Exec(ctx, `INSERT INTO organizations (id, name, slug, created_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-		orgID, "Test Org "+orgID[:8], "test-"+orgID[:8], adminUserID)
-	pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', false) ON CONFLICT DO NOTHING`,
-		orgID, adminUserID)
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, name, slug, created_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+		orgID, "Test Org "+orgID[:8], "test-"+orgID[:8], adminUserID); err != nil {
+		t.Fatalf("createTestOrg: insert organization: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap) VALUES ($1, $2, 'admin', false) ON CONFLICT DO NOTHING`,
+		orgID, adminUserID); err != nil {
+		t.Fatalf("createTestOrg: insert membership: %v", err)
+	}
 }
 
 func ensureTestOrgWorkspace(t *testing.T, pool *pgxpool.Pool, wsID, userID, orgID string) {
@@ -62,7 +66,12 @@ func ensureTestUserWithKeys(t *testing.T, pool *pgxpool.Pool, userID string) []b
 	if err != nil {
 		t.Fatalf("GenerateSalt: %v", err)
 	}
-	err = NewPgKeyStore(pool).CreateUserKey(context.Background(), &UserKeyRecord{
+	keyStore := NewPgKeyStore(pool)
+	existing, _ := keyStore.GetUserKey(context.Background(), userID)
+	if existing != nil {
+		return existing.Salt
+	}
+	err = keyStore.CreateUserKey(context.Background(), &UserKeyRecord{
 		UserID:     userID,
 		KeyVersion: 1,
 		WrappedDEK: []byte("dummy-wrapped-dek"),
@@ -95,7 +104,7 @@ func setupOrgTestEnv(t *testing.T) (*pgxpool.Pool, *PgOrgKeyStore, *PgSecretStor
 	svc := NewOrgKeyService(orgStore, cache)
 	svc.SetCredentialStore(secretStore)
 
-	adminID := "org-test-admin-1"
+	adminID := "org-test-admin-" + t.Name()[len("Test"):8]
 	salt := ensureTestUserWithKeys(t, pool, adminID)
 
 	return pool, orgStore, secretStore, svc, adminID, salt
