@@ -38,7 +38,7 @@ func newMockOpencode(t *testing.T, statuses map[string]string) (*opencode.Client
 		}
 		http.NotFound(w, r)
 	}))
-	client := opencode.NewClient(srv.URL, "test-pw")
+	client := opencode.NewClient(srv.URL, "test-pw", nil)
 	return client, srv
 }
 
@@ -152,7 +152,7 @@ func TestWaitUntilIdle_SnapshotFails_ReturnsErr(t *testing.T) {
 	// Client pointing at closed server
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	srv.Close()
-	client := opencode.NewClient(srv.URL, "test-pw")
+	client := opencode.NewClient(srv.URL, "test-pw", nil)
 
 	err := WaitUntilIdle(context.Background(), "ws-1", tracker, client, 5*time.Second)
 	require.Error(t, err)

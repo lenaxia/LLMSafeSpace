@@ -161,6 +161,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		opencodeCl := opencode.NewClient(
 			fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort),
 			pw,
+			h.zapLogger,
 		)
 		if err := WaitUntilIdle(c.Request.Context(), workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
@@ -418,7 +419,7 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 		if err != nil {
 			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "get_password_failed", "message": err.Error()}}
 		}
-		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw)
+		opencodeCl := opencode.NewClient(fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort), pw, h.zapLogger)
 		if err := WaitUntilIdle(ctx, workspaceID, h.sseTracker, opencodeCl, drainTimeout); err != nil {
 			var drainErr *ErrDrainTimeout
 			if errors.As(err, &drainErr) {
