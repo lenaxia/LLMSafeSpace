@@ -1053,7 +1053,9 @@ func (s *Service) ListAllWorkspaceOwners(ctx context.Context) (map[string]string
 		}
 		result[id] = userID
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
 	return result, nil
 }
 
@@ -1078,6 +1080,8 @@ func (s *Service) ListAllWorkspacesForBilling(ctx context.Context) ([]WorkspaceB
 		}
 		records = append(records, r)
 	}
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
 	return records, nil
 }

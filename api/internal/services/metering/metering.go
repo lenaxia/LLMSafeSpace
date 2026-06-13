@@ -345,24 +345,38 @@ func (s *Service) getQuotaUsage(ctx context.Context, owner BillingOwner, eventTy
 		periodKey = "lifetime"
 		resetsAt = time.Time{}
 	}
-	remaining = limit
+
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(quantity), 0) FROM usage_events
+		 WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3
+		 AND period = $4`,
+		owner.ID, string(owner.Type), eventType, periodKey,
+	).Scan(&used)
+
+	remaining = limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
 	return
 }
 
 func (s *Service) CheckQuota(ctx context.Context, owner BillingOwner, eventType string) (bool, int64, error) {
 	var maxQty int64
+	var periodType string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT max_quantity FROM usage_limits
+		SELECT max_quantity, period_type FROM usage_limits
 		WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3
 		ORDER BY period_type LIMIT 1`, owner.ID, string(owner.Type), eventType,
-	).Scan(&maxQty)
+	).Scan(&maxQty, &periodType)
 	if err == sql.ErrNoRows {
 		return true, 0, nil
 	}
 	if err != nil {
 		return true, 0, fmt.Errorf("check quota: %w", err)
 	}
-	return true, maxQty, nil
+
+	_, remaining, _, _ := s.getQuotaUsage(ctx, owner, eventType, periodType, maxQty)
+	return remaining > 0, remaining, nil
 }
 
 func (s *Service) IncrementQuotaCounter(ctx context.Context, owner BillingOwner, eventType string) error {

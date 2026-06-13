@@ -71,6 +71,7 @@ type RouterConfig struct {
 	BulkReloadHandler *handlers.BulkReloadHandler
 
 	UsageHandler *handlers.UsageHandler
+	WebhookHandler *handlers.WebhookHandler
 
 	CookieName string
 }
@@ -127,6 +128,10 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	router.Use(middleware.MetricsMiddleware(services.GetMetrics()))
 	router.Use(middleware.RateLimitMiddleware(services.GetRateLimiter(), logger, cfg.RateLimitConfig, cfg.InstanceSettings))
 	router.Use(middleware.ErrorHandlerMiddleware(logger))
+
+	if services.GetMetering() != nil {
+		router.Use(middleware.NewMeteringMiddleware(services.GetMetering()).Handler())
+	}
 
 	// F1.1.4 (Epic 17): the previous `/api/v1/workspaces/:id/stream`
 	// group had middleware attached but no handlers — dead code that
@@ -250,6 +255,10 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		adminBilling.GET("/dlq", cfg.UsageHandler.AdminGetDLQ)
 		adminBilling.POST("/dlq/:id/retry", cfg.UsageHandler.AdminRetryDLQ)
 		adminBilling.POST("/dlq/:id/discard", cfg.UsageHandler.AdminDiscardDLQ)
+	}
+
+	if cfg.WebhookHandler != nil {
+		router.POST("/api/v1/webhooks/billing", cfg.WebhookHandler.Billing)
 	}
 
 	// Secret management routes (Epic 10)

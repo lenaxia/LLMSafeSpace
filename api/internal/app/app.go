@@ -23,6 +23,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -97,6 +98,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	if svc.Metering != nil {
 		proxyHandler.SetMeteringService(svc.Metering)
+		if concrete, ok := svc.Metering.(*metering.Service); ok {
+			concrete.SetDatabaseService(svc.Database)
+			concrete.SetActivePhasesChecker(proxyHandler.GetAllKnownPhases)
+		}
 	}
 
 	// Initialize settings services (backed by the same DB service).
@@ -363,6 +368,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	usageHandler := handlers.NewUsageHandler(svc.Metering, svc.Database)
+	if dbSvc, ok := svc.Database.(*database.Service); ok {
+		usageHandler.SetDB(dbSvc.DB)
+	}
+	webhookHandler := handlers.NewWebhookHandler()
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
@@ -381,6 +390,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,
 		UsageHandler:                    usageHandler,
+		WebhookHandler:                  webhookHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
@@ -475,7 +485,8 @@ func (a *App) Run() error {
 				}
 				owner := types.BillingOwner{ID: ownerID, Type: types.OwnerTypeUser}
 				meteringSvc.Record(types.UsageEvent{
-					Owner:        owner,
+					IdempotencyKey: fmt.Sprintf("tokens:%s:%s:in:%d", workspaceID, modelID, time.Now().UnixNano()),
+					Owner:          owner,
 					ActorID:      ownerID,
 					WorkspaceID:  workspaceID,
 					EventType:    "llm_tokens",

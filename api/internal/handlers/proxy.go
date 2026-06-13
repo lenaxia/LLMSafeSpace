@@ -1686,3 +1686,10 @@ func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 	}
 	return h.userBroker.WorkspaceOwner(workspaceID)
 }
+
+func (h *ProxyHandler) GetAllKnownPhases() map[string]string {
+	if h.watcher == nil {
+		return nil
+	}
+	return h.watcher.GetAllKnownPhases()
+}

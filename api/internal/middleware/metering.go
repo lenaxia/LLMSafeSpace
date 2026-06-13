@@ -4,7 +4,6 @@
 package middleware
 
 import (
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,31 +11,12 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
-type meteringBucket struct {
-	read  int64
-	write int64
-}
-
 type MeteringMiddleware struct {
 	meteringSvc interfaces.MeteringService
-	mu          sync.Mutex
-	buckets     map[string]*meteringBucket
-	stopCh      chan struct{}
 }
 
 func NewMeteringMiddleware(svc interfaces.MeteringService) *MeteringMiddleware {
-	m := &MeteringMiddleware{
-		meteringSvc: svc,
-		buckets:     make(map[string]*meteringBucket),
-		stopCh:      make(chan struct{}),
-	}
-	go m.flushLoop()
-	return m
-}
-
-func (m *MeteringMiddleware) Stop() {
-	close(m.stopCh)
-	m.flush()
+	return &MeteringMiddleware{meteringSvc: svc}
 }
 
 func (m *MeteringMiddleware) Handler() gin.HandlerFunc {
@@ -61,66 +41,16 @@ func (m *MeteringMiddleware) Handler() gin.HandlerFunc {
 			subtype = "write"
 		}
 
-		m.mu.Lock()
-		b, ok := m.buckets[userID]
-		if !ok {
-			b = &meteringBucket{}
-			m.buckets[userID] = b
-		}
-		if subtype == "read" {
-			b.read++
-		} else {
-			b.write++
-		}
-		m.mu.Unlock()
-	}
-}
-
-func (m *MeteringMiddleware) flushLoop() {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-m.stopCh:
-			return
-		case <-ticker.C:
-			m.flush()
-		}
-	}
-}
-
-func (m *MeteringMiddleware) flush() {
-	m.mu.Lock()
-	snapshot := m.buckets
-	m.buckets = make(map[string]*meteringBucket)
-	m.mu.Unlock()
-
-	now := time.Now()
-	for userID, bucket := range snapshot {
-		if bucket.read > 0 {
-			m.meteringSvc.Record(types.UsageEvent{
-				IdempotencyKey: "apicall:" + userID + ":read:" + now.Format("20060102150405"),
-				Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
-				ActorID:        userID,
-				EventType:      "api_call",
-				EventSubtype:   "read",
-				Quantity:       bucket.read,
-				Source:         "api",
-				EventTime:      now,
-			})
-		}
-		if bucket.write > 0 {
-			m.meteringSvc.Record(types.UsageEvent{
-				IdempotencyKey: "apicall:" + userID + ":write:" + now.Format("20060102150405"),
-				Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
-				ActorID:        userID,
-				EventType:      "api_call",
-				EventSubtype:   "write",
-				Quantity:       bucket.write,
-				Source:         "api",
-				EventTime:      now,
-			})
-		}
+		m.meteringSvc.Record(types.UsageEvent{
+			IdempotencyKey: "apicall:" + userID + ":" + subtype + ":" + time.Now().UTC().Format("20060102150405"),
+			Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},
+			ActorID:        userID,
+			EventType:      "api_call",
+			EventSubtype:   subtype,
+			Quantity:        1,
+			Source:         "api",
+			EventTime:      time.Now(),
+		})
 	}
 }
 
