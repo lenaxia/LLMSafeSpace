@@ -31,7 +31,8 @@ export function closeOpenFence(text: string): string {
   let openChar: string | null = null;
   let openLen = 0;
 
-  for (const line of text.split("\n")) {
+  const normalized = text.replace(/\r\n?/g, "\n");
+  for (const line of normalized.split("\n")) {
     const match = fenceLine.exec(line);
     if (!match) continue;
 
@@ -50,10 +51,10 @@ export function closeOpenFence(text: string): string {
   }
 
   if (openChar !== null) {
-    return text + "\n" + openChar.repeat(openLen);
+    return normalized + "\n" + openChar.repeat(openLen);
   }
 
-  return text;
+  return normalized;
 }
 
 interface CodeBlockProps {
@@ -248,11 +249,15 @@ export function MessagePart({ part, isUser, isStreaming }: Props) {
                 | React.ReactElement<{ className?: string; children?: string }>
                 | null
                 | undefined;
-              const className = child?.props?.className ?? "";
-              const lang = className.startsWith("language-")
-                ? className.slice("language-".length)
+              const classStr = child?.props?.className ?? "";
+              const lang = classStr.startsWith("language-")
+                ? classStr.slice("language-".length)
                 : null;
-              const code = String(child?.props?.children ?? "").trimEnd();
+              const childrenProp = child?.props?.children;
+              if (typeof childrenProp !== "string") {
+                return <pre className="overflow-x-auto touch-manipulation p-4 text-sm font-mono">{children}</pre>;
+              }
+              const code = childrenProp.trimEnd();
               if (!code && lang === null) {
                 return <pre className="overflow-x-auto touch-manipulation p-4 text-sm font-mono">{children}</pre>;
               }
