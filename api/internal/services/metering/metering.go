@@ -334,24 +334,40 @@ func (s *Service) GetQuotaStatus(ctx context.Context, owner BillingOwner) ([]Quo
 
 func (s *Service) getQuotaUsage(ctx context.Context, owner BillingOwner, eventType, periodType string, limit int64) (used, remaining int64, resetsAt time.Time, periodKey string) {
 	now := time.Now().UTC()
+	var query string
+	var args []interface{}
 	switch periodType {
 	case "daily":
 		periodKey = now.Format("2006-01-02")
 		resetsAt = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		query = `SELECT COALESCE(SUM(quantity), 0) FROM usage_events
+		 WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3
+		 AND period = $4`
+		args = []interface{}{owner.ID, string(owner.Type), eventType, periodKey}
 	case "monthly":
-		periodKey = now.Format("2006-01")
+		periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		periodKey = periodStart.Format("2006-01-02")
 		resetsAt = time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+		query = `SELECT COALESCE(SUM(quantity), 0) FROM usage_events
+		 WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3
+		 AND period >= $4 AND period < $5`
+		args = []interface{}{owner.ID, string(owner.Type), eventType, periodStart, resetsAt}
 	default:
 		periodKey = "lifetime"
 		resetsAt = time.Time{}
+		query = `SELECT COALESCE(SUM(quantity), 0) FROM usage_events
+		 WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3`
+		args = []interface{}{owner.ID, string(owner.Type), eventType}
 	}
 
-	_ = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(quantity), 0) FROM usage_events
-		 WHERE owner_id = $1 AND owner_type = $2 AND event_type = $3
-		 AND period = $4`,
-		owner.ID, string(owner.Type), eventType, periodKey,
-	).Scan(&used)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&used)
+	if err != nil {
+		s.logger.Error("Failed to query quota usage", err,
+			"owner_id", owner.ID,
+			"event_type", eventType,
+			"period_type", periodType,
+		)
+	}
 
 	remaining = limit - used
 	if remaining < 0 {
