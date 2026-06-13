@@ -6,6 +6,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -290,4 +293,49 @@ func TestSafeModeActive_IsGaugeVec(t *testing.T) {
 
 	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-1")
 	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-2")
+}
+
+func TestCreatingActiveCycle_TenCycles_NoGaugeDrift(t *testing.T) {
+	ctrMetrics.WorkspacesRunning.Reset()
+	rt, sl := "python:3.11", "standard"
+	for i := 0; i < 10; i++ {
+		ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Inc()
+		ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Dec()
+	}
+	ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Inc()
+	assert.Equal(t, 1.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
+		"after 10 cycles with 1 workspace still Active, gauge must be 1 not 11")
+}
+
+func TestGaugeDrift_Terminating_StatusUpdateFailure_NoDecrement(t *testing.T) {
+	scheme := testScheme(t)
+	ws := makeWorkspace("ws-g-rollback", "default", v1.WorkspacePhaseTerminating)
+	ws.Finalizers = []string{WorkspaceFinalizer}
+	ws.Status.PodIP = "10.0.0.1"
+
+	updateErr := errors.New("simulated status update failure")
+	fc := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(ws).
+		WithStatusSubresource(&v1.Workspace{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, c client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+				if subResourceName == "status" {
+					return updateErr
+				}
+				return c.Status().Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+	r := &WorkspaceReconciler{Client: fc, Scheme: scheme}
+
+	rt, sl := ws.Spec.Runtime, string(ws.Spec.SecurityLevel)
+	ctrMetrics.WorkspacesRunning.Reset()
+	ctrMetrics.WorkspacesRunning.WithLabelValues(rt, sl).Inc() // workspace was Active and counted in the gauge
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-g-rollback", "default"))
+	require.ErrorIs(t, err, updateErr)
+
+	assert.Equal(t, 1.0, readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, rt, sl),
+		"gauge must NOT decrement when Status().Update fails — otherwise the retry double-decrements")
 }
