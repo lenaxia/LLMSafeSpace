@@ -215,6 +215,14 @@ A Go HTTP server running as a Deployment (2 replicas, pod anti-affinity). This i
 
 5. **Rebalancing:** When a relay rejoins (replacement VM provisioned and healthy), it is added back to the healthy relay set. With rendezvous hashing, only a proportional share of workspaces migrate to the new relay on their next session. Existing sessions on the surviving relay are NOT force-migrated — they move on their next natural session boundary.
 
+6. **Fallback mode (both relays down):** When no relays are healthy, the router enters fallback mode and proxies directly to `opencode.ai/zen/v1` from cluster IPs. To avoid worsening the IP throttle situation:
+   - **Global rate limit of 1 req/2s** across all workspaces (token bucket, shared across router replicas via Redis — reuses the existing Valkey/Redis cache service). Requests exceeding the rate receive `429 Too Many Requests` with `Retry-After: 2` — opencode's retry logic handles this gracefully.
+   - **Concurrency cap of 1** — only one in-flight request to Zen at a time. Streaming responses hold the slot until complete. This makes fallback extremely slow but prevents IP escalation.
+   - **`X-Relay-Status: fallback` header** on all responses so the frontend can display a degraded-mode banner.
+   - **Queue depth limit of 0** — if a request arrives while another is in-flight, it's immediately rejected (no queueing). Users see a 429 and retry after a few seconds. Queueing would create artificial latency and memory pressure.
+   - Fallback exits automatically as soon as any relay passes health check.
+   - This is intentionally hostile UX — fallback is a last resort to keep *some* free-tier access alive while the controller reprovisions, not a sustainable operating mode.
+
 **How the router learns relay IPs:**
 The controller writes a ConfigMap (`relay-router-peers`) that the router mounts as a volume and watches (via fsnotify or poll):
 ```json
@@ -328,6 +336,28 @@ type InferenceRelaySpec struct {
 
     // Rotation configures automatic destroy-and-recreate on 429 detection.
     Rotation RotationConfig `json:"rotation,omitempty"`
+
+    // Fallback configures direct-to-upstream routing when all relay VMs
+    // are unhealthy. Rate-limited to avoid worsening IP throttling.
+    Fallback FallbackConfig `json:"fallback,omitempty"`
+}
+
+type FallbackConfig struct {
+    // Enabled enables direct fallback when all relays are down.
+    // If false, the router returns 502 to all requests when no relays are healthy.
+    // +kubebuilder:default=true
+    Enabled bool `json:"enabled"`
+
+    // Rate is the maximum request rate to the upstream in fallback mode
+    // (requests per second, global across all workspaces).
+    // Default: 0.5 (1 request per 2 seconds).
+    // +kubebuilder:default=0.5
+    Rate float64 `json:"rate,omitempty"`
+
+    // MaxConcurrent is the maximum in-flight requests to the upstream
+    // in fallback mode. Default: 1.
+    // +kubebuilder:default=1
+    MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
 
 type RelayProviderSpec struct {
@@ -612,7 +642,7 @@ All free-tier claims below were verified against provider documentation on 2026-
 | DQ1 | How do we prevent OCI from reclaiming idle relay VMs? | **Keepalive daemon.** Cloud-init installs a cron job that curls `localhost:8080/healthz` every minute. The relay binary also runs a goroutine that probes the upstream (`GET opencode.ai/zen/v1/models`) every 30s. Both contribute to network utilization. The Go runtime's memory footprint (>2 GB on a 12 GB VM) keeps memory above 20%. | OCI reclaims Always Free instances with <20% CPU/network/memory utilization over 7 days (A6). The keepalive ensures network + CPU stay measurable. Requires 7-day empirical validation. |
 | DQ2 | How does the router expose its WireGuard port to relay VMs? | **NodePort or LoadBalancer Service on UDP 51820.** The router Deployment is fronted by a K8s Service of type NodePort (bare-metal cluster) or LoadBalancer (if MetalLB is available). Relay VMs connect to `<nodeIP>:<nodePort>` as the WG endpoint. | The cluster runs on bare-metal Talos with Traefik ingress. Traefik doesn't handle UDP, so we need a separate UDP path. A NodePort is simplest. |
 | DQ3 | How does the router identify which workspace a request belongs to? | **`X-Workspace-ID` header** injected by the workspace controller into the relay injector config. The relay injector already rewrites `agent-config.json` — adding a default header to the `opencode-relay` provider is a one-line change. | The router needs the workspace ID for deterministic hash-based relay assignment. Basic Auth username is not unique per workspace. |
-| DQ4 | What happens when both relays are unhealthy? | **Direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs), accepting the throttle risk. Returns a `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502. | Free-tier traffic from server IPs may be throttled, but partial availability beats total outage. The controller will be working on reprovisioning in parallel. |
+| DQ4 | What happens when both relays are unhealthy? | **Rate-limited direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs) at a global rate of 1 req/2s with max 1 concurrent request. Requests exceeding the rate get `429 + Retry-After: 2`. Returns `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502, and the rate limit prevents escalating IP throttling. | Unthrottled fallback would just get 429'd instantly and risk worsening the block. 1 req/2s keeps *some* free-tier access alive (slowly) while the controller reprovisions. Intentionally hostile UX — fallback is not a sustainable mode. |
 | DQ5 | Destroy-and-recreate vs in-place rotation? | **Always destroy-and-recreate.** No in-place IP swapping, key rotation, or config pushing. Relay VMs are stateless. The other VM carries traffic during the ~60s provisioning window. | Simpler driver interface (no RotateIP), simpler cloud-init (no runtime reconfiguration), identical flow for failure recovery and key/IP rotation. |
 | DQ6 | Should the controller run inside the existing workspace controller binary or as a separate deployment? | **Same binary, new reconciler, gated by a feature flag.** | The relay controller and workspace controller are coupled (router URL injection). Same binary simplifies deployment and avoids a second controller pod. |
 | DQ7 | Should we weight traffic toward OCI (10 TB egress) over GCP (1 GB egress)? | **Yes — OCI gets 2/3 of new sessions, GCP gets 1/3.** Implemented as weighted rendezvous hashing: each relay gets a weight (OCI=2, GCP=1), and the HRW selection incorporates weight. | GCP's 1 GB/mo egress would be exhausted quickly if it carried 50% of traffic. OCI's 10 TB can handle the load. GCP is primarily for failover and IP diversity. |
@@ -649,7 +679,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | US-42.8 | Router WireGuard sidecar + NodePort Service | Small-Medium (1d) | US-42.4, US-42.7 |
 | US-42.9 | InferenceRelay reconciler (lifecycle: provision, health, destroy+recreate, ConfigMap sync, provisioning circuit breaker) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
 | US-42.10 | Helm chart integration (CRD, router Deployment+Service, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
-| US-42.11 | Fallback mode: direct routing when all relays unhealthy | Small (0.5d) | US-42.7 |
+| US-42.11 | Fallback mode: rate-limited direct routing when all relays unhealthy (1 req/2s, max 1 concurrent) | Small-Medium (1d) | US-42.7 |
 | US-42.12 | Observability: Prometheus metrics + alert rules + CR conditions | Small (0.5d) | US-42.9 |
 
 **Total estimated effort:** 11.5-15.5 days
@@ -751,6 +781,10 @@ spec:
     max429Rate: 0.5
     detectionWindow: 5m
     cooldown: 30m
+  fallback:
+    enabled: true
+    rate: 0.5          # 1 req / 2s (global, all workspaces)
+    maxConcurrent: 1   # only 1 in-flight at a time
 ```
 
 ---
