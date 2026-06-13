@@ -100,6 +100,8 @@ func (l *Logger) With(keysAndValues ...interface{}) pkginterfaces.LoggerInterfac
 	}
 }
 
+// ZapLogger returns the underlying zap.Logger for callers that need
+// direct access (e.g. structured logging with zap-specific APIs).
 func (l *Logger) ZapLogger() *zap.Logger {
 	return l.logger
 }

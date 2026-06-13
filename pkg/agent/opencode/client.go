@@ -161,7 +161,8 @@ func (c *Client) GetSessionStatuses(ctx context.Context) (map[string]string, err
 	return result, nil
 }
 
-// setAuth sends PUT /auth/:providerID with the credential payload.
+// retryWithBackoff invokes fn up to maxAttempts times with exponential
+// backoff (plus jitter), returning nil on success or the last error.
 func (c *Client) retryWithBackoff(ctx context.Context, maxAttempts int, initialDelay time.Duration, fn func(attempt int) error) error {
 	var lastErr error
 	for i := 1; i <= maxAttempts; i++ {
@@ -185,6 +186,7 @@ func (c *Client) retryWithBackoff(ctx context.Context, maxAttempts int, initialD
 	return lastErr
 }
 
+// setAuth sends PUT /auth/:providerID with the credential payload.
 func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 	payload := authPayload{
 		Type: "api",
