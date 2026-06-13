@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -373,7 +374,7 @@ func TestE2E_DrainMode_WithRealTracker(t *testing.T) {
 	tracker := NewSSETracker(nil, nil, nil)
 
 	// Use the opencode client directly to test WaitUntilIdle
-	client := opencode.NewClient(opencodeSrv.URL, "test-pw")
+	client := opencode.NewClient(opencodeSrv.URL, "test-pw", zaptest.NewLogger(t))
 	err := WaitUntilIdle(context.Background(), "ws-1", tracker, client, 5*time.Second)
 	assert.NoError(t, err, "WaitUntilIdle should return immediately when no sessions exist")
 }
