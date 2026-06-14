@@ -97,23 +97,15 @@ func (d *detector429) probeRelay(ctx context.Context, relayID string) {
 }
 
 // checkStorm evaluates whether a relay should be marked draining based on
-// consecutive probe failures or overall 429 rate exceeding the threshold.
+// consecutive probe failures OR windowed 429 rate exceeding the threshold.
 func (d *detector429) checkStorm(relayID string) {
-	statuses := d.fleet.HealthyRelays()
-	for _, s := range statuses {
-		if s.ID != relayID {
-			continue
-		}
-		if s.Requests429 >= int64(d.maxConsecutive*10) {
-			rate := 0.0
-			if s.TotalRequests > 0 {
-				rate = float64(s.Requests429) / float64(s.TotalRequests)
-			}
-			if rate >= d.max429Rate {
-				d.fleet.Mark429Draining(relayID, fmt.Sprintf("429-storm: rate=%.2f threshold=%.2f", rate, d.max429Rate))
-				return
-			}
-		}
+	rate, consecutive := d.fleet.Relay429Rate(relayID)
+	if consecutive >= d.maxConsecutive {
+		d.fleet.Mark429Draining(relayID, fmt.Sprintf("429-consecutive-probes: %d probes failed (threshold=%d)", consecutive, d.maxConsecutive))
+		return
+	}
+	if rate >= d.max429Rate {
+		d.fleet.Mark429Draining(relayID, fmt.Sprintf("429-storm: windowed rate=%.2f threshold=%.2f", rate, d.max429Rate))
 	}
 }
 
@@ -139,12 +131,9 @@ func (d *detector429) checkAllStorms() {
 		if s.Draining429 {
 			continue
 		}
-		if s.TotalRequests == 0 {
-			continue
-		}
-		rate := float64(s.Requests429) / float64(s.TotalRequests)
+		rate, _ := d.fleet.Relay429Rate(s.ID)
 		if rate >= d.max429Rate {
-			d.fleet.Mark429Draining(s.ID, fmt.Sprintf("429-storm: rate=%.2f threshold=%.2f", rate, d.max429Rate))
+			d.fleet.Mark429Draining(s.ID, fmt.Sprintf("429-storm: windowed rate=%.2f threshold=%.2f", rate, d.max429Rate))
 		}
 	}
 }

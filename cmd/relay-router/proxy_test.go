@@ -343,7 +343,7 @@ func TestHealthChecker_MarksHealthyOnSuccess(t *testing.T) {
 		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
-	hc := newHealthChecker(fleet, 20*time.Millisecond, 1*time.Second, 3, extractPort(relay.URL))
+	hc := newHealthChecker(fleet, 20*time.Millisecond, 1*time.Second, extractPort(relay.URL))
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	hc.run(ctx)
@@ -359,7 +359,7 @@ func TestHealthChecker_MarksUnhealthyOnFailure(t *testing.T) {
 		{ID: "r1", WgIP: "127.0.0.1", Provider: "oci", State: "healthy"},
 	})
 
-	hc := newHealthChecker(fleet, 20*time.Millisecond, 50*time.Millisecond, 3, 1)
+	hc := newHealthChecker(fleet, 20*time.Millisecond, 50*time.Millisecond, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	hc.run(ctx)
@@ -380,7 +380,7 @@ func TestHealthChecker_StopsOnContextCancel(t *testing.T) {
 		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
-	hc := newHealthChecker(fleet, 10*time.Millisecond, 1*time.Second, 3, extractPort(relay.URL))
+	hc := newHealthChecker(fleet, 10*time.Millisecond, 1*time.Second, extractPort(relay.URL))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})

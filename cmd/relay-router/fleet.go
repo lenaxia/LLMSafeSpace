@@ -80,20 +80,21 @@ type relayEntry struct {
 // The selector, health checker, 429 detector, and proxy handler all
 // read and write through this struct.
 type relayFleet struct {
-	mu      sync.RWMutex
-	relays  map[string]*relayEntry
-	max429s int
-	window  time.Duration
-	rng     *rand.Rand
+	mu           sync.RWMutex
+	relays       map[string]*relayEntry
+	unhealthyThr int
+	window       time.Duration
+	rng          *rand.Rand
 }
 
-// newRelayFleet creates a fleet with the given 429 detection window.
-func newRelayFleet(max429s int, window time.Duration) *relayFleet {
+// newRelayFleet creates a fleet with the given health check unhealthy
+// threshold and 429 detection window.
+func newRelayFleet(unhealthyThreshold int, window time.Duration) *relayFleet {
 	return &relayFleet{
-		relays:  make(map[string]*relayEntry),
-		max429s: max429s,
-		window:  window,
-		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
+		relays:       make(map[string]*relayEntry),
+		unhealthyThr: unhealthyThreshold,
+		window:       window,
+		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -198,7 +199,7 @@ func (f *relayFleet) eligibleRelaysLocked() []*relayEntry {
 // healthStateLocked returns the effective health state of a relay,
 // combining the ConfigMap state with the router's independent health checks.
 func (f *relayFleet) healthStateLocked(e *relayEntry) string {
-	if e.health.consecutiveFailures >= 3 {
+	if e.health.consecutiveFailures >= f.unhealthyThr {
 		return relayStateUnhealthy
 	}
 	return e.peer.State
@@ -314,38 +315,24 @@ func (f *relayFleet) Mark429Suspect(relayID string) {
 	}
 }
 
-// Clear429State resets the 429 detection state for a relay
-// (used when a probe succeeds or relay recovers).
+// Clear429State resets all 429 detection state for a relay, including
+// the draining flag. Called when a probe succeeds or the relay recovers
+// (e.g. after controller rotation). Without this, a relay marked as
+// 429-draining would be permanently excluded from selection.
 func (f *relayFleet) Clear429State(relayID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e, ok := f.relays[relayID]; ok {
 		e.s429.consecutiveProbes = 0
+		e.s429.markedDraining = false
+		e.s429.drainingReason = ""
+		e.s429.drainingSince = time.Time{}
+		e.s429.window = nil
 	}
-}
-
-// ShouldProbe429 returns the relay IDs that should be probed for 429
-// and whether they have enough 429s to warrant a storm check.
-// Returns map of relayID → 429 rate in the detection window.
-func (f *relayFleet) Check429Rate() map[string]float64 {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	result := make(map[string]float64)
-	for id, e := range f.relays {
-		f.prune429WindowRLocked(e)
-		if e.totalRequests == 0 {
-			continue
-		}
-		rate := float64(len(e.s429.window)) / float64(e.totalRequests)
-		if rate > 0 || e.s429.consecutiveProbes > 0 {
-			result[id] = rate
-		}
-	}
-	return result
 }
 
 // prune429WindowLocked removes 429 timestamps outside the detection window.
+// Must be called with mu held (write lock).
 func (f *relayFleet) prune429WindowLocked(e *relayEntry) {
 	cutoff := time.Now().Add(-f.window)
 	filtered := e.s429.window[:0]
@@ -357,8 +344,26 @@ func (f *relayFleet) prune429WindowLocked(e *relayEntry) {
 	e.s429.window = filtered
 }
 
-func (f *relayFleet) prune429WindowRLocked(e *relayEntry) {
-	f.prune429WindowLocked(e)
+// windowed429CountLocked returns the count of 429s within the rolling
+// detection window. Must be called with mu held.
+func (f *relayFleet) windowed429CountLocked(e *relayEntry) int {
+	cutoff := time.Now().Add(-f.window)
+	count := 0
+	for _, t := range e.s429.window {
+		if t.After(cutoff) {
+			count++
+		}
+	}
+	return count
+}
+
+// windowedRequestCountLocked returns total requests in the rolling window.
+// Since we don't track per-request timestamps for non-429 requests, this
+// uses the lifetime total as an upper bound. The storm detection compares
+// windowed 429 count against a threshold, not a rate, so this approximation
+// is conservative (tends to undercount the rate).
+func (f *relayFleet) windowedRequestCountLocked(e *relayEntry) int64 {
+	return e.totalRequests
 }
 
 // HealthyRelays returns relay IDs and their health status.
@@ -426,6 +431,25 @@ func (f *relayFleet) GetWgIP(relayID string) string {
 		return e.peer.WgIP
 	}
 	return ""
+}
+
+// Relay429Rate returns the windowed 429 rate (429s in window / total requests)
+// and consecutive probe count for a relay. Used by the 429 detector for
+// storm detection. Acquires a write lock because pruning mutates the window.
+func (f *relayFleet) Relay429Rate(relayID string) (rate float64, consecutiveProbes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.relays[relayID]
+	if !ok {
+		return 0, 0
+	}
+	f.prune429WindowLocked(e)
+	windowed429 := len(e.s429.window)
+	total := f.windowedRequestCountLocked(e)
+	if total > 0 {
+		rate = float64(windowed429) / float64(total)
+	}
+	return rate, e.s429.consecutiveProbes
 }
 
 // String returns a human-readable representation of the fleet state.

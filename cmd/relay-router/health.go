@@ -17,19 +17,14 @@ type healthChecker struct {
 	fleet     *relayFleet
 	client    *http.Client
 	interval  time.Duration
-	timeout   time.Duration
-	threshold int
-	mu        sync.Mutex
 	relayPort int
 }
 
-func newHealthChecker(fleet *relayFleet, interval, timeout time.Duration, threshold, relayPort int) *healthChecker {
+func newHealthChecker(fleet *relayFleet, interval, timeout time.Duration, relayPort int) *healthChecker {
 	return &healthChecker{
 		fleet:     fleet,
 		client:    &http.Client{Timeout: timeout},
 		interval:  interval,
-		timeout:   timeout,
-		threshold: threshold,
 		relayPort: relayPort,
 	}
 }

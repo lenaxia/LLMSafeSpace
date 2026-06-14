@@ -98,7 +98,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hc := newHealthChecker(fleet, cfg.healthInterval, cfg.healthTimeout, cfg.healthThreshold, cfg.relayPort)
+	hc := newHealthChecker(fleet, cfg.healthInterval, cfg.healthTimeout, cfg.relayPort)
 	go hc.run(ctx)
 
 	go detector.runPeriodicCheck(ctx, cfg.detectorInterval)

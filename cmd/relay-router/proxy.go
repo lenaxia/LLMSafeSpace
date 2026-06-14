@@ -5,7 +5,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -271,19 +270,5 @@ func copyRouterHeaders(dst, src http.Header) {
 		for _, value := range values {
 			dst.Add(key, value)
 		}
-	}
-}
-
-func defaultRouterTransport() *http.Transport {
-	return &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       90 * time.Second,
-		DisableCompression:    true,
 	}
 }
