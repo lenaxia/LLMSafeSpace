@@ -42,14 +42,8 @@ type invitationStore interface {
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 }
 
-var (
-	errInvitationNotFound = errors.New("invitation not found")
-	errInvitationExpired  = errors.New("invitation expired")
-	errInvitationTaken    = errors.New("invitation already accepted or declined")
-	errAlreadyMember      = errors.New("user is already a member of this org")
-	errRateLimited        = errors.New("invitation rate limit exceeded")
-	errBouncedEmail       = errors.New("email address has a permanent bounce; cannot resend")
-)
+// errBouncedEmail is used in Resend to reject resend to a bounced address.
+var errBouncedEmail = errors.New("email address has a permanent bounce; cannot resend")
 
 // InvitationsHandler handles org invitation CRUD and the accept/decline flows.
 type InvitationsHandler struct {

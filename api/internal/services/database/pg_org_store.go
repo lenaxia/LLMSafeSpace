@@ -663,10 +663,9 @@ func (s *PgOrgStore) UpdateOrgStatus(ctx context.Context, orgID string, status *
 	if planID != nil {
 		setParts = append(setParts, fmt.Sprintf("plan_id = $%d", argIdx))
 		args = append(args, string(*planID))
-		argIdx++
 	}
 
-	query := fmt.Sprintf(
+	query := fmt.Sprintf( //nolint:gosec // setParts contains only literal column assignments, no user input
 		`UPDATE organizations SET %s WHERE id = $1 AND deleted_at IS NULL`,
 		strings.Join(setParts, ", "),
 	)

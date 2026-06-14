@@ -52,7 +52,7 @@ func NewPendingOrgCleaner(store pendingOrgStore, provider billing.CheckoutProvid
 	return c
 }
 
-// Run blocks until ctx is cancelled, reaping on each tick.
+// Run blocks until ctx is canceled, reaping on each tick.
 func (c *PendingOrgCleaner) Run(ctx context.Context) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()

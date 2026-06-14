@@ -715,7 +715,7 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 
 // verifyOwner (above) is the single access check post-D6. It grants access to
 // the workspace creator or, for org workspaces, an org admin. The former
-// verifyOrgAdmin was identical in behaviour and has been removed; its call sites
+// verifyOrgAdmin was identical in behavior and has been removed; its call sites
 // now use verifyOwner directly.
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
