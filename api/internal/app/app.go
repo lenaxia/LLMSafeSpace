@@ -29,6 +29,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/pkg/billing"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -51,6 +52,7 @@ type App struct {
 	asyncAudit         *secrets.AsyncAuditLogger // nil if pgxpool path not used
 	secretsPool        *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
+	pendingOrgCleaner  *handlers.PendingOrgCleaner
 	shutdownCh         chan struct{}
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -140,6 +142,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var orgsHandler *handlers.OrgsHandler
 	var orgCredsHandler *handlers.OrgCredentialsHandler
 	var orgStoreForVerifier OrgMembershipChecker
+	var pgOrgStore *database.PgOrgStore
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -292,7 +295,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		secretService.SetOrgKeyService(orgKeyService)
 
-		pgOrgStore := database.NewPgOrgStore(dbSvc.DB)
+		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgStoreForVerifier = pgOrgStore
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
 		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, orgKeyService, svc.GetAuth())
@@ -406,7 +409,42 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if dbSvc, ok := svc.Database.(*database.Service); ok {
 		usageHandler.SetDB(dbSvc.DB)
 	}
-	webhookHandler := handlers.NewWebhookHandler()
+
+	var checkoutProvider billing.CheckoutProvider
+	var webhookHandler *handlers.StripeWebhookHandler
+	if cfg.Billing.SecretKey != "" {
+		sp, err := billing.NewStripeProvider(billing.StripeConfig{
+			SecretKey:     cfg.Billing.SecretKey,
+			WebhookSecret: cfg.Billing.WebhookSecret,
+			PlanPrices:    cfg.Billing.PlanPrices,
+		})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init stripe provider: %w", err)
+		}
+		checkoutProvider = sp
+		if orgsHandler != nil && cfg.Billing.WebhookSecret != "" && pgOrgStore != nil {
+			webhookHandler = handlers.NewStripeWebhookHandler(sp, pgOrgStore, log)
+		}
+		if orgsHandler != nil {
+			orgsHandler.SetBilling(handlers.NewOrgBilling(checkoutProvider),
+				cfg.Billing.CheckoutSuccessURL, cfg.Billing.CheckoutCancelURL, cfg.Billing.PortalReturnURL)
+		}
+	} else if orgsHandler != nil {
+		noop := &billing.NoopCheckoutProvider{}
+		orgsHandler.SetBilling(handlers.NewOrgBilling(noop),
+			cfg.Billing.CheckoutSuccessURL, cfg.Billing.CheckoutCancelURL, cfg.Billing.PortalReturnURL)
+	}
+
+	// Pending org cleanup cron: reaps pending_activation orgs whose Stripe
+	// checkout was never completed after 7 days. Only runs with a real Stripe
+	// provider (needs checkout-session lookup); in dev mode without Stripe the
+	// cleanup is a no-op (pending orgs accumulate but are harmless).
+	var pendingOrgCleaner *handlers.PendingOrgCleaner
+	if checkoutProvider != nil && pgOrgStore != nil {
+		pendingOrgCleaner = handlers.NewPendingOrgCleaner(
+			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
+	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
@@ -456,6 +494,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		userSettings:       userSettings,
 		asyncAudit:         asyncAudit,
 		secretsPool:        secretsPool,
+		pendingOrgCleaner:  pendingOrgCleaner,
 		dekCacheClient:     dekCacheClient,
 		shutdownCh:         make(chan struct{}),
 		ctx:                ctx,
@@ -466,6 +505,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 func (a *App) Run() error {
 	if err := a.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Start the pending-org cleanup cron (Stripe only; nil in dev mode).
+	if a.pendingOrgCleaner != nil {
+		go a.pendingOrgCleaner.Run(a.ctx)
+		a.logger.Info("pending org cleanup cron started", "interval", "1h", "maxAge", "7d")
 	}
 
 	// Start instance settings (loads cache from DB).

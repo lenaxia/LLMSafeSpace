@@ -147,7 +147,7 @@ func TestRenameWorkspace_WrongOwner_Forbidden(t *testing.T) {
 
 	err := f.svc.RenameWorkspace(context.Background(), "user-1", "ws-1", "new-name")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "does not have admin access to workspace")
+	assert.Contains(t, err.Error(), "does not have access to workspace")
 }
 
 func TestMarkSessionSeen_DelegatesToSessionIndex(t *testing.T) {

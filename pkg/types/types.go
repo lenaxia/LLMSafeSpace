@@ -623,14 +623,56 @@ const (
 	OrgRoleMember OrgRole = "member"
 )
 
+// OrgStatus is the operational status of an organization. It gates access:
+// only 'active' orgs are usable via OrgMemberGuard/OrgAdminGuard. It is
+// distinct from SubscriptionStatus, which tracks the payment lifecycle.
+type OrgStatus string
+
+const (
+	OrgStatusPendingActivation OrgStatus = "pending_activation"
+	OrgStatusActive            OrgStatus = "active"
+	OrgStatusSuspended         OrgStatus = "suspended"
+)
+
+// OrgPlan is the product plan identifier stored in organizations.plan_id and
+// used locally for feature gating. The plan is set at org creation
+// (enterprise for platform-admin orgs; the selected checkout plan on
+// checkout.session.completed for self-service orgs). Per-event plan syncing
+// from Stripe is planned for US-43.15.
+type OrgPlan string
+
+const (
+	PlanFree       OrgPlan = "free"
+	PlanTeam       OrgPlan = "team"
+	PlanBusiness   OrgPlan = "business"
+	PlanEnterprise OrgPlan = "enterprise"
+)
+
+// OrgSubscriptionStatus tracks the Stripe subscription lifecycle separately
+// from OrgStatus. An org can be status='active' (members retain access) while
+// subscription_status='past_due' (in the 7-day Smart Retries grace window).
+type OrgSubscriptionStatus string
+
+const (
+	SubscriptionInactive OrgSubscriptionStatus = "inactive"
+	SubscriptionActive   OrgSubscriptionStatus = "active"
+	SubscriptionTrialing OrgSubscriptionStatus = "trialing"
+	SubscriptionPastDue  OrgSubscriptionStatus = "past_due"
+	SubscriptionCanceled OrgSubscriptionStatus = "canceled"
+	SubscriptionUnpaid   OrgSubscriptionStatus = "unpaid"
+)
+
 // Organization is the API DTO for an organization.
 type Organization struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	CreatedBy string    `json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID                 string                `json:"id"`
+	Name               string                `json:"name"`
+	Slug               string                `json:"slug"`
+	CreatedBy          string                `json:"createdBy"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
+	Status             OrgStatus             `json:"status"`
+	PlanID             OrgPlan               `json:"planId"`
+	SubscriptionStatus OrgSubscriptionStatus `json:"subscriptionStatus"`
 }
 
 // OrgMember is the API DTO for an organization membership.
@@ -644,17 +686,27 @@ type OrgMember struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// CreateOrgRequest is the request body for creating an organization.
+// CreateOrgRequest is the request body for creating an organization. The slug is
+// lowercased by the service before insert and uniqueness check.
 type CreateOrgRequest struct {
-	Name     string `json:"name"     binding:"required,min=2,max=100"`
-	Slug     string `json:"slug"     binding:"required,min=2,max=50,alphanum"`
-	Password string `json:"password" binding:"required"               log:"-"`
+	Name     string  `json:"name"     binding:"required,min=2,max=100"`
+	Slug     string  `json:"slug"     binding:"required,min=2,max=50,alphanum"`
+	Password string  `json:"password" binding:"required"               log:"-"`
+	PlanID   OrgPlan `json:"planId" binding:"omitempty"`
 }
 
 // UpdateOrgRequest is the request body for updating an organization.
 type UpdateOrgRequest struct {
 	Name string `json:"name" binding:"omitempty,min=2,max=100"`
 	Slug string `json:"slug" binding:"omitempty,min=2,max=50,alphanum"`
+}
+
+// CreateOrgResponse is returned by POST /api/v1/orgs. For self-service orgs the
+// checkout URL points at Stripe Checkout; for platform-admin created orgs it is
+// empty (status is already active, no payment required).
+type CreateOrgResponse struct {
+	OrgResponse
+	CheckoutURL string `json:"checkoutUrl,omitempty"`
 }
 
 // OrgResponse extends Organization with the calling user's membership context.

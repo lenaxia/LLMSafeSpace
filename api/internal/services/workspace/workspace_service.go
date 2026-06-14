@@ -444,7 +444,7 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		}
 	}()
 
-	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -474,7 +474,7 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		}
 	}()
 
-	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -547,7 +547,7 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 		}
 	}()
 
-	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -681,33 +681,13 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 
 // verifyOwner returns a forbidden or not-found error if the user does not own
 // the workspace. Returns nil when the user is the owner.
+//
+// Per Epic 43 decision D6, access to an org workspace requires either being the
+// creator (meta.UserID) or an org admin (IsOrgAdmin). Plain org members can only
+// access workspaces they themselves created — they can no longer reach other
+// members' org workspaces. This makes verifyOwner equivalent to the former
+// verifyOrgAdmin; that method has been consolidated into this one.
 func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) error {
-	meta, err := s.dbService.GetWorkspace(ctx, workspaceID)
-	if err != nil {
-		return apierrors.NewInternalError("workspace_retrieval_failed", err)
-	}
-	if meta == nil {
-		return apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
-	}
-	if meta.UserID == userID {
-		return nil
-	}
-	if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
-		isMember, err := s.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
-		if err != nil {
-			return fmt.Errorf("check org membership: %w", err)
-		}
-		if isMember {
-			return nil
-		}
-	}
-	return apierrors.NewForbiddenError(
-		"workspace access denied",
-		fmt.Errorf("user %s does not have access to workspace %s", userID, workspaceID),
-	)
-}
-
-func (s *Service) verifyOrgAdmin(ctx context.Context, userID, workspaceID string) error {
 	meta, err := s.dbService.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return apierrors.NewInternalError("workspace_retrieval_failed", err)
@@ -728,10 +708,15 @@ func (s *Service) verifyOrgAdmin(ctx context.Context, userID, workspaceID string
 		}
 	}
 	return apierrors.NewForbiddenError(
-		"workspace admin access denied",
-		fmt.Errorf("user %s does not have admin access to workspace %s", userID, workspaceID),
+		"workspace access denied",
+		fmt.Errorf("user %s does not have access to workspace %s", userID, workspaceID),
 	)
 }
+
+// verifyOwner (above) is the single access check post-D6. It grants access to
+// the workspace creator or, for org workspaces, an org admin. The former
+// verifyOrgAdmin was identical in behaviour and has been removed; its call sites
+// now use verifyOwner directly.
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
 func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequest, namespace string) *v1.Workspace {
@@ -1081,7 +1066,7 @@ func (s *Service) MarkSessionSeen(ctx context.Context, userID, workspaceID, sess
 
 // RenameWorkspace updates the name of a workspace.
 func (s *Service) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
-	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 	return s.dbService.UpdateWorkspace(ctx, workspaceID, types.WorkspaceUpdates{Name: &name})

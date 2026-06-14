@@ -96,6 +96,23 @@ type Config struct {
 		BurstSize     int           `mapstructure:"burstSize"`
 		Strategy      string        `mapstructure:"strategy"`
 	} `mapstructure:"rateLimiting"`
+
+	// Billing holds Stripe configuration for org subscriptions (Epic 43).
+	// When SecretKey is empty, a NoopCheckoutProvider is used and the webhook
+	// endpoint rejects all deliveries — development/test mode.
+	Billing struct {
+		SecretKey          string `mapstructure:"secretKey"`
+		WebhookSecret      string `mapstructure:"webhookSecret"`
+		CheckoutSuccessURL string `mapstructure:"checkoutSuccessUrl"`
+		CheckoutCancelURL  string `mapstructure:"checkoutCancelUrl"`
+		PortalReturnURL    string `mapstructure:"portalReturnUrl"`
+		// PlanPrices maps an internal plan id to a Stripe Price id. Required for
+		// the self-service checkout flow; without an entry for a plan,
+		// CreateCheckoutSession returns an error. Populated from
+		// LLMSAFESPACE_BILLING_PLANPRICES_<PLAN> env vars (e.g.
+		// LLMSAFESPACE_BILLING_PLANPRICES_TEAM=price_abc).
+		PlanPrices map[string]string `mapstructure:"planPrices"`
+	} `mapstructure:"billing"`
 }
 
 // Load loads configuration from file and environment variables
@@ -218,6 +235,36 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_BURSTSIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.RateLimiting.BurstSize = n
+		}
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_BILLING_SECRETKEY"); v != "" {
+		config.Billing.SecretKey = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_BILLING_WEBHOOKSECRET"); v != "" {
+		config.Billing.WebhookSecret = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_BILLING_CHECKOUTSUCCESSURL"); v != "" {
+		config.Billing.CheckoutSuccessURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_BILLING_CHECKOUTCANCELURL"); v != "" {
+		config.Billing.CheckoutCancelURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_BILLING_PORTALRETURNURL"); v != "" {
+		config.Billing.PortalReturnURL = v
+	}
+	for _, envKey := range []string{
+		"LLMSAFESPACE_BILLING_PLANPRICES_TEAM",
+		"LLMSAFESPACE_BILLING_PLANPRICES_BUSINESS",
+		"LLMSAFESPACE_BILLING_PLANPRICES_ENTERPRISE",
+		"LLMSAFESPACE_BILLING_PLANPRICES_PRO",
+	} {
+		if v := os.Getenv(envKey); v != "" {
+			plan := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACE_BILLING_PLANPRICES_"))
+			if config.Billing.PlanPrices == nil {
+				config.Billing.PlanPrices = make(map[string]string)
+			}
+			config.Billing.PlanPrices[plan] = v
 		}
 	}
 

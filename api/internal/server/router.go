@@ -78,7 +78,7 @@ type RouterConfig struct {
 	BulkReloadHandler *handlers.BulkReloadHandler
 
 	UsageHandler   *handlers.UsageHandler
-	WebhookHandler *handlers.WebhookHandler
+	WebhookHandler *handlers.StripeWebhookHandler
 
 	CookieName string
 }
@@ -265,7 +265,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	}
 
 	if cfg.WebhookHandler != nil {
-		router.POST("/api/v1/webhooks/billing", cfg.WebhookHandler.Billing)
+		router.POST("/api/v1/webhooks/stripe", cfg.WebhookHandler.HandleWebhook)
 	}
 
 	// Secret management routes (Epic 10)
@@ -966,6 +966,8 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
 	orgAdminGroup.POST("/rotate-key", h.RotateKey)
+	orgAdminGroup.POST("/billing/checkout", h.Checkout)
+	orgAdminGroup.POST("/billing/portal", h.Portal)
 
 	if credH != nil {
 		orgAdminGroup.POST("/credentials", credH.Create)
