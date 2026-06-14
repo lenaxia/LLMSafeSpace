@@ -193,7 +193,7 @@ describe("useMessageQueue (refresh-based reconciliation)", () => {
     });
     await act(async () => { await result.current.refreshQueue(); });
 
-    expect(result.current.queuedMessages).toHaveLength(1, "message confirmed in Redis should persist without duplicate");
+    expect(result.current.queuedMessages).toHaveLength(1);
   });
 
   it("refreshQueue does not clobber messages from other sessions", async () => {
