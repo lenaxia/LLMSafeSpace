@@ -172,6 +172,11 @@ func TestBatchFlush_DLQOnDBFailure(t *testing.T) {
 		return svc.metrics.failed.Load() >= 1
 	}, 3*time.Second, 50*time.Millisecond, "failed events should be tracked")
 
+	// Wait for the async DLQ write to complete before checking mock expectations.
+	assert.Eventually(t, func() bool {
+		return mock.ExpectationsWereMet() == nil
+	}, 3*time.Second, 50*time.Millisecond, "all mock expectations should be met (including DLQ INSERT)")
+
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
