@@ -5,7 +5,7 @@ package workspace
 
 // pod_builder_test.go — regression tests for workspace pod construction.
 //
-// Each test in this file pins one behavioural assertion about the pod spec
+// Each test in this file pins one behavioral assertion about the pod spec
 // produced by buildPod(). Tests are named after the worklog/epic that
 // introduced the requirement they guard.
 

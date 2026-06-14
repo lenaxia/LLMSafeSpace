@@ -485,7 +485,7 @@ func TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField(t *testing.T) {
 
 // TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit updates the snapshot
 // to include limit.context when a model has ContextLimit set. This is the
-// serialised form that opencode reads from agent-config.json.
+// serialized form that opencode reads from agent-config.json.
 func TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
