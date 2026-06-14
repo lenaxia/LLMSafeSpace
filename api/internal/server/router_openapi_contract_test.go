@@ -302,6 +302,17 @@ var implOnlyAllowlist = map[route]bool{
 
 	// Session delete — proxies to opencode's DELETE /session/:id.
 	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId"}: true,
+
+	// Credential model probe — anon probe endpoint used by the credential
+	// create form to fetch the provider's model list before saving.
+	// Returns model IDs and any saved context limits for the UI table.
+	// Not in the public SDK contract (credential management UX only).
+	{method: "POST", path: "/api/v1/probe-models"}: true,
+
+	// Admin and user credential model probe — same purpose as above,
+	// for already-saved credentials.
+	{method: "GET", path: "/api/v1/admin/provider-credentials/:id/models"}: true,
+	{method: "GET", path: "/api/v1/provider-credentials/:id/models"}:       true,
 }
 
 // -----------------------------------------------------------------------------
