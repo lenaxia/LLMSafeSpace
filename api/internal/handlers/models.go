@@ -225,6 +225,23 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 	}
 	annotated = usable
 
+	// US-43.8: Filter models by org allowed_models / allowed_providers policy.
+	if h.policyChecker != nil && h.wsUpdater != nil {
+		meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
+		if err == nil && meta != nil && meta.OrgID != nil && *meta.OrgID != "" {
+			pol, polErr := h.policyChecker.GetEffectivePolicy(c.Request.Context(), *meta.OrgID)
+			if polErr == nil && pol != nil {
+				filtered := make([]annotatedModel, 0, len(annotated))
+				for _, m := range annotated {
+					if pol.IsModelAllowed(m.ID) && pol.IsProviderAllowed(m.ProviderID) {
+						filtered = append(filtered, m)
+					}
+				}
+				annotated = filtered
+			}
+		}
+	}
+
 	// Include current workspace model selection for convenience.
 	var currentModel string
 	if h.wsUpdater != nil {

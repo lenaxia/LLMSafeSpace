@@ -48,6 +48,7 @@ type Service struct {
 	credProvisioner  CredentialProvisioner
 	instanceSettings *settings.InstanceService
 	orgStore         OrgMembershipChecker
+	policyChecker    PolicyChecker
 	config           *Config
 }
 
@@ -56,8 +57,19 @@ type OrgMembershipChecker interface {
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 }
 
+// PolicyChecker reads the effective org policy for enforcement. The policy
+// service implements this; nil means no policy enforcement (dev/test).
+type PolicyChecker interface {
+	GetEffectivePolicy(ctx context.Context, orgID string) (*types.OrgPolicyValues, error)
+}
+
 func (s *Service) SetOrgStore(store OrgMembershipChecker) {
 	s.orgStore = store
+}
+
+// SetPolicyChecker installs the org policy checker for workspace quota enforcement.
+func (s *Service) SetPolicyChecker(checker PolicyChecker) {
+	s.policyChecker = checker
 }
 
 // CredentialProvisioner seeds workspace_credential_bindings from credential_auto_apply.
@@ -207,6 +219,42 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		}
 		if !isMember {
 			return nil, apierrors.NewForbiddenError("user is not a member of the specified org", fmt.Errorf("user %s is not a member of org %s", userID, *req.OrgID))
+		}
+
+		// US-43.8: Enforce org workspace quotas.
+		if s.policyChecker != nil {
+			pol, err := s.policyChecker.GetEffectivePolicy(ctx, *req.OrgID)
+			if err != nil {
+				return nil, apierrors.NewInternalError("policy_check_failed", err)
+			}
+			if pol != nil {
+				if maxTotal := pol.MaxWorkspaces(); maxTotal >= 0 {
+					count, err := s.dbService.CountWorkspacesByUserAndOrg(ctx, userID, *req.OrgID)
+					if err != nil {
+						return nil, apierrors.NewInternalError("workspace_count_failed", err)
+					}
+					if count >= maxTotal {
+						return nil, apierrors.NewValidationError(
+							fmt.Sprintf("workspace quota exceeded: you have %d of %d allowed workspaces in this org", count, maxTotal),
+							map[string]interface{}{"policy": "max_workspaces_per_member"},
+							fmt.Errorf("quota exceeded: %d >= %d", count, maxTotal),
+						)
+					}
+				}
+				if maxActive := pol.MaxActive(); maxActive >= 0 {
+					active, err := s.dbService.CountActiveWorkspacesByUserAndOrg(ctx, userID, *req.OrgID)
+					if err != nil {
+						return nil, apierrors.NewInternalError("active_workspace_count_failed", err)
+					}
+					if active >= maxActive {
+						return nil, apierrors.NewValidationError(
+							fmt.Sprintf("active workspace quota exceeded: you have %d of %d concurrent active workspaces", active, maxActive),
+							map[string]interface{}{"policy": "max_active_workspaces_per_member"},
+							fmt.Errorf("active quota exceeded: %d >= %d", active, maxActive),
+						)
+					}
+				}
+			}
 		}
 	}
 

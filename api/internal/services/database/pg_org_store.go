@@ -6,6 +6,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -72,6 +73,11 @@ type OrgStore interface {
 	DeclineInvitation(ctx context.Context, invID string) error
 	DeleteInvitation(ctx context.Context, invID string) error
 	CountInvitationsLastHour(ctx context.Context, orgID string) (int, error)
+
+	// --- US-43.7: Policies ---
+	GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error)
+	SetOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey, value json.RawMessage, updatedBy string) error
+	DeleteOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey) error
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -1022,4 +1028,62 @@ func (s *PgOrgStore) CountInvitationsLastHour(ctx context.Context, orgID string)
 		return 0, fmt.Errorf("count invitations last hour: %w", err)
 	}
 	return count, nil
+}
+
+// --- US-43.7: Policy implementations ---
+
+func (s *PgOrgStore) GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT key, value, updated_by, updated_at
+		 FROM org_policies WHERE org_id = $1`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get org policies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*types.OrgPolicy
+	for rows.Next() {
+		var p types.OrgPolicy
+		var updatedBy sql.NullString
+		if err := rows.Scan(&p.Key, &p.Value, &updatedBy, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan policy: %w", err)
+		}
+		p.OrgID = orgID
+		p.UpdatedBy = updatedBy.String
+		out = append(out, &p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate policies: %w", err)
+	}
+	if out == nil {
+		out = []*types.OrgPolicy{}
+	}
+	return out, nil
+}
+
+func (s *PgOrgStore) SetOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey, value json.RawMessage, updatedBy string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO org_policies (org_id, key, value, updated_by, updated_at)
+		 VALUES ($1, $2, $3, $4, NOW())
+		 ON CONFLICT (org_id, key) DO UPDATE
+		   SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+		orgID, string(key), []byte(value), updatedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("set org policy: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) DeleteOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM org_policies WHERE org_id = $1 AND key = $2`,
+		orgID, string(key),
+	)
+	if err != nil {
+		return fmt.Errorf("delete org policy: %w", err)
+	}
+	return nil
 }

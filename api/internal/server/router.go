@@ -80,6 +80,7 @@ type RouterConfig struct {
 	UsageHandler       *handlers.UsageHandler
 	WebhookHandler     *handlers.StripeWebhookHandler
 	InvitationsHandler *handlers.InvitationsHandler
+	PolicyHandler      *handlers.PolicyHandler
 
 	CookieName string
 }
@@ -313,7 +314,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler)
 	}
 
 	// Metrics endpoint.
@@ -954,7 +955,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -996,6 +997,12 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		orgAdminGroup.POST("/credentials/:credID/auto-apply", credH.CreateAutoApply)
 		orgAdminGroup.GET("/credentials/:credID/auto-apply", credH.ListAutoApply)
 		orgAdminGroup.DELETE("/credentials/:credID/auto-apply", credH.DeleteAutoApply)
+	}
+
+	if polH != nil {
+		orgAdminGroup.GET("/policies", polH.Get)
+		orgAdminGroup.PUT("/policies/:key", polH.Put)
+		orgAdminGroup.DELETE("/policies/:key", polH.Delete)
 	}
 
 	// Public invitation routes (token is the credential).

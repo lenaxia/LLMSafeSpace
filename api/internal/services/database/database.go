@@ -611,6 +611,35 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 	return workspaces, pagination, nil
 }
 
+func (s *Service) CountWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
+	var count int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM workspaces WHERE user_id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		userID, orgID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count workspaces by user and org: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
+	var count int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM workspaces w
+		 WHERE w.user_id = $1 AND w.org_id = $2 AND w.deleted_at IS NULL
+		 AND (
+		   SELECT e.to_phase FROM workspace_lifecycle_events e
+		   WHERE e.workspace_id = w.id
+		   ORDER BY e.event_time DESC
+		   LIMIT 1
+		 ) = 'Active'`,
+		userID, orgID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active workspaces by user and org: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
         INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy,

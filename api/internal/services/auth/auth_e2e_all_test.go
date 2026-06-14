@@ -653,6 +653,12 @@ func (m *apiKeyAwareDB) DeleteWorkspace(context.Context, string) error { return 
 func (m *apiKeyAwareDB) ListWorkspaces(context.Context, string, int, int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	return nil, nil, nil
 }
+func (m *apiKeyAwareDB) CountWorkspacesByUserAndOrg(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+func (m *apiKeyAwareDB) CountActiveWorkspacesByUserAndOrg(context.Context, string, string) (int, error) {
+	return 0, nil
+}
 func (m *apiKeyAwareDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *apiKeyAwareDB) MarkWorkspaceDeleted(context.Context, string)                     {}
 func (m *apiKeyAwareDB) CheckPermission(string, string, string, string) (bool, error) {
