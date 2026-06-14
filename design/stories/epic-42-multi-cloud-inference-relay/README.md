@@ -82,11 +82,11 @@ The controller maintains **exactly 1 OCI VM and 1 GCP VM** at all times. The rou
 
 1. **WireGuard as the security boundary.** No TLS, no certs, no path-secret, no Caddy. The relay binary is plain HTTP on the WG interface only. Public internet sees one UDP port per VM. Authentication is WG public-key pinning — only the router's WG public key is accepted as a peer.
 
-2. **In-cluster router for routing intelligence.** Workspace pods call a cluster-local Service, not an external hostname. The router handles sticky session assignment, 429 detection, drain/failover, and retry — all without DNS changes, pod restarts, or TTL waits.
+2. **In-cluster router for routing intelligence.** Workspace pods call a cluster-local Service, not an external hostname. The router handles weighted relay selection, 429 detection, drain/failover, and retry — all without DNS changes, pod restarts, or TTL waits.
 
 3. **Destroy-and-recreate for all rotation.** No in-place key rotation, no IP swapping, no config pushes to running VMs. To rotate an IP, a WG key, or recover from failure: provision a new VM, verify healthy, add to router pool, destroy the old one. The other VM carries traffic during the ~60s window. Relay VMs are stateless — there is nothing to preserve.
 
-4. **OCI-primary, GCP-secondary.** OCI (10 TB egress) carries the majority of traffic. GCP (1 GB egress) is failover and IP diversity. The router prefers OCI for new sessions when both are healthy but weighted toward OCI for capacity.
+4. **OCI-primary, GCP-failover.** OCI (10 TB egress) carries all traffic when healthy. GCP (1 GB egress) is failover only — its monthly egress quota would be exhausted in hours under normal load, so it is reserved exclusively for IP diversity when OCI is down. The router sends 100% of traffic to OCI when healthy; GCP receives traffic only during OCI failure or rotation.
 
 5. **Free-tier only, verified.** All claims about free-tier limits are verified against provider documentation (see Stated Assumptions). AWS is excluded — the new free tier model (credit-based, 6-month auto-close) does not offer reliable perpetual free compute.
 
@@ -104,18 +104,19 @@ The controller maintains **exactly 1 OCI VM and 1 GCP VM** at all times. The rou
 │  Workspace Pods                                                    │
 │    └─ INFERENCE_RELAY_BASEURL = http://relay-router:8080           │
 │                                                                    │
-│  relay-router (Deployment, 2 replicas, anti-affinity)              │
+│  relay-router (Deployment, 1 replica, PDB minAvailable=1)          │
 │    └─ Service: relay-router (ClusterIP)                            │
+│    └─ Service: relay-wg (LoadBalancer, MetalLB, UDP 51820)         │
 │    └─ WireGuard interface: wg0 (10.42.42.1)                        │
 │    └─ Healthy relays list (computed from health checks)            │
-│    └─ Session routing: rendezvous hash(workspaceID)              │
+│    └─ Relay routing: weighted selection (OCI primary, GCP failover) │
 │                                                                    │
 │  InferenceRelay Controller (same binary as workspace controller)   │
 │    └─ Watches InferenceRelay CR                                    │
 │    └─ OCI driver: provisions/destroys OCI VMs                      │
 │    └─ GCP driver: provisions/destroys GCP VMs                      │
 │    └─ Generates WG keypairs, writes relay-router ConfigMap         │
-│    └─ Health-checks each VM over WG every 15s                      │
+│    └─ Reads relay health from router /metrics (not over WG)        │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
          │                                          │
@@ -148,7 +149,7 @@ cmd/relay-proxy/
 
 **Endpoints:**
 - `GET /healthz` → `200 OK` (no body) — for controller health checks over WG
-- `GET /metrics` → Prometheus format — request counts by status code, keepalive counter
+- `GET /metrics` → Prometheus format — request counts by status code, keepalive counter, egress bytes total
 - `* /*` → transparent proxy to `UPSTREAM_URL` (default `https://opencode.ai/zen/v1`), streams response back
 
 **Environment:**
@@ -188,6 +189,31 @@ The relay-router Deployment runs two containers:
 
 This follows the established pattern in `design/stories/epic-32-vpn-network-iam/README.md` for WireGuard sidecars with `NET_ADMIN` + `NET_RAW` capabilities.
 
+**WireGuard ingress — MetalLB LoadBalancer (not NodePort):**
+Relay VMs must reach the router's WG endpoint from outside the cluster. The cluster runs on bare-metal Talos (no cloud LB). A UDP NodePort is NOT suitable: NodePorts are not load-balanced across nodes — if the target node dies, all WG tunnels drop simultaneously with no failover.
+
+Instead, deploy **MetalLB** (the standard bare-metal Kubernetes LB) with a `LoadBalancer` Service on UDP 51820. MetalLB supports UDP in both L2 and BGP modes. This gives the WG endpoint a stable VIP that is reachable regardless of which node the router pod is scheduled on.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-wg
+spec:
+  type: LoadBalancer
+  loadBalancerIP: <MetalLB-allocated-VIP>
+  ports:
+    - port: 51820
+      protocol: UDP
+      targetPort: 51820
+  selector:
+    app: relay-router
+```
+
+The `RouterEndpoint` in the CRD spec (`relay-gw.safespaces.dev:51820`) resolves to this VIP via DNS. MetalLB is not currently deployed in the cluster and must be installed as a prerequisite (US-42.8).
+
+If MetalLB is unavailable (e.g. network constraints), the fallback is a dedicated WG gateway pod with `hostNetwork: true` pinned to a specific node, with a DNS name pointing at that node's IP. This is less resilient (single node) but avoids the MetalLB dependency.
+
 **Why WireGuard over mTLS/TLS:**
 - Eliminates CA, cert generation, cert rotation, Caddy, DNS-for-cert-validation
 - WG public-key pinning is stronger auth than a bearer token or path secret
@@ -197,13 +223,15 @@ This follows the established pattern in `design/stories/epic-32-vpn-network-iam/
 
 ### Layer 3: In-Cluster Relay Router (`cmd/relay-router/`)
 
-A Go HTTP server running as a Deployment (2 replicas, pod anti-affinity). This is the only endpoint workspace pods talk to.
+A Go HTTP server running as a Deployment (1 replica). This is the only endpoint workspace pods talk to.
+
+**Why single replica:** WireGuard requires one interface (wg0) with one IP (10.42.42.1) and one keypair. Two replicas cannot share a WG IP or keypair — each pod has its own network namespace, so each would need a separate wg0, IP, and peer config on every relay VM. MetalLB in L2 mode also routes UDP to one pod at a time, making the second replica's WG sidecar idle. The router is a lightweight Go binary that restarts in <1s; during restart, opencode's retry logic covers the gap. A `PodDisruptionBudget` (`minAvailable: 1`) prevents voluntary eviction during node drains. HA via a leader-elected WG gateway is a future concern if the single-replica restart gap proves problematic.
 
 **Responsibilities:**
 
-1. **Sticky session routing (rendezvous hashing):** Each workspace is deterministically assigned to a relay using rendezvous (HRW) hashing — `max(hash(workspaceID, relayID))` across healthy relays. Unlike simple modulo hashing, rendezvous hashing minimizes disruption when the relay set changes: adding or removing one relay only moves the workspaces that were assigned to that specific relay, not half the fleet. No shared session state — both router replicas compute the same assignment independently. Stickiness is implicit from the hash.
+1. **Weighted relay selection:** The router selects a relay for each request using weighted random selection. OCI receives 100% of traffic when healthy. GCP receives traffic only when OCI is unhealthy, draining, or being rotated. This matches the egress reality: GCP's 1 GB/month quota would be exhausted in hours under any normal load, so GCP is reserved exclusively for failover and IP diversity — not traffic splitting. Relays are stateless byte-pipes (no per-session state on the relay or upstream), so there is no state that stickiness would protect. Weighted random is the simplest correct solution.
 
-2. **Health checking:** Each router replica independently health-checks each relay every 15s via `GET http://10.42.42.x:8080/healthz` over the WG tunnel. A relay is marked unhealthy after 3 consecutive failures (45s).
+2. **Health checking:** The router health-checks each relay every 15s via `GET http://10.42.42.x:8080/healthz` over the WG tunnel. A relay is marked unhealthy after 3 consecutive failures (45s). The router exposes relay health and per-relay egress bytes via its own `/metrics` endpoint, which the controller scrapes to determine fleet status (see Layer 4).
 
 3. **Proactive 429 detection (two-tier):**
    - **Tier 1 — Immediate probe (first 429):** When the router receives the first 429 from a relay, it immediately sends a probe request (`GET /models`) to that relay. If the probe also returns 429, the relay is marked `suspect` and new sessions are weighted away from it (but not fully drained — could be transient).
@@ -211,12 +239,12 @@ A Go HTTP server running as a Deployment (2 replicas, pod anti-affinity). This i
    - Existing in-flight streams on the draining relay are left to complete (or fail naturally if the IP is hard-blocked)
    - This prevents the scenario where dozens of users hit 429s before the 5-minute window elapses
 
-4. **Failover:** When a relay transitions from healthy → unhealthy, it is removed from the healthy relay set. With rendezvous hashing, only workspaces previously assigned to the failed relay are remapped to the survivor. In-flight streams to the failed relay break — opencode's retry logic handles this.
+4. **Failover:** When OCI transitions healthy → unhealthy, all traffic is routed to GCP (if healthy). In-flight streams to the failed relay break — opencode's retry logic handles this. If both are unhealthy, the router enters fallback mode (see below).
 
-5. **Rebalancing:** When a relay rejoins (replacement VM provisioned and healthy), it is added back to the healthy relay set. With rendezvous hashing, only a proportional share of workspaces migrate to the new relay on their next session. Existing sessions on the surviving relay are NOT force-migrated — they move on their next natural session boundary.
+5. **Rebalancing:** When OCI rejoins (replacement VM provisioned and healthy), traffic returns to OCI. Existing sessions on GCP are NOT force-migrated — they complete on GCP, and new requests go to OCI.
 
 6. **Fallback mode (both relays down):** When no relays are healthy, the router enters fallback mode and proxies directly to `opencode.ai/zen/v1` from cluster IPs. To avoid worsening the IP throttle situation:
-   - **Global rate limit of 1 req/2s** across all workspaces (token bucket, shared across router replicas via Redis — reuses the existing Valkey/Redis cache service). Requests exceeding the rate receive `429 Too Many Requests` with `Retry-After: 2` — opencode's retry logic handles this gracefully.
+   - **Global rate limit of 1 req/2s** across all workspaces (token bucket, local to the router replica). Requests exceeding the rate receive `429 Too Many Requests` with `Retry-After: 2` — opencode's retry logic handles this gracefully.
    - **Concurrency cap of 1** — only one in-flight request to Zen at a time. Streaming responses hold the slot until complete. This makes fallback extremely slow but prevents IP escalation.
    - **`X-Relay-Status: fallback` header** on all responses so the frontend can display a degraded-mode banner.
    - **Queue depth limit of 0** — if a request arrives while another is in-flight, it's immediately rejected (no queueing). Users see a 429 and retry after a few seconds. Queueing would create artificial latency and memory pressure.
@@ -224,25 +252,34 @@ A Go HTTP server running as a Deployment (2 replicas, pod anti-affinity). This i
    - This is intentionally hostile UX — fallback is a last resort to keep *some* free-tier access alive while the controller reprovisions, not a sustainable operating mode.
 
 **How the router learns relay IPs:**
-The controller writes a ConfigMap (`relay-router-peers`) that the router mounts as a volume and watches (via fsnotify or poll):
+The controller writes a ConfigMap (`relay-router-peers`) that the router mounts as a volume. The router re-reads the ConfigMap every 5s (simple poll). fsnotify is not used — K8s volume mounts use symlink swaps that fsnotify does not reliably detect. At 2 relays and a 5s poll interval, the cost is negligible.
 ```json
 {
   "relays": [
-    {"id": "oci-1", "wgIP": "10.42.42.2", "provider": "oci", "healthy": true},
-    {"id": "gcp-1", "wgIP": "10.42.42.3", "provider": "gcp", "healthy": true}
+    {"id": "oci-1", "wgIP": "10.42.42.2", "provider": "oci", "state": "healthy"},
+    {"id": "gcp-1", "wgIP": "10.42.42.3", "provider": "gcp", "state": "healthy"}
   ]
 }
 ```
-The router independently verifies health — it doesn't trust the ConfigMap's `healthy` field blindly.
+The `state` field (`healthy`, `draining`, `unhealthy`) drives the router's routing decisions: `draining` stops new requests immediately. The router independently verifies health via its own health checks — it doesn't trust the ConfigMap's state blindly for the `healthy` determination.
 
-**Workspace identification for stickiness:**
-The router extracts the workspace ID from the request. Options:
-- HTTP header injected by the workspace controller: `X-Workspace-ID: <uid>`
-- The existing Basic Auth username (already `opencode` for all pods — not unique enough)
-- **Recommended: new header `X-Workspace-ID`** — the workspace controller already sets per-pod env vars; adding one more header to the relay injector is a one-line change
+**Workspace identification (optional, for metrics only):**
+The router extracts the workspace ID from the `X-Workspace-ID` header if present. This is used only for per-workspace metrics and logging — not for routing (relays are stateless, so weighted random is sufficient).
+
+The `@ai-sdk/openai-compatible` package (v2.0.50+) supports a `headers` field in the provider config (verified from npm docs). The relay injector's `options` struct (`cmd/workspace-agentd/relay_injector.go:136-138`) currently has only `{BaseURL, APIKey}` — adding a `Headers map[string]string` field is a small, localized change:
+
+```go
+type options struct {
+    BaseURL string            `json:"baseURL"`
+    APIKey  string            `json:"apiKey"`
+    Headers map[string]string `json:"headers,omitempty"`
+}
+```
+
+The relay injector sets `Headers: {"X-Workspace-ID": workspaceID}` when building the `opencode-relay` provider entry. The header is consumed by the router and stripped before forwarding to the relay VM.
 
 **Relay-router as a reverse proxy:**
-The router receives the full request from the pod, selects a relay, rewrites the URL to `http://10.42.42.x:8080/<original-path>`, and streams the response back. It injects `X-Workspace-ID` in neither direction — that header is for the router's internal routing only.
+The router receives the full request from the pod, selects a relay via weighted random, rewrites the URL to `http://10.42.42.x:8080/<original-path>`, and streams the response back. It strips `X-Workspace-ID` before forwarding — that header is for the router's metrics only.
 
 ### Layer 4: InferenceRelay Controller
 
@@ -280,26 +317,36 @@ Runs as a new reconciler inside the existing workspace controller binary (gated 
 ```
 
 **Provisioning failure circuit breaker:**
-If a provider slot fails to reach healthy state after 3 consecutive provisioning attempts, the controller:
-1. Stops the destroy/provision loop for that slot
-2. Sets a `ProvisioningFailed` condition on the InferenceRelay CR with details (last error, attempt count, provider)
-3. Fires a Prometheus alert (`llmsafespace_relay_provisioning_failed`)
-4. The surviving relay carries all traffic (via router failover)
-5. The controller does NOT retry until the operator clears the condition (indicating the root cause — bad template, credentials, capacity — has been fixed)
+If a provider slot fails to reach healthy state after 3 consecutive provisioning attempts, the controller distinguishes between two error classes:
 
-This prevents infinite provisioning loops from burning cloud API quotas or creating/destroying VMs in a tight loop when cloud-init is broken.
+- **Capacity errors** (OCI "out of host capacity", transient API throttling): These are NOT counted toward the circuit breaker. The controller retries with exponential backoff (30s, 60s, 120s, ... up to 10m). Capacity errors are expected on OCI Always Free A1 shapes (A5).
+- **Configuration errors** (invalid credentials, bad cloud-init template, image not found, quota exceeded): These ARE counted toward the circuit breaker. After 3 consecutive config-error provisioning attempts, the controller:
+  1. Stops the destroy/provision loop for that slot
+  2. Sets a `ProvisioningFailed` condition on the InferenceRelay CR with details (last error, attempt count, provider)
+  3. Fires a Prometheus alert (`llmsafespace_relay_provisioning_failed`)
+  4. The surviving relay carries all traffic (via router failover)
+  5. The controller does NOT retry until the operator clears the condition (indicating the root cause has been fixed)
+
+This prevents infinite provisioning loops from burning cloud API quotas while allowing transient capacity issues to self-resolve.
 
 **Reconcile loop:**
 1. Read `InferenceRelay` CR spec
-2. For each provider in `spec.providers` (always OCI + GCP):
+2. Scrape `relay-router` `/metrics` endpoint to get per-relay health status (`relay_router_relay_healthy`), in-flight stream counts (`relay_router_active_streams`), and per-relay egress bytes (`relay_router_relay_egress_bytes`). The controller does NOT health-check relays over WG directly — it is not in the WG mesh. The router is the sole component with WG access.
+3. For each provider in `spec.providers` (always OCI + GCP):
    a. Check if a relay VM exists for this provider
-   b. If not, provision one (generate WG keypair, render cloud-init, call provider API). Increment provisioning attempt counter.
-   c. Health-check existing VM over WG tunnel
-   d. If unhealthy for >15m, destroy and reprovision
-   e. If router reports 429 rotation needed, mark draining, provision replacement
-   f. **If 3 consecutive provisioning attempts fail to reach healthy, set `ProvisioningFailed` condition and stop retrying** (circuit breaker)
-3. Update ConfigMap `relay-router-peers` with current relay IPs and health status
-4. Update CR status with observed state, conditions, and metrics
+   b. If not, provision one (generate WG keypair, render cloud-init, call provider API). Classify the result: capacity error → retry with backoff (not counted); config error → increment provisioning attempt counter.
+   c. Read relay health from the scraped router metrics. If router reports the relay as unhealthy for >15m, drain and reprovision (see step e for drain flow).
+   d. **Egress quota check:** Compare per-relay egress bytes against provider quota (OCI: 10 TB/mo, GCP: 1 GB/mo). If GCP egress exceeds ~900 MB (90% of 1 GB), mark the relay `quota-exhausted`, set `quota-exhausted` in the ConfigMap so the router deprioritizes it, and set a CR condition. Do not destroy — the quota resets monthly at the billing boundary.
+   e. **Graceful drain + destroy flow** (triggered by 429 rotation, unhealthy >15m, or manual):
+      1. Controller writes `"state": "draining"` for the relay in the `relay-router-peers` ConfigMap
+      2. Router polls ConfigMap within 5s, stops routing new requests to the draining relay
+      3. Controller waits for `relay_router_active_streams{relay=<id>}` to reach 0 (polled from router /metrics, timeout 60s)
+      4. Controller destroys the VM via cloud API
+      5. Controller provisions a replacement VM
+      6. On replacement healthy, controller updates ConfigMap with new relay IP + `"state": "healthy"`
+   f. **If 3 consecutive config-error provisioning attempts fail, set `ProvisioningFailed` condition and stop retrying** (circuit breaker)
+4. Update ConfigMap `relay-router-peers` with current relay IPs, states, and health status
+5. Update CR status with observed state, conditions, and metrics
 
 ### Layer 5: InferenceRelay CRD
 
@@ -371,13 +418,16 @@ type RelayProviderSpec struct {
     Region string `json:"region"`
 
     // CredentialsRef references a K8s Secret containing provider credentials.
-    //   oci: API key (tenancy OCID, user OCID, fingerprint, private key)
-    //   gcp: Service account JSON key
-    CredentialsRef string `json:"credentialsRef"`
+    // Must be in the controller's namespace. The validating webhook checks
+    // that the Secret exists and contains the required keys:
+    //   oci: tenancy, user, fingerprint, key, region
+    //   gcp: service-account-json
+    // +kubebuilder:validation:MinLength=1
+    CredentialsRef corev1.LocalObjectReference `json:"credentialsRef"`
 
     // Shape overrides the default free-tier shape.
     //   oci default: VM.Standard.A1.Flex (2 OCPU, 12 GB, Arm)
-    //   gcp default: e2-micro (shared vCPU, 1 GB)
+    //   gcp default: e2-micro (0.25 shared vCPU, 1 GB)
     // +optional
     Shape string `json:"shape,omitempty"`
 }
@@ -462,14 +512,20 @@ type RelayInstanceStatus struct {
     Region     string       `json:"region"`
     WgIP       string       `json:"wgIP"`
     PublicIP   string       `json:"publicIP"`
-    State      string       `json:"state"` // "provisioning", "healthy", "draining", "unhealthy", "terminated", "provisioning-failed"
+    State      string       `json:"state"` // "provisioning", "healthy", "draining", "unhealthy", "quota-exhausted", "terminated", "provisioning-failed"
     Healthy    bool         `json:"healthy"`
     LastCheck  *metav1.Time `json:"lastCheck,omitempty"`
     Requests429 int         `json:"429Count,omitempty"`
     TotalRequests int       `json:"totalRequests,omitempty"`
-    // ProvisioningAttempts is the count of consecutive failed provisioning
-    // attempts for this provider slot. Reset to 0 on success. When it reaches 3,
-    // the circuit breaker trips and sets state to "provisioning-failed".
+    // EgressBytes is the cumulative outbound bytes proxied by this relay,
+    // scraped from the router's /metrics (relay_router_relay_egress_bytes).
+    // Used for GCP quota tracking (1 GB/mo limit).
+    EgressBytes int64       `json:"egressBytes,omitempty"`
+    // ProvisioningAttempts is the count of consecutive config-error provisioning
+    // attempts for this provider slot. Capacity errors (out-of-capacity,
+    // throttling) do NOT increment this counter — they retry with backoff.
+    // Reset to 0 on success. When it reaches 3, the circuit breaker trips
+    // and sets state to "provisioning-failed".
     ProvisioningAttempts int `json:"provisioningAttempts,omitempty"`
     // LastProvisionError is the error message from the most recent failed
     // provisioning attempt. Populated when ProvisioningAttempts > 0.
@@ -517,7 +573,7 @@ controller/internal/relay/
 
 Shared across providers. Renders a single `user-data` script that:
 
-1. Downloads the relay binary from the artifact location (GitHub Release / OCI artifact)
+1. Downloads the relay binary from the artifact location (GitHub Release / OCI artifact) with SHA-256 integrity verification
 2. Creates the WireGuard interface with the embedded private key and router peer
 3. Writes the relay binary's systemd unit (binds to WG IP only)
 4. Starts the relay proxy
@@ -529,7 +585,9 @@ Shared across providers. Renders a single `user-data` script that:
 #!/bin/bash
 set -euo pipefail
 
-# Download relay binary (try GitHub Releases first, then GCS/OCI mirror fallback)
+# Download relay binary with SHA-256 integrity verification.
+# The controller embeds RELAY_BINARY_SHA256 (per-arch) into cloud-init at
+# render time, sourced from the GitHub Release checksums file.
 ARCH=$(uname -m)
 case "$ARCH" in
   aarch64) BINARY=relay-proxy-arm64 ;;
@@ -541,13 +599,14 @@ download_binary() {
     "https://storage.googleapis.com/llmsafespace-artifacts/$BINARY" \
     "https://objectstorage.us-ashburn-1.oraclecloud.com/n/llmsafespace/b/artifacts/o/$BINARY"; do
     if curl -fsSL --connect-timeout 10 "$url" -o /usr/local/bin/relay-proxy; then
+      echo "${RELAY_BINARY_SHA256}  /usr/local/bin/relay-proxy" | sha256sum -c - || return 1
       chmod +x /usr/local/bin/relay-proxy
       return 0
     fi
   done
   return 1
 }
-download_binary || { echo "FATAL: could not download relay binary from any source"; exit 1; }
+download_binary || { echo "FATAL: could not download/verify relay binary from any source"; exit 1; }
 
 # Configure WireGuard
 apt-get update && apt-get install -y wireguard-tools
@@ -606,32 +665,35 @@ dpkg-reconfigure -f noninteractive unattended-upgrades
 
 ## Stated Assumptions
 
-All free-tier claims below were verified against provider documentation on 2026-06-13. Items marked ⚠️ could not be fully verified from published docs and require live testing before implementation.
+All assumptions below were validated against provider documentation and technical sources on 2026-06-13. Items marked ⚠️ require live testing before implementation.
+
+**A0 — Throttle is per-IP (Cloudflare egress ranges), not per-key.** This is the epic's foundational assumption. Validated by the project owner: the same `public` API key works without issue from a residential IP. Zen blocks Cloudflare's egress IP ranges, not the anonymous key. (Worklog `0184` originally concluded the throttle was per-key — that conclusion was incorrect and has been corrected in-place.)
 
 | # | Assumption | Status | Source / Verification |
 |---|-----------|--------|----------------------|
+| A0 | Zen throttles by source IP (Cloudflare egress ranges), not by API key | ✅ Validated | Project owner confirmed: same `public` key works from residential IP. CF IPs are blocked. Worklog `0184` corrected. |
 | A1 | OCI Always Free is for the life of the account, no expiration | ✅ Verified | OCI docs: "free of charge in the home region of the tenancy, for the life of the account" |
 | A2 | OCI A1 shape (VM.Standard.A1.Flex) provides 2 OCPU / 12 GB free | ✅ Verified | OCI Always Free docs: "equivalent to 2 OCPUs and 12 GB of memory" |
 | A3 | OCI includes 10 TB/month outbound data transfer free | ✅ Verified | OCI Always Free docs: "you get 10 TB per month of outbound data" |
 | A4 | OCI Always Free resources must be created in the home region only | ✅ Verified | OCI docs: "You must create the Always Free compute instances in your home region" |
 | A5 | OCI A1 instances suffer "out of host capacity" errors requiring retries | ✅ Verified | OCI docs explicitly mention this: "If you receive an 'out of host capacity' error..." |
-| A6 | OCI will reclaim idle Always Free compute instances (CPU/network/memory <20% for 7 days) | ✅ Verified — **CRITICAL DESIGN RISK** | OCI docs: "Idle Always Free compute instances may be reclaimed... if, during a 7-day period, CPU utilization for the 95th percentile is less than 20%, Network utilization is less than 20%, Memory utilization is less than 20%" |
-| A7 | OCI supports ephemeral and reserved public IPs; ephemeral IPs can be released to get a new IP | ✅ Verified (concept) | OCI Networking Overview: "There are two types of public IPs: ephemeral and reserved." |
-| A8 | OCI free-tier limit on number of ephemeral/reserved public IPs | ⚠️ Unverified | OCI docs do not specify the exact IP allocation limit for Always Free tenancies. Must verify empirically. |
-| A9 | OCI supports cloud-init / user-data on Linux images (Oracle Linux, Ubuntu) | ⚠️ Unverified from docs | Not explicitly mentioned in Always Free docs. Widely reported to be supported. Verify during US-42.2. |
+| A6 | OCI will reclaim idle Always Free compute instances (CPU/network/memory <20% for 7 days) | ✅ Verified — **CRITICAL DESIGN RISK** | OCI docs: "Idle Always Free compute instances may be reclaimed... if, during a 7-day period, CPU utilization for the 95th percentile is less than 20%, Network utilization is less than 20%, Memory utilization is less than 20% (applies to A1 shapes only)" |
+| A7 | OCI supports ephemeral and reserved public IPs; ephemeral IPs can be released to get a new IP | ✅ Verified | OCI Networking Overview: "There are two types of public IPs: ephemeral and reserved." |
+| A8 | OCI free-tier limit on number of ephemeral/reserved public IPs | ⚠️ Empirical | OCI docs do not publish a hard limit for Always Free tenancies. IP limits are visible in Console under Governance > Limits, Quotas and Usage. Must verify empirically during US-42.5. Destroy-and-recreate allocates a new ephemeral IP each time — if the limit is 2 (common default), rotation is constrained. |
+| A9 | OCI supports cloud-init / user-data on Linux images (Oracle Linux, Ubuntu) | ✅ Verified | OCI "Creating an Instance" docs: "Initialization script: User data can be used by cloud-init to run custom scripts or provide custom cloud-init configuration." Always Free eligible images include Ubuntu and Oracle Linux, both of which ship cloud-init. Max userdata size: 32,000 bytes. |
 | A10 | AWS free tier has fundamentally changed to a credit-based model (6-month Free plan, auto-close) | ✅ Verified | AWS Free Tier FAQ: Free plan "expires the earlier of 6-months from the date you opened your AWS account, or once you have exhausted your Free Tier credits." AWS is **excluded** from this epic. |
 | A11 | GCP Always Free e2-micro is available in us-west1, us-central1, us-east1 only | ✅ Verified | GCP Free Tier docs: "1 non-preemptible e2-micro VM instance per month in one of the following US regions" |
-| A12 | GCP e2-micro includes 1 GB/month outbound data transfer (North America, excl. China/Australia) | ✅ Verified | GCP Free Tier docs: "1 GB of outbound data transfer from North America to all region destinations" |
+| A12 | GCP e2-micro includes 1 GB/month outbound data transfer (North America, excl. China/Australia) | ✅ Verified | GCP Free Tier docs: "1 GB of outbound data transfer from North America to all region destinations (excluding China and Australia) per month" |
 | A13 | GCP Free Tier has no end date but can be changed with 30 days notice | ✅ Verified | GCP docs: "Google reserves the right to change the offering, including changing or eliminating usage limits, with 30 days' advance notice." |
 | A14 | GCP Free Tier requires an active billing account (Paid or Free Trial) | ✅ Verified | GCP docs: "A Google Cloud billing account is required to access the Google Cloud Free Tier." |
-| A15 | GCP e2-micro specs (vCPU, memory) | ⚠️ Unverified | GCP machine type docs were not fully scrapable. Must verify at implementation time. |
+| A15 | GCP e2-micro specs: 2 vCPUs (0.25 fractional/shared-core), 1 GB memory, burstable | ✅ Verified | GCP machine types docs: "e2-micro: 2 vCPUs, 0.25 fractional vCPU, 1 GB memory." Shared-core: "sustains 2 vCPUs, each for 12.5% of CPU time totaling 25% CPU time." Burstable to 100% per vCPU for up to 30 seconds. Max egress: 1 Gbps. |
 | A16 | GCP supports startup scripts (equivalent of cloud-init) on VM creation | ✅ Verified | GCP Compute Engine docs reference startup scripts as a standard feature. |
 | A17 | OCI A1 shape network bandwidth scales with OCPUs | ✅ Verified | OCI docs: "The network bandwidth and number of VNICs scale proportionately with the number of OCPUs." |
 | A18 | OCI E2.1.Micro shape has 50 Mbps bandwidth to internet | ✅ Verified | OCI docs: "up to 50 Mbps network bandwidth via the internet" |
 | A19 | WireGuard is available in standard Linux kernels ≥5.6 (no DKMS needed) | ✅ Verified | WireGuard was merged into the Linux kernel in 5.6 (2020-03). OCI Oracle Linux 8/9 and GCP Ubuntu 20.04+ images ship kernels ≥5.6. |
-| A20 | WireGuard UDP hole-punching works through cloud NAT (relay VMs behind cloud NAT can maintain persistent connections) | ⚠️ Unverified | `PersistentKeepalive = 25` in the WG config is the standard NAT-traversal mechanism. Should work but needs verification per provider's NAT implementation. |
-| A21 | Relay VMs can reach the router's WG endpoint from outside the cluster | ⚠️ Design dependency | Requires a NodePort or LoadBalancer Service exposing UDP 51820 on the router. Cluster's network setup (Traefik ingress, bare-metal Talos) must support UDP load balancing. ⚠️ Verify during US-42.3. |
-| A22 | OCI IPs and GCP IPs are not blocked by opencode.ai/zen | ⚠️ Unverified | **Day-one validation gate.** Must deploy a relay VM on each provider and curl `opencode.ai/zen/v1` before building the full controller. |
+| A20 | WireGuard UDP hole-punching works through cloud NAT with PersistentKeepalive | ✅ Verified | wireguard.com quickstart: "A sensible interval that works with a wide variety of firewalls is 25 seconds." `PersistentKeepalive = 25` is the documented standard NAT-traversal mechanism. Per-provider NAT behavior still needs live verification during US-42.5/42.6. |
+| A21 | Cluster can expose a reachable UDP endpoint for WG via MetalLB | ✅ Verified (solution specified) | MetalLB is the standard bare-metal Kubernetes LB, supports UDP in both L2 and BGP modes. The cluster runs bare-metal Talos (confirmed from Helm values.yaml). MetalLB is NOT currently deployed (no references in charts/) — must be installed as a prerequisite in US-42.8. A `LoadBalancer` Service on UDP 51820 provides a stable VIP. Fallback: `hostNetwork: true` pod pinned to a specific node. |
+| A22 | OCI IPs and GCP IPs are not blocked by opencode.ai/zen | ⚠️ Day-one gate | **Day-one validation gate (US-42.2).** Must deploy a relay VM on each provider and curl `opencode.ai/zen/v1` before building the full controller. Since the throttle is per-IP (A0), OCI and GCP datacenter IPs should not be in Cloudflare's egress range — but this must be verified, not assumed. |
 
 ---
 
@@ -640,13 +702,13 @@ All free-tier claims below were verified against provider documentation on 2026-
 | # | Question | Answer | Rationale |
 |---|----------|--------|-----------|
 | DQ1 | How do we prevent OCI from reclaiming idle relay VMs? | **Keepalive daemon.** Cloud-init installs a cron job that curls `localhost:8080/healthz` every minute. The relay binary also runs a goroutine that probes the upstream (`GET opencode.ai/zen/v1/models`) every 30s. Both contribute to network utilization. The Go runtime's memory footprint (>2 GB on a 12 GB VM) keeps memory above 20%. | OCI reclaims Always Free instances with <20% CPU/network/memory utilization over 7 days (A6). The keepalive ensures network + CPU stay measurable. Requires 7-day empirical validation. |
-| DQ2 | How does the router expose its WireGuard port to relay VMs? | **NodePort or LoadBalancer Service on UDP 51820.** The router Deployment is fronted by a K8s Service of type NodePort (bare-metal cluster) or LoadBalancer (if MetalLB is available). Relay VMs connect to `<nodeIP>:<nodePort>` as the WG endpoint. | The cluster runs on bare-metal Talos with Traefik ingress. Traefik doesn't handle UDP, so we need a separate UDP path. A NodePort is simplest. |
-| DQ3 | How does the router identify which workspace a request belongs to? | **`X-Workspace-ID` header** injected by the workspace controller into the relay injector config. The relay injector already rewrites `agent-config.json` — adding a default header to the `opencode-relay` provider is a one-line change. | The router needs the workspace ID for deterministic hash-based relay assignment. Basic Auth username is not unique per workspace. |
+| DQ2 | How does the router expose its WireGuard port to relay VMs? | **MetalLB LoadBalancer on UDP 51820.** MetalLB is the standard bare-metal Kubernetes LB (supports UDP). Provides a stable VIP that is node-independent. A plain NodePort is not suitable — UDP NodePorts are not load-balanced across nodes; if the target node dies, all tunnels drop with no failover. MetalLB is not currently deployed in the cluster and must be installed as a prerequisite (US-42.8). Fallback if MetalLB is unavailable: `hostNetwork: true` pod on a known node with DNS pointing at that node's IP. | The cluster runs on bare-metal Talos (confirmed from Helm values.yaml). MetalLB gives us a proper VIP. Traefik doesn't handle UDP. |
+| DQ3 | How does the router identify which workspace a request belongs to? | **`X-Workspace-ID` header** via `@ai-sdk/openai-compatible` `headers` field. Verified from npm docs (v2.0.50+): the provider config supports `headers: { ... }`. The relay injector adds a `Headers` field to the `options` struct (currently only `{BaseURL, APIKey}` at `relay_injector.go:136-138`). Used for per-workspace metrics only — not for routing (relays are stateless). | The router can use the workspace ID for metrics/logging. Not needed for routing since relays are stateless byte-pipes. |
 | DQ4 | What happens when both relays are unhealthy? | **Rate-limited direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs) at a global rate of 1 req/2s with max 1 concurrent request. Requests exceeding the rate get `429 + Retry-After: 2`. Returns `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502, and the rate limit prevents escalating IP throttling. | Unthrottled fallback would just get 429'd instantly and risk worsening the block. 1 req/2s keeps *some* free-tier access alive (slowly) while the controller reprovisions. Intentionally hostile UX — fallback is not a sustainable mode. |
 | DQ5 | Destroy-and-recreate vs in-place rotation? | **Always destroy-and-recreate.** No in-place IP swapping, key rotation, or config pushing. Relay VMs are stateless. The other VM carries traffic during the ~60s provisioning window. | Simpler driver interface (no RotateIP), simpler cloud-init (no runtime reconfiguration), identical flow for failure recovery and key/IP rotation. |
 | DQ6 | Should the controller run inside the existing workspace controller binary or as a separate deployment? | **Same binary, new reconciler, gated by a feature flag.** | The relay controller and workspace controller are coupled (router URL injection). Same binary simplifies deployment and avoids a second controller pod. |
-| DQ7 | Should we weight traffic toward OCI (10 TB egress) over GCP (1 GB egress)? | **Yes — OCI gets 2/3 of new sessions, GCP gets 1/3.** Implemented as weighted rendezvous hashing: each relay gets a weight (OCI=2, GCP=1), and the HRW selection incorporates weight. | GCP's 1 GB/mo egress would be exhausted quickly if it carried 50% of traffic. OCI's 10 TB can handle the load. GCP is primarily for failover and IP diversity. |
-| DQ8 | What happens when GCP egress quota (1 GB/mo) is exhausted? | **Controller detects via GCP billing API or the relay's own byte counter, marks GCP relay as `quota-exhausted`, removes from pool.** All traffic routes to OCI until the monthly reset. | GCP egress resets monthly. The controller can optionally destroy and recreate the GCP VM at month boundary to reset billing counters (though egress is per-billing-account, not per-VM). |
+| DQ7 | Should we weight traffic toward OCI (10 TB egress) over GCP (1 GB egress)? | **OCI gets 100% when healthy; GCP is failover-only.** GCP's 1 GB/mo egress would be exhausted in hours under any normal load (A12, A15). Splitting traffic 2/3 + 1/3 would burn GCP's quota in ~1 day. GCP is reserved exclusively for IP diversity when OCI is down. | GCP's role is failover + second IP address, not capacity. The 1 GB egress ceiling makes it unsuitable as a traffic-splitting partner. |
+| DQ8 | What happens when GCP egress quota (1 GB/mo) is exhausted? | **Controller detects via per-relay egress bytes counter.** The relay binary exposes `relay_egress_bytes_total`; the router aggregates this as `relay_router_relay_egress_bytes{relay}`. The controller scrapes this metric on each reconcile pass. When GCP egress exceeds ~900 MB (90% of 1 GB), the controller marks the relay `quota-exhausted`, writes `"state": "quota-exhausted"` in the ConfigMap (router deprioritizes it), and sets a CR condition. The relay is NOT destroyed — egress quota is per-billing-account, not per-VM, so recreating the VM doesn't reset it. All traffic routes to OCI until the monthly billing cycle resets. | GCP egress resets monthly at the billing boundary. No API call needed — the relay's own byte counter is the source of truth. |
 
 ---
 
@@ -661,7 +723,9 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 3. **Memory:** Go runtime + relay buffers naturally use >2 GB on a 12 GB VM (>20%).
 4. **CPU:** The network I/O from keepalive + probe generates CPU work. A lightweight busy-loop goroutine (1% CPU for 1s every 10s) provides additional floor.
 
-**Verification required (US-42.2):** Monitor CPU/network/memory utilization for 7 days after first deployment to confirm all three metrics stay above 20%.
+**Hard gate — 7-day empirical validation (blocks US-42.5):** OCI's reclamation policy uses 95th-percentile CPU over a 7-day window (A6). The mitigation must be empirically validated: deploy the relay VM with keepalive, then monitor CPU/network/memory utilization via OCI Console metrics for 7 full days. If any metric drops below 20% at the 95th percentile, the mitigation is insufficient and the design must be revised (e.g., increase CPU floor, add synthetic traffic) before proceeding.
+
+**Fallback plan if OCI reclaims despite mitigation:** If the 7-day validation fails or OCI reclaims a production relay, GCP becomes the primary. GCP does not have an equivalent idle-reclamation policy. A small paid VPS ($3-5/mo) as OCI replacement is the ultimate fallback — the architecture supports it via the same driver interface.
 
 ---
 
@@ -669,16 +733,16 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 
 | Story | Title | Effort | Depends On |
 |-------|-------|--------|------------|
-| US-42.1 | Portable relay Go binary (proxy + health + metrics + keepalive) | Small-Medium (1d) | None |
-| US-42.2 | Cloud-init template + artifact publishing + **day-one validation** (deploy VM on OCI, curl Zen, verify not blocked — A22) | Small (0.5-1d) | US-42.1 |
-| US-42.3 | InferenceRelay CRD + types + deepcopy + RBAC | Medium (1d) | None |
+| US-42.1 | Portable relay Go binary (proxy + health + metrics incl. egress bytes + keepalive) | Small-Medium (1d) | None |
+| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on OCI, curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) | Small (0.5-1d) | US-42.1 |
+| US-42.3 | InferenceRelay CRD + types + deepcopy + RBAC + **validating webhook** (CredentialsRef Secret existence + keys) | Medium (1d) | None |
 | US-42.4 | WireGuard keypair generation + config rendering | Small (0.5d) | None |
-| US-42.5 | OCI provider driver (provision, destroy, status) | Medium (1-2d) | US-42.2, US-42.4 |
+| US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
 | US-42.6 | GCP provider driver (provision, destroy, status) | Medium (1d) | US-42.2, US-42.4 |
-| US-42.7 | Relay-router: sticky routing + health checking + 429 detection | Medium-Large (2d) | US-42.3 |
-| US-42.8 | Router WireGuard sidecar + NodePort Service | Small-Medium (1d) | US-42.4, US-42.7 |
-| US-42.9 | InferenceRelay reconciler (lifecycle: provision, health, destroy+recreate, ConfigMap sync, provisioning circuit breaker) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
-| US-42.10 | Helm chart integration (CRD, router Deployment+Service, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
+| US-42.7 | Relay-router: weighted selection + health checking + 429 detection + ConfigMap poll (5s) + metrics (per-relay health, streams, egress) | Medium-Large (2d) | US-42.3 |
+| US-42.8 | **MetalLB install** + router WireGuard sidecar + LoadBalancer Service (UDP 51820) + **NetworkPolicy** (router ingress limited to workspace pods) | Small-Medium (1d) | US-42.4, US-42.7 |
+| US-42.9 | InferenceRelay reconciler (lifecycle: provision, health via router /metrics, graceful drain, destroy+recreate, ConfigMap sync, provisioning circuit breaker, egress quota tracking) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
+| US-42.10 | Helm chart integration (CRD, router Deployment+Service+PDB, NetworkPolicy, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
 | US-42.11 | Fallback mode: rate-limited direct routing when all relays unhealthy (1 req/2s, max 1 concurrent) | Small-Medium (1d) | US-42.7 |
 | US-42.12 | Observability: Prometheus metrics + alert rules + CR conditions | Small (0.5d) | US-42.9 |
 
@@ -724,7 +788,7 @@ Port relay binary, deploy on OCI + GCP manually, curl `opencode.ai/zen/v1` from 
 CRD types and WG keypair generation. No cloud dependencies — can be fully unit-tested.
 
 **Phase 2 — Router (day 3-5):** US-42.7, US-42.8
-Build the relay-router with mock relays. WireGuard sidecar + NodePort. Test stickiness, failover, 429 detection against mock HTTP servers.
+Build the relay-router with mock relays. Install MetalLB. WireGuard sidecar + LoadBalancer Service. Test weighted selection, failover, 429 detection against mock HTTP servers.
 
 **Phase 3 — Provider drivers (day 5-8):** US-42.5, US-42.6
 OCI and GCP drivers. Can be developed in parallel. End of phase 3: controller can provision a VM, establish WG tunnel, health-check it.
@@ -763,14 +827,16 @@ spec:
   wireGuard:
     cidr: "10.42.42.0/24"
     port: 51820
-    routerEndpoint: "relay-gw.safespaces.dev:31820"  # DNS name + NodePort
+    routerEndpoint: "relay-gw.safespaces.dev:51820"  # DNS → MetalLB VIP
   providers:
     - provider: oci
       region: us-ashburn-1
-      credentialsRef: oci-credentials
+      credentialsRef:
+        name: oci-credentials
     - provider: gcp
       region: us-central1-a
-      credentialsRef: gcp-credentials
+      credentialsRef:
+        name: gcp-credentials
   healthCheck:
     interval: 15s
     timeout: 5s
@@ -809,7 +875,7 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 |-------|-----------|----------|--------|
 | `RelayFleetDegraded` | `llmsafespace_relay_healthy_replicas < 2` | Warning | One relay is down — system is running on a single provider. Check InferenceRelay CR status for the failed instance. |
 | `RelayFleetCritical` | `llmsafespace_relay_healthy_replicas == 0` | Critical | Both relays are down — all free-tier traffic is falling back to direct (throttled) routing. Page on-call immediately. |
-| `RelayProvisioningFailed` | `llmsafespace_relay_provisioning_failed == 1` | Critical | A provider slot has failed to provision 3 times. Circuit breaker is tripped — the controller has stopped retrying. Operator must fix the root cause (bad template, credentials, capacity) and clear the `ProvisioningFailed` condition. |
+| `RelayProvisioningFailed` | `llmsafespace_relay_provisioning_failed == 1` | Critical | A provider slot has failed to provision 3 times (config errors). Circuit breaker is tripped — the controller has stopped retrying. Operator must fix the root cause (bad template, credentials) and clear the `ProvisioningFailed` condition. Capacity errors do NOT trip this. |
 | `Relay429RateHigh` | `rate(relay_requests_total{status="429"}[5m]) / rate(relay_requests_total[5m]) > 0.3` | Warning | A relay is receiving significant 429s from upstream. Rotation may be imminent. |
 | `RelayDraining` | `llmsafespace_relay_draining == 1` | Info | A relay is in draining state — rotation in progress. Informational, no action needed unless it persists >30m. |
 | `GCPQuotaExhausted` | `llmsafespace_relay_quota_exhausted{provider="gcp"} == 1` | Warning | GCP monthly egress (1 GB) is exhausted. All traffic is on OCI. Resets at month boundary. |
@@ -824,12 +890,14 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 **Metrics exposed by the relay binary (scraped by router over WG):**
 - `relay_requests_total` (counter, labels: status) — proxied request count by HTTP status
+- `relay_egress_bytes_total` (counter) — total bytes sent in response bodies (for GCP quota tracking)
 - `relay_keepalive_total` (counter) — keepalive probes sent
 
 **Metrics exposed by the router:**
 - `relay_router_requests_total` (counter, labels: relay, status) — requests routed per relay
-- `relay_router_active_streams` (gauge) — in-flight streaming connections
+- `relay_router_active_streams` (gauge, labels: relay) — in-flight streaming connections per relay (used by controller for graceful drain)
 - `relay_router_relay_healthy` (gauge, labels: relay) — router's view of relay health (0/1)
+- `relay_router_relay_egress_bytes` (counter, labels: relay) — per-relay egress bytes (aggregated from relay `/metrics`; used by controller for quota tracking)
 - `relay_router_fallback_active` (gauge) — 1 when in direct-fallback mode
 
 **CR conditions (operator-visible via `kubectl describe inferencerelay`):**
@@ -851,9 +919,13 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 4. **UFW firewall on relay VMs.** Cloud-init configures: deny all incoming, allow UDP 51820 (WG), allow outgoing. SSH is either disabled or restricted to the WG interface.
 
-5. **Router is in-cluster, not exposed to the internet.** Workspace pods reach it via ClusterIP. Only the WG UDP port is exposed (via NodePort) for relay VMs to connect back.
+5. **Router is in-cluster, not exposed to the internet.** Workspace pods reach it via ClusterIP. Only the WG UDP port is exposed (via MetalLB LoadBalancer) for relay VMs to connect back.
 
-6. **Provider credential rotation.** Cloud credentials (OCI API key, GCP service account JSON) live in K8s Secrets, used only by the controller. Rotating them doesn't affect running VMs — only future provisioning calls.
+6. **Provider credential rotation.** Cloud credentials (OCI API key, GCP service account JSON) live in K8s Secrets, used only by the controller. Rotating them doesn't affect running VMs — only future provisioning calls. The validating webhook checks that the referenced Secret exists and contains the required keys before provisioning.
+
+7. **Relay binary integrity verification.** Cloud-init verifies the SHA-256 checksum of the downloaded relay binary before executing it (`sha256sum -c`). The checksum is embedded at cloud-init render time by the controller, sourced from the GitHub Release checksums file. This prevents supply-chain attacks via compromised artifact mirrors — consistent with the project's digest-pinning standard for container images.
+
+8. **NetworkPolicy isolates the router.** The router Service (`relay-router:8080`) is reachable by any pod in the namespace by default. A NetworkPolicy limits ingress to workspace pods (by pod selector) and the controller pod only. This prevents a compromised non-workspace pod from abusing the relay path or triggering upstream rate limits.
 
 ---
 
@@ -861,11 +933,11 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 | # | Question | Notes |
 |---|----------|-------|
-| OQ1 | What is the exact OCI free-tier limit on ephemeral/reserved public IPs? | Unverified (A8). Must test empirically during US-42.5. Determines feasibility of IP rotation via destroy+recreate (which allocates a new ephemeral IP). |
-| OQ2 | Does OCI support cloud-init on Always Free images? | Unverified (A9). If not, fall back to a custom startup script in cloud-init format (OCI supports `user_data` field on instance launch regardless). |
-| OQ3 | What are the actual GCP e2-micro specs? | Unverified (A15). Verify at GCP machine type docs during US-42.6. |
-| OQ4 | Can the cluster expose a UDP NodePort for WG that relay VMs can reach? | Design dependency (A21). The Talos cluster's network setup must allow incoming UDP on a NodePort. Verify during US-42.8. If not, use a LoadBalancer Service (MetalLB) or a dedicated WG gateway pod. |
-| OQ5 | Will OCI's idle reclamation actually trigger for a relay VM with keepalive traffic? | Requires 7-day empirical testing (see "OCI Idle Reclamation Mitigation"). The 20% thresholds are documented but the measurement methodology (95th percentile for CPU) needs validation. |
-| OQ6 | Does Zen (opencode.ai) block OCI and GCP IP ranges? | **Day-one validation gate (A22).** Must curl `opencode.ai/zen/v1` from a VM on each provider before building anything. |
-| OQ7 | How does the router inject `X-Workspace-ID`? | The relay injector (`cmd/workspace-agentd/relay_injector.go:171-179`) writes the provider config. Adding a `headers` field or a custom header to the `opencode-relay` provider's `options` is a one-line change — but must verify opencode's `@ai-sdk/openai-compatible` package supports custom headers. |
-| OQ8 | Should the router proxy streaming responses (SSE) with buffering or true pass-through? | True pass-through (`io.Copy` / `Flush`) — the router must not buffer SSE streams. The existing proxy in `api/internal/handlers/proxy.go` already does this for workspace→opencode traffic; reuse the same pattern. |
+| OQ1 | What is the exact OCI free-tier limit on ephemeral/reserved public IPs? | Empirical (A8). Must test during US-42.5. Determines feasibility of IP rotation via destroy+recreate (which allocates a new ephemeral IP each time). |
+| OQ2 | ~~Does OCI support cloud-init on Always Free images?~~ | ✅ Resolved (A9). OCI "Creating an Instance" docs confirm cloud-init/user-data support on Ubuntu and Oracle Linux images. Max 32,000 bytes userdata. |
+| OQ3 | ~~What are the actual GCP e2-micro specs?~~ | ✅ Resolved (A15). 2 vCPUs (0.25 fractional shared-core), 1 GB memory, burstable to 100% for 30s. Max egress 1 Gbps. |
+| OQ4 | ~~Can the cluster expose a UDP endpoint for WG?~~ | ✅ Resolved (A21). MetalLB LoadBalancer on UDP 51820 is the solution. Not currently deployed — must install in US-42.8. Fallback: `hostNetwork: true` pod. |
+| OQ5 | Will OCI's idle reclamation actually trigger for a relay VM with keepalive traffic? | Requires 7-day empirical testing (see "OCI Idle Reclamation Mitigation"). The 20% thresholds are documented (95th percentile CPU). **Hard gate for US-42.5.** |
+| OQ6 | Does Zen (opencode.ai) block OCI and GCP IP ranges? | **Day-one validation gate (A22).** Since the throttle is per-IP (A0), OCI/GCP datacenter IPs should not be in Cloudflare's egress range — but must curl to verify. |
+| OQ7 | ~~How does the router inject `X-Workspace-ID`?~~ | ✅ Resolved. `@ai-sdk/openai-compatible` (v2.0.50+) supports a `headers` field in provider config (verified from npm docs). Add `Headers map[string]string` to the `options` struct at `relay_injector.go:136`. Used for metrics only, not routing. |
+| OQ8 | Should the router proxy streaming responses (SSE) with buffering or true pass-through? | True pass-through (`io.Copy` / `Flush`) — the router must not buffer SSE streams. The existing proxy in `api/internal/handlers/proxy.go:358-377` already does this for workspace→opencode traffic; reuse the same pattern. |
