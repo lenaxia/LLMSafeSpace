@@ -133,7 +133,7 @@ func (p *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.ContentLength = r.ContentLength
 	copyNonHopByHopHeaders(upstreamReq.Header, r.Header)
 
-	resp, err := p.client.Do(upstreamReq)
+	resp, err := p.client.Do(upstreamReq) //nolint:gosec // proxy by design
 	if err != nil {
 		if r.Context().Err() != nil {
 			return

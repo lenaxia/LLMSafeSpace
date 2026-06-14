@@ -342,19 +342,6 @@ func (f *relayFleet) prune429WindowLocked(e *relayEntry) {
 	e.s429.window = filtered
 }
 
-// windowed429CountLocked returns the count of 429s within the rolling
-// detection window. Must be called with mu held.
-func (f *relayFleet) windowed429CountLocked(e *relayEntry) int {
-	cutoff := time.Now().Add(-f.window)
-	count := 0
-	for _, t := range e.s429.window {
-		if t.After(cutoff) {
-			count++
-		}
-	}
-	return count
-}
-
 // windowedRequestCountLocked returns the total request count for rate
 // calculation. This is a lifetime count, not truly windowed — the rate
 // denominator dilutes over time for long-lived relays. The consecutive-

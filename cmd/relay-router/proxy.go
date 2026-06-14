@@ -83,7 +83,7 @@ func (rp *routerProxy) forwardToRelay(w http.ResponseWriter, r *http.Request, re
 	rp.fleet.RecordStreamStart(relayID)
 	defer rp.fleet.RecordStreamEnd(relayID)
 
-	resp, err := rp.httpClient.Do(upstreamReq)
+	resp, err := rp.httpClient.Do(upstreamReq) //nolint:gosec // target is trusted WG IP
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -232,7 +232,7 @@ func (fp *fallbackProxy) forward(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.ContentLength = r.ContentLength
 	copyRouterHeaders(upstreamReq.Header, r.Header)
 
-	resp, err := fp.httpClient.Do(upstreamReq)
+	resp, err := fp.httpClient.Do(upstreamReq) //nolint:gosec // target is configured upstream
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
