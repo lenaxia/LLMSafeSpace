@@ -2231,7 +2231,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 81},
       "id": 34,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_db_query_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, operation)) by (operation)", "legendFormat": "{{operation}} p95", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_db_query_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, operation))", "legendFormat": "{{operation}} p95", "refId": "A"}],
       "title": "DB Query Latency (p95)",
       "type": "timeseries",
       "description": "95th percentile database query latency by operation type (select, insert, update, delete)."
@@ -2264,7 +2264,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 89},
       "id": 37,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_redis_command_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, command)) by (command)", "legendFormat": "{{command}} p95", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_redis_command_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, command))", "legendFormat": "{{command}} p95", "refId": "A"}],
       "title": "Redis Command Latency (p95)",
       "type": "timeseries",
       "description": "95th percentile Redis command latency by command type."
@@ -2319,7 +2319,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 105},
       "id": 42,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_service_startup_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, service)) by (service)", "legendFormat": "{{service}} p95", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_service_startup_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, service))", "legendFormat": "{{service}} p95", "refId": "A"}],
       "title": "Service Startup Duration (p95)",
       "type": "timeseries",
       "description": "95th percentile startup duration for each named service in the initialization order."
