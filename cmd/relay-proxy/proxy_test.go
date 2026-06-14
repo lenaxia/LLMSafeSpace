@@ -573,6 +573,10 @@ func TestProxyHandler_RecordsEgressBytes(t *testing.T) {
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
 
+	// Close the relay server to ensure all in-flight ServeHTTP goroutines
+	// have completed (including recordEgressBytes) before reading metrics.
+	relay.Close()
+
 	var buf strings.Builder
 	metrics.writePrometheus(&buf)
 
@@ -605,6 +609,10 @@ func TestProxyHandler_RecordsEgressBytesMultipleRequests(t *testing.T) {
 		resp.Body.Close()
 		totalLen += int64(len(n))
 	}
+
+	// Close the relay server to ensure all in-flight ServeHTTP goroutines
+	// have completed (including recordEgressBytes) before reading metrics.
+	relay.Close()
 
 	var buf strings.Builder
 	metrics.writePrometheus(&buf)
