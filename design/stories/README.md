@@ -63,6 +63,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 35 | Secretless Credential Injection — eliminate `workspace-secrets-<id>` K8s Secret; init container self-fetches credentials from API server via projected SA token + TokenReview | ❌ Not Started | None |
 | 37 | Session Activity & Unread State UX — activity spinners across workspaces, unread pulsation, "new messages" divider, persisted across refreshes | ❌ Not Started | Epics 15, 28 |
 | 41 | Message Queue Reliability — fix streaming state clear timing, add 409 guard for in-flight sessions, restore dead `onSessionIdle` activity recording | ❌ Not Started | Epics 15, 28, 38 |
+| 43 | Organization Management & Multi-Tenant Product — org admin portal, email invitations, SSO, policy engine, billing tiers | ❌ Not Started | Epic 11 (complete), Epic 12 (metering infra exists) |
 
 ---
 
