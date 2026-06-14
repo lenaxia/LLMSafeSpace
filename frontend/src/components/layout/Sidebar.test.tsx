@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
-import { render } from "@testing-library/react";
+import { screen, render, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Sidebar } from "./Sidebar";
@@ -262,6 +261,58 @@ describe("Sidebar — activity spinner and unread pulsation (US-37.5/37.6)", () 
 
     const workspaceButton = screen.getByText("alpha").closest("button")!;
     const blueSpinners = workspaceButton.querySelectorAll(".animate-spin.text-blue-500");
+    expect(blueSpinners.length).toBe(1);
+  });
+
+  // Only top-level (parent) sessions pulsate when they have an unread response.
+  // Subtasks (children) stay quiet when done — pulsating every completed
+  // subtask is noise. Children still show the blue spinner while busy.
+  it("only top-level sessions pulse; subtasks do not pulse when unread", async () => {
+    mockIsSessionUnread = (sid: string) => sid === "sess-parent" || sid === "sess-child";
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-parent", title: "Parent session", messageCount: 2, status: "idle", hasUnread: true },
+      { id: "sess-child", parentId: "sess-parent", title: "Child task", messageCount: 1, status: "idle", hasUnread: true },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Parent session");
+
+    // Expand the parent so the child row is rendered.
+    await act(async () => {
+      screen.getByLabelText("Expand subtasks").click();
+    });
+
+    await screen.findByText("Child task");
+
+    // The parent (depth 0) title pulses; the child (depth 1) title does not.
+    const parentTitle = screen.getByText("Parent session");
+    const childTitle = screen.getByText("Child task");
+    expect(parentTitle.className).toContain("animate-unread-pulse");
+    expect(childTitle.className).not.toContain("animate-unread-pulse");
+  });
+
+  it("subtask still shows blue spinner when busy (depth does not affect busy)", async () => {
+    mockIsSessionBusy = (sid: string) => sid === "sess-child";
+    mockWorkspaceBusyCount = (wsid: string) => wsid === "ws-1" ? 1 : 0;
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-parent", title: "Parent session", messageCount: 2, status: "idle" },
+      { id: "sess-child", parentId: "sess-parent", title: "Child task", messageCount: 1, status: "idle" },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Parent session");
+
+    await act(async () => {
+      screen.getByLabelText("Expand subtasks").click();
+    });
+
+    await screen.findByText("Child task");
+
+    // The child row should contain a blue spinner.
+    const childRow = screen.getByText("Child task").closest("div")!;
+    const blueSpinners = childRow.querySelectorAll(".animate-spin.text-blue-500");
     expect(blueSpinners.length).toBe(1);
   });
 });
