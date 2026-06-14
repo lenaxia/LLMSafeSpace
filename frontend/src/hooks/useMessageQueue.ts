@@ -67,12 +67,10 @@ export function useMessageQueue(
 
   const retry = useCallback(async (id: string) => {
     if (!workspaceId || !sessionId) return;
-    setQueuedMessages((prev) => {
-      const msg = prev.find((m) => m.id === id);
-      if (msg) void enqueue(msg.text);
-      return prev.filter((m) => m.id !== id);
-    });
-  }, [workspaceId, sessionId, enqueue]);
+    const msg = queuedMessages.find((m) => m.id === id);
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+    if (msg) await enqueue(msg.text);
+  }, [workspaceId, sessionId, queuedMessages, enqueue]);
 
   const dismiss = useCallback(async (id: string) => {
     if (!workspaceId || !sessionId) return;

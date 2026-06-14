@@ -324,6 +324,82 @@ func TestPublishQueueEvent(t *testing.T) {
 	}
 }
 
+func TestDeleteQueueMessage_Success(t *testing.T) {
+	handler, svc, cleanup := setupQueueTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	id, err := svc.Enqueue(ctx, "ws-1", "ses-1", "to delete")
+	require.NoError(t, err)
+
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.DELETE("/:id/sessions/:sessionId/queue/:messageId", handler.DeleteQueueMessage)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/ws-1/sessions/ses-1/queue/"+id, nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	n, _ := svc.Len(ctx, "ws-1", "ses-1")
+	assert.Equal(t, int64(0), n, "message should be removed from queue")
+
+	select {
+	case evt := <-sub.Ch:
+		assert.Equal(t, "queue.update", evt.Type)
+		data, ok := evt.Data.(queueUpdateData)
+		require.True(t, ok)
+		assert.Equal(t, "dismissed", data.Event)
+		assert.Equal(t, id, data.MessageID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dismissed SSE event")
+	}
+}
+
+func TestDeleteQueueMessage_NoQueueService(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.DELETE("/:id/sessions/:sessionId/queue/:messageId", handler.DeleteQueueMessage)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/ws-1/sessions/ses-1/queue/msg_123", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestDeleteQueueMessage_NotFound(t *testing.T) {
+	handler, svc, cleanup := setupQueueTestEnv(t)
+	defer cleanup()
+
+	id, err := svc.Enqueue(context.Background(), "ws-1", "ses-1", "keep me")
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("DELETE", "/queue", nil)
+	c.Params = gin.Params{
+		{Key: "id", Value: "ws-1"},
+		{Key: "sessionId", Value: "ses-1"},
+		{Key: "messageId", Value: "nonexistent"},
+	}
+
+	handler.DeleteQueueMessage(c)
+
+	n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
+	assert.Equal(t, int64(1), n, "unrelated message should remain")
+	_ = id
+}
+
 func newMockK8sWithWorkspace(t *testing.T, workspaceID, podIP string) *k8smocks.MockKubernetesClient {
 	t.Helper()
 	k8sMock := k8smocks.NewMockKubernetesClient()
