@@ -304,8 +304,9 @@ var implOnlyAllowlist = map[route]bool{
 	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId"}: true,
 
 	// Message queue — Redis-backed queue for messages typed while busy.
-	{method: "POST", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}: true,
-	{method: "GET", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:  true,
+	{method: "POST", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:              true,
+	{method: "GET", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:               true,
+	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue/:messageId"}: true,
 }
 
 // -----------------------------------------------------------------------------

@@ -117,6 +117,26 @@ func (s *Service) Len(ctx context.Context, workspaceID, sessionID string) (int64
 	return n, nil
 }
 
+func (s *Service) Remove(ctx context.Context, workspaceID, sessionID, messageID string) error {
+	data, err := s.client.LRange(ctx, queueKey(workspaceID, sessionID), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("listing queue for remove: %w", err)
+	}
+	for _, d := range data {
+		var msg QueuedMessage
+		if err := json.Unmarshal([]byte(d), &msg); err != nil {
+			continue
+		}
+		if msg.ID == messageID {
+			if err := s.client.LRem(ctx, queueKey(workspaceID, sessionID), 1, d).Err(); err != nil {
+				return fmt.Errorf("removing message from queue: %w", err)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func (s *Service) Clear(ctx context.Context, workspaceID, sessionID string) error {
 	if err := s.client.Del(ctx, queueKey(workspaceID, sessionID)).Err(); err != nil {
 		return fmt.Errorf("clearing queue: %w", err)

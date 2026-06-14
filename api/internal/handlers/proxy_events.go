@@ -360,33 +360,40 @@ func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
 	if h.queueSvc == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	msg, err := h.queueSvc.Dequeue(ctx, workspaceID, sessionID)
-	if err != nil {
-		h.logger.Error("Failed to dequeue message", err, "workspaceID", workspaceID, "sessionID", sessionID)
-		return
-	}
-	if msg == nil {
-		return
-	}
-
-	if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, msg); err != nil {
-		h.logger.Error("Failed to send queued message to opencode", err,
-			"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
-		if msg.RetryCount >= maxQueueRetries {
-			h.publishQueueEvent(workspaceID, sessionID, "error", msg.ID, "max retries exceeded")
+	for {
+		msg, err := h.queueSvc.Dequeue(ctx, workspaceID, sessionID)
+		if err != nil {
+			h.logger.Error("Failed to dequeue message", err, "workspaceID", workspaceID, "sessionID", sessionID)
 			return
 		}
-		msg.RetryCount++
-		if requeueErr := h.queueSvc.Requeue(ctx, workspaceID, sessionID, *msg); requeueErr != nil {
-			h.logger.Error("Failed to requeue message", requeueErr, "workspaceID", workspaceID, "sessionID", sessionID)
+		if msg == nil {
+			return
 		}
-		return
-	}
 
-	h.publishQueueEvent(workspaceID, sessionID, "sent", msg.ID, "")
+		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, msg); err != nil {
+			h.logger.Error("Failed to send queued message to opencode", err,
+				"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
+			msg.RetryCount++
+			if msg.RetryCount > maxQueueRetries {
+				h.publishQueueEvent(workspaceID, sessionID, "error", msg.ID, "max retries exceeded")
+				continue
+			}
+			if requeueErr := h.queueSvc.Requeue(ctx, workspaceID, sessionID, *msg); requeueErr != nil {
+				h.logger.Error("Failed to requeue message", requeueErr, "workspaceID", workspaceID, "sessionID", sessionID)
+			}
+			select {
+			case <-time.After(time.Duration(msg.RetryCount) * time.Second):
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+
+		h.publishQueueEvent(workspaceID, sessionID, "sent", msg.ID, "")
+	}
 }
 
 type promptRequestBody struct {

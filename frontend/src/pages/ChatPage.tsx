@@ -323,7 +323,7 @@ export function ChatPage() {
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
       if (freshHistory) {
-        queue.reconcile(msgs);
+        void queue.refreshQueue();
       }
     } catch {
     }
@@ -554,6 +554,7 @@ export function ChatPage() {
           setRetryStatus(null);
           clearStreamTimedOut();
           reconcileOnIdle();
+          queue.refreshQueue();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
           setPendingPermissions([]);
@@ -565,10 +566,12 @@ export function ChatPage() {
       }
     } else if (event.type === "queue.update" && workspaceId) {
       const qe = (event.data ?? {}) as { event?: string; messageID?: string; error?: string };
-      if (qe.event === "sent" && qe.messageID) {
-        queue.markSent(qe.messageID);
+      if (qe.event === "sent") {
+        queue.refreshQueue();
       } else if (qe.event === "error" && qe.messageID) {
         queue.markError(qe.messageID, qe.error ?? "Send failed");
+      } else if (qe.event === "enqueued" || qe.event === "dismissed") {
+        queue.refreshQueue();
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
