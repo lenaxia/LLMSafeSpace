@@ -326,14 +326,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 	}
 
-	// US-43.7/43.8: Wire policy checker into workspace service AFTER policySvc
-	// is constructed.
-	if policySvc != nil {
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-			wsSvc.SetPolicyChecker(policySvc)
-		}
-	}
-
 	// In development mode, disable RequireHTTPS so the API works over plain
 	securityCfg := server.DefaultRouterConfig().SecurityConfig
 	if cfg.Logging.Development {
@@ -485,6 +477,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if pgOrgStore != nil {
 		policySvc = policy.New(pgOrgStore, svc.Cache)
 		policyHandler = handlers.NewPolicyHandler(pgOrgStore, policySvc, svc.GetAuth())
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			wsSvc.SetPolicyChecker(policySvc)
+		}
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
