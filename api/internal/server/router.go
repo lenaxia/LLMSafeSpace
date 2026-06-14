@@ -883,6 +883,7 @@ func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandle
 	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
 	rg.POST("/:id/sessions/:sessionId/queue", proxyHandler.EnqueueMessage)
 	rg.GET("/:id/sessions/:sessionId/queue", proxyHandler.ListQueue)
+	rg.DELETE("/:id/sessions/:sessionId/queue/:messageId", proxyHandler.DeleteQueueMessage)
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
 	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)

@@ -1,6 +1,5 @@
-import { useReducer, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { messagesApi } from "../api/messages";
-import type { Message } from "../api/types";
 
 export type QueuedMessage = {
   id: string;
@@ -10,116 +9,86 @@ export type QueuedMessage = {
   sessionId: string;
 };
 
-type Action =
-  | { type: "add"; msg: QueuedMessage }
-  | { type: "mark_sent"; id: string }
-  | { type: "mark_error"; id: string; error: string }
-  | { type: "remove"; id: string }
-  | { type: "clear" }
-  | { type: "hydrate"; sessionId: string; messages: QueuedMessage[] }
-  | { type: "reconcile"; historyIds: Set<string> };
-
-function reduce(state: QueuedMessage[], action: Action): QueuedMessage[] {
-  switch (action.type) {
-    case "add":
-      return [...state, action.msg];
-    case "mark_sent":
-      return state.filter((m) => m.id !== action.id);
-    case "mark_error":
-      return state.map((m) =>
-        m.id === action.id ? { ...m, status: "error" as const, error: action.error } : m,
-      );
-    case "remove":
-      return state.filter((m) => m.id !== action.id);
-    case "clear":
-      return [];
-    case "hydrate":
-      return state.some((m) => m.sessionId === action.sessionId)
-        ? state
-        : [...state, ...action.messages];
-    case "reconcile":
-      return state.filter((m) => !action.historyIds.has(m.id));
-    default:
-      return state;
-  }
-}
-
 const RESTART_PHASES = ["Creating", "Pending", "Suspending"];
 
 export function useMessageQueue(
   workspaceId: string | undefined,
   sessionId: string | undefined,
 ) {
-  const [queuedMessages, dispatch] = useReducer(reduce, []);
-  const hydratedRef = useRef<Set<string>>(new Set());
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const refreshInFlightRef = useRef(false);
+
+  const refreshQueue = useCallback(async () => {
+    if (!workspaceId || !sessionId) return;
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      const res = await messagesApi.getQueue(workspaceId, sessionId);
+      setQueuedMessages((prev) => {
+        const redisIds = new Set(res.messages.map((m) => m.id));
+        const kept = prev.filter((m) => m.status === "error" || redisIds.has(m.id));
+        const existingIds = new Set(kept.map((m) => m.id));
+        const added: QueuedMessage[] = res.messages
+          .filter((m) => !existingIds.has(m.id))
+          .map((m) => ({ id: m.id, text: m.text, status: "pending", sessionId: m.session_id }));
+        return [...kept, ...added];
+      });
+    } catch {
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, [workspaceId, sessionId]);
 
   useEffect(() => {
-    if (!workspaceId || !sessionId) return;
-    if (hydratedRef.current.has(sessionId)) return;
-    hydratedRef.current.add(sessionId);
-
-    messagesApi
-      .getQueue(workspaceId, sessionId)
-      .then((res) => {
-        const msgs: QueuedMessage[] = (res.messages ?? []).map((m) => ({
-          id: m.id,
-          text: m.text,
-          status: "pending" as const,
-          sessionId: m.session_id,
-        }));
-        if (msgs.length > 0) {
-          dispatch({ type: "hydrate", sessionId, messages: msgs });
-        }
-      })
-      .catch(() => {});
-  }, [workspaceId, sessionId]);
+    refreshQueue();
+  }, [refreshQueue]);
 
   const enqueue = useCallback(async (text: string) => {
     if (!workspaceId || !sessionId) return;
     try {
       const res = await messagesApi.queueMessage(workspaceId, sessionId, text);
-      dispatch({
-        type: "add",
-        msg: { id: res.messageID, text, status: "pending", sessionId },
-      });
+      setQueuedMessages((prev) => [
+        ...prev,
+        { id: res.messageID, text, status: "pending", sessionId },
+      ]);
     } catch {
-      dispatch({
-        type: "add",
-        msg: { id: "err_" + Date.now(), text, status: "error", sessionId, error: "Failed to queue" },
-      });
+      setQueuedMessages((prev) => [
+        ...prev,
+        { id: "err_" + Date.now(), text, status: "error", sessionId, error: "Failed to queue" },
+      ]);
     }
   }, [workspaceId, sessionId]);
 
-  const markSent = useCallback((id: string) => {
-    dispatch({ type: "mark_sent", id });
-  }, []);
-
   const markError = useCallback((id: string, error: string) => {
-    dispatch({ type: "mark_error", id, error });
+    setQueuedMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, status: "error", error } : m)),
+    );
   }, []);
 
   const retry = useCallback(async (id: string) => {
     if (!workspaceId || !sessionId) return;
-    const msg = queuedMessages.find((m) => m.id === id);
-    if (!msg) return;
-    dispatch({ type: "remove", id });
-    await enqueue(msg.text);
-  }, [workspaceId, sessionId, queuedMessages, enqueue]);
+    setQueuedMessages((prev) => {
+      const msg = prev.find((m) => m.id === id);
+      if (msg) void enqueue(msg.text);
+      return prev.filter((m) => m.id !== id);
+    });
+  }, [workspaceId, sessionId, enqueue]);
 
-  const dismiss = useCallback((id: string) => {
-    dispatch({ type: "remove", id });
-  }, []);
+  const dismiss = useCallback(async (id: string) => {
+    if (!workspaceId || !sessionId) return;
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await messagesApi.deleteQueueMessage(workspaceId, sessionId, id);
+    } catch {
+    }
+    void refreshQueue();
+  }, [workspaceId, sessionId, refreshQueue]);
 
-  const clear = useCallback(() => dispatch({ type: "clear" }), []);
-
-  const reconcile = useCallback((history: Message[]) => {
-    const historyIds = new Set(history.filter((m) => m.role === "user").map((m) => m.id));
-    dispatch({ type: "reconcile", historyIds });
-  }, []);
+  const clear = useCallback(() => setQueuedMessages([]), []);
 
   const onPhaseChange = useCallback((phase: string) => {
     if (RESTART_PHASES.includes(phase)) {
-      dispatch({ type: "clear" });
+      setQueuedMessages([]);
     }
   }, []);
 
@@ -130,12 +99,11 @@ export function useMessageQueue(
   return {
     queuedMessages: sessionQueue,
     enqueue,
-    markSent,
+    refreshQueue,
     markError,
     retry,
     dismiss,
     clear,
-    reconcile,
     onPhaseChange,
   };
 }

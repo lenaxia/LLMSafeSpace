@@ -254,3 +254,38 @@ func TestClearWorkspace_EmptyWorkspace(t *testing.T) {
 	err := svc.ClearWorkspace(ctx, "nonexistent")
 	require.NoError(t, err)
 }
+
+func TestRemove(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	id1, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "first")
+	id2, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "second")
+	id3, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "third")
+
+	err := svc.Remove(ctx, "ws-1", "ses-1", id2)
+	require.NoError(t, err)
+
+	n, _ := svc.Len(ctx, "ws-1", "ses-1")
+	assert.Equal(t, int64(2), n)
+
+	msgs, _ := svc.PeekAll(ctx, "ws-1", "ses-1")
+	require.Len(t, msgs, 2)
+	assert.Equal(t, id1, msgs[0].ID)
+	assert.Equal(t, id3, msgs[1].ID)
+}
+
+func TestRemove_NotFound(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	_, _ = svc.Enqueue(ctx, "ws-1", "ses-1", "only")
+
+	err := svc.Remove(ctx, "ws-1", "ses-1", "nonexistent_id")
+	require.NoError(t, err, "Remove should be idempotent — no error on not found")
+
+	n, _ := svc.Len(ctx, "ws-1", "ses-1")
+	assert.Equal(t, int64(1), n)
+}

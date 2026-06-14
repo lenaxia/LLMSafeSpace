@@ -193,7 +193,7 @@ func TestDrainQueuedMessage_SendsToOpencode(t *testing.T) {
 	sub := handler.broker.Subscribe("ws-1")
 	defer handler.broker.Unsubscribe("ws-1", sub)
 
-	handler.drainQueuedMessage("ws-1", "ses-1")
+	go handler.drainQueuedMessage("ws-1", "ses-1")
 
 	require.Eventually(t, func() bool {
 		select {
@@ -239,16 +239,12 @@ func TestDrainQueuedMessage_RequeuesOnFailure(t *testing.T) {
 	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1", "will fail")
 	require.NoError(t, err)
 
-	handler.drainQueuedMessage("ws-1", "ses-1")
+	go handler.drainQueuedMessage("ws-1", "ses-1")
 
 	require.Eventually(t, func() bool {
-		n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
-		return n == 1
-	}, 2*time.Second, 10*time.Millisecond, "message should be requeued after failure")
-
-	msgs, _ := svc.PeekAll(context.Background(), "ws-1", "ses-1")
-	require.Len(t, msgs, 1)
-	assert.Equal(t, 1, msgs[0].RetryCount, "retry count should be incremented")
+		msgs, _ := svc.PeekAll(context.Background(), "ws-1", "ses-1")
+		return len(msgs) == 1 && msgs[0].RetryCount == 1
+	}, 3*time.Second, 10*time.Millisecond, "message should be requeued with incremented retry count")
 }
 
 func TestDrainQueuedMessage_DropsAfterMaxRetries(t *testing.T) {
@@ -288,7 +284,7 @@ func TestDrainQueuedMessage_DropsAfterMaxRetries(t *testing.T) {
 	sub := handler.broker.Subscribe("ws-1")
 	defer handler.broker.Unsubscribe("ws-1", sub)
 
-	handler.drainQueuedMessage("ws-1", "ses-1")
+	go handler.drainQueuedMessage("ws-1", "ses-1")
 
 	require.Eventually(t, func() bool {
 		select {

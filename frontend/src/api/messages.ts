@@ -95,4 +95,6 @@ export const messagesApi = {
     }> }>(`/workspaces/${workspaceId}/sessions/${sessionId}/queue`);
     return res;
   },
+  deleteQueueMessage: (workspaceId: string, sessionId: string, messageId: string) =>
+    api.delete<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/queue/${messageId}`),
 };

@@ -44,6 +44,7 @@ vi.mock("../api/messages", () => ({
     sendAsync: vi.fn(),
     queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_test" }),
     getQueue: vi.fn().mockResolvedValue({ messages: [] }),
+    deleteQueueMessage: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));

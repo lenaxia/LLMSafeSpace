@@ -290,3 +290,41 @@ func (h *ProxyHandler) ListQueue(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"messages": msgs})
 }
+
+func (h *ProxyHandler) DeleteQueueMessage(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+	msgID := c.Param("messageId")
+	if msgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "messageId required"})
+		return
+	}
+
+	if h.queueSvc == nil {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	if err := h.queueSvc.Remove(c.Request.Context(), wid, sid, msgID); err != nil {
+		h.logger.Error("Failed to remove queue message", err, "workspaceID", wid, "sessionID", sid, "messageID", msgID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove message"})
+		return
+	}
+
+	if h.broker != nil {
+		h.broker.Publish(wid, apitypes.WorkspaceSSEEvent{
+			Type:      "queue.update",
+			SessionID: sid,
+			Data: queueUpdateData{
+				Event:     "dismissed",
+				MessageID: msgID,
+			},
+		})
+	}
+
+	c.Status(http.StatusNoContent)
+}

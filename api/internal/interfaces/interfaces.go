@@ -160,6 +160,7 @@ type MessageQueueService interface {
 	Requeue(ctx context.Context, workspaceID, sessionID string, msg msgqueue.QueuedMessage) error
 	PeekAll(ctx context.Context, workspaceID, sessionID string) ([]msgqueue.QueuedMessage, error)
 	Len(ctx context.Context, workspaceID, sessionID string) (int64, error)
+	Remove(ctx context.Context, workspaceID, sessionID, messageID string) error
 	Clear(ctx context.Context, workspaceID, sessionID string) error
 	ClearWorkspace(ctx context.Context, workspaceID string) error
 }
