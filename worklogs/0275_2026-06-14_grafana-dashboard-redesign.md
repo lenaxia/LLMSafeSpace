@@ -158,12 +158,13 @@ None.
 
 ## Tests Run
 
-- `python3 -c "import json; json.load(open('operational.json'))"` — valid JSON ✓
-- `python3 -c "import json; json.load(open('billing.json'))"` — valid JSON ✓
-- Programmatic panel audit: confirmed all 30 operational panels and 16 billing panels have descriptions, actionable panels have red thresholds, non-actionable story panels intentionally omit thresholds ✓
-- `yaml.safe_load(values.yaml)` — valid YAML, datasources section present ✓
-- Prometheus rules: confirmed availability alert present, old error rate alerts removed ✓
-- Helm not available in sandbox for `helm template` — validation deferred to CI/operator
+- `python3 -c "import json; json.load(open('operational.json'))"` — valid JSON
+- `python3 -c "import json; json.load(open('billing.json'))"` — valid JSON
+- Programmatic panel audit: confirmed all 30 operational panels and 16 billing panels have descriptions, actionable panels have red thresholds, non-actionable story panels intentionally omit thresholds
+- `yaml.safe_load(values.yaml)` — valid YAML, datasources section present
+- Prometheus rules: confirmed availability alert present, old error rate alerts removed
+- Chart tests (`go test ./charts/llmsafespace/...`): 5 new/updated tests — spec top-level regression test, datasource ConfigMap label/gating tests, dashboard non-empty test, alert name expectations updated
+- `result="failure"` → `result="error"` fix validated against `api/internal/handlers/agent_reload.go:110`
 
 ---
 

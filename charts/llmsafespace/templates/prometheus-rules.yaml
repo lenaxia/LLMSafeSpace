@@ -207,7 +207,7 @@ spec:
               pods. Use $apiJob to match. */}}
         - alert: LLMSafeSpaceAgentReloadFailures
           expr: |
-            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}",result="failure"}[5m]))
+            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}",result="error"}[5m]))
             /
             sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}"}[5m]))
             > 0.1
