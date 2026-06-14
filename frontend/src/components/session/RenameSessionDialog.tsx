@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -11,6 +11,11 @@ interface Props {
 
 export function RenameSessionDialog({ currentTitle, onRename, onCancel }: Props) {
   const [title, setTitle] = useState(currentTitle);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -30,6 +35,7 @@ export function RenameSessionDialog({ currentTitle, onRename, onCancel }: Props)
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3 p-3">
       <Input
+        ref={inputRef}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={handleKeyDown}

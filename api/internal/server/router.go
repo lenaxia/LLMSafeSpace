@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -839,9 +840,24 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 			c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
 			return
 		}
-		if err := wsSvc.RenameSession(c.Request.Context(), userID, c.Param("id"), c.Param("sessionId"), body.Title); err != nil {
+		wsID := c.Param("id")
+		sID := c.Param("sessionId")
+		if err := wsSvc.RenameSession(c.Request.Context(), userID, wsID, sID, body.Title); err != nil {
 			respondWithError(c, err)
 			return
+		}
+		// Also rename in the opencode agent so the frontend's periodic title
+		// fetch (useSessionTitle hook) doesn't retrieve the old agent-side
+		// title and overwrite the user-assigned one.
+		if proxyHandler != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := proxyHandler.RenameSessionInAgent(ctx, wsID, sID, body.Title); err != nil {
+					// Log-only: the DB rename succeeded; agent rename is best-effort
+					log.Printf("RenameSessionInAgent failed for session %s: %v", sID, err)
+				}
+			}()
 		}
 		c.Status(http.StatusNoContent)
 	})
