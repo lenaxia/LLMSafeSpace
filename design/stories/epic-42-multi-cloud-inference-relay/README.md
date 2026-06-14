@@ -30,7 +30,7 @@ Additionally, the current relay has no self-healing or rotation:
 
 A **portable relay binary** that runs on OCI, GCP, and AWS VMs, connected to the cluster via **WireGuard tunnels**, fronted by an **in-cluster router** that handles sticky session routing, failover, and 429 detection. A **relay controller** (CRD + reconciler) manages the full lifecycle of relay VMs — provisioning, health-checking, IP rotation, and replacement.
 
-The controller maintains up to **3 relay VMs** (1 AWS, 1 OCI, 1 GCP). AWS is the **paid primary** (~$7/month, most reliable — no idle reclamation, no capacity issues). OCI is the **free secondary** (10 TB egress, but idle-reclamation risk). GCP is the **free tertiary failover** (1 GB egress — IP diversity only). The router sends 100% of traffic to AWS when healthy; OCI carries traffic during AWS rotation; GCP is last resort.
+The controller maintains up to **2 relay VMs** by default: 1 AWS (paid primary) and 1 OCI (free secondary). AWS is the **paid primary** (~$7/month, most reliable — no idle reclamation, no capacity issues). OCI is the **free secondary** (10 TB egress, but idle-reclamation risk). The router sends 100% of traffic to AWS when healthy; OCI carries traffic during AWS rotation or failure. GCP is no longer in the default fleet (Always Free tier eliminated — see A12). The operator can add GCP as a paid provider if they want a third IP source.
 
 ```
                                   WireGuard mesh (10.42.42.0/24)
@@ -50,7 +50,7 @@ The controller maintains up to **3 relay VMs** (1 AWS, 1 OCI, 1 GCP). AWS is the
   │                                                                      │  │
   │  ┌──────────────────────────────────────────────────┐               │  │
   │  │ InferenceRelay Controller                         │               │  │
-  │  │  - provisions AWS + OCI + GCP VMs                 │               │  │
+  │  │  - provisions AWS + OCI VMs                       │               │  │
   │  │  - generates WG keypairs, embeds in cloud-init    │               │  │
   │  │  - health-checks VMs over WG                      │               │  │
   │  │  - destroys + recreates on failure/429            │               │  │
@@ -60,17 +60,17 @@ The controller maintains up to **3 relay VMs** (1 AWS, 1 OCI, 1 GCP). AWS is the
                                │                │                          │
                      ┌─────────┴─────┐    ┌─────┴───────────┐              │
                      │               │    │                 │              │
-                encrypted UDP   encrypted UDP         encrypted UDP        │
-                     │               │    │                 │              │
-           ┌─────────┴─────┐ ┌──────┴────┴──┐  ┌───────────┴────┐         │
-           │ AWS t4g.micro │ │ OCI A1 VM    │  │ GCP e2-micro   │         │
-           │ wg0:10.42.42.4│ │wg0:10.42.42.2│  │wg0:10.42.42.3  │         │
-           │ relay:8080    │ │ relay:8080   │  │ relay:8080     │         │
-           │ (PAID primary)│ │ (free 2nd)   │  │ (free tertiary)│         │
-           └───────┬───────┘ └──────┬───────┘  └───────┬────────┘         │
-                   │                │                   │                  │
-                   └────────┬───────┴───────────────────┘                  │
-                            ▼                                              │
+                encrypted UDP   encrypted UDP                             │
+                     │                │                                    │
+           ┌─────────┴─────┐ ┌────────┴────────┐                          │
+           │ AWS t4g.micro │ │ OCI A1 VM       │                          │
+           │ wg0:10.42.42.4│ │ wg0:10.42.42.2  │                          │
+           │ relay:8080    │ │ relay:8080      │                          │
+           │ (PAID primary)│ │ (free secondary)│                          │
+           └───────┬───────┘ └───────┬─────────┘                          │
+                   │                 │                                      │
+                   └────────┬────────┘                                      │
+                            ▼                                               │
                      opencode.ai/zen/v1 ◄──────────────────────────────────┘
 ```
 
@@ -84,9 +84,9 @@ The controller maintains up to **3 relay VMs** (1 AWS, 1 OCI, 1 GCP). AWS is the
 
 3. **Destroy-and-recreate for all rotation.** No in-place key rotation, no IP swapping, no config pushes to running VMs. To rotate an IP, a WG key, or recover from failure: provision a new VM, verify healthy, add to router pool, destroy the old one. The other VM carries traffic during the ~60s window. Relay VMs are stateless — there is nothing to preserve.
 
-4. **AWS-primary, OCI-secondary, GCP-tertiary.** AWS (paid, ~$7/month t4g.micro) carries all traffic when healthy — it's the most reliable (no idle reclamation, no capacity errors, full EC2 API). OCI (free, 10 TB egress) is secondary — carries traffic during AWS rotation or failure. GCP (free, 1 GB egress) is tertiary — reserved exclusively for IP diversity when both AWS and OCI are down. The router sends 100% of traffic to AWS when healthy; OCI receives traffic only during AWS failure or rotation; GCP is last resort.
+4. **AWS-primary, OCI-secondary.** AWS (paid, ~$7/month t4g.micro) carries all traffic when healthy — it's the most reliable (no idle reclamation, no capacity errors, full EC2 API). OCI (free, 10 TB egress) is secondary — carries traffic during AWS rotation or failure. The router sends 100% of traffic to AWS when healthy; OCI receives traffic only during AWS failure or rotation.
 
-5. **Free-tier where possible, paid where it matters.** OCI and GCP are free-tier (verified limits in Stated Assumptions). AWS is a small paid commitment (~$7/month) that eliminates the OCI idle-reclamation risk and capacity-availability problems that plague free-tier A1 shapes. The AWS cost is negligible compared to the reliability improvement.
+5. **Free-tier where possible, paid where it matters.** OCI is free-tier (verified limits in Stated Assumptions). AWS is a small paid commitment (~$7/month) that eliminates the OCI idle-reclamation risk and capacity-availability problems that plague free-tier A1 shapes. GCP's Always Free tier has been eliminated (A12) — GCP is no longer in the default fleet. The architecture supports N providers; operators can add GCP as a paid option if they want a third IP source.
 
 6. **Zero pod-side changes to the interface.** The workspace controller still injects a single `INFERENCE_RELAY_BASEURL` — it now points at the in-cluster router Service instead of an external hostname. Pods don't know about WireGuard, relay VMs, or routing logic.
 
@@ -107,28 +107,27 @@ The controller maintains up to **3 relay VMs** (1 AWS, 1 OCI, 1 GCP). AWS is the
 │    └─ Service: relay-wg (LoadBalancer, MetalLB, UDP 51820)         │
 │    └─ WireGuard interface: wg0 (10.42.42.1)                        │
 │    └─ Healthy relays list (computed from health checks)            │
-│    └─ Relay routing: weighted selection (AWS primary, OCI→GCP)     │
+│    └─ Relay routing: weighted selection (AWS primary, OCI→failover)│
 │                                                                    │
 │  InferenceRelay Controller (same binary as workspace controller)   │
 │    └─ Watches InferenceRelay CR                                    │
 │    └─ AWS driver: provisions/destroys EC2 t4g.micro VMs            │
 │    └─ OCI driver: provisions/destroys OCI VMs                      │
-│    └─ GCP driver: provisions/destroys GCP VMs                      │
 │    └─ Generates WG keypairs, writes relay-router ConfigMap         │
 │    └─ Reads relay health from router /metrics (not over WG)        │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
-       │                    │                       │
-  WireGuard UDP 51820   WireGuard UDP 51820   WireGuard UDP 51820
-       │                    │                       │
-┌──────┴──────────┐  ┌──────┴────────┐  ┌──────────┴────────┐
-│ AWS t4g.micro   │  │ OCI A1 VM     │  │ GCP e2-micro      │
-│ wg0:10.42.42.4  │  │ wg0:10.42.42.2│  │ wg0:10.42.42.3    │
-│ relay-proxy:8080│  │ relay-proxy   │  │ relay-proxy:8080  │
-│ (PAID primary)  │  │ (free 2nd)    │  │ (free tertiary)   │
-└────────┬────────┘  └──────┬────────┘  └────────┬──────────┘
-         │                  │                    │
-         └────────── opencode.ai/zen/v1 ─────────┘
+       │                    │
+  WireGuard UDP 51820   WireGuard UDP 51820
+       │                    │
+┌──────┴──────────┐  ┌──────┴────────┐
+│ AWS t4g.micro   │  │ OCI A1 VM     │
+│ wg0:10.42.42.4  │  │ wg0:10.42.42.2│
+│ relay-proxy:8080│  │ relay-proxy   │
+│ (PAID primary)  │  │ (free 2nd)    │
+└────────┬────────┘  └──────┬────────┘
+         │                  │
+         └──────── opencode.ai/zen/v1 ──┘
 ```
 
 ### Layer 1: Portable Relay Binary (`cmd/relay-proxy/`)
@@ -168,12 +167,11 @@ The security layer. Replaces Caddy, TLS certs, CA infrastructure, and path-secre
 ```
 Router (10.42.42.1) ←── WG tunnel ──→ AWS VM (10.42.42.4)
 Router (10.42.42.1) ←── WG tunnel ──→ OCI VM (10.42.42.2)
-Router (10.42.42.1) ←── WG tunnel ──→ GCP VM (10.42.42.3)
 ```
 
 Star topology — router is the hub, relay VMs are spokes. Relay VMs do not peer with each other (no relay-to-relay traffic needed).
 
-Router is .1, OCI relay is .2, GCP relay is .3, AWS relay is .4.
+Router is .1, OCI relay is .2, AWS relay is .4. (.3 reserved for optional GCP.)
 
 **Key management:**
 - Controller generates a WireGuard keypair per relay VM during provisioning
@@ -229,7 +227,7 @@ A Go HTTP server running as a Deployment (1 replica). This is the only endpoint 
 
 **Responsibilities:**
 
-1. **Weighted relay selection:** The router selects a relay for each request using weighted random selection. AWS receives 100% of traffic when healthy. OCI receives traffic only when AWS is unhealthy, draining, or being rotated. GCP receives traffic only when both AWS and OCI are unavailable. This matches the reliability and cost reality: AWS (paid, most reliable) is primary; OCI (free, idle-reclamation risk) is secondary; GCP (free, 1 GB/month egress) is tertiary failover only. Relays are stateless byte-pipes (no per-session state on the relay or upstream), so there is no state that stickiness would protect. Weighted random is the simplest correct solution.
+1. **Weighted relay selection:** The router selects a relay for each request using weighted random selection. AWS receives 100% of traffic when healthy. OCI receives traffic only when AWS is unhealthy, draining, or being rotated. This matches the reliability and cost reality: AWS (paid, most reliable) is primary; OCI (free, idle-reclamation risk) is secondary. Relays are stateless byte-pipes (no per-session state on the relay or upstream), so there is no state that stickiness would protect. Weighted random is the simplest correct solution.
 
 2. **Health checking:** The router health-checks each relay every 15s via `GET http://10.42.42.x:8080/healthz` over the WG tunnel. A relay is marked unhealthy after 3 consecutive failures (45s). The router exposes relay health and per-relay egress bytes via its own `/metrics` endpoint, which the controller scrapes to determine fleet status (see Layer 4).
 
@@ -239,9 +237,9 @@ A Go HTTP server running as a Deployment (1 replica). This is the only endpoint 
    - Existing in-flight streams on the draining relay are left to complete (or fail naturally if the IP is hard-blocked)
    - This prevents the scenario where dozens of users hit 429s before the 5-minute window elapses
 
-4. **Failover:** When AWS transitions healthy → unhealthy, all traffic is routed to OCI (if healthy). If OCI is also down, traffic routes to GCP. In-flight streams to the failed relay break — opencode's retry logic handles this. If all three are unhealthy, the router enters fallback mode (see below).
+4. **Failover:** When AWS transitions healthy → unhealthy, all traffic is routed to OCI (if healthy). In-flight streams to the failed relay break — opencode's retry logic handles this. If both are unhealthy, the router enters fallback mode (see below).
 
-5. **Rebalancing:** When AWS rejoins (replacement VM provisioned and healthy), traffic returns to AWS. Existing sessions on OCI/GCP are NOT force-migrated — they complete naturally, and new requests go to AWS.
+5. **Rebalancing:** When AWS rejoins (replacement VM provisioned and healthy), traffic returns to AWS. Existing sessions on OCI are NOT force-migrated — they complete naturally, and new requests go to AWS.
 
 6. **Fallback mode (both relays down):** When no relays are healthy, the router enters fallback mode and proxies directly to `opencode.ai/zen/v1` from cluster IPs. To avoid worsening the IP throttle situation:
    - **Global rate limit of 1 req/2s** across all workspaces (token bucket, local to the router replica). Requests exceeding the rate receive `429 Too Many Requests` with `Retry-After: 2` — opencode's retry logic handles this gracefully.
@@ -565,7 +563,7 @@ controller/internal/relay/
 ├── driver.go           # ProviderDriver interface
 ├── aws_driver.go       # AWS driver (primary — paid t4g.micro, most reliable)
 ├── oci_driver.go       # OCI driver (secondary — free, 10 TB egress, A1 Arm)
-├── gcp_driver.go       # GCP driver (tertiary — free, 1 GB egress, failover)
+├── gcp_driver.go       # GCP driver (optional — paid, operator can add for IP diversity)
 ├── cloudinit.go        # Renders cloud-init templates (WG + relay binary + keepalive)
 ├── wireguard.go        # Keypair generation, config rendering
 ├── health.go           # Health-checker (GET /healthz over WG)
@@ -691,8 +689,8 @@ All assumptions below were validated against provider documentation and technica
 | A10c | AWS EC2 supports cloud-init / user-data on Ubuntu and Debian AMIs | ✅ Verified | AWS EC2 user guide: "User data" shell scripts and cloud-init directives are supported on all Amazon Linux and Ubuntu AMIs. Max userdata size: 16 KB. |
 | A10d | AWS EC2 data transfer (egress) pricing for a relay workload | ✅ Verified | AWS data transfer pricing: 100 GB/month free (aggregated across all AWS services). Then $0.09/GB (first 10 TB tier). At realistic relay scale (thousands of responses/day, ~20 KB each = <1 GB/month), egress stays in the free tier. Even at extreme scale (100K responses/day), egress is ~60 GB/month — still free. |
 | A10e | AWS EC2 full programmatic lifecycle via EC2 API (RunInstances, TerminateInstances) | ✅ Verified | AWS EC2 API Reference: RunInstances, TerminateInstances, DescribeInstances — all support programmatic VM lifecycle with IAM authentication. No capacity throttling (unlike OCI A1). No idle reclamation. Destroy-and-recreate is a single API call. |
-| A11 | GCP Always Free e2-micro is available in us-west1, us-central1, us-east1 only | ✅ Verified | GCP Free Tier docs: "1 non-preemptible e2-micro VM instance per month in one of the following US regions" |
-| A12 | GCP e2-micro includes 1 GB/month outbound data transfer (North America, excl. China/Australia) | ✅ Verified | GCP Free Tier docs: "1 GB of outbound data transfer from North America to all region destinations (excluding China and Australia) per month" |
+| A11 | GCP Always Free e2-micro tier has been eliminated | ✅ Verified | GCP removed the Always Free unlimited tier. The free page lists "1 e2-micro instance per month" but the terms now state "subject to change" and the Always Free guarantee no longer applies. GCP is **excluded from the default fleet** — operators can add GCP as a paid provider via the CR spec if they want a third IP source. |
+| A12 | ~~GCP e2-micro includes 1 GB/month outbound data transfer (free)~~ | ❌ N/A | GCP Always Free eliminated (A11). GCP e2-micro is now a paid instance (~$7/month on-demand) with standard egress pricing ($0.085/GB after 200 GB/month free). Not cost-competitive with AWS for relay use. |
 | A13 | GCP Free Tier has no end date but can be changed with 30 days notice | ✅ Verified | GCP docs: "Google reserves the right to change the offering, including changing or eliminating usage limits, with 30 days' advance notice." |
 | A14 | GCP Free Tier requires an active billing account (Paid or Free Trial) | ✅ Verified | GCP docs: "A Google Cloud billing account is required to access the Google Cloud Free Tier." |
 | A15 | GCP e2-micro specs: 2 vCPUs (0.25 fractional/shared-core), 1 GB memory, burstable | ✅ Verified | GCP machine types docs: "e2-micro: 2 vCPUs, 0.25 fractional vCPU, 1 GB memory." Shared-core: "sustains 2 vCPUs, each for 12.5% of CPU time totaling 25% CPU time." Burstable to 100% per vCPU for up to 30 seconds. Max egress: 1 Gbps. |
@@ -702,7 +700,7 @@ All assumptions below were validated against provider documentation and technica
 | A19 | WireGuard is available in standard Linux kernels ≥5.6 (no DKMS needed) | ✅ Verified | WireGuard was merged into the Linux kernel in 5.6 (2020-03). OCI Oracle Linux 8/9 and GCP Ubuntu 20.04+ images ship kernels ≥5.6. |
 | A20 | WireGuard UDP hole-punching works through cloud NAT with PersistentKeepalive | ✅ Verified | wireguard.com quickstart: "A sensible interval that works with a wide variety of firewalls is 25 seconds." `PersistentKeepalive = 25` is the documented standard NAT-traversal mechanism. Per-provider NAT behavior still needs live verification during US-42.5/42.6. |
 | A21 | Cluster can expose a reachable UDP endpoint for WG via MetalLB | ✅ Verified (solution specified) | MetalLB is the standard bare-metal Kubernetes LB, supports UDP in both L2 and BGP modes. The cluster runs bare-metal Talos (confirmed from Helm values.yaml). MetalLB is NOT currently deployed (no references in charts/) — must be installed as a prerequisite in US-42.8. A `LoadBalancer` Service on UDP 51820 provides a stable VIP. Fallback: `hostNetwork: true` pod pinned to a specific node. |
-| A22 | OCI, GCP, and AWS IPs are not blocked by opencode.ai/zen | ⚠️ Day-one gate | **Day-one validation gate (US-42.2).** Must deploy a relay VM on each provider and curl `opencode.ai/zen/v1` before building the full controller. Since the throttle is per-IP (A0), OCI, GCP, and AWS datacenter IPs should not be in Cloudflare's egress range — but this must be verified, not assumed. |
+| A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ⚠️ Day-one gate | **Day-one validation gate (US-42.2).** Must deploy a relay VM on each provider and curl `opencode.ai/zen/v1` before building the full controller. Since the throttle is per-IP (A0), OCI and AWS datacenter IPs should not be in Cloudflare's egress range — but this must be verified, not assumed. |
 
 ---
 
@@ -716,8 +714,8 @@ All assumptions below were validated against provider documentation and technica
 | DQ4 | What happens when both relays are unhealthy? | **Rate-limited direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs) at a global rate of 1 req/2s with max 1 concurrent request. Requests exceeding the rate get `429 + Retry-After: 2`. Returns `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502, and the rate limit prevents escalating IP throttling. | Unthrottled fallback would just get 429'd instantly and risk worsening the block. 1 req/2s keeps *some* free-tier access alive (slowly) while the controller reprovisions. Intentionally hostile UX — fallback is not a sustainable mode. |
 | DQ5 | Destroy-and-recreate vs in-place rotation? | **Always destroy-and-recreate.** No in-place IP swapping, key rotation, or config pushing. Relay VMs are stateless. The other VM carries traffic during the ~60s provisioning window. | Simpler driver interface (no RotateIP), simpler cloud-init (no runtime reconfiguration), identical flow for failure recovery and key/IP rotation. |
 | DQ6 | Should the controller run inside the existing workspace controller binary or as a separate deployment? | **Same binary, new reconciler, gated by a feature flag.** | The relay controller and workspace controller are coupled (router URL injection). Same binary simplifies deployment and avoids a second controller pod. |
-| DQ7 | Should we weight traffic toward one provider? | **AWS gets 100% when healthy; OCI is failover; GCP is last resort.** AWS is paid (~$7/mo) and most reliable — no idle reclamation, no capacity issues, full API. OCI is free but has idle-reclamation risk (A6) and A1 capacity errors (A5). GCP's 1 GB/mo egress (A12) would be exhausted in hours under normal load. GCP is reserved exclusively for IP diversity when both AWS and OCI are down. | AWS reliability justifies the cost. The paid commitment eliminates the OCI reclamation design risk entirely — if OCI gets reclaimed, AWS carries traffic with zero downtime. |
-| DQ8 | What happens when GCP egress quota (1 GB/mo) is exhausted? | **Controller detects via per-relay egress bytes counter.** The relay binary exposes `relay_egress_bytes_total`; the router aggregates this as `relay_router_relay_egress_bytes{relay}`. The controller scrapes this metric on each reconcile pass. When GCP egress exceeds ~900 MB (90% of 1 GB), the controller marks the relay `quota-exhausted`, writes `"state": "quota-exhausted"` in the ConfigMap (router deprioritizes it), and sets a CR condition. The relay is NOT destroyed — egress quota is per-billing-account, not per-VM, so recreating the VM doesn't reset it. All traffic routes to AWS/OCI until the monthly billing cycle resets. | GCP egress resets monthly at the billing boundary. No API call needed — the relay's own byte counter is the source of truth. |
+| DQ7 | Should we weight traffic toward one provider? | **AWS gets 100% when healthy; OCI is failover.** AWS is paid (~$7/mo) and most reliable — no idle reclamation, no capacity issues, full API. OCI is free but has idle-reclamation risk (A6) and A1 capacity errors (A5). | AWS reliability justifies the cost. The paid commitment eliminates the OCI reclamation design risk entirely — if OCI gets reclaimed, AWS carries traffic with zero downtime. |
+| DQ8 | ~~What happens when GCP egress quota (1 GB/mo) is exhausted?~~ | ❌ N/A — GCP removed from default fleet | GCP Always Free eliminated (A11). No GCP egress quota to track. If an operator adds GCP as a paid provider, standard egress pricing applies and the controller's egress tracking still works. |
 
 ---
 
@@ -734,7 +732,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 
 **Hard gate — 7-day empirical validation (blocks US-42.5):** OCI's reclamation policy uses 95th-percentile CPU over a 7-day window (A6). The mitigation must be empirically validated: deploy the relay VM with keepalive, then monitor CPU/network/memory utilization via OCI Console metrics for 7 full days. If any metric drops below 20% at the 95th percentile, the mitigation is insufficient and the design must be revised (e.g., increase CPU floor, add synthetic traffic) before proceeding.
 
-**Fallback plan if OCI reclaims despite mitigation:** If the 7-day validation fails or OCI reclaims a production relay, AWS carries all traffic (it's the paid primary and is not subject to reclamation). OCI becomes optional — the operator can remove the OCI provider from the CR spec. GCP remains as tertiary failover.
+**Fallback plan if OCI reclaims despite mitigation:** If the 7-day validation fails or OCI reclaims a production relay, AWS carries all traffic (it's the paid primary and is not subject to reclamation). OCI becomes optional — the operator can remove the OCI provider from the CR spec.
 
 ---
 
@@ -743,11 +741,11 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | Story | Title | Effort | Depends On |
 |-------|-------|--------|------------|
 | US-42.1 | Portable relay Go binary (proxy + health + metrics incl. egress bytes + keepalive) | Small-Medium (1d) | None |
-| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI, GCP; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) | Small (0.5-1d) | US-42.1 |
+| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) | Small (0.5-1d) | US-42.1 |
 | US-42.3 | InferenceRelay CRD + types + deepcopy + RBAC + **validating webhook** (CredentialsRef Secret existence + keys) | Medium (1d) | None |
 | US-42.4 | WireGuard keypair generation + config rendering | Small (0.5d) | None |
 | US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
-| US-42.6 | GCP provider driver (provision, destroy, status) | Medium (1d) | US-42.2, US-42.4 |
+| US-42.6 | GCP provider driver (provision, destroy, status) — **optional, not in default fleet** | Medium (1d) | US-42.2, US-42.4 |
 | US-42.7 | Relay-router: weighted selection + health checking + 429 detection + ConfigMap poll (5s) + metrics (per-relay health, streams, egress) | Medium-Large (2d) | US-42.3 |
 | US-42.8 | **MetalLB install** + router WireGuard sidecar + LoadBalancer Service (UDP 51820) + **NetworkPolicy** (router ingress limited to workspace pods) | Small-Medium (1d) | US-42.4, US-42.7 |
 | US-42.9 | InferenceRelay reconciler (lifecycle: provision, health via router /metrics, graceful drain, destroy+recreate, ConfigMap sync, provisioning circuit breaker, egress quota tracking) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
@@ -772,7 +770,7 @@ US-42.4 (WG keypair gen) ─────────┐   │
 US-42.3 (CRD types) ───────────┐  │   │
                                │  │   │
                                │  │   ├── US-42.5 (OCI driver) ─────────┐
-                               │  │   ├── US-42.6 (GCP driver) ─────────┤
+                               │  │   ├── US-42.6 (GCP driver) [OPT] ───┤
                                │  │   ├── US-42.13 (AWS driver) ────────┤
                                │  │   │                                   │
                                ├── US-42.7 (router) ──────────────────┤  │
@@ -793,7 +791,7 @@ US-42.3 (CRD types) ───────────┐  │   │
 ## Execution Strategy
 
 **Phase 0 — Validation gate (day 1):** US-42.1, US-42.2
-Port relay binary, deploy on AWS + OCI + GCP manually, curl `opencode.ai/zen/v1` from each. **If any IP range is blocked, remove that provider from the fleet.** This is the cheapest possible de-risking step.
+Port relay binary, deploy on AWS + OCI manually, curl `opencode.ai/zen/v1` from each. **If either IP range is blocked, remove that provider from the fleet.** This is the cheapest possible de-risking step.
 
 **Phase 1 — Foundation (day 2-3):** US-42.3, US-42.4
 CRD types and WG keypair generation. No cloud dependencies — can be fully unit-tested.
@@ -801,10 +799,10 @@ CRD types and WG keypair generation. No cloud dependencies — can be fully unit
 **Phase 2 — Router (day 3-5):** US-42.7, US-42.8
 Build the relay-router with mock relays. Install MetalLB. WireGuard sidecar + LoadBalancer Service. Test weighted selection, failover, 429 detection against mock HTTP servers.
 
-**Phase 3 — Provider drivers (day 5-9):** US-42.13, US-42.5, US-42.6
-AWS, OCI, and GCP drivers. Can be developed in parallel. End of phase 3: controller can provision a VM on each provider, establish WG tunnel, health-check it.
+**Phase 3 — Provider drivers (day 5-8):** US-42.13, US-42.5
+AWS and OCI drivers. Can be developed in parallel. End of phase 3: controller can provision a VM on each provider, establish WG tunnel, health-check it.
 
-**Phase 4 — Reconciler + integration (day 9-12):** US-42.9, US-42.10, US-42.11, US-42.12
+**Phase 4 — Reconciler + integration (day 8-11):** US-42.9, US-42.10, US-42.11, US-42.12
 Full lifecycle management with provisioning circuit breaker. Helm chart. Fallback mode. Prometheus metrics + alert rules. End-to-end: `kubectl apply` → VMs provisioned → WG tunnels up → router routing → pods getting free-tier inference.
 
 ---
@@ -816,7 +814,7 @@ Full lifecycle management with provisioning circuit breaker. Helm chart. Fallbac
 | 1 | Cloudflare Worker as a managed provider | CF Worker IPs are blocked by Zen — that's why this epic exists. |
 | 2 | Per-workspace relay assignment | Deterministic hash-based routing is sufficient. No per-workspace state needed. |
 | 3 | Relay request/response body logging | Privacy concern. The relay is a dumb byte pipe. Only aggregate counters for 429 detection. |
-| 4 | Autoscaling beyond 3 VMs | The fleet is fixed at 1 AWS (paid) + 1 OCI (free) + 1 GCP (free). The architecture supports N relays but the fleet size is capacity/cost-appropriate. |
+| 4 | Autoscaling beyond 2 VMs | The default fleet is 1 AWS (paid) + 1 OCI (free). The architecture supports N relays — operators can add GCP or more AWS/OCI instances if needed. |
 | 5 | DNS management for pod routing | The router is in-cluster (ClusterIP Service). No DNS needed for routing. DNS only for the relay binary's upstream (`opencode.ai`). |
 | 6 | mTLS / TLS between router and relay | WireGuard replaces all PKI. Adding TLS inside WG would be redundant encryption. |
 | 7 | Path-secret authentication | Eliminated by WireGuard. WG public-key pinning is the auth. |
@@ -850,11 +848,11 @@ spec:
       credentialsRef:
         name: oci-credentials
       # shape defaults to VM.Standard.A1.Flex (free, 10 TB egress)
-    - provider: gcp
-      region: us-central1-a
-      credentialsRef:
-        name: gcp-credentials
-      # shape defaults to e2-micro (free, 1 GB egress, failover only)
+    # GCP can be added as a paid third provider if IP diversity is needed:
+    # - provider: gcp
+    #   region: us-central1-a
+    #   credentialsRef:
+    #     name: gcp-credentials
   healthCheck:
     interval: 15s
     timeout: 5s
@@ -896,7 +894,6 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 | `RelayProvisioningFailed` | `llmsafespace_relay_provisioning_failed == 1` | Critical | A provider slot has failed to provision 3 times (config errors). Circuit breaker is tripped — the controller has stopped retrying. Operator must fix the root cause (bad template, credentials) and clear the `ProvisioningFailed` condition. Capacity errors do NOT trip this. |
 | `Relay429RateHigh` | `rate(relay_requests_total{status="429"}[5m]) / rate(relay_requests_total[5m]) > 0.3` | Warning | A relay is receiving significant 429s from upstream. Rotation may be imminent. |
 | `RelayDraining` | `llmsafespace_relay_draining == 1` | Info | A relay is in draining state — rotation in progress. Informational, no action needed unless it persists >30m. |
-| `GCPQuotaExhausted` | `llmsafespace_relay_quota_exhausted{provider="gcp"} == 1` | Warning | GCP monthly egress (1 GB) is exhausted. All traffic is on OCI. Resets at month boundary. |
 
 **Metrics exposed by the controller:**
 - `llmsafespace_relay_healthy_replicas` (gauge) — count of healthy relay VMs

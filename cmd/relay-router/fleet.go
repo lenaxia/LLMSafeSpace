@@ -225,7 +225,7 @@ func (f *relayFleet) is429DrainingLocked(e *relayEntry) bool {
 // relayWeight assigns traffic weights by provider and health state.
 // AWS primary (weight 1000), OCI secondary (weight 100), GCP tertiary (weight 1).
 // Suspect relays get reduced weight. This encodes Design Principle 4
-// (AWS-primary, OCI-secondary, GCP-tertiary).
+// (AWS-primary, OCI-secondary). GCP is optional (operator can add as paid).
 func relayWeight(provider, peerState, healthState string) float64 {
 	if healthState == relayStateUnhealthy {
 		return 0

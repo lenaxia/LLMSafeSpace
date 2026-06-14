@@ -88,7 +88,7 @@ type WireGuardConfig struct {
 	RouterPrivateKeyRef string `json:"routerPrivateKeyRef,omitempty"`
 
 	// CIDR is the WireGuard mesh network.
-	// Router is .1, OCI relay is .2, GCP relay is .3.
+	// Router is .1, OCI relay is .2, AWS relay is .4. (.3 reserved for optional GCP.)
 	// +kubebuilder:default="10.42.42.0/24"
 	CIDR string `json:"cidr,omitempty"`
 
