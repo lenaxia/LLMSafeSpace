@@ -77,8 +77,9 @@ type RouterConfig struct {
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
 
-	UsageHandler   *handlers.UsageHandler
-	WebhookHandler *handlers.WebhookHandler
+	UsageHandler       *handlers.UsageHandler
+	WebhookHandler     *handlers.StripeWebhookHandler
+	InvitationsHandler *handlers.InvitationsHandler
 
 	CookieName string
 }
@@ -265,7 +266,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	}
 
 	if cfg.WebhookHandler != nil {
-		router.POST("/api/v1/webhooks/billing", cfg.WebhookHandler.Billing)
+		router.POST("/api/v1/webhooks/stripe", cfg.WebhookHandler.HandleWebhook)
 	}
 
 	// Secret management routes (Epic 10)
@@ -302,7 +303,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler)
 	}
 
 	// Metrics endpoint.
@@ -943,7 +944,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -957,6 +958,9 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgIDGroup.GET("/workspaces", h.ListWorkspaces)
 	orgIDGroup.GET("/members", h.ListMembers)
 	orgIDGroup.POST("/accept-key", h.AcceptKey)
+	if invH != nil {
+		orgIDGroup.GET("/invitations", invH.List)
+	}
 
 	orgAdminGroup := orgGroup.Group("/:id")
 	orgAdminGroup.Use(middleware.OrgAdminGuard(h))
@@ -966,6 +970,13 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
 	orgAdminGroup.POST("/rotate-key", h.RotateKey)
+	orgAdminGroup.POST("/billing/checkout", h.Checkout)
+	orgAdminGroup.POST("/billing/portal", h.Portal)
+	if invH != nil {
+		orgAdminGroup.POST("/invitations", invH.Create)
+		orgAdminGroup.DELETE("/invitations/:invID", invH.Delete)
+		orgAdminGroup.POST("/invitations/:invID/resend", invH.Resend)
+	}
 
 	if credH != nil {
 		orgAdminGroup.POST("/credentials", credH.Create)
@@ -975,5 +986,14 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		orgAdminGroup.POST("/credentials/:credID/auto-apply", credH.CreateAutoApply)
 		orgAdminGroup.GET("/credentials/:credID/auto-apply", credH.ListAutoApply)
 		orgAdminGroup.DELETE("/credentials/:credID/auto-apply", credH.DeleteAutoApply)
+	}
+
+	// Public invitation routes (token is the credential).
+	if invH != nil {
+		publicInv := router.Group("/api/v1/invitations")
+		publicInv.GET("/:token", invH.GetByToken)
+		authedInv := publicInv.Group("", authMW)
+		authedInv.POST("/:token/accept", invH.Accept)
+		authedInv.POST("/:token/decline", invH.Decline)
 	}
 }

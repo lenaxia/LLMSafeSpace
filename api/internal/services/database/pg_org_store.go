@@ -7,9 +7,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
+
+// PendingOrgCleanup describes a pending_activation org eligible for the cleanup
+// cron. StripeCustomerID lets the cron verify checkout state with Stripe before
+// deleting.
+type PendingOrgCleanup struct {
+	OrgID            string
+	Slug             string
+	CreatedAt        time.Time
+	StripeCustomerID string
+}
 
 // OrgStore is the data-access interface for organizations and their memberships.
 type OrgStore interface {
@@ -36,6 +48,30 @@ type OrgStore interface {
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
+
+	// US-43.1: Stripe lifecycle. UpdateOrgStatus sets the operational status
+	// (active/suspended) and/or subscription_status and/or plan_id. A nil/empty
+	// argument leaves the column unchanged.
+	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
+	// GetOrgIDByStripeCustomer resolves a Stripe customer ID to the owning org's
+	// ID via billing_accounts. Returns ("", nil) when no row matches.
+	GetOrgIDByStripeCustomer(ctx context.Context, stripeCustomerID string) (string, error)
+	// GetStripeCustomerID resolves an org to its Stripe customer id via
+	// billing_accounts. Returns ("", nil) when no billing account exists.
+	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
+	// --- US-43.2: Invitations ---
+	CreateInvitation(ctx context.Context, inv *types.OrgInvitation) error
+	ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error)
+	GetInvitationByTokenHash(ctx context.Context, tokenHash string) (*types.OrgInvitation, error)
+	GetInvitationByID(ctx context.Context, invID string) (*types.OrgInvitation, error)
+	// AcceptInvitation performs the accept flow atomically under FOR UPDATE:
+	// locks the invitation row, re-checks it is still pending, inserts the
+	// membership, and marks the invitation accepted. Returns
+	// (membership, alreadyAccepted, error).
+	AcceptInvitationTx(ctx context.Context, invID, userID string, role types.OrgRole) (*types.OrgMember, bool, error)
+	DeclineInvitation(ctx context.Context, invID string) error
+	DeleteInvitation(ctx context.Context, invID string) error
+	CountInvitationsLastHour(ctx context.Context, orgID string) (int, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -58,9 +94,10 @@ func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organiza
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO organizations (id, name, slug, created_by, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, NOW(), NOW())
-		 RETURNING id, name, slug, created_by, created_at, updated_at`,
+		 RETURNING id, name, slug, created_by, created_at, updated_at, status, plan_id, subscription_status`,
 		org.ID, org.Name, org.Slug, org.CreatedBy,
-	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt,
+		&org.Status, &org.PlanID, &org.SubscriptionStatus)
 	if err != nil {
 		return nil, fmt.Errorf("insert organization: %w", err)
 	}
@@ -93,10 +130,11 @@ func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organiza
 func (s *PgOrgStore) GetOrg(ctx context.Context, orgID string) (*types.Organization, error) {
 	var org types.Organization
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, created_by, created_at, updated_at
+		`SELECT id, name, slug, created_by, created_at, updated_at, status, plan_id, subscription_status
 		 FROM organizations WHERE id = $1 AND deleted_at IS NULL`,
 		orgID,
-	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt,
+		&org.Status, &org.PlanID, &org.SubscriptionStatus)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -109,10 +147,11 @@ func (s *PgOrgStore) GetOrg(ctx context.Context, orgID string) (*types.Organizat
 func (s *PgOrgStore) GetOrgBySlug(ctx context.Context, slug string) (*types.Organization, error) {
 	var org types.Organization
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, created_by, created_at, updated_at
-		 FROM organizations WHERE slug = $1 AND deleted_at IS NULL`,
+		`SELECT id, name, slug, created_by, created_at, updated_at, status, plan_id, subscription_status
+		 FROM organizations WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL`,
 		slug,
-	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt,
+		&org.Status, &org.PlanID, &org.SubscriptionStatus)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -125,13 +164,15 @@ func (s *PgOrgStore) GetOrgBySlug(ctx context.Context, slug string) (*types.Orga
 func (s *PgOrgStore) ListOrgsForUser(ctx context.Context, userID string) ([]*types.OrgResponse, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at,
+		        o.status, o.plan_id, o.subscription_status,
 		        m.role, m.pending_key_wrap,
 		        COUNT(m2.user_id) AS member_count
 		 FROM organizations o
 		 JOIN org_memberships m ON m.org_id = o.id AND m.user_id = $1
 		 JOIN org_memberships m2 ON m2.org_id = o.id
 		 WHERE o.deleted_at IS NULL
-		 GROUP BY o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at, m.role, m.pending_key_wrap
+		 GROUP BY o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at,
+		          o.status, o.plan_id, o.subscription_status, m.role, m.pending_key_wrap
 		 ORDER BY o.created_at DESC`,
 		userID,
 	)
@@ -145,6 +186,7 @@ func (s *PgOrgStore) ListOrgsForUser(ctx context.Context, userID string) ([]*typ
 		var r types.OrgResponse
 		if err := rows.Scan(
 			&r.ID, &r.Name, &r.Slug, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt,
+			&r.Status, &r.PlanID, &r.SubscriptionStatus,
 			&r.UserRole, &r.UserPendingKeyWrap,
 			&r.MemberCount,
 		); err != nil {
@@ -166,12 +208,13 @@ func (s *PgOrgStore) UpdateOrg(ctx context.Context, orgID string, req types.Upda
 	err := s.db.QueryRowContext(ctx,
 		`UPDATE organizations
 		 SET name      = CASE WHEN $2 != '' THEN $2 ELSE name END,
-		     slug      = CASE WHEN $3 != '' THEN $3 ELSE slug END,
+		     slug      = CASE WHEN $3 != '' THEN LOWER($3) ELSE slug END,
 		     updated_at = NOW()
 		 WHERE id = $1 AND deleted_at IS NULL
-		 RETURNING id, name, slug, created_by, created_at, updated_at`,
+		 RETURNING id, name, slug, created_by, created_at, updated_at, status, plan_id, subscription_status`,
 		orgID, req.Name, req.Slug,
-	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt,
+		&org.Status, &org.PlanID, &org.SubscriptionStatus)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -465,6 +508,7 @@ func (s *PgOrgStore) IsOrgMember(ctx context.Context, orgID, userID string) (boo
 		   SELECT 1 FROM org_memberships m
 		   JOIN organizations o ON o.id = m.org_id
 		   WHERE m.org_id = $1 AND m.user_id = $2 AND o.deleted_at IS NULL
+		     AND o.status != 'suspended'
 		 )`,
 		orgID, userID,
 	).Scan(&exists)
@@ -483,6 +527,7 @@ func (s *PgOrgStore) IsOrgAdmin(ctx context.Context, orgID, userID string) (bool
 		   WHERE m.org_id = $1 AND m.user_id = $2
 		     AND m.role = 'admin' AND m.pending_key_wrap = false
 		     AND o.deleted_at IS NULL
+		     AND o.status != 'suspended'
 		 )`,
 		orgID, userID,
 	).Scan(&exists)
@@ -595,4 +640,386 @@ func (s *PgOrgStore) GetUserSalt(ctx context.Context, userID string) ([]byte, er
 		return nil, fmt.Errorf("get user salt: %w", err)
 	}
 	return salt, nil
+}
+
+func (s *PgOrgStore) UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error {
+	if status == nil && subStatus == nil && planID == nil {
+		return nil
+	}
+
+	setParts := []string{"updated_at = NOW()"}
+	args := []interface{}{orgID}
+	argIdx := 2
+	if status != nil {
+		setParts = append(setParts, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, string(*status))
+		argIdx++
+	}
+	if subStatus != nil {
+		setParts = append(setParts, fmt.Sprintf("subscription_status = $%d", argIdx))
+		args = append(args, string(*subStatus))
+		argIdx++
+	}
+	if planID != nil {
+		setParts = append(setParts, fmt.Sprintf("plan_id = $%d", argIdx))
+		args = append(args, string(*planID))
+	}
+
+	query := fmt.Sprintf( //nolint:gosec // setParts contains only literal column assignments, no user input
+		`UPDATE organizations SET %s WHERE id = $1 AND deleted_at IS NULL`,
+		strings.Join(setParts, ", "),
+	)
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update org status: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) GetOrgIDByStripeCustomer(ctx context.Context, stripeCustomerID string) (string, error) {
+	var orgID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT owner_id FROM billing_accounts
+		 WHERE external_customer_id = $1 AND provider = 'stripe' AND owner_type = 'org'`,
+		stripeCustomerID,
+	).Scan(&orgID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup org by stripe customer: %w", err)
+	}
+	return orgID, nil
+}
+
+func (s *PgOrgStore) GetStripeCustomerID(ctx context.Context, orgID string) (string, error) {
+	var customerID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT external_customer_id FROM billing_accounts
+		 WHERE owner_id = $1 AND owner_type = 'org' AND provider = 'stripe'`,
+		orgID,
+	).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup stripe customer for org: %w", err)
+	}
+	return customerID, nil
+}
+
+func (s *PgOrgStore) RecordStripeEvent(ctx context.Context, eventID, eventType string) (bool, error) {
+	var inserted bool
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO stripe_events (event_id, event_type) VALUES ($1, $2)
+		 ON CONFLICT (event_id) DO NOTHING
+		 RETURNING TRUE`,
+		eventID, eventType,
+	).Scan(&inserted)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("record stripe event: %w", err)
+	}
+	return inserted, nil
+}
+
+func (s *PgOrgStore) DeleteStripeEvent(ctx context.Context, eventID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM stripe_events WHERE event_id = $1`,
+		eventID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete stripe event: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) ListPendingOrgsOlderThan(ctx context.Context, maxAge time.Duration) ([]PendingOrgCleanup, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT o.id, o.slug, o.created_at,
+		        COALESCE(b.external_customer_id, '') AS customer_id
+		 FROM organizations o
+		 LEFT JOIN billing_accounts b
+		   ON b.owner_id = o.id AND b.owner_type = 'org' AND b.provider = 'stripe'
+		 WHERE o.status = 'pending_activation'
+		   AND o.deleted_at IS NULL
+		   AND o.created_at < NOW() - make_interval(secs => $1)`,
+		int(maxAge.Seconds()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending orgs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []PendingOrgCleanup
+	for rows.Next() {
+		var p PendingOrgCleanup
+		if err := rows.Scan(&p.OrgID, &p.Slug, &p.CreatedAt, &p.StripeCustomerID); err != nil {
+			return nil, fmt.Errorf("scan pending org: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending orgs: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PgOrgStore) HardDeleteOrg(ctx context.Context, orgID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE workspaces SET org_id = NULL WHERE org_id = $1`, orgID,
+	); err != nil {
+		return fmt.Errorf("null workspace org_id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM provider_credentials WHERE owner_type = 'org' AND owner_id = $1`, orgID,
+	); err != nil {
+		return fmt.Errorf("delete org provider credentials: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM billing_accounts WHERE owner_id = $1 AND owner_type = 'org'`, orgID,
+	); err != nil {
+		return fmt.Errorf("delete org billing accounts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM organizations WHERE id = $1`, orgID,
+	); err != nil {
+		return fmt.Errorf("delete organization: %w", err)
+	}
+
+	committed = true
+	return tx.Commit()
+}
+
+func (s *PgOrgStore) CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO billing_accounts (owner_id, owner_type, provider, external_customer_id, status)
+		 VALUES ($1, $2, $3, $4, 'pending')
+		 ON CONFLICT (owner_id, owner_type, provider) DO UPDATE
+		   SET external_customer_id = EXCLUDED.external_customer_id,
+		       updated_at = NOW()
+		 RETURNING id`,
+		ownerID, ownerType, provider, externalCustomerID,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("create billing account: %w", err)
+	}
+	return id, nil
+}
+
+func (s *PgOrgStore) SetBillingAccountSubscription(ctx context.Context, ownerID, ownerType, provider, subscriptionID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE billing_accounts
+		 SET external_subscription_id = $4, status = 'active', updated_at = NOW()
+		 WHERE owner_id = $1 AND owner_type = $2 AND provider = $3`,
+		ownerID, ownerType, provider, subscriptionID,
+	)
+	if err != nil {
+		return fmt.Errorf("set billing account subscription: %w", err)
+	}
+	return nil
+}
+
+// --- US-43.2: Invitation implementations ---
+
+func (s *PgOrgStore) CreateInvitation(ctx context.Context, inv *types.OrgInvitation) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO org_invitations (id, org_id, email, role, invited_by, token_hash, expires_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+		inv.ID, inv.OrgID, inv.Email, inv.Role, inv.InvitedBy, inv.TokenHash, inv.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations
+		 WHERE org_id = $1 AND accepted_at IS NULL AND declined_at IS NULL
+		 ORDER BY created_at DESC`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending invitations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*types.OrgInvitation
+	for rows.Next() {
+		var inv types.OrgInvitation
+		var bounceType sql.NullString
+		var bouncedAt sql.NullTime
+		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy,
+			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		inv.BounceType = bounceType.String
+		if bouncedAt.Valid {
+			inv.BouncedAt = &bouncedAt.Time
+		}
+		out = append(out, &inv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate invitations: %w", err)
+	}
+	if out == nil {
+		out = []*types.OrgInvitation{}
+	}
+	return out, nil
+}
+
+func (s *PgOrgStore) GetInvitationByTokenHash(ctx context.Context, tokenHash string) (*types.OrgInvitation, error) {
+	return s.scanInvitation(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, accepted_at, accepted_by,
+		        declined_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations WHERE token_hash = $1`, tokenHash)
+}
+
+func (s *PgOrgStore) GetInvitationByID(ctx context.Context, invID string) (*types.OrgInvitation, error) {
+	return s.scanInvitation(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, accepted_at, accepted_by,
+		        declined_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations WHERE id = $1`, invID)
+}
+
+func (s *PgOrgStore) scanInvitation(ctx context.Context, query string, args ...interface{}) (*types.OrgInvitation, error) {
+	var inv types.OrgInvitation
+	var acceptedAt, declinedAt, bouncedAt sql.NullTime
+	var acceptedBy sql.NullString
+	var bounceType sql.NullString
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy, &inv.ExpiresAt,
+		&acceptedAt, &acceptedBy, &declinedAt, &bounceType, &bouncedAt, &inv.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan invitation row: %w", err)
+	}
+	if acceptedAt.Valid {
+		inv.AcceptedAt = &acceptedAt.Time
+	}
+	if declinedAt.Valid {
+		inv.DeclinedAt = &declinedAt.Time
+	}
+	if bouncedAt.Valid {
+		inv.BouncedAt = &bouncedAt.Time
+	}
+	inv.BounceType = bounceType.String
+	return &inv, nil
+}
+
+func (s *PgOrgStore) AcceptInvitationTx(ctx context.Context, invID, userID string, role types.OrgRole) (*types.OrgMember, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var orgID string
+	var acceptedAt, declinedAt sql.NullTime
+	err = tx.QueryRowContext(ctx,
+		`SELECT org_id, accepted_at, declined_at
+		 FROM org_invitations
+		 WHERE id = $1 AND expires_at > NOW()
+		 FOR UPDATE`,
+		invID,
+	).Scan(&orgID, &acceptedAt, &declinedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("lock invitation: %w", err)
+	}
+	if acceptedAt.Valid || declinedAt.Valid {
+		return nil, true, nil
+	}
+
+	pendingKeyWrap := role == types.OrgRoleAdmin
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap, created_at)
+		 VALUES ($1, $2, $3, $4, NOW())
+		 ON CONFLICT (org_id, user_id) DO NOTHING`,
+		orgID, userID, role, pendingKeyWrap,
+	); err != nil {
+		return nil, false, fmt.Errorf("insert membership: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE org_invitations SET accepted_at = NOW(), accepted_by = $2 WHERE id = $1`,
+		invID, userID,
+	); err != nil {
+		return nil, false, fmt.Errorf("mark invitation accepted: %w", err)
+	}
+
+	committed = true
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("commit: %w", err)
+	}
+
+	return &types.OrgMember{
+		OrgID:          orgID,
+		UserID:         userID,
+		Role:           role,
+		PendingKeyWrap: pendingKeyWrap,
+	}, false, nil
+}
+
+func (s *PgOrgStore) DeclineInvitation(ctx context.Context, invID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE org_invitations SET declined_at = NOW() WHERE id = $1
+		 AND accepted_at IS NULL AND declined_at IS NULL`,
+		invID,
+	)
+	if err != nil {
+		return fmt.Errorf("decline invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) DeleteInvitation(ctx context.Context, invID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM org_invitations WHERE id = $1 AND accepted_at IS NULL AND declined_at IS NULL`,
+		invID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) CountInvitationsLastHour(ctx context.Context, orgID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_invitations
+		 WHERE org_id = $1 AND created_at > NOW() - interval '1 hour'`,
+		orgID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count invitations last hour: %w", err)
+	}
+	return count, nil
 }
