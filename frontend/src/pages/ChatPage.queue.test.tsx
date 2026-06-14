@@ -229,4 +229,42 @@ describe("ChatPage message queue (backend-backed)", () => {
       expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
     });
   });
+
+  it("abort deletes queued messages from Redis via clearAll", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "queued msg");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
+
+    await user.click(screen.getByLabelText("Stop generating"));
+
+    await waitFor(() => {
+      expect(messagesApi.deleteQueueMessage).toHaveBeenCalledWith("ws-1", "ses_1", "msg_q_test");
+    });
+  });
+
+  it("queue.update dismissed event removes pill via removeById", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
+    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
+
+    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
+
+    await user.type(document.querySelector("textarea")!, "will be dismissed");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
+
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "dismissed", messageID: "msg_q_test" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
+    });
+  });
 });
